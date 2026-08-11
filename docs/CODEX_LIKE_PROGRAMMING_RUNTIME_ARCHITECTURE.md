@@ -633,6 +633,14 @@ Failure classes should include:
 This lets the repair loop ask the model a bounded question: fix this classified
 failure against these paths, not "read the whole terminal log and guess."
 
+The current `builder-check-run-outcome-projection.v1` is deliberately narrower
+than FailureTriage. It preserves a safe current-draft outcome across refresh and
+restart and distinguishes not-run, running, completed, and unavailable reads,
+but it carries only fixed public copy. It must not be treated as diagnostic or
+repair evidence. FailureTriage still requires a separate bounded, redacted,
+candidate-bound diagnostic contract before any automatic repair loop can use
+check output.
+
 ### Edit Intent Plan
 
 Before mutating more than a trivial single file, Builder should have a small
@@ -903,8 +911,10 @@ authority contracts themselves. It does not replace Task Stream, ReviewState,
 CheckRun, DraftCheckpoint, or Revision authority. Active CheckRun now joins
 through the main-owned candidate activity registry as the fixed `Running
 checks` phase; the public projection receives no command, output, path, or
-runtime handle. Repair must remain absent until its own durable/runtime facts
-can be joined without speculation.
+runtime handle. Terminal and unavailable status survives refresh through the
+separate CheckRun Outcome projection, while ReviewState fails closed during an
+active or unreadable check. Repair must remain absent until its own bounded
+diagnostic facts can be joined without speculation.
 
 ## Authority Boundaries
 

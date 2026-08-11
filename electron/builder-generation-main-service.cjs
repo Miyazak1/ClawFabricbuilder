@@ -656,6 +656,7 @@ function taskStreamConversationForSubmitContext(value, expectedProjectId) {
     'provider_context_disclosure_status_projection',
     'draft_checkpoint_status_projection',
     'review_state_projection',
+    'check_run_outcome_projection',
     'agent_activity_projection',
   ]);
   if (

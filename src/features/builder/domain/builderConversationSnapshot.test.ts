@@ -107,6 +107,7 @@ type MutableWire = {
   project_id: string;
   context_status_projection?: unknown;
   provider_context_disclosure_status_projection?: unknown;
+  check_run_outcome_projection?: unknown;
   conversation: {
     conversation_id: string;
     created_at_ms: number;
@@ -126,6 +127,37 @@ type MutableWire = {
     project_revision: string;
   };
 };
+
+function checkRunOutcomeProjection(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const base = {
+    projection_version: 'builder-check-run-outcome-projection.v1',
+    state: 'unavailable',
+    command_kind: null,
+    command_label: null,
+    status: 'unavailable',
+    label: 'Check status unavailable',
+    summary: 'Builder could not verify the check status for this draft.',
+    completed_at_ms: null,
+    authority: {
+      projection_authority: 'main_owned_check_run_outcome_projection_v1',
+      fact_source: 'status_unavailable',
+      raw_output: 'not_present',
+      runtime_paths: 'not_present',
+      renderer_authority: 'read_only_projection',
+      save_authority: false,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...((overrides.authority as Record<string, unknown> | undefined) ?? {}),
+    },
+  };
+}
 
 function contextStatusProjection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base = {
@@ -850,6 +882,26 @@ describe('Builder conversation snapshot', () => {
     expect(Object.isFrozen(snapshot.conversation)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items[2])).toBe(true);
+  });
+
+  it('restores a renderer-safe CheckRun outcome and rejects forged save authority', () => {
+    const wire = candidateWire();
+    wire.check_run_outcome_projection = checkRunOutcomeProjection();
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.check_run_outcome_projection).toMatchObject({
+      state: 'unavailable',
+      status: 'unavailable',
+      label: 'Check status unavailable',
+    });
+    expect(Object.isFrozen(snapshot.check_run_outcome_projection)).toBe(true);
+
+    wire.check_run_outcome_projection = checkRunOutcomeProjection({
+      authority: { save_authority: true },
+    });
+    expectUnavailable(wire);
   });
 
   it('accepts a queued active-run follow-up without treating it as a submitted turn', () => {

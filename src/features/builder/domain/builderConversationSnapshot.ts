@@ -18,6 +18,10 @@ import {
   sanitizeBuilderAgentActivityProjectionWire,
   type BuilderAgentActivityProjectionWire,
 } from './builderAgentActivityProjection';
+import {
+  sanitizeBuilderCheckRunOutcomeProjectionWire,
+  type BuilderCheckRunOutcomeProjectionWire,
+} from './builderCheckRunOutcomeProjection';
 
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
@@ -336,6 +340,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
+  check_run_outcome_projection?: BuilderCheckRunOutcomeProjectionWire | null;
   agent_activity_projection?: BuilderAgentActivityProjectionWire | null;
   conversation: Readonly<{
     conversation_id: string;
@@ -362,6 +367,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
+  check_run_outcome_projection?: BuilderCheckRunOutcomeProjectionWire | null;
   agent_activity_projection?: BuilderAgentActivityProjectionWire | null;
   conversation: null;
   authority: BuilderConversationAuthority;
@@ -406,6 +412,7 @@ const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
   'provider_context_disclosure_status_projection',
   'draft_checkpoint_status_projection',
   'review_state_projection',
+  'check_run_outcome_projection',
   'agent_activity_projection',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
@@ -843,6 +850,17 @@ function optionalAgentActivityProjection(
   const value = source.agent_activity_projection;
   if (value === null) return null;
   const projection = sanitizeBuilderAgentActivityProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
+function optionalCheckRunOutcomeProjection(
+  source: Record<string, unknown>,
+): BuilderCheckRunOutcomeProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'check_run_outcome_projection')) return undefined;
+  const value = source.check_run_outcome_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderCheckRunOutcomeProjectionWire(value);
   if (projection === null) throw unavailable();
   return projection;
 }
@@ -2927,9 +2945,11 @@ export function sanitizeBuilderConversationSnapshot(
       optionalProviderContextDisclosureStatusProjection(source);
     const draftCheckpointStatusProjection = optionalDraftCheckpointStatusProjection(source);
     const reviewStateProjection = optionalReviewStateProjection(source);
+    const checkRunOutcomeProjection = optionalCheckRunOutcomeProjection(source);
     const agentActivityProjection = optionalAgentActivityProjection(source);
     if (source.conversation === null) {
       if (reviewStateProjection !== undefined && reviewStateProjection !== null) throw unavailable();
+      if (checkRunOutcomeProjection !== undefined && checkRunOutcomeProjection !== null) throw unavailable();
       if (agentActivityProjection !== undefined && agentActivityProjection !== null) throw unavailable();
       const absent = {
         state: 'absent' as const,
@@ -2950,6 +2970,9 @@ export function sanitizeBuilderConversationSnapshot(
         ...(reviewStateProjection === undefined
           ? {}
           : { review_state_projection: reviewStateProjection }),
+        ...(checkRunOutcomeProjection === undefined
+          ? {}
+          : { check_run_outcome_projection: checkRunOutcomeProjection }),
         ...(agentActivityProjection === undefined
           ? {}
           : { agent_activity_projection: agentActivityProjection }),
@@ -3022,6 +3045,9 @@ export function sanitizeBuilderConversationSnapshot(
       ...(reviewStateProjection === undefined
         ? {}
         : { review_state_projection: reviewStateProjection }),
+      ...(checkRunOutcomeProjection === undefined
+        ? {}
+        : { check_run_outcome_projection: checkRunOutcomeProjection }),
       ...(agentActivityProjection === undefined
         ? {}
         : { agent_activity_projection: agentActivityProjection }),

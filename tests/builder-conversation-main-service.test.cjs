@@ -3693,17 +3693,19 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     const ready = item.service.read_stream({ project_id: PROJECT_ID });
     assert.equal(ready.draft_checkpoint_status_projection.label, 'Checkpoint saved');
     assert.equal(ready.draft_checkpoint_status_projection.changed_file_count, 2);
-    assert.equal(ready.review_state_projection.status, 'ready');
-    assert.equal(ready.review_state_projection.check_status, 'passed');
+    assert.equal(ready.review_state_projection.status, 'blocked');
+    assert.equal(ready.review_state_projection.check_status, 'running');
     assert.equal(
       ready.review_state_projection.summary,
-      'A recoverable draft is checked and ready to inspect and save.',
+      'The project check is still running.',
     );
-    assert.equal(ready.review_state_projection.can_save, true);
+    assert.equal(ready.review_state_projection.can_save, false);
     assert.equal(ready.review_state_projection.can_discard, true);
     assert.equal(ready.review_state_projection.authority.save_authority, false);
     assert.equal(ready.agent_activity_projection.current.phase, 'running_checks');
     assert.equal(ready.agent_activity_projection.current.label, 'Running checks');
+    assert.equal(ready.check_run_outcome_projection.state, 'running');
+    assert.equal(ready.check_run_outcome_projection.status, 'running');
     assert.deepEqual(requests, [{
       project_id: PROJECT_ID,
       conversation_id: context.conversation.conversation_id,
@@ -3725,6 +3727,56 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     assert.equal(requests.length, 1);
     assert.equal(checkRequests.length, 1);
     assert.equal(activityRequests.length, 1);
+  } finally {
+    item.close();
+  }
+});
+
+test('read_stream fails closed when current CheckRun status cannot be verified', () => {
+  const item = fixture(1, 1_000, {
+    automaticDraftCheckpointService: {
+      read_current_checkpoint_status() {
+        return {
+          draft_checkpoint_status_projection: draftCheckpointStatusProjection(),
+        };
+      },
+    },
+    checkRunStatusService: {
+      read_current_check_run_status() {
+        throw new Error('private check store failure');
+      },
+    },
+    checkRunActivityRegistry: {
+      read_candidate_activity(request) {
+        return {
+          result_version: 'builder-check-run-candidate-activity-result.v1',
+          project_id: request.project_id,
+          candidate_id: request.candidate_id,
+          activity: null,
+        };
+      },
+    },
+  });
+  try {
+    const context = begin(item.service);
+    const candidate = candidateResult(context);
+    item.service.complete_candidate({
+      context,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+
+    const stream = item.service.read_stream({ project_id: PROJECT_ID });
+    assert.equal(stream.check_run_outcome_projection.state, 'unavailable');
+    assert.equal(stream.check_run_outcome_projection.status, 'unavailable');
+    assert.equal(stream.review_state_projection.status, 'blocked');
+    assert.equal(stream.review_state_projection.check_status, 'unavailable');
+    assert.equal(stream.review_state_projection.can_save, false);
+    assert.deepEqual(stream.review_state_projection.blocking_reasons, ['check_unavailable']);
+    assert.equal(
+      stream.review_state_projection.summary,
+      'Builder could not verify the project check status.',
+    );
   } finally {
     item.close();
   }

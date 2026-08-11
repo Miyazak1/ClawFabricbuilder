@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
+import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
 
@@ -69,7 +70,7 @@ function reviewState(status: 'ready' | 'blocked'): BuilderReviewStateProjectionW
       checkpoint_evidence: ready
         ? 'verified_latest_candidate_checkpoint'
         : 'missing_or_unverified',
-      check_evidence: 'not_present',
+      check_evidence: 'verified_absence',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -106,6 +107,30 @@ const passedCheck: BuilderCheckRunStatusProjection = Object.freeze({
   completed_at_ms: 20,
   result_digest: `sha256:${'4'.repeat(64)}`,
 });
+
+function checkOutcome(state: 'running' | 'unavailable'): BuilderCheckRunOutcomeProjectionWire {
+  const running = state === 'running';
+  return Object.freeze({
+    projection_version: 'builder-check-run-outcome-projection.v1',
+    state,
+    command_kind: null,
+    command_label: null,
+    status: state,
+    label: running ? 'Running checks' : 'Check status unavailable',
+    summary: running
+      ? 'Checking the current draft before it is saved.'
+      : 'Builder could not verify the check status for this draft.',
+    completed_at_ms: null,
+    authority: Object.freeze({
+      projection_authority: 'main_owned_check_run_outcome_projection_v1',
+      fact_source: running ? 'activity_registry' : 'status_unavailable',
+      raw_output: 'not_present',
+      runtime_paths: 'not_present',
+      renderer_authority: 'read_only_projection',
+      save_authority: false,
+    }),
+  });
+}
 
 describe('BuilderReviewCheckpoint', () => {
   it('renders the draft review actions without changing public selectors', () => {
@@ -213,5 +238,47 @@ describe('BuilderReviewCheckpoint', () => {
     click(container, `[data-builder-run-check="${checkProfile.command_profile_id}"]`);
     expect(onRunCheck).toHaveBeenCalledTimes(1);
     expect(onRunCheck).toHaveBeenCalledWith(checkProfile);
+  });
+
+  it('restores running and unavailable outcomes from durable task activity', () => {
+    const running = render(
+      <BuilderReviewCheckpoint
+        canReject
+        canSave={false}
+        changes={changes()}
+        checkRunOutcome={checkOutcome('running')}
+        checkRunProfiles={[checkProfile]}
+        discardLabel="Discard draft"
+        hasContent
+        onOpenChanges={() => undefined}
+        onOpenPreview={() => undefined}
+        onRunCheck={() => undefined}
+        preview={null}
+        reviewState={reviewState('ready')}
+        saveLabel="Save version"
+      />,
+    );
+    expect(running.querySelector('[data-builder-check-run-status="running"]')?.textContent)
+      .toContain('Running project check');
+    expect(running.querySelector<HTMLButtonElement>('[data-builder-run-check]')?.disabled).toBe(true);
+
+    const unavailable = render(
+      <BuilderReviewCheckpoint
+        canReject
+        canSave={false}
+        changes={changes()}
+        checkRunOutcome={checkOutcome('unavailable')}
+        checkRunProfiles={[checkProfile]}
+        discardLabel="Discard draft"
+        hasContent
+        onOpenChanges={() => undefined}
+        onOpenPreview={() => undefined}
+        preview={null}
+        reviewState={reviewState('ready')}
+        saveLabel="Save version"
+      />,
+    );
+    expect(unavailable.querySelector('[data-builder-check-run-status="unavailable"]')?.textContent)
+      .toContain('could not verify the check status');
   });
 });

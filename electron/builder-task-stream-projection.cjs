@@ -23,6 +23,9 @@ const {
 const {
   projectBuilderAgentActivity,
 } = require('./builder-agent-activity-projection.cjs');
+const {
+  sanitizeBuilderCheckRunOutcomeProjection,
+} = require('./builder-check-run-outcome-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -531,12 +534,42 @@ function safeOptionalCandidateActivity(rawInput) {
   return value;
 }
 
+function safeOptionalCheckRunOutcomeProjection(rawInput) {
+  if (!Object.hasOwn(rawInput, 'check_run_outcome_projection')) return undefined;
+  const value = valueAt(rawInput, 'check_run_outcome_projection');
+  if (value === null) return null;
+  return sanitizeBuilderCheckRunOutcomeProjection(value);
+}
+
+function assertCheckRunProjectionConsistency(
+  reviewStateProjection,
+  checkRunOutcomeProjection,
+  candidateActivity,
+) {
+  if (
+    candidateActivity === 'check_run'
+    && checkRunOutcomeProjection?.state !== 'running'
+  ) fail();
+  if (
+    checkRunOutcomeProjection?.state === 'running'
+    && candidateActivity !== 'check_run'
+  ) fail();
+  if (
+    reviewStateProjection !== undefined
+    && reviewStateProjection !== null
+    && checkRunOutcomeProjection !== undefined
+    && checkRunOutcomeProjection !== null
+    && reviewStateProjection.check_status !== checkRunOutcomeProjection.status
+  ) fail();
+}
+
 function withOptionalStatusProjections(
   result,
   contextStatusProjection,
   providerContextDisclosureStatusProjection,
   draftCheckpointStatusProjection,
   reviewStateProjection,
+  checkRunOutcomeProjection,
   agentActivityProjection,
 ) {
   return {
@@ -556,6 +589,9 @@ function withOptionalStatusProjections(
     ...(reviewStateProjection === undefined
       ? {}
       : { review_state_projection: reviewStateProjection }),
+    ...(checkRunOutcomeProjection === undefined
+      ? {}
+      : { check_run_outcome_projection: checkRunOutcomeProjection }),
     ...(agentActivityProjection === undefined
       ? {}
       : { agent_activity_projection: agentActivityProjection }),
@@ -597,6 +633,7 @@ function projectBuilderTaskStream(rawInput) {
       'provider_context_disclosure_status_projection',
       'draft_checkpoint_status_projection',
       'review_state_projection',
+      'check_run_outcome_projection',
       'candidate_activity',
     ]);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
@@ -605,10 +642,12 @@ function projectBuilderTaskStream(rawInput) {
       safeOptionalProviderContextDisclosureStatusProjection(rawInput);
     const draftCheckpointStatusProjection = safeOptionalDraftCheckpointStatusProjection(rawInput);
     const reviewStateProjection = safeOptionalReviewStateProjection(rawInput);
+    const checkRunOutcomeProjection = safeOptionalCheckRunOutcomeProjection(rawInput);
     const candidateActivity = safeOptionalCandidateActivity(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
       if (reviewStateProjection !== undefined && reviewStateProjection !== null) fail();
+      if (checkRunOutcomeProjection !== undefined && checkRunOutcomeProjection !== null) fail();
       if (candidateActivity !== undefined && candidateActivity !== null) fail();
       return boundResult(withOptionalStatusProjections({
         stream_version: BUILDER_TASK_STREAM_VERSION,
@@ -616,7 +655,7 @@ function projectBuilderTaskStream(rawInput) {
         conversation: null,
         authority: authority(),
       }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
-      reviewStateProjection, undefined));
+      reviewStateProjection, checkRunOutcomeProjection, undefined));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -636,6 +675,11 @@ function projectBuilderTaskStream(rawInput) {
       && reviewStateProjection !== null
       && reviewStateProjection.draft_id !== latestUnreviewedDraftId(replay)
     ) fail();
+    assertCheckRunProjectionConsistency(
+      reviewStateProjection,
+      checkRunOutcomeProjection,
+      candidateActivity,
+    );
     const visibleItems = [];
     const firstVisibleIndex = Math.max(0, events.length - MAX_PUBLIC_ITEMS);
     const progressStagesByRun = latestProgressStagesByRun(events);
@@ -669,7 +713,7 @@ function projectBuilderTaskStream(rawInput) {
       },
       authority: authority(),
     }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
-    reviewStateProjection, agentActivityProjection));
+    reviewStateProjection, checkRunOutcomeProjection, agentActivityProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

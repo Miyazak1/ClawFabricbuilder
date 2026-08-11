@@ -112,6 +112,7 @@ for (const expected of [
   '/electron/builder-check-run-store.cjs',
   '/electron/builder-check-run-status-service.cjs',
   '/electron/builder-check-run-status-projection.cjs',
+  '/electron/builder-check-run-outcome-projection.cjs',
   '/electron/builder-check-run-save-gate.cjs',
   '/electron/builder-check-run-main-service.cjs',
   '/electron/builder-check-run-current-draft-service.cjs',

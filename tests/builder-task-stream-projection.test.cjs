@@ -54,6 +54,9 @@ const {
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
 } = require('../electron/builder-task-stream-projection.cjs');
+const {
+  projectBuilderCheckRunOutcome,
+} = require('../electron/builder-check-run-outcome-projection.cjs');
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -883,7 +886,7 @@ function reviewStateProjection(overrides = {}) {
       checkpoint_evidence: ready
         ? 'verified_latest_candidate_checkpoint'
         : 'missing_or_unverified',
-      check_evidence: 'not_present',
+      check_evidence: 'verified_absence',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -906,6 +909,31 @@ function reviewStateProjection(overrides = {}) {
       ...(overrides.authority ?? {}),
     },
   };
+}
+
+function runningReviewStateProjection() {
+  return reviewStateProjection({
+    status: 'blocked',
+    summary: 'The project check is still running.',
+    checkpoint_status: 'ready',
+    check_status: 'running',
+    changed_file_count: 3,
+    can_save: false,
+    blocking_reasons: ['check_running'],
+    authority: {
+      checkpoint_evidence: 'verified_latest_candidate_checkpoint',
+      check_evidence: 'main_owned_candidate_activity_registry',
+    },
+  });
+}
+
+function checkRunOutcomeProjection(state = 'unavailable') {
+  return projectBuilderCheckRunOutcome({
+    project_id: PROJECT_ID,
+    candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+    state,
+    check_run_status_projection: null,
+  });
 }
 
 function assertProjectionError(error) {
@@ -1742,12 +1770,13 @@ test('carries optional renderer-safe Draft Checkpoint status without exposing ch
 test('carries optional main-owned Review State without granting save authority', () => {
   const stream = projectBuilderTaskStream({
     ...input(candidateEvents()),
-    review_state_projection: reviewStateProjection(),
+    review_state_projection: runningReviewStateProjection(),
+    check_run_outcome_projection: checkRunOutcomeProjection('running'),
     candidate_activity: 'check_run',
   });
 
-  assert.equal(stream.review_state_projection.status, 'ready');
-  assert.equal(stream.review_state_projection.can_save, true);
+  assert.equal(stream.review_state_projection.status, 'blocked');
+  assert.equal(stream.review_state_projection.can_save, false);
   assert.equal(stream.review_state_projection.can_discard, true);
   assert.equal(stream.review_state_projection.checkpoint_status, 'ready');
   assert.equal(stream.review_state_projection.authority.save_authority, false);
@@ -1756,6 +1785,22 @@ test('carries optional main-owned Review State without granting save authority',
   assert.doesNotMatch(
     JSON.stringify(stream.review_state_projection),
     /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|provider_(?:secret|config|envelope)|credential|source_tree/iu,
+  );
+});
+
+test('carries optional renderer-safe CheckRun outcome without exposing check identity', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    check_run_outcome_projection: checkRunOutcomeProjection(),
+  });
+
+  assert.equal(stream.check_run_outcome_projection.state, 'unavailable');
+  assert.equal(stream.check_run_outcome_projection.status, 'unavailable');
+  assert.equal(stream.check_run_outcome_projection.label, 'Check status unavailable');
+  assert.equal(stream.check_run_outcome_projection.authority.save_authority, false);
+  assert.doesNotMatch(
+    JSON.stringify(stream.check_run_outcome_projection),
+    /check_run_id|candidate_id|project_id|sha256:|result_digest|runtime_identity|credential/iu,
   );
 });
 
@@ -1831,6 +1876,39 @@ test('rejects forged optional Review State before exposing it', () => {
     review_state_projection: reviewStateProjection({
       draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
     }),
+  }), assertProjectionError);
+});
+
+test('rejects forged optional CheckRun outcome before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    check_run_outcome_projection: {
+      ...checkRunOutcomeProjection(),
+      summary: 'Checks passed. sha256:aaaaaaaa',
+    },
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    check_run_outcome_projection: {
+      ...checkRunOutcomeProjection(),
+      authority: {
+        ...checkRunOutcomeProjection().authority,
+        save_authority: true,
+      },
+    },
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    review_state_projection: reviewStateProjection(),
+    check_run_outcome_projection: checkRunOutcomeProjection('running'),
+    candidate_activity: 'check_run',
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    check_run_outcome_projection: checkRunOutcomeProjection('running'),
   }), assertProjectionError);
 });
 

@@ -22,7 +22,7 @@ function readyProjection(): Readonly<Record<string, unknown>> {
       projection_authority: 'main_owned_review_state_projection_v1',
       candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
       checkpoint_evidence: 'verified_latest_candidate_checkpoint',
-      check_evidence: 'not_present',
+      check_evidence: 'verified_absence',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -56,6 +56,23 @@ describe('sanitizeBuilderReviewStateProjectionWire', () => {
       authority: Object.freeze({
         ...(readyProjection().authority as Readonly<Record<string, unknown>>),
         check_evidence: 'verified_current_candidate_check_projection',
+      }),
+    };
+    expect(sanitizeBuilderReviewStateProjectionWire(projection)).toEqual(projection);
+  });
+
+  it('keeps an unavailable check status blocked instead of treating it as not run', () => {
+    const projection = {
+      ...readyProjection(),
+      status: 'blocked',
+      label: 'Review not ready',
+      summary: 'Builder could not verify the project check status.',
+      check_status: 'unavailable',
+      can_save: false,
+      blocking_reasons: Object.freeze(['check_unavailable']),
+      authority: Object.freeze({
+        ...(readyProjection().authority as Readonly<Record<string, unknown>>),
+        check_evidence: 'status_unavailable',
       }),
     };
     expect(sanitizeBuilderReviewStateProjectionWire(projection)).toEqual(projection);

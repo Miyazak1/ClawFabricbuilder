@@ -64,6 +64,7 @@ import type {
   BuilderConversationRunProgressStage,
 } from '../domain/builderConversationSnapshot';
 import type { BuilderAgentActivityProjectionWire } from '../domain/builderAgentActivityProjection';
+import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 import {
@@ -261,6 +262,14 @@ function currentAgentActivity(
 ): BuilderAgentActivityProjectionWire | null {
   return snapshot?.conversation?.state === 'ready'
     ? snapshot.conversation.agent_activity_projection ?? null
+    : null;
+}
+
+function currentCheckRunOutcome(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): BuilderCheckRunOutcomeProjectionWire | null {
+  return snapshot?.conversation?.state === 'ready'
+    ? snapshot.conversation.check_run_outcome_projection ?? null
     : null;
 }
 
@@ -2278,6 +2287,7 @@ export function BuilderPage({
     && activity.conversation?.state === 'ready'
     ? activity.conversation.review_state_projection ?? null
     : null;
+  const checkRunOutcome = currentCheckRunOutcome(activity);
   const canSave = typeof onSave === 'function'
     && hasUnsavedDraft
     && !busy
@@ -3024,6 +3034,7 @@ export function BuilderPage({
       canReject={canReject}
       canSave={canSave}
       checkRunOperation={checkRunOperation}
+      checkRunOutcome={checkRunOutcome}
       checkRunProfiles={checkRunProfiles}
       checkRunStatus={checkRunStatus}
       changes={changes}

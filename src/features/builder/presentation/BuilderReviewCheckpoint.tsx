@@ -2,6 +2,7 @@ import type { Ref } from 'react';
 import { CircleCheck, CircleX, Eye, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
+import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
 import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
@@ -12,6 +13,7 @@ export type BuilderReviewCheckpointProps = Readonly<{
   canReject: boolean;
   canSave: boolean;
   checkRunOperation?: 'loading' | 'running' | 'failed' | null;
+  checkRunOutcome?: BuilderCheckRunOutcomeProjectionWire | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
   discardLabel: string;
@@ -32,6 +34,7 @@ export function BuilderReviewCheckpoint({
   canReject,
   canSave,
   checkRunOperation = null,
+  checkRunOutcome = null,
   checkRunProfiles = [],
   checkRunStatus = null,
   discardLabel,
@@ -46,23 +49,31 @@ export function BuilderReviewCheckpoint({
   saveLabel,
   checkpointRef,
 }: BuilderReviewCheckpointProps) {
-  const checksBusy = checkRunOperation === 'loading' || checkRunOperation === 'running';
+  const restoredRunning = checkRunOperation === null && checkRunOutcome?.state === 'running';
+  const checksBusy = checkRunOperation === 'loading'
+    || checkRunOperation === 'running'
+    || restoredRunning;
+  const recordedStatus = checkRunStatus ?? (
+    checkRunOutcome?.state === 'completed' || checkRunOutcome?.state === 'unavailable'
+      ? checkRunOutcome
+      : null
+  );
   const checkStatusText = checkRunOperation === 'loading'
     ? 'Finding project checks...'
-    : checkRunOperation === 'running'
+    : checkRunOperation === 'running' || restoredRunning
       ? 'Running project check...'
       : checkRunOperation === 'failed'
         ? 'Project checks are unavailable. Try again.'
-        : checkRunStatus !== null
-          ? `${checkRunStatus.label}. ${checkRunStatus.summary}`
+        : recordedStatus !== null
+          ? `${recordedStatus.label}. ${recordedStatus.summary}`
           : checkRunProfiles.length === 0
             ? 'No project checks found.'
             : 'Not checked.';
-  const CheckStatusIcon = checkRunOperation === 'loading' || checkRunOperation === 'running'
+  const CheckStatusIcon = checkRunOperation === 'loading' || checkRunOperation === 'running' || restoredRunning
     ? LoaderCircle
-    : checkRunStatus?.status === 'passed'
+    : recordedStatus?.status === 'passed'
       ? CircleCheck
-      : checkRunStatus !== null
+      : recordedStatus !== null
         ? CircleX
         : null;
   return (
@@ -99,13 +110,16 @@ export function BuilderReviewCheckpoint({
         data-builder-check-run-operation={checkRunOperation ?? 'idle'}
         data-builder-review-checks="true"
       >
-        <div className="cf-builder-review-check-status" data-builder-check-run-status={checkRunStatus?.status ?? 'not_run'}>
+        <div
+          className="cf-builder-review-check-status"
+          data-builder-check-run-status={recordedStatus?.status ?? (restoredRunning ? 'running' : 'not_run')}
+        >
           <span className="cf-builder-review-check-label">Checks</span>
           <span className="cf-builder-review-check-summary" role={checkRunOperation === 'failed' ? 'alert' : undefined}>
             {CheckStatusIcon === null ? null : (
               <CheckStatusIcon
                 aria-hidden="true"
-                className={checkRunOperation === 'loading' || checkRunOperation === 'running'
+                className={checkRunOperation === 'loading' || checkRunOperation === 'running' || restoredRunning
                   ? 'size-3.5 animate-spin'
                   : 'size-3.5'}
               />

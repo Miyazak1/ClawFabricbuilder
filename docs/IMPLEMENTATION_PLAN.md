@@ -1137,8 +1137,12 @@ Evidence requirements:
   receives no dispatch, mutation, permission, Git/SQLite, or Save authority.
   Active CheckRun joins through the main-owned candidate activity registry,
   which emits only a bounded refresh hint and exposes no command, output, path,
-  or runtime handle. Repair remains a future join until its runtime facts can
-  be projected without guessing;
+  or runtime handle. A separate renderer-safe CheckRun Outcome projection now
+  restores verified not-run, running, completed, or unavailable state after
+  refresh/restart; ReviewState blocks Save while a check runs or its status
+  cannot be verified. This remains fixed result copy, not FailureTriage or
+  repair evidence. Repair remains a future join until bounded diagnostic facts
+  can be projected without guessing;
 - the current draft-continuation checkpoint lets the visible single composer
   keep modifying an unsaved draft without saving or discarding it first. The
   renderer can request this only with a pending `draft_id` and new instruction;

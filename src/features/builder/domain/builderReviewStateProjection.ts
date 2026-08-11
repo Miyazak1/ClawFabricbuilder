@@ -8,19 +8,31 @@ export type BuilderReviewStateProjectionWire = Readonly<{
     | 'A recoverable draft is checked and ready to inspect and save.'
     | 'Waiting for a verified draft checkpoint before saving.'
     | 'The latest project check failed. Review it before saving.'
-    | 'The latest project check did not finish. Run it again before saving.';
+    | 'The latest project check did not finish. Run it again before saving.'
+    | 'The project check is still running.'
+    | 'Builder could not verify the project check status.';
   checkpoint_status: 'ready' | 'missing';
   preview_status: 'not_recorded';
-  check_status: 'not_run' | 'passed' | 'failed' | 'incomplete';
+  check_status: 'not_run' | 'passed' | 'failed' | 'incomplete' | 'running' | 'unavailable';
   changed_file_count: number | null;
   can_save: boolean;
   can_discard: true;
-  blocking_reasons: readonly ('checkpoint_missing' | 'check_failed' | 'check_incomplete')[];
+  blocking_reasons: readonly (
+    | 'checkpoint_missing'
+    | 'check_failed'
+    | 'check_incomplete'
+    | 'check_running'
+    | 'check_unavailable'
+  )[];
   authority: Readonly<{
     projection_authority: 'main_owned_review_state_projection_v1';
     candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate';
     checkpoint_evidence: 'verified_latest_candidate_checkpoint' | 'missing_or_unverified';
-    check_evidence: 'verified_current_candidate_check_projection' | 'not_present';
+    check_evidence:
+      | 'verified_current_candidate_check_projection'
+      | 'verified_absence'
+      | 'main_owned_candidate_activity_registry'
+      | 'status_unavailable';
     renderer_authority: 'not_present';
     ipc_authority: 'projection_only';
     provider_dispatch: false;
@@ -87,8 +99,8 @@ export function sanitizeBuilderReviewStateProjectionWire(
     const checkpointReady = value.checkpoint_status === 'ready';
     if (!checkpointReady && value.checkpoint_status !== 'missing') return null;
     const checkStatus = value.check_status;
-    if (!['not_run', 'passed', 'failed', 'incomplete'].includes(String(checkStatus))) return null;
-    const checkBlocksSave = checkStatus === 'failed' || checkStatus === 'incomplete';
+    if (!['not_run', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus))) return null;
+    const checkBlocksSave = ['failed', 'incomplete', 'running', 'unavailable'].includes(String(checkStatus));
     if (ready !== (checkpointReady && !checkBlocksSave)) return null;
     const expectedSummary = !checkpointReady
       ? 'Waiting for a verified draft checkpoint before saving.'
@@ -96,6 +108,10 @@ export function sanitizeBuilderReviewStateProjectionWire(
         ? 'The latest project check failed. Review it before saving.'
         : checkStatus === 'incomplete'
           ? 'The latest project check did not finish. Run it again before saving.'
+          : checkStatus === 'running'
+            ? 'The project check is still running.'
+            : checkStatus === 'unavailable'
+              ? 'Builder could not verify the project check status.'
           : checkStatus === 'passed'
             ? 'A recoverable draft is checked and ready to inspect and save.'
             : 'A recoverable draft is ready to inspect and save.';
@@ -103,6 +119,8 @@ export function sanitizeBuilderReviewStateProjectionWire(
     if (!checkpointReady) expectedReasons.push('checkpoint_missing');
     if (checkStatus === 'failed') expectedReasons.push('check_failed');
     if (checkStatus === 'incomplete') expectedReasons.push('check_incomplete');
+    if (checkStatus === 'running') expectedReasons.push('check_running');
+    if (checkStatus === 'unavailable') expectedReasons.push('check_unavailable');
     const authority = value.authority;
     if (
       (!ready && value.status !== 'blocked')
@@ -128,7 +146,10 @@ export function sanitizeBuilderReviewStateProjectionWire(
         checkpointReady ? 'verified_latest_candidate_checkpoint' : 'missing_or_unverified'
       )
       || authority.check_evidence !== (
-        checkStatus === 'not_run' ? 'not_present' : 'verified_current_candidate_check_projection'
+        checkStatus === 'not_run' ? 'verified_absence'
+          : checkStatus === 'running' ? 'main_owned_candidate_activity_registry'
+            : checkStatus === 'unavailable' ? 'status_unavailable'
+              : 'verified_current_candidate_check_projection'
       )
       || authority.renderer_authority !== 'not_present'
       || authority.ipc_authority !== 'projection_only'

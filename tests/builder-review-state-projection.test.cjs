@@ -26,6 +26,7 @@ function reviewInput(overrides = {}) {
     candidate_id: CANDIDATE_ID,
     draft_id: DRAFT_ID,
     draft_checkpoint_status_projection: checkpointStatus(),
+    check_run_state: 'not_run',
     check_run_status_projection: null,
     ...overrides,
   };
@@ -82,7 +83,7 @@ test('projects a verified checkpoint into a renderer-safe ready Review State', (
   assert.equal(result.can_discard, true);
   assert.deepEqual(result.blocking_reasons, []);
   assert.equal(result.authority.save_authority, false);
-  assert.equal(result.authority.check_evidence, 'not_present');
+  assert.equal(result.authority.check_evidence, 'verified_absence');
   assert.equal(sanitizeBuilderReviewStateProjection(structuredClone(result)).status, 'ready');
   assert.doesNotMatch(
     JSON.stringify(result),
@@ -105,6 +106,7 @@ test('blocks saving while preserving discard when the checkpoint is missing', ()
 
 test('shows current-candidate check evidence and blocks save after failed or incomplete checks', () => {
   const passed = projectBuilderReviewState(reviewInput({
+    check_run_state: 'completed',
     check_run_status_projection: projectBuilderCheckRunStatus({ check_run: checkRun('passed') }),
   }));
   assert.equal(passed.status, 'ready');
@@ -118,6 +120,7 @@ test('shows current-candidate check evidence and blocks save after failed or inc
     ['timed_out', 'incomplete', 'check_incomplete'],
   ]) {
     const result = projectBuilderReviewState(reviewInput({
+      check_run_state: 'completed',
       check_run_status_projection: projectBuilderCheckRunStatus({
         check_run: checkRun(terminalStatus),
       }),
@@ -130,14 +133,30 @@ test('shows current-candidate check evidence and blocks save after failed or inc
   }
 });
 
+test('blocks save while checks run or their status cannot be verified', () => {
+  for (const [state, status, reason, evidence] of [
+    ['running', 'running', 'check_running', 'main_owned_candidate_activity_registry'],
+    ['unavailable', 'unavailable', 'check_unavailable', 'status_unavailable'],
+  ]) {
+    const result = projectBuilderReviewState(reviewInput({ check_run_state: state }));
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.check_status, status);
+    assert.equal(result.can_save, false);
+    assert.deepEqual(result.blocking_reasons, [reason]);
+    assert.equal(result.authority.check_evidence, evidence);
+  }
+});
+
 test('rejects a valid CheckRun projection from a different candidate or project', () => {
   const projection = projectBuilderCheckRunStatus({ check_run: checkRun() });
   assert.throws(() => projectBuilderReviewState(reviewInput({
     candidate_id: `builder-code-change-candidate:${'f'.repeat(64)}`,
+    check_run_state: 'completed',
     check_run_status_projection: projection,
   })), projectionError);
   assert.throws(() => projectBuilderReviewState(reviewInput({
     project_id: 'builder-project:223e4567-e89b-42d3-a456-426614174000',
+    check_run_state: 'completed',
     check_run_status_projection: projection,
   })), projectionError);
 });

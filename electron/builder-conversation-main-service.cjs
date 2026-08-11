@@ -53,6 +53,9 @@ const {
   sanitizeBuilderCheckRunStatusProjection,
 } = require('./builder-check-run-status-projection.cjs');
 const {
+  projectBuilderCheckRunOutcome,
+} = require('./builder-check-run-outcome-projection.cjs');
+const {
   sanitizeBuilderContextStatusProjection,
 } = require('./builder-context-status-projection.cjs');
 const {
@@ -1067,18 +1070,23 @@ function createBuilderConversationMainService(rawOptions) {
         options.checkRunStatusService,
         [{ project_id: projectId, candidate_id: subject.candidate_id }],
       );
-      if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
+      if (!isPlainObject(result) || utilTypes.isProxy(result)) {
+        return Object.freeze({ read_state: 'unavailable', projection: null });
+      }
       const descriptor = Object.getOwnPropertyDescriptor(result, 'check_run_status_projection');
       if (
         !descriptor
         || descriptor.enumerable !== true
         || !Object.hasOwn(descriptor, 'value')
-      ) return undefined;
+      ) return Object.freeze({ read_state: 'unavailable', projection: null });
       return descriptor.value === null
-        ? null
-        : sanitizeBuilderCheckRunStatusProjection(descriptor.value);
+        ? Object.freeze({ read_state: 'not_run', projection: null })
+        : Object.freeze({
+          read_state: 'completed',
+          projection: sanitizeBuilderCheckRunStatusProjection(descriptor.value),
+        });
     } catch {
-      return undefined;
+      return Object.freeze({ read_state: 'unavailable', projection: null });
     }
   }
 
@@ -1099,10 +1107,37 @@ function createBuilderConversationMainService(rawOptions) {
         || valueAt(result, 'project_id') !== projectId
         || valueAt(result, 'candidate_id') !== subject.candidate_id
         || (activity !== null && activity !== 'check_run')
-      ) return undefined;
-      return activity;
+      ) return Object.freeze({ read_state: 'unavailable', activity: null });
+      return Object.freeze({ read_state: 'ready', activity });
     } catch {
-      return undefined;
+      return Object.freeze({ read_state: 'unavailable', activity: null });
+    }
+  }
+
+  function currentCheckRunOutcomeProjection(state, projectId, checkRunStatus, activity) {
+    const subject = latestCandidateReviewSubject(state);
+    if (subject === null || (checkRunStatus === undefined && activity === undefined)) return undefined;
+    try {
+      const stateValue = activity?.read_state === 'unavailable'
+        ? 'unavailable'
+        : activity?.activity === 'check_run'
+          ? 'running'
+          : checkRunStatus?.read_state ?? 'unavailable';
+      return projectBuilderCheckRunOutcome({
+        project_id: projectId,
+        candidate_id: subject.candidate_id,
+        state: stateValue,
+        check_run_status_projection: stateValue === 'completed'
+          ? checkRunStatus.projection
+          : null,
+      });
+    } catch {
+      return projectBuilderCheckRunOutcome({
+        project_id: projectId,
+        candidate_id: subject.candidate_id,
+        state: 'unavailable',
+        check_run_status_projection: null,
+      });
     }
   }
 
@@ -1110,7 +1145,8 @@ function createBuilderConversationMainService(rawOptions) {
     state,
     projectId,
     draftCheckpointStatusProjection,
-    checkRunStatusProjection,
+    checkRunStatus,
+    candidateActivity,
   ) {
     const subject = latestCandidateReviewSubject(state);
     if (
@@ -1118,13 +1154,21 @@ function createBuilderConversationMainService(rawOptions) {
       || subject === null
     ) return undefined;
     try {
+      const checkRunState = candidateActivity?.read_state === 'unavailable'
+        ? 'unavailable'
+        : candidateActivity?.activity === 'check_run'
+          ? 'running'
+          : checkRunStatus?.read_state ?? 'not_run';
       return projectBuilderReviewState({
         candidate_state: 'proposed',
         project_id: projectId,
         candidate_id: subject.candidate_id,
         draft_id: subject.draft_id,
         draft_checkpoint_status_projection: draftCheckpointStatusProjection ?? null,
-        check_run_status_projection: checkRunStatusProjection ?? null,
+        check_run_state: checkRunState,
+        check_run_status_projection: checkRunState === 'completed'
+          ? checkRunStatus.projection
+          : null,
       });
     } catch {
       return undefined;
@@ -3306,19 +3350,23 @@ function createBuilderConversationMainService(rawOptions) {
       const draftCheckpointStatusProjection = state === null
         ? undefined
         : currentDraftCheckpointStatusProjection(state, projectId, conversationId);
-      const checkRunStatusProjection = state === null
+      const checkRunStatus = state === null
         ? undefined
         : currentCheckRunStatusProjection(state, projectId);
       const candidateActivity = state === null
         ? undefined
         : currentCandidateActivity(state, projectId);
+      const checkRunOutcomeProjection = state === null
+        ? undefined
+        : currentCheckRunOutcomeProjection(state, projectId, checkRunStatus, candidateActivity);
       const reviewStateProjection = state === null
         ? undefined
         : currentReviewStateProjection(
           state,
           projectId,
           draftCheckpointStatusProjection,
-          checkRunStatusProjection,
+          checkRunStatus,
+          candidateActivity,
         );
       return projectBuilderTaskStream({
         project_id: projectId,
@@ -3337,9 +3385,12 @@ function createBuilderConversationMainService(rawOptions) {
         ...(reviewStateProjection === undefined
           ? {}
           : { review_state_projection: reviewStateProjection }),
+        ...(checkRunOutcomeProjection === undefined
+          ? {}
+          : { check_run_outcome_projection: checkRunOutcomeProjection }),
         ...(candidateActivity === undefined
           ? {}
-          : { candidate_activity: candidateActivity }),
+          : { candidate_activity: candidateActivity.activity }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,

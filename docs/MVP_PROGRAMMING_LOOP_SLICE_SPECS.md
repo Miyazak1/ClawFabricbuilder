@@ -610,12 +610,26 @@ accepted bounded CheckRun to settle before generation runtime closes SQLite and
 Git authorities. An unconfirmed drain stops shutdown before those authorities
 close. Direct cancellation can remain a later optimization because the runner
 already bounds timeout and process-tree termination. Preload and renderer do
-not expose these channels yet.
+now expose only the fixed current-draft availability and explicit approval
+commands. The Review Workspace can run a discovered check and display its
+bounded status without receiving a command line, raw output, runtime identity,
+or process handle.
+
+`builder-check-run-outcome-projection.v1` now closes the refresh/restart gap
+between the stored terminal CheckRun and the active candidate registry. It
+distinguishes verified `Not checked`, `Running checks`, a completed fixed-copy
+result, and `Check status unavailable`. ReviewState consumes the same main-owned
+read state, so an active check or failed status read blocks Save instead of
+silently becoming an apparently saveable `Not checked` draft. The Task Stream
+and renderer receive no CheckRun id, candidate id, digest, output, path, or Save
+authority.
 
 This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-Preload and user approval controls, environment-readiness projection, durable
-`Not checked` activity, and packaged end-to-end CheckRun orchestration remain
-required before Slice 6 is product-complete.
+and renderer contracts, approval controls, status recovery, and packaged
+verification assertions now exist. Explicit durable skip evidence, richer
+environment-readiness projection, bounded diagnostic evidence for
+FailureTriage, and a fresh real packaged release canary remain required before
+Slice 6 is product-complete.
 
 ## Slice 7: Save Version And Restart Recovery Canary
 

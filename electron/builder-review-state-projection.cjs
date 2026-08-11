@@ -16,6 +16,7 @@ const INPUT_KEYS = Object.freeze([
   'candidate_id',
   'draft_id',
   'draft_checkpoint_status_projection',
+  'check_run_state',
   'check_run_status_projection',
 ]);
 const PROJECTION_KEYS = Object.freeze([
@@ -113,16 +114,20 @@ function freezeDeep(value) {
   return value;
 }
 
-function authority(checkpointReady, checkRecorded) {
+function authority(checkpointReady, checkState) {
   return freezeDeep({
     projection_authority: 'main_owned_review_state_projection_v1',
     candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
     checkpoint_evidence: checkpointReady
       ? 'verified_latest_candidate_checkpoint'
       : 'missing_or_unverified',
-    check_evidence: checkRecorded
+    check_evidence: checkState === 'completed'
       ? 'verified_current_candidate_check_projection'
-      : 'not_present',
+      : checkState === 'running'
+        ? 'main_owned_candidate_activity_registry'
+        : checkState === 'unavailable'
+          ? 'status_unavailable'
+          : 'verified_absence',
     renderer_authority: 'not_present',
     ipc_authority: 'projection_only',
     provider_dispatch: false,
@@ -171,6 +176,18 @@ function reviewCopy(checkpointReady, checkStatus) {
       summary: 'The latest project check did not finish. Run it again before saving.',
     });
   }
+  if (checkStatus === 'running') {
+    return Object.freeze({
+      label: 'Review not ready',
+      summary: 'The project check is still running.',
+    });
+  }
+  if (checkStatus === 'unavailable') {
+    return Object.freeze({
+      label: 'Review not ready',
+      summary: 'Builder could not verify the project check status.',
+    });
+  }
   return Object.freeze({
     label: 'Ready to review',
     summary: checkStatus === 'passed'
@@ -188,14 +205,16 @@ function assertProjection(value) {
   const checkpointReady = checkpointStatus === 'ready';
   if (!checkpointReady && checkpointStatus !== 'missing') fail();
   const checkStatus = valueAt(value, 'check_status');
-  if (!['not_run', 'passed', 'failed', 'incomplete'].includes(checkStatus)) fail();
-  const checkBlocksSave = checkStatus === 'failed' || checkStatus === 'incomplete';
+  if (!['not_run', 'passed', 'failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus)) fail();
+  const checkBlocksSave = ['failed', 'incomplete', 'running', 'unavailable'].includes(checkStatus);
   if (ready !== (checkpointReady && !checkBlocksSave)) fail();
   const copy = reviewCopy(checkpointReady, checkStatus);
   const blockingReasons = [];
   if (!checkpointReady) blockingReasons.push('checkpoint_missing');
   if (checkStatus === 'failed') blockingReasons.push('check_failed');
   if (checkStatus === 'incomplete') blockingReasons.push('check_incomplete');
+  if (checkStatus === 'running') blockingReasons.push('check_running');
+  if (checkStatus === 'unavailable') blockingReasons.push('check_unavailable');
   if (
     valueAt(value, 'projection_version') !== BUILDER_REVIEW_STATE_PROJECTION_VERSION
     || safeDraftId(valueAt(value, 'draft_id')) !== valueAt(value, 'draft_id')
@@ -213,7 +232,12 @@ function assertProjection(value) {
   ) fail();
   denseBlockingReasons(valueAt(value, 'blocking_reasons'), blockingReasons);
   const projectedAuthority = valueAt(value, 'authority');
-  const expectedAuthority = authority(checkpointReady, checkStatus !== 'not_run');
+  const expectedAuthority = authority(
+    checkpointReady,
+    checkStatus === 'not_run' ? 'not_run'
+      : checkStatus === 'running' ? 'running'
+        : checkStatus === 'unavailable' ? 'unavailable' : 'completed',
+  );
   exactObject(projectedAuthority, AUTHORITY_KEYS);
   for (const key of AUTHORITY_KEYS) {
     if (valueAt(projectedAuthority, key) !== valueAt(expectedAuthority, key)) fail();
@@ -239,21 +263,26 @@ function projectBuilderReviewState(rawInput) {
       ? null
       : sanitizeBuilderDraftCheckpointStatusProjection(rawCheckpoint);
     const rawCheckRun = valueAt(rawInput, 'check_run_status_projection');
+    const checkRunState = valueAt(rawInput, 'check_run_state');
+    if (!['not_run', 'running', 'completed', 'unavailable'].includes(checkRunState)) fail();
     const checkRun = rawCheckRun === null
       ? null
       : sanitizeBuilderCheckRunStatusProjection(rawCheckRun);
+    if ((checkRunState === 'completed') !== (checkRun !== null)) fail();
     if (
       checkRun !== null
       && (checkRun.project_id !== projectId || checkRun.candidate_id !== candidateId)
     ) fail();
     const checkpointReady = checkpoint?.status === 'ready';
-    const checkStatus = checkRun?.status ?? 'not_run';
-    const ready = checkpointReady && checkStatus !== 'failed' && checkStatus !== 'incomplete';
+    const checkStatus = checkRunState === 'completed' ? checkRun.status : checkRunState;
+    const ready = checkpointReady && (checkStatus === 'not_run' || checkStatus === 'passed');
     const copy = reviewCopy(checkpointReady, checkStatus);
     const blockingReasons = [];
     if (!checkpointReady) blockingReasons.push('checkpoint_missing');
     if (checkStatus === 'failed') blockingReasons.push('check_failed');
     if (checkStatus === 'incomplete') blockingReasons.push('check_incomplete');
+    if (checkStatus === 'running') blockingReasons.push('check_running');
+    if (checkStatus === 'unavailable') blockingReasons.push('check_unavailable');
     return freezeDeep(assertProjection({
       projection_version: BUILDER_REVIEW_STATE_PROJECTION_VERSION,
       draft_id: draftId,
@@ -267,7 +296,7 @@ function projectBuilderReviewState(rawInput) {
       can_save: ready,
       can_discard: true,
       blocking_reasons: blockingReasons,
-      authority: authority(checkpointReady, checkRun !== null),
+      authority: authority(checkpointReady, checkRunState),
     }));
   } catch (error) {
     if (error instanceof BuilderReviewStateProjectionError) throw error;

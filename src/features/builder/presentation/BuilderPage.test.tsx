@@ -446,7 +446,7 @@ function readyReviewStateProjection(changedFileCount = 2) {
       projection_authority: 'main_owned_review_state_projection_v1',
       candidate_evidence: 'sqlite_conversation_replay_current_unreviewed_candidate',
       checkpoint_evidence: 'verified_latest_candidate_checkpoint',
-      check_evidence: 'not_present',
+      check_evidence: 'verified_absence',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -476,7 +476,7 @@ function blockedReviewStateProjection() {
     authority: {
       ...readyReviewStateProjection().authority,
       checkpoint_evidence: 'missing_or_unverified',
-      check_evidence: 'not_present',
+      check_evidence: 'verified_absence',
     },
   } as const;
 }
