@@ -20,7 +20,7 @@ const {
 const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-default.cjs');
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
-const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v1';
+const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v2';
 const AUTO_QUESTION_INSTRUCTION = '这个项目是什么';
 const AUTO_BUILD_ARTIFACT_INSTRUCTION = '做一个计划管理页面';
 const ASK_MODE_INSTRUCTION = 'Make a timer.';

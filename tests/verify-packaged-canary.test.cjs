@@ -6440,6 +6440,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(defaultSource, /createLocalCanaryProviderServer/u);
   assert.match(defaultSource, /127\.0\.0\.1/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
+  assert.match(planModeSource, /builder-packaged-plan-mode-canary-result\.v2/u);
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
   assert.match(planModeSource, /verifyAutoDeterministicRoutesSkipClassifier/u);
   assert.match(planModeSource, /verifyAskModePersistentAndClear/u);
