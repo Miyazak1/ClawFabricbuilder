@@ -100,6 +100,14 @@ function checkpoint(index = 1, overrides = {}) {
     verification_summary: {
       status: index === 2 ? 'candidate_verified_with_warnings' : 'candidate_verified',
       summary: 'Git candidate evidence is available for restore.',
+      edit_attempt_ref: {
+        edit_attempt_id: `builder-edit-attempt:${'6'.repeat(64)}`,
+        edit_attempt_digest: digest('6'),
+        status: 'succeeded',
+        candidate_id: receipt.candidate_id,
+        candidate_digest: receipt.candidate_digest,
+        resulting_tree_digest: receipt.resulting_tree_digest,
+      },
     },
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== 'candidate_receipt')),
   });

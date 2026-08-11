@@ -92,6 +92,14 @@ function checkpointInput(overrides = {}) {
     verification_summary: {
       status: 'candidate_verified',
       summary: 'Git candidate evidence is available for restore.',
+      edit_attempt_ref: {
+        edit_attempt_id: `builder-edit-attempt:${'6'.repeat(64)}`,
+        edit_attempt_digest: digest('6'),
+        status: 'succeeded',
+        candidate_id: receipt.candidate_id,
+        candidate_digest: receipt.candidate_digest,
+        resulting_tree_digest: receipt.resulting_tree_digest,
+      },
     },
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => (
       key !== 'candidate_receipt' && key !== 'candidate_verification'
@@ -143,6 +151,12 @@ test('creates a deterministic local draft checkpoint from verified Git candidate
   assert.equal(first.candidate_ref.parent_oid, BASE_OID);
   assert.equal(first.base_revision_ref.revision_receipt_digest, digest('f'));
   assert.equal(first.source_scope.changed_file_count, 3);
+  assert.equal(first.verification_summary.edit_attempt_ref.status, 'succeeded');
+  assert.equal(first.verification_summary.edit_attempt_ref.candidate_id, CANDIDATE_ID);
+  assert.equal(
+    first.verification_summary.edit_attempt_ref.resulting_tree_digest,
+    first.candidate_ref.resulting_tree_digest,
+  );
   assert.equal(first.checkpoint_state, 'active');
   assert.equal(first.restore_eligibility, 'candidate_ref_verified');
   assert.equal(first.lifecycle.checkpoint_authority, 'main_draft_checkpoint_contract_v1');
@@ -205,6 +219,15 @@ test('fails closed for mismatched candidate, base, source, and lifecycle claims'
       resulting_tree_digest: digest('9'),
     },
   })));
+  assertCheckpointError(() => createBuilderDraftCheckpoint(checkpointInput({
+    verification_summary: {
+      ...checkpointInput().verification_summary,
+      edit_attempt_ref: {
+        ...checkpointInput().verification_summary.edit_attempt_ref,
+        candidate_digest: digest('9'),
+      },
+    },
+  })));
 
   const checkpoint = createBuilderDraftCheckpoint(checkpointInput());
   assertCheckpointError(() => sanitizeBuilderDraftCheckpoint({
@@ -256,6 +279,7 @@ test('rejects extras, accessors, proxies, unsafe text, and hidden source payload
     verification_summary: {
       status: 'provider_claimed_success',
       summary: 'Provider said it worked.',
+      edit_attempt_ref: checkpointInput().verification_summary.edit_attempt_ref,
     },
   })));
   assertCheckpointError(() => createBuilderDraftCheckpoint(checkpointInput({

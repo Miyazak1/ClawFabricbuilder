@@ -345,6 +345,25 @@ MVP require explicit visible approval:
 - rollback on failed multi-file patch;
 - no renderer source mutation authority.
 
+### Current Implementation Checkpoint
+
+`builder-edit-intent-plan.v1` and `builder-workspace-guard-report.v1` now bind
+structured candidate operations to expected-old content digests, protected-path
+policy, and a fresh main-owned workspace read before Git candidate persistence.
+`builder-edit-attempt.v1` now turns an allowed plan/report/candidate set into an
+immutable successful attempt fact with changed paths, operation counts, base
+and resulting tree digests, and an explicit atomic in-memory rollback model.
+Its bounded id/digest/candidate reference is persisted in the automatic Draft
+Checkpoint, so restart recovery can prove that the candidate passed the edit
+admission chain instead of relying on transient generation state.
+
+This slice is not complete yet. Delete, move, lockfile, and large-edit decisions
+still need a visible approval-and-resume path instead of a terminal failure.
+Final Save materialization also needs a transaction-style rollback journal and
+fault-injection evidence before partial filesystem writes can be considered
+fully covered. Move/rename operations and the renderer-safe `Changing files`
+activity projection remain later checkpoints.
+
 ## Slice 4: Automatic Draft Checkpoint
 
 ### Purpose

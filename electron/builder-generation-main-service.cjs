@@ -30,6 +30,10 @@ const {
   evaluateBuilderWorkspaceGuard,
 } = require('./builder-edit-intent-workspace-guard.cjs');
 const {
+  createBuilderEditAttempt,
+  projectBuilderEditAttemptRef,
+} = require('./builder-edit-attempt.cjs');
+const {
   createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
@@ -1874,7 +1878,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingGenerateRouteDecisionHints = new Map();
   const pendingGenerateQueuedFollowups = new Map();
 
-  function recordAutomaticDraftCheckpoint(candidate, receiptPair, summary) {
+  function recordAutomaticDraftCheckpoint(candidate, receiptPair, summary, editAttempt) {
     if (recordVerifiedCandidateCheckpoint === null) return null;
     const changedPaths = new Set(candidate.operations.map((operation) => operation.path));
     try {
@@ -1887,6 +1891,7 @@ function createBuilderGenerationMainService(rawOptions) {
           base_revision_ref: baseRevisionRefFromCandidate(candidate),
           summary,
           changed_file_count: changedPaths.size,
+          edit_attempt_ref: projectBuilderEditAttemptRef(editAttempt),
         }],
       );
     } catch {
@@ -3286,7 +3291,15 @@ function createBuilderGenerationMainService(rawOptions) {
       observed_workspace_source_tree: observed.source_tree,
       evaluated_at_ms: safeTimestamp(Date.now()),
     });
-    if (report.status === 'allowed') return freezeDeep({ edit_intent_plan: editIntentPlan, report });
+    if (report.status === 'allowed') {
+      const editAttempt = createBuilderEditAttempt({
+        candidate,
+        edit_intent_plan: editIntentPlan,
+        workspace_guard_report: report,
+        attempted_at_ms: safeTimestamp(Date.now()),
+      });
+      return freezeDeep({ edit_intent_plan: editIntentPlan, report, edit_attempt: editAttempt });
+    }
     if (report.summary.workspace_conflict_count > 0) fail('builder_generation_workspace_changed');
     if (report.status === 'approval_required') {
       fail('builder_generation_workspace_guard_approval_required');
@@ -3477,7 +3490,7 @@ function createBuilderGenerationMainService(rawOptions) {
           run_id: candidate.run_id,
           restore_revision_receipt_digest: request.revision_receipt_digest,
         }).slice('sha256:'.length)}`;
-        await admitCandidateWorkspaceGuard(candidate, request.project_id);
+        const editEvidence = await admitCandidateWorkspaceGuard(candidate, request.project_id);
         const gitCandidateReceipt = await Reflect.apply(
           persistCandidateCommit,
           options.gitAuthority,
@@ -3500,7 +3513,7 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         const title = 'Restored saved version';
         const summary = 'Review this restored draft before saving it as a new version.';
-        recordAutomaticDraftCheckpoint(candidate, receiptPair, summary);
+        recordAutomaticDraftCheckpoint(candidate, receiptPair, summary, editEvidence.edit_attempt);
         const recorded = Reflect.apply(
           completeConversationCandidate,
           options.conversationService,
@@ -3579,7 +3592,10 @@ function createBuilderGenerationMainService(rawOptions) {
         candidate_digest: internal.candidate.candidate_digest,
         run_id: internal.candidate.run_id,
       }).slice('sha256:'.length)}`;
-      await admitCandidateWorkspaceGuard(internal.candidate, request.existing_project_id);
+      const editEvidence = await admitCandidateWorkspaceGuard(
+        internal.candidate,
+        request.existing_project_id,
+      );
       const gitCandidateReceipt = await Reflect.apply(
         persistCandidateCommit,
         options.gitAuthority,
@@ -3600,7 +3616,12 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
-      recordAutomaticDraftCheckpoint(internal.candidate, receiptPair, internal.summary);
+      recordAutomaticDraftCheckpoint(
+        internal.candidate,
+        receiptPair,
+        internal.summary,
+        editEvidence.edit_attempt,
+      );
       const recorded = Reflect.apply(
         completeConversationCandidate,
         options.conversationService,
@@ -3680,7 +3701,10 @@ function createBuilderGenerationMainService(rawOptions) {
         continuation_base_digest: continuationContext.base.base_digest,
         previous_draft_id: continuationContext.admission.draft_id,
       }).slice('sha256:'.length)}`;
-      await admitCandidateWorkspaceGuard(internal.candidate, request.existing_project_id);
+      const editEvidence = await admitCandidateWorkspaceGuard(
+        internal.candidate,
+        request.existing_project_id,
+      );
       const gitCandidateReceipt = await Reflect.apply(
         persistCandidateCommit,
         options.gitAuthority,
@@ -3701,7 +3725,12 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
-      recordAutomaticDraftCheckpoint(internal.candidate, receiptPair, internal.summary);
+      recordAutomaticDraftCheckpoint(
+        internal.candidate,
+        receiptPair,
+        internal.summary,
+        editEvidence.edit_attempt,
+      );
       const recorded = Reflect.apply(
         completeConversationCandidate,
         options.conversationService,

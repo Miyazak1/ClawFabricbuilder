@@ -38,6 +38,7 @@ const RECORD_KEYS = Object.freeze([
   'base_revision_ref',
   'summary',
   'changed_file_count',
+  'edit_attempt_ref',
 ]);
 const READ_STATUS_KEYS = Object.freeze([
   'project_id',
@@ -269,6 +270,7 @@ function createBuilderAutomaticDraftCheckpointService(rawOptions) {
           verification_summary: {
             status: 'candidate_verified',
             summary: 'Candidate source was verified for local draft recovery.',
+            edit_attempt_ref: valueAt(rawRequest, 'edit_attempt_ref'),
           },
         }]);
         if (!isPlainObject(recorded) || valueAt(recorded, 'status') !== 'ready') fail();

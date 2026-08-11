@@ -152,12 +152,13 @@ a milestone.
 7. Retention cleanup integrated with storage lifecycle governance.
 
 Current checkpoint: `builder-draft-checkpoint.v1` now exists as a pure
-main-side contract. It creates deterministic in-memory Draft Checkpoint facts
-only from a verified Git candidate receipt pair, session id, task address id,
-base revision ref, source scope, and bounded public summaries. It records no
-SQLite row, writes no Git ref, performs no Save, selects no Project Revision,
-opens no IPC/preload surface, dispatches no provider/tool, mutates no source,
-publishes nothing, and creates no Work Capsule.
+main-side contract. It creates deterministic Draft Checkpoint facts only from a
+verified Git candidate receipt pair, session id, task address id, base revision
+ref, source scope, bounded public summaries, and a candidate-bound successful
+`builder-edit-attempt.v1` reference. It writes no Git ref, performs no Save,
+selects no Project Revision, opens no IPC/preload surface, dispatches no
+provider/tool, mutates no source, publishes nothing, and creates no Work
+Capsule.
 
 Current store checkpoint: `builder-draft-checkpoint-store.v1` now persists those
 already-validated Draft Checkpoint facts in a main-owned SQLite store with
@@ -175,9 +176,9 @@ evidence for restart-safe recovery. It is still a pure main-side service: no
 IPC/preload surface, no renderer-owned facts, no provider/model/tool dispatch,
 no source write, no Git mutation, no permission grant, no Review decision, no
 Save, no Project Revision selection, no publication, and no Work Capsule
-creation. This service is the contract slice that later mutating Run lifecycle
-code may call after candidate verification; it is not yet wired into runtime
-generation or UI restore/compare actions.
+creation. Runtime generation now calls this service only after Workspace Guard,
+successful EditAttempt creation, Git candidate persistence, and Git candidate
+verification. Restore/compare UI actions remain separate gates.
 
 Current status projection checkpoint:
 `builder-draft-checkpoint-status-projection.v1` turns a verified latest/read
@@ -186,8 +187,8 @@ availability, changed-file count, and verification status. It exposes no
 checkpoint id, candidate id, digest, commit, tree, source, SQLite schema, Git
 evidence, provider data, permission grant, Save authority, publish authority, or
 Work Capsule authority. Task Stream can carry this projection as optional
-read-only status, but automatic recording from mutating Runs and UI restore or
-compare actions remain separate future gates.
+read-only status. Automatic recording from mutating Runs is now active; UI
+restore or compare actions remain separate future gates.
 
 ## Non-Goals
 

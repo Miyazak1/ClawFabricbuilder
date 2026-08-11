@@ -154,6 +154,14 @@ function recordRequest(index, { firstDraft = false } = {}) {
       : { revision_receipt_digest: digest('f'), commit_oid: BASE_OID },
     summary: `Automatic checkpoint ${index}`,
     changed_file_count: index,
+    edit_attempt_ref: {
+      edit_attempt_id: `builder-edit-attempt:${'6'.repeat(64)}`,
+      edit_attempt_digest: digest('6'),
+      status: 'succeeded',
+      candidate_id: receipt.candidate_id,
+      candidate_digest: receipt.candidate_digest,
+      resulting_tree_digest: receipt.resulting_tree_digest,
+    },
   };
 }
 
@@ -168,6 +176,10 @@ test('records, replays, and increments automatic checkpoints for the current tas
   assert.equal(second.draft_checkpoint.draft_checkpoint.checkpoint_sequence, 2);
   assert.equal(first.draft_checkpoint_status_projection.label, 'Checkpoint saved');
   assert.equal(second.draft_checkpoint_status_projection.changed_file_count, 2);
+  assert.equal(
+    first.draft_checkpoint.draft_checkpoint.verification_summary.edit_attempt_ref.edit_attempt_id,
+    recordRequest(1).edit_attempt_ref.edit_attempt_id,
+  );
   assert.equal(
     checkpointStore.list_draft_checkpoints_for_task({
       project_id: PROJECT_ID,

@@ -936,6 +936,15 @@ Initial action kinds: source read, patch apply, check run, preview start.
 
 Introduce bounded patch application with expected-old checks and rollback.
 
+Current checkpoint: structured create/update/delete operations are applied
+atomically to a bounded in-memory source tree, then admitted by
+`builder-edit-intent-plan.v1`, `builder-workspace-guard-report.v1`, and
+`builder-edit-attempt.v1` before Git candidate persistence. The automatic Draft
+Checkpoint stores the successful EditAttempt reference for restart-safe
+evidence. This does not yet complete transaction-style final worktree
+materialization, visible approval continuation for risky edits, or move/rename
+support.
+
 Evidence:
 
 - conflict tests;

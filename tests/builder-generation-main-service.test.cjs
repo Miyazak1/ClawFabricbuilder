@@ -1746,6 +1746,19 @@ test('records an automatic checkpoint after Git verification and before exposing
   });
   assert.equal(checkpointCalls[0].summary, 'A quiet timer for focused work.');
   assert.equal(checkpointCalls[0].changed_file_count, 2);
+  assert.equal(checkpointCalls[0].edit_attempt_ref.status, 'succeeded');
+  assert.equal(
+    checkpointCalls[0].edit_attempt_ref.candidate_id,
+    result.candidate.candidate_id,
+  );
+  assert.equal(
+    checkpointCalls[0].edit_attempt_ref.resulting_tree_digest,
+    result.candidate.resulting_tree_digest,
+  );
+  assert.match(
+    checkpointCalls[0].edit_attempt_ref.edit_attempt_id,
+    /^builder-edit-attempt:[0-9a-f]{64}$/u,
+  );
   assert.equal(lifecycle.calls.candidate.length, 1);
 });
 

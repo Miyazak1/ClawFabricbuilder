@@ -39,6 +39,15 @@ const SOURCE_SCOPE_KEYS = Object.freeze([
 const VERIFICATION_SUMMARY_KEYS = Object.freeze([
   'status',
   'summary',
+  'edit_attempt_ref',
+]);
+const EDIT_ATTEMPT_REF_KEYS = Object.freeze([
+  'edit_attempt_id',
+  'edit_attempt_digest',
+  'status',
+  'candidate_id',
+  'candidate_digest',
+  'resulting_tree_digest',
 ]);
 const CHECKPOINT_KEYS = Object.freeze([
   'checkpoint_version',
@@ -269,13 +278,49 @@ function sanitizeSourceScope(value, resultingTreeDigest) {
   });
 }
 
-function sanitizeVerificationSummary(value) {
+function sanitizeEditAttemptRef(value, expectedCandidate) {
+  const descriptors = exactObject(value, EDIT_ATTEMPT_REF_KEYS);
+  const editAttemptId = safePattern(
+    descriptors.edit_attempt_id.value,
+    /^builder-edit-attempt:[0-9a-f]{64}$/u,
+    85,
+  );
+  const editAttemptDigest = safeDigest(descriptors.edit_attempt_digest.value);
+  const candidateId = safePattern(
+    descriptors.candidate_id.value,
+    /^builder-code-change-candidate:[0-9a-f]{64}$/u,
+    94,
+  );
+  const candidateDigest = safeDigest(descriptors.candidate_digest.value);
+  const resultingTreeDigest = safeDigest(descriptors.resulting_tree_digest.value);
+  if (
+    descriptors.status.value !== 'succeeded'
+    || editAttemptId !== `builder-edit-attempt:${editAttemptDigest.slice('sha256:'.length)}`
+    || candidateId !== expectedCandidate.candidate_id
+    || candidateDigest !== expectedCandidate.candidate_digest
+    || resultingTreeDigest !== expectedCandidate.resulting_tree_digest
+  ) fail();
+  return freezeDeep({
+    edit_attempt_id: editAttemptId,
+    edit_attempt_digest: editAttemptDigest,
+    status: 'succeeded',
+    candidate_id: candidateId,
+    candidate_digest: candidateDigest,
+    resulting_tree_digest: resultingTreeDigest,
+  });
+}
+
+function sanitizeVerificationSummary(value, expectedCandidate) {
   const descriptors = exactObject(value, VERIFICATION_SUMMARY_KEYS);
   const status = descriptors.status.value;
   if (!['candidate_verified', 'candidate_verified_with_warnings'].includes(status)) fail();
   return freezeDeep({
     status,
     summary: safeText(descriptors.summary.value, 400),
+    edit_attempt_ref: sanitizeEditAttemptRef(
+      descriptors.edit_attempt_ref.value,
+      expectedCandidate,
+    ),
   });
 }
 
@@ -343,7 +388,10 @@ function createBuilderDraftCheckpoint(rawInput) {
       candidate_ref: candidateRef,
       base_revision_ref: sanitizeBaseRevisionRef(descriptors.base_revision_ref.value, receipt.expected_base_oid),
       source_scope: sanitizeSourceScope(descriptors.source_scope.value, receipt.resulting_tree_digest),
-      verification_summary: sanitizeVerificationSummary(descriptors.verification_summary.value),
+      verification_summary: sanitizeVerificationSummary(
+        descriptors.verification_summary.value,
+        receipt,
+      ),
       created_at_ms: safeTimestamp(descriptors.created_at_ms.value),
       summary: safeText(descriptors.summary.value, 400),
       checkpoint_state: 'active',
@@ -417,7 +465,10 @@ function sanitizeBuilderDraftCheckpoint(value) {
       candidate_ref: candidateRef,
       base_revision_ref: sanitizeBaseRevisionRef(descriptors.base_revision_ref.value, candidateRef.parent_oid),
       source_scope: sanitizeSourceScope(descriptors.source_scope.value, candidateRef.resulting_tree_digest),
-      verification_summary: sanitizeVerificationSummary(descriptors.verification_summary.value),
+      verification_summary: sanitizeVerificationSummary(
+        descriptors.verification_summary.value,
+        candidateRef,
+      ),
       created_at_ms: safeTimestamp(descriptors.created_at_ms.value),
       summary: safeText(descriptors.summary.value, 400),
       checkpoint_state: 'active',
