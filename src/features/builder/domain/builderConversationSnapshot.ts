@@ -14,6 +14,10 @@ import {
   sanitizeBuilderReviewStateProjectionWire,
   type BuilderReviewStateProjectionWire,
 } from './builderReviewStateProjection';
+import {
+  sanitizeBuilderAgentActivityProjectionWire,
+  type BuilderAgentActivityProjectionWire,
+} from './builderAgentActivityProjection';
 
 export const BUILDER_TASK_STREAM_READ_RESULT_VERSION =
   'builder-task-stream-read-result.v1' as const;
@@ -332,6 +336,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
+  agent_activity_projection?: BuilderAgentActivityProjectionWire | null;
   conversation: Readonly<{
     conversation_id: string;
     created_at_ms: number;
@@ -357,6 +362,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
     | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
+  agent_activity_projection?: BuilderAgentActivityProjectionWire | null;
   conversation: null;
   authority: BuilderConversationAuthority;
 }>;
@@ -400,6 +406,7 @@ const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
   'provider_context_disclosure_status_projection',
   'draft_checkpoint_status_projection',
   'review_state_projection',
+  'agent_activity_projection',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'conversation',
@@ -825,6 +832,17 @@ function optionalReviewStateProjection(
   const value = source.review_state_projection;
   if (value === null) return null;
   const projection = sanitizeBuilderReviewStateProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
+function optionalAgentActivityProjection(
+  source: Record<string, unknown>,
+): BuilderAgentActivityProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'agent_activity_projection')) return undefined;
+  const value = source.agent_activity_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderAgentActivityProjectionWire(value);
   if (projection === null) throw unavailable();
   return projection;
 }
@@ -2909,8 +2927,10 @@ export function sanitizeBuilderConversationSnapshot(
       optionalProviderContextDisclosureStatusProjection(source);
     const draftCheckpointStatusProjection = optionalDraftCheckpointStatusProjection(source);
     const reviewStateProjection = optionalReviewStateProjection(source);
+    const agentActivityProjection = optionalAgentActivityProjection(source);
     if (source.conversation === null) {
       if (reviewStateProjection !== undefined && reviewStateProjection !== null) throw unavailable();
+      if (agentActivityProjection !== undefined && agentActivityProjection !== null) throw unavailable();
       const absent = {
         state: 'absent' as const,
         stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
@@ -2930,6 +2950,9 @@ export function sanitizeBuilderConversationSnapshot(
         ...(reviewStateProjection === undefined
           ? {}
           : { review_state_projection: reviewStateProjection }),
+        ...(agentActivityProjection === undefined
+          ? {}
+          : { agent_activity_projection: agentActivityProjection }),
         conversation: null,
         authority,
       };
@@ -2966,6 +2989,15 @@ export function sanitizeBuilderConversationSnapshot(
       )
       || items.some((item, index) => item.sequence !== firstSequence + index)
     ) throw unavailable();
+    if (
+      agentActivityProjection !== undefined
+      && agentActivityProjection !== null
+      && (
+        agentActivityProjection.project_id !== projectId
+        || agentActivityProjection.conversation_id !== conversationId
+        || agentActivityProjection.head_sequence !== headSequence
+      )
+    ) throw unavailable();
     if (windowSource.has_earlier) {
       validateTruncatedWindow(items, recordedActiveTurnId);
     } else {
@@ -2990,6 +3022,9 @@ export function sanitizeBuilderConversationSnapshot(
       ...(reviewStateProjection === undefined
         ? {}
         : { review_state_projection: reviewStateProjection }),
+      ...(agentActivityProjection === undefined
+        ? {}
+        : { agent_activity_projection: agentActivityProjection }),
       conversation: {
         conversation_id: conversationId,
         created_at_ms: createdAtMs,

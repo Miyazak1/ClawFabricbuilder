@@ -1325,6 +1325,10 @@ test('projects fixed run progress as renderer-safe status items', () => {
 
   const stream = projectBuilderTaskStream(input(events));
 
+  assert.equal(stream.agent_activity_projection.current.phase, 'preparing_review');
+  assert.equal(stream.agent_activity_projection.current.label, 'Preparing review');
+  assert.equal(stream.agent_activity_projection.authority.side_effect_authority, 'none');
+
   assert.deepEqual(stream.conversation.items.slice(2), [
     {
       item_kind: 'run_progress_recorded',

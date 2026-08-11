@@ -895,6 +895,15 @@ The composer remains simple. The right side is the Review Workspace when a
 draft exists. The chat timeline should show status and decisions, not every raw
 tool output.
 
+The first convergence layer is `builder-agent-activity-projection.v1`. It is a
+main-owned, renderer-safe summary over already-recorded Conversation, Run,
+Tool, and Review facts. Renderer surfaces consume its fixed current phase and
+plain-language copy instead of guessing from streamed provider text or joining
+authority contracts themselves. It does not replace Task Stream, ReviewState,
+CheckRun, DraftCheckpoint, or Revision authority. Active CheckRun and repair
+phases must remain absent until their own durable/runtime facts can be joined
+without speculation.
+
 ## Authority Boundaries
 
 The programming runtime must preserve Builder's current trust model:

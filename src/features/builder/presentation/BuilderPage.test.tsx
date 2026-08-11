@@ -666,7 +666,30 @@ async function briefActivity() {
 }
 
 async function progressActivity() {
-  const controller = createBuilderConversationController(taskStreamPort(async () => createProgressTaskStreamWire()));
+  const wire = createProgressTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    agent_activity_projection: {
+      projection_version: 'builder-agent-activity-projection.v1',
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      head_sequence: wire.conversation.head_sequence,
+      current: {
+        phase: 'preparing_review',
+        status: 'active',
+        label: 'Preparing review',
+        summary: 'Checking and organizing the result for review.',
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+      },
+      authority: {
+        projection_authority: 'main_owned_agent_activity_projection_v1',
+        fact_source: 'recorded_activity',
+        consumer_role: 'read_only',
+        side_effect_authority: 'none',
+      },
+    },
+  })));
   return controller.load(PROJECT_ID);
 }
 
@@ -3602,12 +3625,13 @@ describe('BuilderPage v2', () => {
     expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(1);
     expect(workStatus?.getAttribute('data-builder-activity-role')).toBe('status');
     expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
+    expect(workStatus?.getAttribute('data-builder-work-phase')).toBe('preparing_review');
     expect(
       workStatus?.querySelector('[data-builder-message-surface]')
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('status');
-    expect(workStatus?.textContent).toContain('Assistant is working');
-    expect(workStatus?.textContent).toContain('Preparing the result for review.');
+    expect(workStatus?.textContent).toContain('Preparing review');
+    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
     expect(started).toBeNull();
     expect(contextReady).toBeNull();
     expect(responseStarted).toBeNull();
@@ -3743,7 +3767,7 @@ describe('BuilderPage v2', () => {
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     expect(workStatus).not.toBeNull();
     expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
-    expect(workStatus?.textContent).toContain('Preparing the result for review.');
+    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response received"]')).toBeNull();
@@ -3818,7 +3842,7 @@ describe('BuilderPage v2', () => {
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
     expect(workStatus).not.toBeNull();
     expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
-    expect(workStatus?.textContent).toContain('Preparing the result for review.');
+    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
     expect(container.textContent).not.toContain("I'm working on this...");
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();

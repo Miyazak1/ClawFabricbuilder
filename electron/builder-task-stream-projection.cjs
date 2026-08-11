@@ -20,6 +20,9 @@ const {
 const {
   sanitizeBuilderReviewStateProjection,
 } = require('./builder-review-state-projection.cjs');
+const {
+  projectBuilderAgentActivity,
+} = require('./builder-agent-activity-projection.cjs');
 
 const BUILDER_TASK_STREAM_VERSION = 'builder-task-stream-read-result.v1';
 const MAX_PUBLIC_ITEMS = 128;
@@ -527,6 +530,7 @@ function withOptionalStatusProjections(
   providerContextDisclosureStatusProjection,
   draftCheckpointStatusProjection,
   reviewStateProjection,
+  agentActivityProjection,
 ) {
   return {
     ...result,
@@ -545,6 +549,37 @@ function withOptionalStatusProjections(
     ...(reviewStateProjection === undefined
       ? {}
       : { review_state_projection: reviewStateProjection }),
+    ...(agentActivityProjection === undefined
+      ? {}
+      : { agent_activity_projection: agentActivityProjection }),
+  };
+}
+
+function latestRunActivityFacts(replay) {
+  const turn = replay.turns.at(-1) ?? null;
+  const run = turn?.runs.at(-1) ?? null;
+  if (run === null) return null;
+  const activeToolCall = [...run.tool_calls].reverse().find(
+    (toolCall) => toolCall.tool_result_record === null,
+  ) ?? null;
+  return {
+    turn_id: turn.turn_id,
+    run_id: run.run_id,
+    status: run.status,
+    terminal_status: run.terminal_status,
+    result_kind: run.result_kind,
+    route: run.context_snapshot?.route_decision.route ?? null,
+    dispatch: run.context_snapshot?.route_decision.dispatch ?? null,
+    programming_run_admitted: run.programming_run_admission !== null,
+    latest_progress_stage: run.progress_stages.at(-1) ?? null,
+    active_tool_action: activeToolCall?.action ?? null,
+    control: run.cancel_request_id !== null
+      ? 'cancel'
+      : run.interrupt_request_id !== null
+        ? 'interrupt'
+        : null,
+    plan_review: run.plan_review?.decision ?? null,
+    candidate_review: run.candidate_review?.decision ?? null,
   };
 }
 
@@ -571,7 +606,7 @@ function projectBuilderTaskStream(rawInput) {
         conversation: null,
         authority: authority(),
       }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
-      reviewStateProjection));
+      reviewStateProjection, undefined));
     }
 
     exactObject(rawConversation, ['conversation_id', 'created_at_ms', 'events']);
@@ -598,6 +633,14 @@ function projectBuilderTaskStream(rawInput) {
       const item = itemFromEvent(events[index], progressStagesByRun);
       if (item !== null) visibleItems.push(item);
     }
+    const agentActivityProjection = projectBuilderAgentActivity({
+      project_id: projectId,
+      conversation_id: conversationId,
+      head_sequence: replay.head.sequence,
+      active_turn_id: replay.active_turn_id,
+      latest_run: latestRunActivityFacts(replay),
+      review_state_projection: reviewStateProjection ?? null,
+    });
     return boundResult(withOptionalStatusProjections({
       stream_version: BUILDER_TASK_STREAM_VERSION,
       project_id: projectId,
@@ -615,7 +658,7 @@ function projectBuilderTaskStream(rawInput) {
       },
       authority: authority(),
     }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
-    reviewStateProjection));
+    reviewStateProjection, agentActivityProjection));
   } catch (error) {
     if (error instanceof BuilderTaskStreamProjectionError) throw error;
     fail();

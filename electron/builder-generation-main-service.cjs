@@ -649,7 +649,15 @@ function denseTaskStreamItems(value) {
 }
 
 function taskStreamConversationForSubmitContext(value, expectedProjectId) {
-  exactObject(value, ['stream_version', 'project_id', 'conversation', 'authority']);
+  exactObjectWithOptional(value, [
+    'stream_version', 'project_id', 'conversation', 'authority',
+  ], [
+    'context_status_projection',
+    'provider_context_disclosure_status_projection',
+    'draft_checkpoint_status_projection',
+    'review_state_projection',
+    'agent_activity_projection',
+  ]);
   if (
     valueAt(value, 'stream_version') !== BUILDER_TASK_STREAM_READ_RESULT_VERSION
     || valueAt(value, 'project_id') !== expectedProjectId
@@ -813,6 +821,23 @@ function exactObject(value, keys) {
   if (
     actual.length !== keys.length
     || actual.some((key) => typeof key !== 'string' || !keys.includes(key))
+  ) fail();
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return value;
+}
+
+function exactObjectWithOptional(value, requiredKeys, optionalKeys) {
+  if (!isPlainObject(value)) fail();
+  const allowedKeys = [...requiredKeys, ...optionalKeys];
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length < requiredKeys.length
+    || actual.length > allowedKeys.length
+    || requiredKeys.some((key) => !actual.includes(key))
+    || actual.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))
   ) fail();
   for (const key of actual) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);

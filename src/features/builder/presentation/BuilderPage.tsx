@@ -63,6 +63,7 @@ import type {
   BuilderConversationItem,
   BuilderConversationRunProgressStage,
 } from '../domain/builderConversationSnapshot';
+import type { BuilderAgentActivityProjectionWire } from '../domain/builderAgentActivityProjection';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 import {
@@ -255,6 +256,14 @@ function activityItems(
   return conversation?.state === 'ready' ? conversation.conversation.items : [];
 }
 
+function currentAgentActivity(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): BuilderAgentActivityProjectionWire | null {
+  return snapshot?.conversation?.state === 'ready'
+    ? snapshot.conversation.agent_activity_projection ?? null
+    : null;
+}
+
 function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
   const completedRuns = new Set<string>();
@@ -269,6 +278,8 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
         entry_kind: 'work_status',
         key,
         sequence: item.sequence,
+        turnId: item.turn_id,
+        runId: item.run_id,
         status: 'started',
         hidden: false,
       };
@@ -289,6 +300,8 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
           entry_kind: 'work_status',
           key,
           sequence: item.sequence,
+          turnId: item.turn_id,
+          runId: item.run_id,
           status: item.stage,
           hidden: false,
         };
@@ -384,6 +397,8 @@ function artifactWorkStatusEntry(
     entry_kind: 'work_status',
     key: `${item.turn_id}:${item.run_id}:${item.sequence}`,
     sequence: item.sequence,
+    turnId: item.turn_id,
+    runId: item.run_id,
     status: item.item_kind === 'run_started' ? 'started' : item.stage,
     hidden: false,
   };
@@ -618,6 +633,8 @@ type ActivityWorkStatusEntry = {
   entry_kind: 'work_status';
   key: string;
   sequence: number;
+  turnId: string;
+  runId: string;
   status: ActivityWorkStatus;
   hidden: boolean;
 };
@@ -1370,15 +1387,22 @@ function ActivityLiveOutputItem({
 
 function ActivityWorkStatusItem({
   entry,
+  projection,
 }: Readonly<{
   entry: ActivityWorkStatusEntry;
+  projection: BuilderAgentActivityProjectionWire | null;
 }>) {
+  const current = projection?.current.turn_id === entry.turnId
+    && projection.current.run_id === entry.runId
+    ? projection.current
+    : null;
   return (
     <li
       className="cf-builder-activity-item"
       data-builder-activity-card="Assistant working"
       data-builder-activity-role="status"
       data-builder-work-status="true"
+      data-builder-work-phase={current?.phase}
       data-builder-work-status-stage={entry.status}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
@@ -1388,8 +1412,8 @@ function ActivityWorkStatusItem({
         className="cf-builder-activity-content min-w-0"
         data-builder-message-surface="status"
       >
-        <div className="cf-builder-activity-title">Assistant is working</div>
-        <p className="cf-builder-activity-body">{workStatusBody(entry.status)}</p>
+        <div className="cf-builder-activity-title">{current?.label ?? 'Assistant is working'}</div>
+        <p className="cf-builder-activity-body">{current?.summary ?? workStatusBody(entry.status)}</p>
       </div>
     </li>
   );
@@ -1465,6 +1489,7 @@ function ActivityPanel({
 }>) {
   const entries = activityEntries(snapshot);
   const visibleEntries = entries;
+  const agentActivityProjection = currentAgentActivity(snapshot);
   const showLiveOutput = shouldShowLiveOutput(liveOutput, visibleEntries);
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
@@ -1508,7 +1533,11 @@ function ActivityPanel({
           <ol className="cf-builder-activity-list">
             {visibleEntries.map((entry) => (
               entry.entry_kind === 'work_status' ? (
-                <ActivityWorkStatusItem entry={entry} key={entry.key} />
+                <ActivityWorkStatusItem
+                  entry={entry}
+                  key={entry.key}
+                  projection={agentActivityProjection}
+                />
               ) : (
                 <ActivityItem
                   canReviewPlan={canReviewPlan}
@@ -1773,6 +1802,7 @@ function BuilderArtifactLogsPanel({
   const entries = artifactLogEntries(snapshot);
   const latestBrief = latestTaskBriefItem(snapshot);
   const showLiveOutput = shouldShowLiveOutput(liveOutput, entries);
+  const agentActivityProjection = currentAgentActivity(snapshot);
   return (
     <section
       aria-label="Work logs"
@@ -1807,7 +1837,11 @@ function BuilderArtifactLogsPanel({
         <ol className="cf-builder-activity-list cf-builder-artifact-logs-list">
           {entries.map((entry) => (
             entry.entry_kind === 'work_status' ? (
-              <ActivityWorkStatusItem entry={entry} key={entry.key} />
+              <ActivityWorkStatusItem
+                entry={entry}
+                key={entry.key}
+                projection={agentActivityProjection}
+              />
             ) : (
               <ActivityItem
                 canReviewPlan={false}
