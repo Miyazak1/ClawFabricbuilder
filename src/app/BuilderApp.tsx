@@ -73,6 +73,7 @@ import {
   decideBuilderComposerIntent,
   decideBuilderComposerSemanticIntent,
   isBuilderComposerContextualBuildIntent,
+  isBuilderComposerPlanBuildConflictIntent,
   type BuilderComposerApprovalMode,
   type BuilderComposerRouteDecision,
   type BuilderComposerRouteDecisionEvidence,
@@ -933,9 +934,11 @@ const DIRECT_CURRENT_DRAFT_BUILD_SIGNALS = new Set([
 function shouldSkipSemanticClassifierForCurrentDraftBuild(
   decision: BuilderComposerRouteDecision,
   projectSnapshot: BuilderVisibleProjectSnapshot,
+  instruction: string,
 ): boolean {
   return projectSnapshot.draft !== null
     && decision.route === 'build'
+    && !isBuilderComposerPlanBuildConflictIntent(instruction)
     && decision.matchedSignals.some((signal) => DIRECT_CURRENT_DRAFT_BUILD_SIGNALS.has(signal));
 }
 
@@ -2064,7 +2067,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (
       activeComposerMode === null
       && ports.generator.classifyIntent !== undefined
-      && !shouldSkipSemanticClassifierForCurrentDraftBuild(decision, projectSnapshotRef.current)
+      && !shouldSkipSemanticClassifierForCurrentDraftBuild(decision, projectSnapshotRef.current, submittedIdea)
     ) {
       const classificationEpoch = workspaceEpochRef.current;
       submitInFlightInstructionRef.current = submittedIdea;

@@ -151,6 +151,12 @@ const EXPLICIT_PLAN_PATTERNS = Object.freeze([
   /^(?:plan first|plan this first|make a plan|propose a plan|draft a plan|give me a plan|outline the steps|don'?t write code yet|let'?s plan|let us plan)\b/u,
 ]);
 
+const SEMANTIC_PLAN_BUILD_CONFLICT_PATTERNS = Object.freeze([
+  /(?:做|写|出|给|制定|规划|生成|创建|整理|梳理|设计).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
+  /(?:当前|这个|项目|文件夹|网站|页面|应用|readme|README).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
+  /\b(?:implementation|execution|migration|refactor|optimization|redesign)\s+(?:plan|proposal)\b/u,
+]);
+
 const EXPLICIT_BRIEF_PATTERNS = Object.freeze([
   /^(?:保存|记住|记录|保留|沉淀)(?:一下|下)?(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这次)?(?:方向|目标|需求|约束|方案|计划|想法|brief|上下文)?(?:[：:，,\s]|$).*/u,
   /^(?:把|将)(?:这个|当前|刚才(?:的)?|上面(?:的)?|前面(?:的)?|这段|这些|以上|上面的)?(?:方向|目标|需求|约束|方案|计划|想法|内容|上下文|brief)?(?:保存|记录|记住|作为|设为).*/u,
@@ -234,6 +240,12 @@ export function isBuilderComposerExplicitBriefIntent(instruction: string): boole
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return false;
   return EXPLICIT_BRIEF_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isBuilderComposerPlanBuildConflictIntent(instruction: string): boolean {
+  const normalized = normalizeComposerInstruction(instruction);
+  if (normalized.length === 0) return false;
+  return SEMANTIC_PLAN_BUILD_CONFLICT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function routeBuilderComposerIntent(

@@ -2477,6 +2477,59 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('keeps current-draft plan/proposal wording on the semantic route instead of direct draft edits', async () => {
+    const {
+      answer,
+      answerDraft,
+      classifyIntent,
+      container,
+      continueDraft,
+      generate,
+      saveDraft,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      semanticIntentRoute: 'plan',
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-build-mode="true"]');
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    });
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(classifyIntent).not.toHaveBeenCalled();
+
+    click(container, '[data-builder-clear-composer-mode="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).toBeNull();
+    });
+    setComposerInstruction(container, '给当前文件夹做一个优化方案');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
+        instruction: '给当前文件夹做一个优化方案',
+      });
+      expect(answerDraft).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        instruction: '给当前文件夹做一个优化方案',
+      });
+    });
+    expect(answer).not.toHaveBeenCalled();
+    expect(continueDraft).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
+  });
+
   it('does not keep a gated build pending after the workspace picker is closed', async () => {
     const { container, createLocalProject, generate, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');

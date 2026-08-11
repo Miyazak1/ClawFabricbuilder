@@ -6371,7 +6371,31 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
     'plan',
   );
   assert.equal(
+    (await semanticRouteRequest('做一个摄影作品集网站改版方案')).route,
+    'plan',
+  );
+  assert.equal(
+    (await semanticRouteRequest('给当前文件夹做一个优化方案')).route,
+    'plan',
+  );
+  assert.equal(
+    (await semanticRouteRequest('为这个项目制定实现计划')).route,
+    'plan',
+  );
+  assert.equal(
+    (await semanticRouteRequest('帮我出一个 README 重构方案')).route,
+    'plan',
+  );
+  assert.equal(
     (await semanticRouteRequest('做一个计划管理页面')).route,
+    'build',
+  );
+  assert.equal(
+    (await semanticRouteRequest('做一个学习计划表应用')).route,
+    'build',
+  );
+  assert.equal(
+    (await semanticRouteRequest('做一个方案展示页')).route,
     'build',
   );
   const firstCode = JSON.parse(JSON.parse(await request('builder_code_change_operations')).choices[0].message.content);

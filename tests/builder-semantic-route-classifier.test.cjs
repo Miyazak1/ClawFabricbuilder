@@ -30,6 +30,12 @@ test('creates a bounded semantic route request and prompt without source or conv
   const descriptor = createBuilderSemanticRoutePromptDescriptor(request);
   assert.equal(descriptor.prompt_version, 'builder-semantic-route-prompt.v1');
   assert.match(descriptor.system_instruction, /complete sentence as a whole/u);
+  assert.match(descriptor.system_instruction, /做一个静态技术博客实施计划/u);
+  assert.match(descriptor.system_instruction, /给当前文件夹做一个优化方案/u);
+  assert.match(descriptor.system_instruction, /帮我出一个 README 重构方案/u);
+  assert.match(descriptor.system_instruction, /做一个计划管理页面/u);
+  assert.match(descriptor.system_instruction, /做一个学习计划表应用/u);
+  assert.match(descriptor.system_instruction, /做一个方案展示页/u);
   assert.deepEqual(JSON.parse(descriptor.user_instruction), {
     instruction: '帮我做一个静态技术博客实施计划',
     product_state: context(),

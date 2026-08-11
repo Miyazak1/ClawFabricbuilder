@@ -7,6 +7,7 @@ import {
   decideBuilderComposerSemanticIntent,
   isBuilderComposerContextualBuildIntent,
   isBuilderComposerExplicitBriefIntent,
+  isBuilderComposerPlanBuildConflictIntent,
   routeBuilderComposerIntent,
 } from './builderComposerIntent';
 
@@ -37,6 +38,27 @@ describe('routeBuilderComposerIntent', () => {
       dispatch: 'build',
       matchedSignals: ['semantic_route'],
     });
+  });
+
+  it.each([
+    '帮我做一个静态技术博客实施计划',
+    '做一个摄影作品集网站改版方案',
+    '给当前文件夹做一个优化方案',
+    '为这个项目制定实现计划',
+    '帮我出一个 README 重构方案',
+    'Create an implementation plan for this site.',
+    'Draft a redesign proposal for the portfolio.',
+  ])('marks %s as requiring semantic plan/build classification', (instruction) => {
+    expect(isBuilderComposerPlanBuildConflictIntent(instruction)).toBe(true);
+  });
+
+  it.each([
+    '做一个计划管理页面',
+    '做一个学习计划表应用',
+    '做一个方案展示页',
+    '继续优化标题和说明，不要保存版本',
+  ])('does not treat artifact request %s as a semantic plan/build conflict', (instruction) => {
+    expect(isBuilderComposerPlanBuildConflictIntent(instruction)).toBe(false);
   });
 
   it('fails low-confidence semantic execution closed to clarification', () => {
