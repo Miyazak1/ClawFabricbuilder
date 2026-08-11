@@ -42,14 +42,24 @@ async function optionalVisible(page, selector) {
   }
 }
 
-async function waitForSubmitEnabled(page) {
+async function waitForSubmitEnabled(page, stage) {
   const submit = page.locator(SELECTORS.submitTurn);
   await submit.waitFor({ state: 'visible', timeout: 10_000 });
-  await page.waitForFunction((selector) => {
-    /* global document, HTMLButtonElement */
-    const node = document.querySelector(selector);
-    return node instanceof HTMLButtonElement && node.disabled === false;
-  }, SELECTORS.submitTurn, { timeout: 10_000 });
+  try {
+    await page.waitForFunction((selector) => {
+      /* global document, HTMLButtonElement */
+      const node = document.querySelector(selector);
+      return node instanceof HTMLButtonElement && node.disabled === false;
+    }, SELECTORS.submitTurn, { timeout: 10_000 });
+  } catch {
+    fail('plan_mode_submit_not_enabled', {
+      stage,
+      submit_disabled: await submit.isDisabled().catch(() => null),
+      composer_status: await page.locator(SELECTORS.composerStatus).textContent().catch(() => null),
+      project_status: await page.locator(SELECTORS.projectPage).
+        getAttribute('data-builder-project-status').catch(() => null),
+    });
+  }
 }
 
 async function bindNewProjectWorkspace(page) {
@@ -156,7 +166,7 @@ async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
 
 async function verifyNaturalLanguagePlanAndReject(page, providerServer, userDataPath) {
   await page.locator(SELECTORS.idea).fill(SEMANTIC_PLAN_INSTRUCTION);
-  await waitForSubmitEnabled(page);
+  await waitForSubmitEnabled(page, 'semantic_plan_before_submit');
   await page.locator(SELECTORS.submitTurn).click();
   const approvedSourceRead = await approvePlanSourceReadIfRequested(page);
   const planReady = page.locator(SELECTORS.planReviewActions).
@@ -189,7 +199,6 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
   await clickByRole(page, 'button', 'Reject');
   await page.locator(SELECTORS.planRejected).waitFor({ state: 'visible', timeout: 30_000 });
   await page.locator(SELECTORS.planReviewActions).waitFor({ state: 'hidden', timeout: 30_000 });
-  await waitForSubmitEnabled(page);
   return Object.freeze({
     plan_source_read_approved: approvedSourceRead,
     semantic_classifier_observed: true,
@@ -244,7 +253,7 @@ async function run() {
       userDataPath,
     );
     await page.locator(SELECTORS.idea).fill(PLAN_MODE_INSTRUCTION);
-    await waitForSubmitEnabled(page);
+    await waitForSubmitEnabled(page, 'manual_plan_before_mode_select');
     await page.locator(SELECTORS.composerAddMenuButton).click();
     const planMode = page.locator(SELECTORS.composerAddPlanMode);
     await planMode.waitFor({ state: 'visible', timeout: 10_000 });
@@ -252,7 +261,7 @@ async function run() {
     await planMode.click();
     await page.locator('[data-builder-composer-mode-chip="plan"]').
       waitFor({ state: 'visible', timeout: 10_000 });
-    await waitForSubmitEnabled(page);
+    await waitForSubmitEnabled(page, 'manual_plan_after_mode_select');
     await page.locator(SELECTORS.submitTurn).click();
     const approvedSourceRead = await approvePlanSourceReadIfRequested(page);
     const planReady = page.locator(SELECTORS.planReviewActions).
