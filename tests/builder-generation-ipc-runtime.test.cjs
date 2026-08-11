@@ -515,11 +515,21 @@ function runtimeWithService(service, probes = {}) {
       }
       if (specifier === './builder-check-run-activity-registry.cjs') {
         return {
-          createBuilderCheckRunActivityRegistry: () => {
+          createBuilderCheckRunActivityRegistry: (options) => {
+            probes.checkRunActivityRegistryOptions = options;
+            assert.equal(typeof options.on_activity_changed, 'function');
             context.__checkRunActivityRegistry = {
               registry_version: 'builder-check-run-activity-registry.v1',
               acquire_candidate_save() {},
               release_candidate_save() {},
+              read_candidate_activity() {
+                return {
+                  result_version: 'builder-check-run-candidate-activity-result.v1',
+                  project_id: PROJECT_ID,
+                  candidate_id: CANDIDATE_ID,
+                  activity: null,
+                };
+              },
             };
             return context.__checkRunActivityRegistry;
           },
@@ -610,6 +620,7 @@ function runtimeWithService(service, probes = {}) {
             );
             assert.equal(options.automaticDraftCheckpointService, context.__automaticDraftCheckpointService);
             assert.equal(options.checkRunStatusService, context.__checkRunStatusService);
+            assert.equal(options.checkRunActivityRegistry, context.__checkRunActivityRegistry);
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},
@@ -2677,6 +2688,7 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__checkRunStatusService);
   assert.equal(probes.checkRunCompositionOptions.activity_registry,
     runtimeModule.context.__checkRunActivityRegistry);
+  assert.equal(typeof probes.checkRunActivityRegistryOptions.on_activity_changed, 'function');
   assert.equal(probes.providerContextDisclosureDecisionOptions.actor_id,
     'builder-user:00000000-0000-4000-8000-000000000001');
   assert.equal(typeof probes.providerContextDisclosureDecisionOptions.evaluate_permission, 'function');

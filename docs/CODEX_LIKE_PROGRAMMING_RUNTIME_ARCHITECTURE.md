@@ -900,9 +900,11 @@ main-owned, renderer-safe summary over already-recorded Conversation, Run,
 Tool, and Review facts. Renderer surfaces consume its fixed current phase and
 plain-language copy instead of guessing from streamed provider text or joining
 authority contracts themselves. It does not replace Task Stream, ReviewState,
-CheckRun, DraftCheckpoint, or Revision authority. Active CheckRun and repair
-phases must remain absent until their own durable/runtime facts can be joined
-without speculation.
+CheckRun, DraftCheckpoint, or Revision authority. Active CheckRun now joins
+through the main-owned candidate activity registry as the fixed `Running
+checks` phase; the public projection receives no command, output, path, or
+runtime handle. Repair must remain absent until its own durable/runtime facts
+can be joined without speculation.
 
 ## Authority Boundaries
 

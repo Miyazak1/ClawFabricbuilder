@@ -1419,6 +1419,46 @@ function ActivityWorkStatusItem({
   );
 }
 
+function ActivityProjectedStatusItem({
+  projection,
+}: Readonly<{
+  projection: BuilderAgentActivityProjectionWire;
+}>) {
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card="Assistant working"
+      data-builder-activity-role="status"
+      data-builder-agent-current-activity={projection.current.phase}
+      data-builder-work-phase={projection.current.phase}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <RefreshCw className="size-3.5" />
+      </div>
+      <div
+        className="cf-builder-activity-content min-w-0"
+        data-builder-message-surface="status"
+      >
+        <div className="cf-builder-activity-title">{projection.current.label}</div>
+        <p className="cf-builder-activity-body">{projection.current.summary}</p>
+      </div>
+    </li>
+  );
+}
+
+function standaloneAgentActivity(
+  projection: BuilderAgentActivityProjectionWire | null,
+  entries: readonly ActivityEntry[],
+): BuilderAgentActivityProjectionWire | null {
+  if (projection?.current.phase !== 'running_checks' || projection.current.status !== 'active') return null;
+  const alreadyShown = entries.some((entry) => (
+    entry.entry_kind === 'work_status'
+    && entry.turnId === projection.current.turn_id
+    && entry.runId === projection.current.run_id
+  ));
+  return alreadyShown ? null : projection;
+}
+
 function ActivityCompletionSummaryView({
   hasUnsavedDraft,
   item,
@@ -1490,6 +1530,7 @@ function ActivityPanel({
   const entries = activityEntries(snapshot);
   const visibleEntries = entries;
   const agentActivityProjection = currentAgentActivity(snapshot);
+  const currentAgentActivityStatus = standaloneAgentActivity(agentActivityProjection, visibleEntries);
   const showLiveOutput = shouldShowLiveOutput(liveOutput, visibleEntries);
   const message = activityMessage(snapshot);
   const canRefresh = snapshot !== null
@@ -1553,6 +1594,9 @@ function ActivityPanel({
                 />
               )
             ))}
+            {currentAgentActivityStatus !== null ? (
+              <ActivityProjectedStatusItem projection={currentAgentActivityStatus} />
+            ) : null}
             {showLiveOutput ? (
               <ActivityLiveOutputItem liveOutput={liveOutput} />
             ) : null}
@@ -1803,6 +1847,7 @@ function BuilderArtifactLogsPanel({
   const latestBrief = latestTaskBriefItem(snapshot);
   const showLiveOutput = shouldShowLiveOutput(liveOutput, entries);
   const agentActivityProjection = currentAgentActivity(snapshot);
+  const currentAgentActivityStatus = standaloneAgentActivity(agentActivityProjection, entries);
   return (
     <section
       aria-label="Work logs"
@@ -1856,6 +1901,9 @@ function BuilderArtifactLogsPanel({
               />
             )
           ))}
+          {currentAgentActivityStatus !== null ? (
+            <ActivityProjectedStatusItem projection={currentAgentActivityStatus} />
+          ) : null}
           {showLiveOutput ? (
             <ActivityLiveOutputItem liveOutput={liveOutput} />
           ) : null}

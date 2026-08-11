@@ -3653,6 +3653,7 @@ test('read_stream carries main-owned provider context disclosure status when ava
 test('read_stream projects checkpoint only while the latest candidate is unreviewed', () => {
   const requests = [];
   const checkRequests = [];
+  const activityRequests = [];
   const item = fixture(1, 1_000, {
     automaticDraftCheckpointService: {
       read_current_checkpoint_status(request) {
@@ -3666,6 +3667,17 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
       read_current_check_run_status(request) {
         checkRequests.push(request);
         return { check_run_status_projection: checkRunStatusProjection() };
+      },
+    },
+    checkRunActivityRegistry: {
+      read_candidate_activity(request) {
+        activityRequests.push(request);
+        return {
+          result_version: 'builder-check-run-candidate-activity-result.v1',
+          project_id: request.project_id,
+          candidate_id: request.candidate_id,
+          activity: 'check_run',
+        };
       },
     },
   });
@@ -3690,12 +3702,18 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     assert.equal(ready.review_state_projection.can_save, true);
     assert.equal(ready.review_state_projection.can_discard, true);
     assert.equal(ready.review_state_projection.authority.save_authority, false);
+    assert.equal(ready.agent_activity_projection.current.phase, 'running_checks');
+    assert.equal(ready.agent_activity_projection.current.label, 'Running checks');
     assert.deepEqual(requests, [{
       project_id: PROJECT_ID,
       conversation_id: context.conversation.conversation_id,
       candidate_id: candidate.git_candidate_receipt.candidate_id,
     }]);
     assert.deepEqual(checkRequests, [{
+      project_id: PROJECT_ID,
+      candidate_id: candidate.git_candidate_receipt.candidate_id,
+    }]);
+    assert.deepEqual(activityRequests, [{
       project_id: PROJECT_ID,
       candidate_id: candidate.git_candidate_receipt.candidate_id,
     }]);
@@ -3706,6 +3724,7 @@ test('read_stream projects checkpoint only while the latest candidate is unrevie
     assert.equal(Object.hasOwn(rejected, 'review_state_projection'), false);
     assert.equal(requests.length, 1);
     assert.equal(checkRequests.length, 1);
+    assert.equal(activityRequests.length, 1);
   } finally {
     item.close();
   }

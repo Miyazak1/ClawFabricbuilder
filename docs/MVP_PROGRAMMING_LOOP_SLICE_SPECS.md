@@ -377,13 +377,16 @@ recorded Conversation/Run/Tool facts and current ReviewState into one
 renderer-safe current-work phase. The chat flow can therefore show plain
 states such as `Reading project`, `Planning`, `Changing files`, and
 `Preparing review` without inferring them from provider text or exposing the
-underlying receipts. This projection is read-only and grants no provider,
+underlying receipts. Active CheckRun work now joins the same projection from
+the main-owned candidate activity registry, so a completed generation can show
+`Running checks` while its current candidate is being verified. The registry
+publishes only a bounded refresh hint; commands, output, paths, and runtime
+handles remain private. This projection is read-only and grants no provider,
 tool, source, command, Git, SQLite, permission, or Save authority.
 
 This slice is not complete yet. Delete, move, lockfile, and large-edit
 decisions still need a visible approval-and-resume path instead of a terminal
-failure. Move/rename operations and active `Running checks` projection remain
-later checkpoints.
+failure. Move/rename operations remain a later checkpoint.
 
 ## Slice 4: Automatic Draft Checkpoint
 

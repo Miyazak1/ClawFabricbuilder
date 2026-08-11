@@ -88,6 +88,7 @@ const OPTION_KEYS = Object.freeze([
   'providerContextDisclosureStatusService',
   'automaticDraftCheckpointService',
   'checkRunStatusService',
+  'checkRunActivityRegistry',
 ]);
 const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
@@ -591,6 +592,9 @@ function sanitizeOptions(value) {
   const checkRunStatusService = keys.includes('checkRunStatusService')
     ? valueAt(value, 'checkRunStatusService')
     : null;
+  const checkRunActivityRegistry = keys.includes('checkRunActivityRegistry')
+    ? valueAt(value, 'checkRunActivityRegistry')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
@@ -619,6 +623,10 @@ function sanitizeOptions(value) {
       checkRunStatusService !== null
       && (!isPlainObject(checkRunStatusService) || utilTypes.isProxy(checkRunStatusService))
     )
+    || (
+      checkRunActivityRegistry !== null
+      && (!isPlainObject(checkRunActivityRegistry) || utilTypes.isProxy(checkRunActivityRegistry))
+    )
   ) fail();
   return Object.freeze({
     metadataAuthority,
@@ -633,6 +641,7 @@ function sanitizeOptions(value) {
     providerContextDisclosureStatusService,
     automaticDraftCheckpointService,
     checkRunStatusService,
+    checkRunActivityRegistry,
     readCurrentWorkingContextStateForConversation: workingContextStateService === null
       ? null
       : ownMethod(workingContextStateService, 'read_current_working_context_state_for_conversation'),
@@ -649,6 +658,9 @@ function sanitizeOptions(value) {
     readCurrentCheckRunStatus: checkRunStatusService === null
       ? null
       : ownMethod(checkRunStatusService, 'read_current_check_run_status'),
+    readCurrentCandidateActivity: checkRunActivityRegistry === null
+      ? null
+      : ownMethod(checkRunActivityRegistry, 'read_candidate_activity'),
   });
 }
 
@@ -1065,6 +1077,30 @@ function createBuilderConversationMainService(rawOptions) {
       return descriptor.value === null
         ? null
         : sanitizeBuilderCheckRunStatusProjection(descriptor.value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function currentCandidateActivity(state, projectId) {
+    if (options.readCurrentCandidateActivity === null) return undefined;
+    const subject = latestCandidateReviewSubject(state);
+    if (subject === null) return undefined;
+    try {
+      const result = Reflect.apply(
+        options.readCurrentCandidateActivity,
+        options.checkRunActivityRegistry,
+        [{ project_id: projectId, candidate_id: subject.candidate_id }],
+      );
+      exactObject(result, ['result_version', 'project_id', 'candidate_id', 'activity']);
+      const activity = valueAt(result, 'activity');
+      if (
+        valueAt(result, 'result_version') !== 'builder-check-run-candidate-activity-result.v1'
+        || valueAt(result, 'project_id') !== projectId
+        || valueAt(result, 'candidate_id') !== subject.candidate_id
+        || (activity !== null && activity !== 'check_run')
+      ) return undefined;
+      return activity;
     } catch {
       return undefined;
     }
@@ -3273,6 +3309,9 @@ function createBuilderConversationMainService(rawOptions) {
       const checkRunStatusProjection = state === null
         ? undefined
         : currentCheckRunStatusProjection(state, projectId);
+      const candidateActivity = state === null
+        ? undefined
+        : currentCandidateActivity(state, projectId);
       const reviewStateProjection = state === null
         ? undefined
         : currentReviewStateProjection(
@@ -3298,6 +3337,9 @@ function createBuilderConversationMainService(rawOptions) {
         ...(reviewStateProjection === undefined
           ? {}
           : { review_state_projection: reviewStateProjection }),
+        ...(candidateActivity === undefined
+          ? {}
+          : { candidate_activity: candidateActivity }),
         conversation: state === null ? null : {
           conversation_id: state.conversation.conversation_id,
           created_at_ms: state.conversation.created_at_ms,

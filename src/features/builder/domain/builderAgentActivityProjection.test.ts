@@ -33,6 +33,23 @@ describe('sanitizeBuilderAgentActivityProjectionWire', () => {
     expect(sanitizeBuilderAgentActivityProjectionWire(value)).toBe(value);
   });
 
+  it('accepts the fixed public running-checks phase', () => {
+    const value = {
+      ...projection(),
+      current: {
+        ...projection().current,
+        phase: 'running_checks',
+        label: 'Running checks',
+        summary: 'Checking the current draft before it is saved.',
+      },
+      authority: {
+        ...projection().authority,
+        fact_source: 'recorded_activity_and_review',
+      },
+    };
+    expect(sanitizeBuilderAgentActivityProjectionWire(value)).toBe(value);
+  });
+
   it('rejects mismatched copy and side-effect authority', () => {
     expect(sanitizeBuilderAgentActivityProjectionWire({
       ...projection(),

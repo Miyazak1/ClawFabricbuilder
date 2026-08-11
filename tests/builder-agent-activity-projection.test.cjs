@@ -42,6 +42,7 @@ function input(overrides = {}) {
     active_turn_id: TURN_ID,
     latest_run: latestRun(),
     review_state_projection: null,
+    candidate_activity: null,
     ...overrides,
   };
 }
@@ -187,6 +188,24 @@ test('keeps a retryable failed run blocked while its turn remains active', () =>
   assert.equal(projection.current.phase, 'blocked');
   assert.equal(projection.current.status, 'blocked');
   assert.equal(projection.current.turn_id, TURN_ID);
+});
+
+test('projects an active candidate check ahead of ready review state', () => {
+  const projection = projectBuilderAgentActivity(input({
+    active_turn_id: null,
+    latest_run: latestRun({
+      status: 'completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      latest_progress_stage: 'result_preparing',
+    }),
+    review_state_projection: reviewState(),
+    candidate_activity: 'check_run',
+  }));
+
+  assert.equal(projection.current.phase, 'running_checks');
+  assert.equal(projection.current.label, 'Running checks');
+  assert.equal(projection.current.status, 'active');
 });
 
 test('sanitizer accepts exact projections and fails closed on authority or identity changes', () => {

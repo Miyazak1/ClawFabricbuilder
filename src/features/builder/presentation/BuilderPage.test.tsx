@@ -562,6 +562,35 @@ async function candidateFailedCheckActivity() {
   return controller.load(PROJECT_ID);
 }
 
+async function candidateRunningCheckActivity() {
+  const wire = createTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    review_state_projection: readyReviewStateProjection(),
+    agent_activity_projection: {
+      projection_version: 'builder-agent-activity-projection.v1',
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      head_sequence: wire.conversation.head_sequence,
+      current: {
+        phase: 'running_checks',
+        status: 'active',
+        label: 'Running checks',
+        summary: 'Checking the current draft before it is saved.',
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+      },
+      authority: {
+        projection_authority: 'main_owned_agent_activity_projection_v1',
+        fact_source: 'recorded_activity_and_review',
+        consumer_role: 'read_only',
+        side_effect_authority: 'none',
+      },
+    },
+  })));
+  return controller.load(PROJECT_ID);
+}
+
 async function absentActivity() {
   const controller = createBuilderConversationController(taskStreamPort(
     async () => ({
@@ -2861,6 +2890,25 @@ describe('BuilderPage v2', () => {
       .toBe(true);
     click(container, '[data-builder-save-version="true"]');
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('shows a main-owned running check after generation work has completed', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateRunningCheckActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        snapshot={draftReady}
+      />,
+    );
+
+    const status = container.querySelector('[data-builder-agent-current-activity="running_checks"]');
+    expect(status?.getAttribute('data-builder-activity-role')).toBe('status');
+    expect(status?.textContent).toContain('Running checks');
+    expect(status?.textContent).toContain('Checking the current draft before it is saved.');
+    expect(status?.textContent).not.toMatch(/command|output|path|sha256|candidate_id|credential/iu);
   });
 
   it('uses the draft composer review shortcut without sending or saving', async () => {

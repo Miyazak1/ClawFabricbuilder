@@ -524,6 +524,13 @@ function safeOptionalReviewStateProjection(rawInput) {
   return sanitizeBuilderReviewStateProjection(value);
 }
 
+function safeOptionalCandidateActivity(rawInput) {
+  if (!Object.hasOwn(rawInput, 'candidate_activity')) return undefined;
+  const value = valueAt(rawInput, 'candidate_activity');
+  if (value !== null && value !== 'check_run') fail();
+  return value;
+}
+
 function withOptionalStatusProjections(
   result,
   contextStatusProjection,
@@ -590,6 +597,7 @@ function projectBuilderTaskStream(rawInput) {
       'provider_context_disclosure_status_projection',
       'draft_checkpoint_status_projection',
       'review_state_projection',
+      'candidate_activity',
     ]);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
     const contextStatusProjection = safeOptionalContextStatusProjection(rawInput);
@@ -597,9 +605,11 @@ function projectBuilderTaskStream(rawInput) {
       safeOptionalProviderContextDisclosureStatusProjection(rawInput);
     const draftCheckpointStatusProjection = safeOptionalDraftCheckpointStatusProjection(rawInput);
     const reviewStateProjection = safeOptionalReviewStateProjection(rawInput);
+    const candidateActivity = safeOptionalCandidateActivity(rawInput);
     const rawConversation = valueAt(rawInput, 'conversation');
     if (rawConversation === null) {
       if (reviewStateProjection !== undefined && reviewStateProjection !== null) fail();
+      if (candidateActivity !== undefined && candidateActivity !== null) fail();
       return boundResult(withOptionalStatusProjections({
         stream_version: BUILDER_TASK_STREAM_VERSION,
         project_id: projectId,
@@ -640,6 +650,7 @@ function projectBuilderTaskStream(rawInput) {
       active_turn_id: replay.active_turn_id,
       latest_run: latestRunActivityFacts(replay),
       review_state_projection: reviewStateProjection ?? null,
+      candidate_activity: candidateActivity ?? null,
     });
     return boundResult(withOptionalStatusProjections({
       stream_version: BUILDER_TASK_STREAM_VERSION,

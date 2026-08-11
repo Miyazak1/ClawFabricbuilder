@@ -1132,11 +1132,13 @@ Evidence requirements:
 - the current main-owned Agent Activity projection now converges recorded
   Conversation/Run/Tool progress plus ReviewState into one bounded current-work
   phase for the chat flow. The renderer displays user language such as
-  `Reading project`, `Planning`, `Changing files`, or `Preparing review`; it
-  does not infer these phases from provider text and receives no dispatch,
-  mutation, permission, Git/SQLite, or Save authority. Active CheckRun and
-  repair phases remain future joins until those runtime facts can be projected
-  without guessing;
+  `Reading project`, `Planning`, `Changing files`, `Running checks`, or
+  `Preparing review`; it does not infer these phases from provider text and
+  receives no dispatch, mutation, permission, Git/SQLite, or Save authority.
+  Active CheckRun joins through the main-owned candidate activity registry,
+  which emits only a bounded refresh hint and exposes no command, output, path,
+  or runtime handle. Repair remains a future join until its runtime facts can
+  be projected without guessing;
 - the current draft-continuation checkpoint lets the visible single composer
   keep modifying an unsaved draft without saving or discarding it first. The
   renderer can request this only with a pending `draft_id` and new instruction;

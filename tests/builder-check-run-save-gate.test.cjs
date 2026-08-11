@@ -89,6 +89,35 @@ test('blocks save while a check is active and releases the candidate afterward',
   ), true);
 });
 
+test('projects current check activity as a read-only refresh hint', () => {
+  const events = [];
+  const activity = createBuilderCheckRunActivityRegistry({
+    on_activity_changed(event) {
+      events.push(event);
+    },
+  });
+  const selected = admittedCheck();
+  const request = {
+    project_id: selected.admission.project_id,
+    candidate_id: selected.admission.candidate_id,
+  };
+
+  assert.equal(activity.read_candidate_activity(request).activity, null);
+  assert.equal(activity.begin_check_run({ check_run_admission: selected.admission }), true);
+  assert.equal(activity.read_candidate_activity(request).activity, 'check_run');
+  assert.equal(activity.end_check_run({ check_run_admission: selected.admission }), true);
+  assert.equal(activity.read_candidate_activity(request).activity, null);
+  assert.deepEqual(events.map((event) => event.activity), ['check_run', null]);
+  assert.deepEqual(events.map((event) => event.project_id), [
+    selected.admission.project_id,
+    selected.admission.project_id,
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(events),
+    /command_profile|runtime|output|source_tree|credential|commit_oid|tree_oid/iu,
+  );
+});
+
 test('holds a save guard across the operation so a check cannot start concurrently', async (t) => {
   const h = harness(t);
   const selected = admittedCheck();

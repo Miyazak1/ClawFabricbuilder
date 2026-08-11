@@ -24,6 +24,7 @@ const CURRENT_CANDIDATE_KEYS = Object.freeze([
 ]);
 const BEGIN_KEYS = Object.freeze(['check_run_admission']);
 const SAVE_KEYS = Object.freeze(['current_candidate']);
+const READ_KEYS = Object.freeze(['project_id', 'candidate_id']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PATTERNS = Object.freeze({
   project_id: new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u'),
@@ -135,11 +136,62 @@ function sameValue(left, right) {
   return canonicalJson(left) === canonicalJson(right);
 }
 
-function createBuilderCheckRunActivityRegistry() {
+function safeOptions(rawOptions) {
+  if (rawOptions === undefined) return Object.freeze({ onActivityChanged: null });
+  const options = exactObject(rawOptions, ['on_activity_changed']);
+  const onActivityChanged = valueAt(options, 'on_activity_changed');
+  if (typeof onActivityChanged !== 'function' || utilTypes.isProxy(onActivityChanged)) fail();
+  return Object.freeze({ onActivityChanged });
+}
+
+function safeReadRequest(rawRequest) {
+  const request = exactObject(rawRequest, READ_KEYS);
+  const projectId = valueAt(request, 'project_id');
+  const candidateId = valueAt(request, 'candidate_id');
+  if (
+    typeof projectId !== 'string'
+    || !PATTERNS.project_id.test(projectId)
+    || typeof candidateId !== 'string'
+    || !PATTERNS.candidate_id.test(candidateId)
+  ) fail();
+  return Object.freeze({ project_id: projectId, candidate_id: candidateId });
+}
+
+function createBuilderCheckRunActivityRegistry(rawOptions) {
+  const options = safeOptions(rawOptions);
   const active = new Map();
+
+  function notify(candidate, activity) {
+    if (options.onActivityChanged === null) return;
+    try {
+      Reflect.apply(options.onActivityChanged, undefined, [freezeDeep({
+        event_version: 'builder-check-run-activity-changed.v1',
+        project_id: candidate.project_id,
+        candidate_id: candidate.candidate_id,
+        activity,
+      })]);
+    } catch {
+      // Activity notifications are refresh hints; registry state remains authoritative.
+    }
+  }
 
   return freezeDeep({
     registry_version: BUILDER_CHECK_RUN_ACTIVITY_REGISTRY_VERSION,
+
+    read_candidate_activity(rawRequest) {
+      const request = safeReadRequest(rawRequest);
+      const existing = active.get(request.candidate_id) ?? null;
+      if (
+        existing !== null
+        && existing.current_candidate.project_id !== request.project_id
+      ) fail();
+      return freezeDeep({
+        result_version: 'builder-check-run-candidate-activity-result.v1',
+        project_id: request.project_id,
+        candidate_id: request.candidate_id,
+        activity: existing?.kind === 'check_run' ? 'check_run' : null,
+      });
+    },
 
     begin_check_run(rawRequest) {
       const request = exactObject(rawRequest, BEGIN_KEYS);
@@ -151,6 +203,7 @@ function createBuilderCheckRunActivityRegistry() {
         admission_id: admission.admission_id,
         current_candidate: candidate,
       }));
+      notify(candidate, 'check_run');
       return true;
     },
 
@@ -165,6 +218,7 @@ function createBuilderCheckRunActivityRegistry() {
         || !sameValue(existing.current_candidate, candidateFromAdmission(admission))
       ) fail();
       active.delete(admission.candidate_id);
+      notify(existing.current_candidate, null);
       return true;
     },
 

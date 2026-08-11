@@ -1277,7 +1277,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     const checkRunStatusService = createBuilderCheckRunStatusService({
       check_run_store: checkRunStore,
     });
-    const checkRunActivityRegistry = createBuilderCheckRunActivityRegistry();
+    const checkRunActivityRegistry = createBuilderCheckRunActivityRegistry({
+      on_activity_changed(event) {
+        publishTaskStreamChanged({
+          event_version: 'builder-task-stream-changed.v1',
+          project_id: event.project_id,
+        });
+      },
+    });
     const checkRunSaveGate = createBuilderCheckRunSaveGate({
       check_run_store: checkRunStore,
       activity_registry: checkRunActivityRegistry,
@@ -1335,6 +1342,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       providerContextDisclosureStatusService,
       automaticDraftCheckpointService,
       checkRunStatusService,
+      checkRunActivityRegistry,
     });
     const checkRunClock = Object.freeze({
       clock_version: 'builder-clock.v1',

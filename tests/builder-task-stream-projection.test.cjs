@@ -1743,6 +1743,7 @@ test('carries optional main-owned Review State without granting save authority',
   const stream = projectBuilderTaskStream({
     ...input(candidateEvents()),
     review_state_projection: reviewStateProjection(),
+    candidate_activity: 'check_run',
   });
 
   assert.equal(stream.review_state_projection.status, 'ready');
@@ -1750,6 +1751,8 @@ test('carries optional main-owned Review State without granting save authority',
   assert.equal(stream.review_state_projection.can_discard, true);
   assert.equal(stream.review_state_projection.checkpoint_status, 'ready');
   assert.equal(stream.review_state_projection.authority.save_authority, false);
+  assert.equal(stream.agent_activity_projection.current.phase, 'running_checks');
+  assert.equal(stream.agent_activity_projection.current.label, 'Running checks');
   assert.doesNotMatch(
     JSON.stringify(stream.review_state_projection),
     /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|provider_(?:secret|config|envelope)|credential|source_tree/iu,

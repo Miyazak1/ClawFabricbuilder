@@ -14,6 +14,7 @@ const INPUT_KEYS = Object.freeze([
   'active_turn_id',
   'latest_run',
   'review_state_projection',
+  'candidate_activity',
 ]);
 const LATEST_RUN_KEYS = Object.freeze([
   'turn_id',
@@ -100,6 +101,11 @@ const COPY = Object.freeze({
     status: 'active',
     label: 'Running local step',
     summary: 'Running an approved local project command.',
+  }),
+  running_checks: Object.freeze({
+    status: 'active',
+    label: 'Running checks',
+    summary: 'Checking the current draft before it is saved.',
   }),
   preparing_review: Object.freeze({
     status: 'active',
@@ -288,7 +294,8 @@ function completedPhase(run) {
   return 'finished';
 }
 
-function phaseFor(run, reviewStateProjection, activeTurnId) {
+function phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity) {
+  if (candidateActivity === 'check_run') return 'running_checks';
   if (reviewStateProjection !== null) {
     if (reviewStateProjection.status === 'ready') return 'ready_for_review';
     if (reviewStateProjection.blocking_reasons.includes('checkpoint_missing')) {
@@ -330,7 +337,9 @@ function projectBuilderAgentActivity(rawInput) {
       ? null
       : sanitizeBuilderReviewStateProjection(reviewStateRaw);
     if (reviewStateProjection !== null && run?.result_kind !== 'candidate') fail();
-    const phase = phaseFor(run, reviewStateProjection, activeTurnId);
+    const candidateActivity = safeNullable(valueAt(input, 'candidate_activity'), ['check_run']);
+    if (candidateActivity !== null && run?.result_kind !== 'candidate') fail();
+    const phase = phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity);
     const copy = COPY[phase];
     if (!copy) fail();
     const current = {
