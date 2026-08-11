@@ -20,6 +20,8 @@ const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-de
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
 const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v1';
+const ASK_MODE_INSTRUCTION = 'Make a timer.';
+const BUILD_MODE_INSTRUCTION = '这个文件夹是什么结构？';
 const SEMANTIC_PLAN_INSTRUCTION = '帮我做一个静态技术博客实施计划';
 const PLAN_MODE_INSTRUCTION = '我打算做一个技术博客，静态的，帮我做成计划';
 
@@ -104,6 +106,28 @@ async function approvePlanSourceReadIfRequested(page) {
   return true;
 }
 
+async function selectComposerMode(page, mode) {
+  const selector = mode === 'ask'
+    ? SELECTORS.composerAddAskMode
+    : mode === 'build'
+      ? SELECTORS.composerAddBuildMode
+      : SELECTORS.composerAddPlanMode;
+  await page.locator(SELECTORS.composerAddMenuButton).click();
+  const option = page.locator(selector);
+  await option.waitFor({ state: 'visible', timeout: 10_000 });
+  if (await option.isDisabled().catch(() => false)) fail(`${mode}_mode_disabled`);
+  await option.click();
+  await page.locator(`[data-builder-composer-mode-chip="${mode}"]`).
+    waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function clearComposerMode(page, mode) {
+  const chip = page.locator(`[data-builder-composer-mode-chip="${mode}"]`);
+  await chip.waitFor({ state: 'visible', timeout: 10_000 });
+  await page.locator(SELECTORS.composerClearMode).click();
+  await chip.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
 async function readCanaryDebugFile(userDataPath) {
   try {
     const debugPath = path.join(userDataPath, 'builder-canary-generation-debug.jsonl');
@@ -138,6 +162,84 @@ async function capturePlanModeDiagnostic(page, providerServer, userDataPath) {
     save_version_visible: await optionalVisible(page, SELECTORS.saveVersion),
     provider_requests: providerServer.snapshot(),
     canary_generation_debug: await readCanaryDebugFile(userDataPath),
+  });
+}
+
+function countProviderRequests(providerRequests, responseKind) {
+  return providerRequests.filter((request) => request.response_kind === responseKind).length;
+}
+
+async function verifyAskModePersistentAndClear(page, providerServer) {
+  const before = providerServer.snapshot();
+  const answersBefore = await page.locator(SELECTORS.questionAnswer).count().catch(() => 0);
+  await selectComposerMode(page, 'ask');
+  await page.locator(SELECTORS.idea).fill(ASK_MODE_INSTRUCTION);
+  await waitForSubmitEnabled(page, 'ask_mode_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  await page.locator(SELECTORS.questionAnswer).nth(answersBefore).
+    waitFor({ state: 'visible', timeout: 120_000 });
+  const composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+  const composerDispatch = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-dispatch');
+  const composerSignals = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-signals');
+  const after = providerServer.snapshot();
+  if (
+    composerRoute !== 'answer'
+    || composerDispatch !== 'reply'
+    || composerSignals !== 'composer_mode_ask'
+  ) {
+    fail('ask_mode_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
+  }
+  if (countProviderRequests(after, 'builder_semantic_route_classification')
+    !== countProviderRequests(before, 'builder_semantic_route_classification')) {
+    fail('ask_mode_spent_semantic_classifier', { provider_requests: after });
+  }
+  await page.locator('[data-builder-composer-mode-chip="ask"]').
+    waitFor({ state: 'visible', timeout: 10_000 });
+  await clearComposerMode(page, 'ask');
+  return Object.freeze({
+    ask_answer_observed: true,
+    ask_mode_persisted_until_cleared: true,
+    ask_mode_skipped_classifier: true,
+  });
+}
+
+async function verifyBuildModePersistentAndClear(page, providerServer) {
+  const before = providerServer.snapshot();
+  await selectComposerMode(page, 'build');
+  await page.locator(SELECTORS.idea).fill(BUILD_MODE_INSTRUCTION);
+  await waitForSubmitEnabled(page, 'build_mode_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  await page.locator(SELECTORS.currentProjectWriteApproval).
+    waitFor({ state: 'visible', timeout: 30_000 });
+  const composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
+  const composerDispatch = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-dispatch');
+  const composerSignals = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-signals');
+  const after = providerServer.snapshot();
+  if (
+    composerRoute !== 'build'
+    || composerDispatch !== 'ask_permission'
+    || composerSignals !== 'composer_mode_build'
+  ) {
+    fail('build_mode_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
+  }
+  if (countProviderRequests(after, 'builder_semantic_route_classification')
+    !== countProviderRequests(before, 'builder_semantic_route_classification')) {
+    fail('build_mode_spent_semantic_classifier', { provider_requests: after });
+  }
+  await page.locator('[data-builder-composer-mode-chip="build"]').
+    waitFor({ state: 'visible', timeout: 10_000 });
+  await page.locator(SELECTORS.dismissCurrentProjectWriteApproval).click();
+  await page.locator(SELECTORS.currentProjectWriteApproval).
+    waitFor({ state: 'hidden', timeout: 30_000 });
+  await clearComposerMode(page, 'build');
+  return Object.freeze({
+    build_mode_persisted_until_cleared: true,
+    build_mode_requested_write_approval: true,
+    build_mode_skipped_classifier: true,
   });
 }
 
@@ -247,20 +349,16 @@ async function run() {
     }), gate);
     await clickByRole(page, 'button', 'New project');
     await bindNewProjectWorkspace(page);
+    const askMode = await verifyAskModePersistentAndClear(page, providerServer);
     const semanticPlan = await verifyNaturalLanguagePlanAndReject(
       page,
       providerServer,
       userDataPath,
     );
+    const buildMode = await verifyBuildModePersistentAndClear(page, providerServer);
     await page.locator(SELECTORS.idea).fill(PLAN_MODE_INSTRUCTION);
     await waitForSubmitEnabled(page, 'manual_plan_before_mode_select');
-    await page.locator(SELECTORS.composerAddMenuButton).click();
-    const planMode = page.locator(SELECTORS.composerAddPlanMode);
-    await planMode.waitFor({ state: 'visible', timeout: 10_000 });
-    if (await planMode.isDisabled()) fail('plan_mode_disabled');
-    await planMode.click();
-    await page.locator('[data-builder-composer-mode-chip="plan"]').
-      waitFor({ state: 'visible', timeout: 10_000 });
+    await selectComposerMode(page, 'plan');
     await waitForSubmitEnabled(page, 'manual_plan_after_mode_select');
     await page.locator(SELECTORS.submitTurn).click();
     const approvedSourceRead = await approvePlanSourceReadIfRequested(page);
@@ -297,6 +395,12 @@ async function run() {
       executable_path: executablePath,
       instruction_digest: `sha256:${require('node:crypto').
         createHash('sha256').update(PLAN_MODE_INSTRUCTION).digest('hex')}`,
+      ask_mode_answer_observed: askMode.ask_answer_observed,
+      ask_mode_persisted_until_cleared: askMode.ask_mode_persisted_until_cleared,
+      ask_mode_skipped_classifier: askMode.ask_mode_skipped_classifier,
+      build_mode_persisted_until_cleared: buildMode.build_mode_persisted_until_cleared,
+      build_mode_requested_write_approval: buildMode.build_mode_requested_write_approval,
+      build_mode_skipped_classifier: buildMode.build_mode_skipped_classifier,
       plan_mode_enabled: true,
       plan_mode_chip_visible: true,
       semantic_classifier_observed: semanticPlan.semantic_classifier_observed,
