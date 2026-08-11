@@ -3,6 +3,8 @@ import { act, createRef, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createSourceTree, PROJECT_ID } from '../../../test/builderV2Fixtures';
+import { createBuilderSourceTreePreview } from '../preview/builderSourceTreePreview';
 import { BuilderResultPanel } from './BuilderResultPanel';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,6 +70,30 @@ describe('BuilderResultPanel', () => {
     expect(expand?.closest('[data-builder-result-placement="artifact"]')).not.toBeNull();
     act(() => expand?.click());
     expect(onExpandPreview).toHaveBeenCalledOnce();
+  });
+
+  it('keeps routine static preview explanation out of the artifact result panel', async () => {
+    const projection = await createBuilderSourceTreePreview({
+      project_id: PROJECT_ID,
+      title: 'Focus timer',
+      source_tree: await createSourceTree([
+        { path: 'index.html', content: '<main><h1>Focus timer</h1><script src="./app.js"></script></main>\n' },
+        { path: 'styles.css', content: 'h1 { color: #15221f; }\n' },
+        { path: 'app.js', content: 'document.body.dataset.ready = "true";\n' },
+      ]),
+    });
+
+    const container = render(
+      <BuilderResultPanel
+        placement="artifact"
+        projection={projection}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-preview-limitation="true"]')).toBeNull();
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(container.textContent).not.toContain('HTML and CSS are shown here');
+    expect(container.textContent).not.toContain('JavaScript is disabled');
   });
 
   it('keeps unavailable live preview secondary and disabled without replacing static preview', () => {

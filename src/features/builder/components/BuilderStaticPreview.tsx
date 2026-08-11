@@ -6,6 +6,7 @@ import {
 
 export type BuilderStaticPreviewProps = {
   projection: BuilderSourceTreePreviewProjection | unknown;
+  showReadablePreviewNotice?: boolean;
 };
 
 function limitationText(limitation: BuilderSourceTreePreviewRuntimeLimitation): string {
@@ -41,7 +42,10 @@ function shouldShowRuntimeUnavailable(projection: BuilderSourceTreePreviewProjec
   return projection.preview_runtime_limitations.some((limitation) => limitation !== 'javascript_removed');
 }
 
-export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) {
+export function BuilderStaticPreview({
+  projection,
+  showReadablePreviewNotice = true,
+}: BuilderStaticPreviewProps) {
   if (!isTrustedBuilderSourceTreePreviewProjection(projection)) {
     return (
       <section
@@ -96,7 +100,7 @@ export function BuilderStaticPreview({ projection }: BuilderStaticPreviewProps) 
         </section>
       ) : (
         <>
-          {projection.preview_script_admission === 'not_authorized' ? (
+          {showReadablePreviewNotice && projection.preview_script_admission === 'not_authorized' ? (
             <section
               aria-label="Static preview limitation"
               className="cf-builder-preview-runtime-notice"

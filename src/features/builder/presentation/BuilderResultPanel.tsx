@@ -178,7 +178,10 @@ export function BuilderResultPanel({
             </p>
           </section>
         ) : (
-          <BuilderStaticPreview projection={projection} />
+          <BuilderStaticPreview
+            projection={projection}
+            showReadablePreviewNotice={placement !== 'artifact'}
+          />
         )}
       </div>
     </section>

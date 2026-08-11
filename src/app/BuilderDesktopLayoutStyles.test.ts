@@ -378,6 +378,8 @@ describe('Builder desktop layout styles', () => {
     expect(previewCard).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(previewBody).toContain('overflow: auto;');
     expect(previewFrame).toContain('min-height: clamp(420px, calc(100vh - 220px), 760px);');
+    expect(styleBlock(source, '.cf-builder-artifact-preview-card :where(.cf-builder-preview-runtime-notice)'))
+      .toContain('grid-template-columns: minmax(0, 1fr);');
     expect(source).not.toContain('.cf-builder-draft-landing .cf-builder-static-preview .cf-builder-preview-frame');
   });
 

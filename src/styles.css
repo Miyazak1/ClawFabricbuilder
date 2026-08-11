@@ -1887,8 +1887,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-artifact-preview-card :where(.cf-builder-preview-runtime-notice) {
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
   gap: 6px 8px;
   padding: 6px 8px;
 }
