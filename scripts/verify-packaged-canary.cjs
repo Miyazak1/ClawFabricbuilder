@@ -14,6 +14,12 @@ const {
 const {
   sanitizeBuilderReviewStateProjection,
 } = require('../electron/builder-review-state-projection.cjs');
+const {
+  sanitizeBuilderCheckRunOutcomeProjection,
+} = require('../electron/builder-check-run-outcome-projection.cjs');
+const {
+  sanitizeBuilderAgentActivityProjection,
+} = require('../electron/builder-agent-activity-projection.cjs');
 
 const CANARY_INPUT_VERSION = 'builder-packaged-canary-input.v1';
 const CANARY_RESULT_VERSION = 'builder-packaged-canary-result.v21';
@@ -532,6 +538,8 @@ const TASK_STREAM_OPTIONAL_KEYS = Object.freeze([
   'provider_context_disclosure_status_projection',
   'draft_checkpoint_status_projection',
   'review_state_projection',
+  'check_run_outcome_projection',
+  'agent_activity_projection',
 ]);
 const TASK_STREAM_AUTHORITY_KEYS = Object.freeze([
   'candidate_source',
@@ -4362,6 +4370,43 @@ function sanitizeTaskStream(value, expectedProjectId) {
   const conversation = descriptors.conversation.value === null
     ? null
     : sanitizeTaskStreamConversation(descriptors.conversation.value, projectId);
+  const checkRunOutcomeProjection = Object.hasOwn(descriptors, 'check_run_outcome_projection')
+    ? descriptors.check_run_outcome_projection.value === null
+      ? null
+      : sanitizeBuilderCheckRunOutcomeProjection(
+        descriptors.check_run_outcome_projection.value,
+      )
+    : undefined;
+  const agentActivityProjection = Object.hasOwn(descriptors, 'agent_activity_projection')
+    ? descriptors.agent_activity_projection.value === null
+      ? null
+      : sanitizeBuilderAgentActivityProjection(descriptors.agent_activity_projection.value)
+    : undefined;
+  if (
+    (agentActivityProjection === null && conversation !== null)
+    || (
+      agentActivityProjection !== undefined
+      && agentActivityProjection !== null
+      && (
+        conversation === null
+        || agentActivityProjection.project_id !== projectId
+        || agentActivityProjection.conversation_id !== conversation.conversation_id
+        || agentActivityProjection.head_sequence !== conversation.head_sequence
+      )
+    )
+  ) fail('canary_evidence_failed');
+  const reviewStateProjection = Object.hasOwn(descriptors, 'review_state_projection')
+    ? descriptors.review_state_projection.value === null
+      ? null
+      : sanitizeBuilderReviewStateProjection(descriptors.review_state_projection.value)
+    : undefined;
+  if (
+    reviewStateProjection !== undefined
+    && reviewStateProjection !== null
+    && checkRunOutcomeProjection !== undefined
+    && checkRunOutcomeProjection !== null
+    && reviewStateProjection.check_status !== checkRunOutcomeProjection.status
+  ) fail('canary_evidence_failed');
   return Object.freeze({
     authority: Object.freeze({
       candidate_source: 'not_loaded',
@@ -4394,16 +4439,15 @@ function sanitizeTaskStream(value, expectedProjectId) {
             ),
       }
       : {}),
-    ...(Object.hasOwn(descriptors, 'review_state_projection')
-      ? {
-        review_state_projection:
-          descriptors.review_state_projection.value === null
-            ? null
-            : sanitizeBuilderReviewStateProjection(
-              descriptors.review_state_projection.value,
-            ),
-      }
-      : {}),
+    ...(reviewStateProjection === undefined
+      ? {}
+      : { review_state_projection: reviewStateProjection }),
+    ...(checkRunOutcomeProjection === undefined
+      ? {}
+      : { check_run_outcome_projection: checkRunOutcomeProjection }),
+    ...(agentActivityProjection === undefined
+      ? {}
+      : { agent_activity_projection: agentActivityProjection }),
     project_id: projectId,
     stream_version: streamVersion,
   });
@@ -5569,6 +5613,31 @@ function sameCatalogProjectRevision(left, right) {
     && left.revision_receipt_digest === right.revision_receipt_digest
     && left.commit_oid === right.commit_oid
     && left.tree_oid === right.tree_oid;
+}
+
+function taskStreamCheckpointDiagnostic(evidence, checkpoint) {
+  const stream = evidence?.task_stream ?? null;
+  const conversation = stream?.conversation ?? null;
+  const counts = conversation?.item_facts?.counts ?? null;
+  return Object.freeze({
+    checkpoint,
+    current_revision_number: evidence?.current?.product_revision_receipt?.revision_number ?? null,
+    conversation_present: conversation !== null,
+    conversation_item_count: conversation?.item_count ?? null,
+    conversation_head_sequence: conversation?.head_sequence ?? null,
+    active_turn_present: conversation?.recorded_active_turn_id !== null,
+    candidate_ready_count: counts?.candidate_ready_count ?? null,
+    candidate_reviewed_count: counts?.candidate_reviewed_count ?? null,
+    run_completed_count: counts?.run_completed_count ?? null,
+    turn_completed_count: counts?.turn_completed_count ?? null,
+    check_state: stream?.check_run_outcome_projection?.state ?? null,
+    check_status: stream?.check_run_outcome_projection?.status ?? null,
+    review_status: stream?.review_state_projection?.status ?? null,
+    review_check_status: stream?.review_state_projection?.check_status ?? null,
+    review_can_save: stream?.review_state_projection?.can_save ?? null,
+    activity_phase: stream?.agent_activity_projection?.current?.phase ?? null,
+    activity_status: stream?.agent_activity_projection?.current?.status ?? null,
+  });
 }
 
 function exactRevisionFromReadEvidence(evidence, expectedProject) {
@@ -6746,14 +6815,40 @@ async function runPackagedCanary(rawInput, options = {}) {
       userDataRoot,
       fsModule,
     );
-    const pendingUpdateEvidence = await readSanitizedBridgeEvidence(
-      page,
-      initialProject.project_id,
-      'canary_read_evidence_pending_update_failed',
-    );
-    const pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
-    if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
-    const pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(pendingUpdateEvidence, initialRevision, 2, 0);
+    let pendingUpdateEvidence = null;
+    let pendingUpdateProject = null;
+    let pendingUpdateTaskStream;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        pendingUpdateEvidence = await readSanitizedBridgeEvidence(
+          page,
+          initialProject.project_id,
+          'canary_read_evidence_pending_update_failed',
+        );
+        pendingUpdateProject = projectFromReadEvidence(pendingUpdateEvidence, 1);
+        if (!sameCatalogProjectRevision(pendingUpdateProject, initialProject)) fail('canary_evidence_failed');
+        pendingUpdateTaskStream = assertTaskStreamPendingCandidateFacts(
+          pendingUpdateEvidence,
+          initialRevision,
+          2,
+          0,
+        );
+        break;
+      } catch (error) {
+        if (attempt < 7) {
+          if (typeof page.waitForTimeout === 'function') await page.waitForTimeout(100);
+          else await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+        if (error instanceof BuilderPackagedCanaryError) {
+          error.diagnostic = taskStreamCheckpointDiagnostic(
+            pendingUpdateEvidence,
+            'pending_update_task_stream',
+          );
+        }
+        throw error;
+      }
+    }
     const pendingUpdatePreviewEvidence = await capturePreviewEvidence(page, gate);
     if (!staticPreviewSrcdocChanged(pendingUpdatePreviewEvidence, initialPreviewEvidence)) {
       failWithDiagnostic(

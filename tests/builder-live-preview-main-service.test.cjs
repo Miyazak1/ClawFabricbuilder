@@ -206,6 +206,14 @@ function fixture(options = {}) {
 test('starts a live preview browser from main-owned source and attaches it to requested bounds', async (t) => {
   const selected = fixture();
   t.after(async () => { await selected.service.shutdown(); });
+  assert.deepEqual(Reflect.ownKeys(selected.service), [
+    'service_version',
+    'request_current_draft_live_preview',
+    'reload_current_live_preview',
+    'stop_current_live_preview',
+    'read_current_live_preview_status',
+    'shutdown',
+  ]);
   const result = await selected.service.request_current_draft_live_preview(request());
 
   assert.equal(result.status, 'ready');

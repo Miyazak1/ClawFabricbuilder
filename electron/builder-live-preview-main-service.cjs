@@ -197,23 +197,6 @@ function statusProjection(request, status, updatedAtMs, unavailableReason = null
   });
 }
 
-function serviceUnavailableStatus(request, nowMs) {
-  return freezeDeep({
-    status_version: 'builder-live-preview-status-projection.v1',
-    project_id: request.project_id,
-    conversation_id: request.conversation_id,
-    preview_kind: 'live_static_web',
-    status: 'unavailable',
-    can_start: false,
-    can_reload: false,
-    can_stop: false,
-    message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
-    unavailable_reason: 'preview_source_resolver_not_connected',
-    updated_at_ms: nowMs,
-    authority: AUTHORITY,
-  });
-}
-
 function sanitizeSourceResult(rawValue, request) {
   const value = exactObject(rawValue, SOURCE_RESULT_KEYS);
   if (
@@ -383,9 +366,6 @@ function createBuilderLivePreviewMainService(rawOptions) {
       await stopActive();
       await disposeRuntime();
       return freezeDeep({ shutdown: true });
-    },
-    unavailable_status(rawRequest) {
-      return serviceUnavailableStatus(safeRequest(rawRequest), safeTimestamp(nowMs()));
     },
   });
 }

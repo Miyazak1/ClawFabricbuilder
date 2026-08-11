@@ -3441,6 +3441,65 @@ test('preserves fixed read-evidence substages without exposing bridge details', 
   );
 });
 
+test('accepts current check outcome and agent activity task stream projections', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = bridgeEvidence(projectId, true, 1, 1, 0);
+  const conversation = evidence.task_stream.conversation;
+  const revision = evidence.current.product_revision_receipt;
+  evidence.task_stream.check_run_outcome_projection = {
+    projection_version: 'builder-check-run-outcome-projection.v1',
+    state: 'not_run',
+    command_kind: null,
+    command_label: null,
+    status: 'not_run',
+    label: 'Not checked',
+    summary: 'No project check has been recorded for this draft.',
+    completed_at_ms: null,
+    authority: {
+      projection_authority: 'main_owned_check_run_outcome_projection_v1',
+      fact_source: 'verified_absence',
+      raw_output: 'not_present',
+      runtime_paths: 'not_present',
+      renderer_authority: 'read_only_projection',
+      save_authority: false,
+    },
+  };
+  evidence.task_stream.agent_activity_projection = {
+    projection_version: 'builder-agent-activity-projection.v1',
+    project_id: projectId,
+    conversation_id: conversation.conversation_id,
+    head_sequence: conversation.head_sequence,
+    current: {
+      phase: 'finished',
+      status: 'complete',
+      label: 'Finished',
+      summary: 'This work is complete.',
+      turn_id: revision.turn_id,
+      run_id: revision.run_id,
+    },
+    authority: {
+      projection_authority: 'main_owned_agent_activity_projection_v1',
+      fact_source: 'recorded_activity',
+      consumer_role: 'read_only',
+      side_effect_authority: 'none',
+    },
+  };
+
+  const sanitized = assertReadEvidence(evidence, 'canary_read_evidence_initial_current_failed');
+  assert.equal(sanitized.task_stream.check_run_outcome_projection.state, 'not_run');
+  assert.equal(sanitized.task_stream.agent_activity_projection.current.phase, 'finished');
+
+  const tampered = bridgeEvidence(projectId, true, 1, 1, 0);
+  tampered.task_stream.agent_activity_projection = {
+    ...evidence.task_stream.agent_activity_projection,
+    head_sequence: conversation.head_sequence + 1,
+  };
+  assert.throws(
+    () => assertReadEvidence(tampered, 'canary_read_evidence_initial_current_failed'),
+    (error) => error.code === 'canary_read_evidence_initial_current_task_stream_failed',
+  );
+});
+
 test('preserves initial-current read-evidence component substages', () => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const currentFailure = bridgeEvidence(projectId, true, 1, 1, 0);
