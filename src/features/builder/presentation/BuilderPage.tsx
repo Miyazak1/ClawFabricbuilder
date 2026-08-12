@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -11,9 +12,12 @@ import {
 } from 'react';
 import {
   AlertCircle,
+  ArrowLeft,
+  ArrowRight,
   Bot,
   ChevronDown,
   CheckCircle2,
+  Download,
   Eye,
   FileCode2,
   FolderOpen,
@@ -23,6 +27,7 @@ import {
   LockKeyhole,
   Menu,
   Minimize2,
+  MoreVertical,
   PanelRightClose,
   PanelRightOpen,
   Play,
@@ -1736,6 +1741,11 @@ function sideWorkspaceFileDisplayName(path: string | null): string {
   return path.split('/').filter(Boolean).at(-1) ?? path;
 }
 
+function sideWorkspaceFileBreadcrumb(path: string | null): readonly string[] {
+  if (path === null || path.trim().length === 0) return [];
+  return path.split('/').filter(Boolean);
+}
+
 function firstTextFileEntry(
   tree: BuilderSideWorkspaceFileTreeProjection | null,
 ): Extract<BuilderSideWorkspaceFileTreeEntry, { entry_kind: 'text_file' }> | null {
@@ -1790,6 +1800,7 @@ function BuilderArtifactFilesPanel({
   const fileCount = projection?.entries.filter((entry) => entry.entry_kind === 'text_file').length ?? 0;
   const selectedPath = content?.path ?? projection?.selected_file_ref?.path ?? firstFile?.path ?? null;
   const selectedName = sideWorkspaceFileDisplayName(selectedPath);
+  const breadcrumb = sideWorkspaceFileBreadcrumb(selectedPath);
   return (
     <section
       aria-label="Project files"
@@ -1799,16 +1810,26 @@ function BuilderArtifactFilesPanel({
     >
       <div className="cf-builder-artifact-files-toolbar">
         <div className="cf-builder-artifact-files-path">
+          <nav
+            aria-label="Selected file path"
+            className="cf-builder-artifact-files-breadcrumb"
+            data-builder-side-workspace-file-breadcrumb="true"
+          >
+            <span aria-label="Project root">/</span>
+            {breadcrumb.map((part, index) => (
+              <Fragment key={`${part}:${index}`}>
+                {index > 0 ? (
+                  <span aria-hidden="true" className="cf-builder-artifact-files-breadcrumb-separator">
+                    /
+                  </span>
+                ) : null}
+                <span data-builder-side-workspace-file-breadcrumb-part="true">
+                  {part}
+                </span>
+              </Fragment>
+            ))}
+          </nav>
           <strong>{selectedName}</strong>
-          <span>
-            {selectedPath ?? (
-              projection === null
-                ? treeStatus === 'loading'
-                  ? 'Loading files from the current draft.'
-                  : 'Files are unavailable for this view.'
-                : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}.`
-            )}
-          </span>
         </div>
         <span className="cf-builder-artifact-files-count">
           {projection === null
@@ -1894,6 +1915,59 @@ function BuilderArtifactFilesPanel({
         </aside>
       </div>
     </section>
+  );
+}
+
+function BuilderSideWorkspaceBrowserToolbar({
+  livePreviewStatus,
+  onReloadLivePreview,
+}: Readonly<{
+  livePreviewStatus: BuilderLivePreviewStatusProjection | null;
+  onReloadLivePreview?: () => Promise<unknown> | void;
+}>) {
+  const canReload = typeof onReloadLivePreview === 'function' && livePreviewStatus?.can_reload === true;
+  const addressLabel = livePreviewStatus?.status === 'ready'
+    ? 'Project live preview'
+    : 'Project preview';
+  return (
+    <div
+      aria-label="Browser preview controls"
+      className="cf-builder-side-workspace-browser-toolbar"
+      data-builder-side-workspace-browser-toolbar="true"
+    >
+      <span className="cf-builder-side-workspace-browser-nav" aria-label="Browser navigation">
+        <button aria-label="Back" disabled title="Back" type="button">
+          <ArrowLeft aria-hidden="true" className="size-3.5" />
+        </button>
+        <button aria-label="Forward" disabled title="Forward" type="button">
+          <ArrowRight aria-hidden="true" className="size-3.5" />
+        </button>
+        <button
+          aria-label="Reload preview"
+          disabled={!canReload}
+          onClick={() => { void onReloadLivePreview?.(); }}
+          title={canReload ? 'Reload preview' : 'Reload preview unavailable'}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className="size-3.5" />
+        </button>
+      </span>
+      <div
+        aria-label="Preview address"
+        className="cf-builder-side-workspace-browser-address"
+        data-builder-side-workspace-browser-address="true"
+      >
+        <span>{addressLabel}</span>
+      </div>
+      <span className="cf-builder-side-workspace-browser-tools" aria-label="Browser tools">
+        <button aria-label="Downloads unavailable" disabled title="Downloads unavailable" type="button">
+          <Download aria-hidden="true" className="size-3.5" />
+        </button>
+        <button aria-label="Browser menu unavailable" disabled title="Browser menu unavailable" type="button">
+          <MoreVertical aria-hidden="true" className="size-3.5" />
+        </button>
+      </span>
+    </div>
   );
 }
 
@@ -2456,17 +2530,27 @@ function BuilderArtifactSidebar({
       </header>
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'preview' ? (
-          <BuilderResultPanel
-            livePreviewOperation={livePreviewOperation}
-            livePreviewStatus={livePreviewStatus}
-            onExpandPreview={onExpandPreview}
-            onReloadLivePreview={onReloadLivePreview}
-            onRequestLivePreview={onRequestLivePreview}
-            onStopLivePreview={onStopLivePreview}
-            panelRef={previewPanelRef}
-            placement="artifact"
-            projection={preview}
-          />
+          <section
+            aria-label="Browser preview workspace"
+            className="cf-builder-side-workspace-browser"
+            data-builder-side-workspace-browser="true"
+          >
+            <BuilderSideWorkspaceBrowserToolbar
+              livePreviewStatus={livePreviewStatus}
+              onReloadLivePreview={onReloadLivePreview}
+            />
+            <BuilderResultPanel
+              livePreviewOperation={livePreviewOperation}
+              livePreviewStatus={livePreviewStatus}
+              onExpandPreview={onExpandPreview}
+              onReloadLivePreview={onReloadLivePreview}
+              onRequestLivePreview={onRequestLivePreview}
+              onStopLivePreview={onStopLivePreview}
+              panelRef={previewPanelRef}
+              placement="artifact"
+              projection={preview}
+            />
+          </section>
         ) : null}
         {activeTab === 'changes' ? (
           <div className="cf-builder-artifact-changes" data-builder-changes-flow="true">

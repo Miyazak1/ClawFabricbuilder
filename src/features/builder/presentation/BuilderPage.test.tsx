@@ -3194,6 +3194,10 @@ describe('BuilderPage v2', () => {
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')
       ?.getAttribute('data-builder-side-workspace-tab-kind'))
       .toBe('browser');
+    expect(artifactSidebar?.querySelector('[data-builder-side-workspace-browser-toolbar="true"]'))
+      .not.toBeNull();
+    expect(artifactSidebar?.querySelector('[data-builder-side-workspace-browser-address="true"]')?.textContent)
+      .toContain('Project preview');
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')).toBeNull();
     expect(sideWorkspaceTabs?.textContent).toContain('Preview');
@@ -3473,6 +3477,8 @@ describe('BuilderPage v2', () => {
     expect(filesPanel?.textContent).toContain('App.tsx');
     expect(filesPanel?.textContent).toContain('styles.css');
     expect(filesPanel?.textContent).toContain('export function App()');
+    expect(filesPanel?.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
+      .toContain('/src/App.tsx');
     expect(filesPanel?.querySelector('[data-builder-side-workspace-file-kind="directory"]')?.textContent)
       .toContain('src');
     expect(onRequestSideWorkspaceFiles).toHaveBeenCalled();
@@ -5156,6 +5162,8 @@ describe('BuilderPage v2', () => {
       .toBe('source');
     expect(container.querySelector('[data-builder-side-workspace-file-entry="src/tool.py"]')?.getAttribute('data-active'))
       .toBe('true');
+    expect(container.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
+      .toContain('/src/tool.py');
     expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
