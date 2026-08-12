@@ -630,12 +630,27 @@ silently becoming an apparently saveable `Not checked` draft. The Task Stream
 and renderer receive no CheckRun id, candidate id, digest, output, path, or Save
 authority.
 
-This checkpoint does not yet claim a complete desktop CheckRun workflow. Main
-and renderer contracts, approval controls, status recovery, and packaged
-verification assertions now exist. Explicit durable skip evidence, richer
-environment-readiness projection, bounded diagnostic evidence for
-FailureTriage, and a fresh real packaged release canary remain required before
-Slice 6 is product-complete.
+Explicit `Skip check` is now a durable candidate-bound decision, not a
+renderer-only convenience. `builder-check-skip-decision.v1`,
+`builder-check-skip-decision-store.v1`, and
+`builder-check-skip-current-draft-service.v1` record/replay the owner decision
+only after main verifies the current candidate, active activity guard, absence
+of a CheckRun for that candidate, and the current DraftCheckpoint. The
+CheckRun status service, ReviewState, SaveGate, IPC adapter/runtime, preload,
+renderer port, and Review Workspace all consume the same fixed `skipped`
+projection. Save admission may therefore allow an explicit skip while still
+blocking a merely unchecked draft.
+
+The latest packaged release checkpoint also proves the desktop CheckRun path:
+`verify:release` runs lint, unit tests, boundary tests, package verification,
+packaged launch smoke, and the packaged provider canary. The canary covers a
+discovered `npm test` check, main-selected CommandProfile approval, packaged
+runtime execution, visible CheckRun status, Save gate behavior, restart
+recovery, and hidden internal evidence.
+
+Remaining Slice 6 gaps are narrower: richer environment-readiness projection,
+bounded diagnostic evidence for FailureTriage, explicit cancellation controls,
+and repair-loop input remain later checkpoints.
 
 ## Slice 7: Save Version And Restart Recovery Canary
 

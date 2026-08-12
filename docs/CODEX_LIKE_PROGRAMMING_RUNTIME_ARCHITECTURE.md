@@ -991,6 +991,14 @@ Evidence:
 - failed check output summary;
 - repair feedback projection.
 
+Current checkpoint: CheckRun MVP now has main-owned current-draft approval,
+candidate-bound execution admission, bounded packaged npm-script runtime,
+immutable CheckRun v2 facts, explicit durable skip evidence, ReviewState/Save
+gate integration, renderer-safe status/outcome projection, and packaged release
+canary coverage for a discovered `npm test` check. The runtime still does not
+claim arbitrary terminal authority, dependency installation, networked command
+execution, or provider-suggested shell execution.
+
 ### Slice P4: Repair Loop MVP
 
 Allow one bounded repair attempt after a failed CheckRun.

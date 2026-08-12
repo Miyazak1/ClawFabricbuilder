@@ -2107,14 +2107,30 @@ Required boundaries:
 - canary evidence proves JavaScript execution, nonblank WebGL/canvas pixels,
   screenshot capture, console/error capture, and restart recovery.
 
-Current LP5 checkpoint:
+Current LP5c checkpoint:
 
 - `livePreview` preload/IPC/status bridge is available with exact
   `{ project_id, conversation_id }` requests;
 - Preview panel has `Static` / `Live` mode and Live start/reload/stop controls;
 - renderer does not upload `source_tree`, HTML, paths, URLs, or view/session ids;
-- until a main-owned preview source resolver and WebContentsView attachment are
-  connected, Live mode must show unavailable instead of claiming execution.
+- main resolves current draft source through the current ReviewState,
+  DraftCheckpoint, verified Git candidate, source resolver, and source
+  admission chain before starting preview;
+- Live Preview starts a main-owned read-only loopback static server and an
+  isolated `WebContentsView` attachment for the current draft;
+- status/evidence remains renderer-safe: no raw source tree, HTML, filesystem
+  path, server URL, command handle, provider body, or mutation authority is
+  exposed to the renderer;
+- the packaged Live Preview canary is independent from `verify:release` and
+  currently proves browser startup, loopback WebContents observation,
+  JavaScript execution, nonblank canvas evidence, reload readiness, blocked
+  external fetch/navigation/window-open attempts, visible block counts, static
+  fallback before Live, and WebContents disposal on stop.
+
+LP6 remains the next release-track decision: either promote a packaged live
+preview canary into a broader release gate after more runtime/restart coverage,
+or keep it as an independent post-MVP evidence track while the MVP programming
+loop prioritizes CheckRun, Review, Save, and repair-loop maturity.
 
 ### Gate R3 - Live Preview V2: Dev Server Adapters
 
