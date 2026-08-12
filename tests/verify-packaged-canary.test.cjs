@@ -29,6 +29,7 @@ const {
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
+  assertNoManualProjectCheckControlsViaUi,
   askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
   askRejectedPlanContextualSubmitViaUi,
@@ -194,6 +195,7 @@ function automaticCheckRunEvidence() {
   return {
     agent_ran_check_automatically: true,
     command_profile_selected_by_main: true,
+    manual_check_controls_hidden: true,
     packaged_runtime_executed: true,
     status: 'passed',
   };
@@ -441,6 +443,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.skipCheck) {
       return this.page.unsavedDraftVisible && this.page.checkRunStatus === 'not_run';
     }
+    if (this.selector === SELECTORS.runCheck) return false;
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
       return this.page.unsavedDraftVisible;
     }
@@ -819,6 +822,7 @@ class FakePage {
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
     this.versionHistoryVisible = true;
+    this.visibleButtonTextsOverride = null;
     this.previewFrameBodyFailuresRemaining = 0;
     this.previewFrameBodyTextOverride = null;
     this.projectStatus = 'ready';
@@ -990,6 +994,9 @@ class FakePage {
 
   async evaluate(callback, argument) {
     this.events.push(['evaluate', callback.toString(), argument]);
+    if (callback.toString().includes("querySelectorAll('button')")) {
+      return this.visibleButtonTextsOverride ?? [];
+    }
     return callback({
       projectId: argument.projectId,
     });
@@ -2671,7 +2678,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
   assert.equal(evidence.status.configured, true);
   assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v27');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
-  const source = evaluateEvents[0][1];
+  const source = evaluateEvents.find((event) => event[1].includes('providerSettings.status'))?.[1] ?? '';
   assert.match(source, /providerSettings\.status/u);
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
@@ -2712,6 +2719,30 @@ test('runs the main-selected project check before saving Version 1', async (t) =
       && event[1] === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
   );
   assert.ok(passedStatusWait >= 0 && passedStatusWait < saveClick);
+  assert.equal(page.events.some((event) => event[0] === 'click' && event[1] === SELECTORS.skipCheck), false);
+});
+
+test('fails closed if packaged UI exposes manual project check controls', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.checkRunStatus = 'not_run';
+
+  await assert.rejects(
+    () => assertNoManualProjectCheckControlsViaUi(page),
+    (error) => error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_manual_check_controls_visible'
+      && error.stage === 'manual_check_controls',
+  );
+  assert.equal(page.events.some((event) => event[0] === 'click' && event[1] === SELECTORS.skipCheck), false);
+
+  const textLeak = new FakePage();
+  textLeak.visibleButtonTextsOverride = ['Run npm test'];
+  await assert.rejects(
+    () => assertNoManualProjectCheckControlsViaUi(textLeak),
+    (error) => error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_manual_check_controls_visible'
+      && error.diagnostic.visible_buttons.includes('Run npm test'),
+  );
 });
 
 test('approves current project write gate before waiting for draft output', async (t) => {

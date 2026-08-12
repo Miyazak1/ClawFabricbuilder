@@ -147,6 +147,7 @@ const SELECTORS = Object.freeze({
   reviewOpenPreview: '[data-builder-review-open-preview="true"]',
   reviewSummary: '[data-builder-review-summary="true"]',
   reviewTitle: '[data-builder-review-title="true"]',
+  runCheck: '[data-builder-run-check]',
   skipCheck: '[data-builder-skip-check="true"]',
   checkRunStatus: '[data-builder-check-run-status]',
   saveVersion: '[data-builder-save-version="true"]',
@@ -245,6 +246,7 @@ const ERROR_MESSAGES = Object.freeze({
   canary_review_diff_checkpoint_text_stack_failed: 'Packaged canary review checkpoint text layout failed.',
   canary_review_diff_text_failed: 'Packaged canary review diff text evidence failed.',
   canary_check_run_failed: 'Packaged canary project check failed.',
+  canary_manual_check_controls_visible: 'Packaged canary exposed manual project check controls.',
   canary_history_failed: 'Packaged canary history evidence failed.',
   canary_history_navigation_failed: 'Packaged canary history navigation failed.',
   canary_history_preview_failed: 'Packaged canary history preview evidence failed.',
@@ -359,6 +361,7 @@ const ERROR_STAGES = Object.freeze({
   canary_review_diff_checkpoint_text_stack_failed: 'review_diff_checkpoint_text_stack',
   canary_review_diff_text_failed: 'review_diff_text',
   canary_check_run_failed: 'check_run',
+  canary_manual_check_controls_visible: 'manual_check_controls',
   canary_history_failed: 'history',
   canary_history_navigation_failed: 'history_navigation',
   canary_history_preview_failed: 'history_preview',
@@ -1861,12 +1864,10 @@ async function clickByRole(page, role, name) {
 async function clickSaveVersionViaUi(page) {
   const save = page.locator(SELECTORS.saveVersion);
   await save.waitFor({ state: 'visible' });
-  if (await optionalLocatorVisible(page, SELECTORS.skipCheck) === true) {
-    await page.locator(SELECTORS.skipCheck).click();
-    await page.locator(
-      `${SELECTORS.checkRunStatus}[data-builder-check-run-status="skipped"]`,
-    ).waitFor({ state: 'visible' });
-  }
+  await page.locator(
+    `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
+  ).waitFor({ state: 'visible', timeout: 120_000 });
+  await assertNoManualProjectCheckControlsViaUi(page);
   try {
     const changesOpen = await page.locator(SELECTORS.changesDisclosure).evaluate((node) => node.open === true);
     if (changesOpen) {
@@ -2462,9 +2463,11 @@ async function waitForAutomaticProjectCheckViaUi(page) {
     await page.locator(
       `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
     ).waitFor({ state: 'visible', timeout: 120_000 });
+    await assertNoManualProjectCheckControlsViaUi(page);
     return Object.freeze({
       agent_ran_check_automatically: true,
       command_profile_selected_by_main: true,
+      manual_check_controls_hidden: true,
       packaged_runtime_executed: true,
       status: 'passed',
     });
@@ -2483,6 +2486,22 @@ async function waitForAutomaticProjectCheckViaUi(page) {
       ),
       check_status_text: await optionalLocatorText(page, SELECTORS.checkRunStatus),
       bridge_check_run: await readCheckRunFailureDiagnostic(page, null),
+    }));
+  }
+}
+
+async function assertNoManualProjectCheckControlsViaUi(page) {
+  const runCheckVisible = await optionalLocatorVisible(page, SELECTORS.runCheck);
+  const skipCheckVisible = await optionalLocatorVisible(page, SELECTORS.skipCheck);
+  const visibleButtons = await readVisibleButtonTexts(page);
+  const leakedManualCheckButton = visibleButtons.find((text) => (
+    /^Run\b/iu.test(text) && /\b(?:npm|pnpm|yarn|test|lint|build|check)\b/iu.test(text)
+  ) || /^Skip check$/iu.test(text));
+  if (runCheckVisible || skipCheckVisible || leakedManualCheckButton !== undefined) {
+    failWithDiagnostic('canary_manual_check_controls_visible', Object.freeze({
+      run_check_visible: runCheckVisible,
+      skip_check_visible: skipCheckVisible,
+      visible_buttons: visibleButtons,
     }));
   }
 }
@@ -7865,6 +7884,7 @@ module.exports = {
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   approvePlanViaUi,
+  assertNoManualProjectCheckControlsViaUi,
   askInitialChatQuestionViaUi,
   askProjectQuestionViaUi,
   askRejectedPlanContextualSubmitViaUi,
