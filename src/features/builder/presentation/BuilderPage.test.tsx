@@ -3423,9 +3423,12 @@ describe('BuilderPage v2', () => {
     expect(changes?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(changes?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedArtifactSidebar);
     expect(changes?.closest('[data-builder-changes-flow="true"]')).toBe(changesFlow);
+    expect(changes?.getAttribute('data-builder-changes-placement')).toBe('artifact');
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
-    expect(changesDisclosure?.textContent).toContain('Changes');
+    expect(changesDisclosure?.querySelector('.cf-builder-changes-title')).toBeNull();
+    expect(updatedArtifactSidebar?.querySelector('[data-builder-side-workspace-tool="changes"]')?.textContent)
+      .toContain('Changes');
     expect(changesDisclosure?.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('file');
     expect(versions).toBeNull();
@@ -4594,8 +4597,10 @@ describe('BuilderPage v2', () => {
     expect(changesPanel?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(changesPanel?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     expect(changesPanel?.closest('[data-builder-changes-flow="true"]')).toBe(changesFlow);
+    expect(changesPanel?.getAttribute('data-builder-changes-placement')).toBe('artifact');
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
+    expect(changesDisclosure?.querySelector('.cf-builder-changes-title')).toBeNull();
     expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
       .toContain('Changes');
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)

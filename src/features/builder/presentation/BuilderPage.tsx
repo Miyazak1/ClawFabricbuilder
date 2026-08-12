@@ -2700,6 +2700,7 @@ function BuilderArtifactSidebar({
               onOpenChange={() => undefined}
               onOpenFile={onOpenFile}
               open={changesOpen}
+              placement="artifact"
             />
           </div>
         ) : null}

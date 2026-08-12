@@ -155,6 +155,7 @@ describe('Builder desktop layout styles', () => {
     const permissionsRow = styleBlock(source, '.cf-builder-permission-row');
     const currentDirection = styleBlock(source, '.cf-builder-current-direction');
     const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
+    const artifactSummaryRow = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const changesBody = styleBlock(source, '.cf-builder-changes-body');
     const changesList = styleBlock(source, '.cf-builder-changes-list');
     const changeItem = styleBlock(source, '.cf-builder-change-item');
@@ -206,9 +207,12 @@ describe('Builder desktop layout styles', () => {
     expect(artifactLogsContent).toContain('max-width: 100%;');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
     expect(summaryRowOverride).toContain('display: grid;');
-    expect(summaryRowOverride).toContain('grid-template-columns: 20px minmax(0, 1fr);');
     expect(summaryRowOverride).toContain('background: transparent;');
-    expect(summaryRowOverride).toContain('padding: 0 0 8px;');
+    expect(artifactSummaryRow).toContain('min-height: 36px;');
+    expect(artifactSummaryRow).toContain('grid-template-columns: 16px minmax(0, 1fr);');
+    expect(artifactSummaryRow).toContain('cursor: default;');
+    expect(artifactSummaryRow).toContain('background: color-mix(in srgb, var(--cf-bg) 72%, var(--cf-surface));');
+    expect(artifactSummaryRow).toContain('padding: 7px 10px;');
     expect(summaryMain).toContain('display: grid;');
     expect(summaryText).toContain('overflow: hidden;');
     expect(summaryText).toContain('text-overflow: ellipsis;');
@@ -216,6 +220,8 @@ describe('Builder desktop layout styles', () => {
     expect(summaryText).not.toContain('overflow-wrap: anywhere;');
     expect(changesBody).toContain('gap: 0;');
     expect(changesBody).toContain('padding: 12px 0 2px;');
+    expect(styleBlock(source, '.cf-builder-artifact-changes .cf-builder-changes-body'))
+      .toContain('padding: 6px 10px 10px;');
     expect(changesList).toContain('gap: 0;');
     expect(changeItem).toContain('grid-template-columns: 72px minmax(0, 1fr);');
     expect(changeItem).toContain('border-top: 1px solid color-mix(in srgb, var(--cf-border) 72%, transparent);');

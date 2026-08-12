@@ -11,6 +11,7 @@ export type BuilderChangesPanelProps = Readonly<{
   onOpenChange: (open: boolean) => void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   open: boolean;
+  placement?: 'artifact' | 'flow';
 }>;
 
 function changeLabel(change: BuilderSourceTreeChange): string {
@@ -44,26 +45,43 @@ export function BuilderChangesPanel({
   onOpenChange,
   onOpenFile,
   open,
+  placement = 'flow',
 }: BuilderChangesPanelProps) {
+  const lockedOpen = placement === 'artifact';
   return (
     <section
       aria-label="Project changes"
       className="cf-builder-changes-panel"
       data-builder-changes-panel="true"
+      data-builder-changes-placement={placement}
       id="builder-tool-changes"
       tabIndex={-1}
     >
       <details
         className="cf-builder-changes-disclosure"
         data-builder-changes-disclosure="true"
-        onToggle={(event) => onOpenChange(event.currentTarget.open)}
-        open={open}
+        onToggle={(event) => {
+          if (lockedOpen && !event.currentTarget.open) {
+            event.currentTarget.open = true;
+            return;
+          }
+          onOpenChange(event.currentTarget.open);
+        }}
+        open={lockedOpen ? true : open}
         tabIndex={-1}
       >
-        <summary className="cf-builder-panel-toolbar cf-builder-changes-summary-row">
+        <summary
+          className="cf-builder-panel-toolbar cf-builder-changes-summary-row"
+          data-builder-changes-summary-placement={placement}
+          onClick={(event) => {
+            if (lockedOpen) event.preventDefault();
+          }}
+        >
           <GitCompareArrows aria-hidden="true" className="size-4" />
           <span className="cf-builder-changes-summary-main">
-            <span className="cf-builder-changes-title">Changes</span>
+            {placement === 'flow' ? (
+              <span className="cf-builder-changes-title">Changes</span>
+            ) : null}
             <span className="cf-builder-changes-summary" data-builder-changes-summary="true">
               {builderChangesSummary(changes)}
             </span>

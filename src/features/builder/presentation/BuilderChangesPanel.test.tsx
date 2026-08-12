@@ -172,4 +172,34 @@ describe('BuilderChangesPanel', () => {
     expect(tooLarge.querySelector('[data-builder-change-diff-note="big-file.js"]')?.textContent)
       .toContain('too large for the inline comparison');
   });
+
+  it('keeps artifact placement open and avoids repeating the tab title', () => {
+    const onOpenChange = vi.fn();
+    const container = render(
+      <BuilderChangesPanel
+        changes={changes()}
+        onOpenChange={onOpenChange}
+        onOpenFile={() => undefined}
+        open={false}
+        placement="artifact"
+      />,
+    );
+
+    const panel = container.querySelector('[data-builder-changes-panel="true"]');
+    const disclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
+    const summary = container.querySelector<HTMLElement>('[data-builder-changes-summary-placement="artifact"]');
+    expect(panel?.getAttribute('data-builder-changes-placement')).toBe('artifact');
+    expect(disclosure?.open).toBe(true);
+    expect(summary?.querySelector('.cf-builder-changes-title')).toBeNull();
+    expect(summary?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
+
+    act(() => {
+      if (disclosure) {
+        disclosure.open = false;
+        disclosure.dispatchEvent(new Event('toggle', { bubbles: true }));
+      }
+    });
+    expect(disclosure?.open).toBe(true);
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });
