@@ -6186,7 +6186,9 @@ describe('BuilderApp v2', () => {
       limit: 128,
     });
     expect(restoreDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
+    });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
         .toContain('Current');
