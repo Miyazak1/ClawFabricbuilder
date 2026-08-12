@@ -284,9 +284,9 @@ test('starts a live preview browser from main-owned source and attaches it to re
   assert.equal(selected.runtime.calls[0][0], 'start');
   assert.equal(selected.window.calls[0][0], 'add');
   assert.deepEqual(selected.runtime.calls.find((item) => item[0] === 'bounds')[1], {
-    x: 825,
+    x: 792,
     y: 114,
-    width: 435,
+    width: 480,
     height: 682,
   });
   assert.doesNotMatch(JSON.stringify(result), /"source_tree"|"entry_url"|"preview_origin"|"commit_oid"|"tree_oid"/iu);
@@ -303,11 +303,26 @@ test('reload updates bounds and stop detaches then cleans up runtime', async () 
   assert.equal(reloaded.blocked_request_count, 4);
   assert.equal(stopped.blocked_request_count, 4);
   assert.deepEqual(selected.runtime.calls.filter((item) => item[0] === 'bounds').map((item) => item[1]), [
-    { x: 825, y: 114, width: 435, height: 682 },
+    { x: 792, y: 114, width: 480, height: 682 },
   ]);
   assert.deepEqual(selected.window.calls.map((item) => item[0]), ['add', 'remove']);
   assert.equal(selected.runtime.calls.some((item) => item[0] === 'reload'), true);
   assert.equal(selected.runtime.calls.some((item) => item[0] === 'stop'), true);
+});
+
+test('fallback bounds shrink inside narrow windows instead of overflowing', async (t) => {
+  const selected = fixture();
+  t.after(async () => { await selected.service.shutdown(); });
+  selected.window.window.getContentBounds = () => ({ width: 300, height: 420 });
+
+  await selected.service.request_current_draft_live_preview(request());
+
+  assert.deepEqual(selected.runtime.calls.find((item) => item[0] === 'bounds')[1], {
+    x: 0,
+    y: 88,
+    width: 292,
+    height: 308,
+  });
 });
 
 test('read status is idle until started and failed source resolution is redacted', async () => {

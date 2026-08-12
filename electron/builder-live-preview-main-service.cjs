@@ -73,6 +73,9 @@ const RUNTIME_BLOCK_COUNT_KEYS = Object.freeze([
   'download_block_count',
   'window_open_block_count',
 ]);
+const FALLBACK_ARTIFACT_PANEL_WIDTH_PX = 480;
+const FALLBACK_ARTIFACT_PANEL_MIN_WIDTH_PX = 360;
+const FALLBACK_ARTIFACT_PANEL_RIGHT_INSET_PX = 8;
 
 class BuilderLivePreviewMainServiceError extends Error {
   constructor() {
@@ -200,10 +203,13 @@ function fallbackBounds(windowRef) {
   } catch {
     // Fall through to a bounded default; the view remains local-only.
   }
-  const panelWidth = Math.max(320, Math.min(520, Math.floor(width * 0.34)));
+  const availableWidth = Math.max(1, width - FALLBACK_ARTIFACT_PANEL_RIGHT_INSET_PX);
+  const panelWidth = availableWidth < FALLBACK_ARTIFACT_PANEL_MIN_WIDTH_PX
+    ? availableWidth
+    : Math.min(FALLBACK_ARTIFACT_PANEL_WIDTH_PX, availableWidth);
   const y = Math.min(140, Math.max(88, Math.floor(height * 0.14)));
   return freezeDeep({
-    x: Math.max(0, width - panelWidth - 20),
+    x: Math.max(0, width - panelWidth - FALLBACK_ARTIFACT_PANEL_RIGHT_INSET_PX),
     y,
     width: panelWidth,
     height: Math.max(180, height - y - 24),
