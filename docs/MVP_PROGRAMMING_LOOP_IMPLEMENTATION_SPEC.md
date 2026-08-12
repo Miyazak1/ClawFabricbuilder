@@ -98,6 +98,11 @@ User asks for a plan or selects `Plan mode`.
 Required behavior:
 
 - Plan mode is selectable from the composer `+` menu when a project is bound.
+- Plan mode is one-shot: after the plan request is admitted, the composer
+  returns to `Auto`.
+- Ask and Build are persistent manual modes. They remain active until the user
+  switches mode or clears the chip, and they override automatic intent
+  detection for subsequent messages.
 - Natural language plan intent can route to plan.
 - Plan route may read/search project context.
 - Plan route must not write files, run write-capable commands, mutate Git,
@@ -179,7 +184,7 @@ Required behavior:
 
 - Show changed files and readable diff.
 - Show static preview if an HTML/static artifact is available.
-- Show basic check evidence if a command profile is available and approved or
+- Show automatic basic check evidence if a command profile is available and
   safe for the current policy.
 - Show a concise change explanation: what changed, what was checked, and what
   was not checked.
@@ -298,12 +303,12 @@ Allowed interruption behavior:
 | Surface | MVP projection |
 | --- | --- |
 | Project sidebar | Saved projects, current version, unsaved draft marker |
-| Composer top edge | Selected project, source folder status, plan mode chip, write mode |
-| Composer `+` menu | Files/folders, Plan mode; no Brief user mode |
+| Composer top edge | Selected project, source folder status, persistent Ask/Build chip, one-shot Plan chip, write mode |
+| Composer `+` menu | Files/folders, Ask mode, Plan mode, Build mode; no Brief user mode |
 | Chat timeline | User request, assistant plan, execution status, change explanation |
 | Status chips | Reading project, Planning, Ready to execute, Changing files, Review draft |
 | Right drawer | Preview, Changes, Source summary if available, basic check result |
-| Review actions | Preview, Changes, Discard draft, Save version |
+| Review actions | Discard draft, Save version, with Preview/Changes in the side workspace |
 | History/version surface | Saved version after explicit save |
 
 The UI should avoid duplicate controls. One global workspace tab can choose the
@@ -325,6 +330,7 @@ selector unless it adds local value.
 | Patch failed | Show edit failure; no save |
 | Draft checkpoint failed | Do not claim recoverable draft; show recovery warning |
 | Check failed | Show summary and changed files; stop or allow user follow-up |
+| Check not finished | Keep Save blocked and show that Builder has not finished checking; do not expose a routine skip button |
 | Preview failed | Show diff and preview error; Save may still require user judgment |
 | Save failed | Keep draft; do not update current revision |
 | Restart recovery failed | Surface integrity failure and avoid rewriting facts |
@@ -343,7 +349,8 @@ MVP is not done until a packaged app can pass this canary with a real provider:
 7. Record automatic draft checkpoint.
 8. Show changed files and diff.
 9. Show static preview if applicable.
-10. Run or explicitly skip a basic check with evidence.
+10. Let Builder run a discovered basic check automatically, or surface an
+    honest not-checked/failed state without a manual check button.
 11. Save version.
 12. Quit and relaunch packaged app.
 13. Reopen project and verify saved version, draft state, and conversation
@@ -358,7 +365,7 @@ Required evidence:
 - edit attempt result;
 - draft checkpoint receipt;
 - review state projection;
-- check/skip evidence;
+- check/no-check evidence;
 - save version receipt;
 - restart recovery result.
 
