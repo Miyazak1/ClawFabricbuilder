@@ -25,7 +25,8 @@ Use a stable workspace container with a selected tool:
 
 ```text
 SideWorkspace
-  active_tool: project_browser | general_browser | files | review | terminal | side_chat
+  active_tool: browser | files | review | terminal | side_chat
+  browser_mode?: project_preview | web
   project_id
   conversation_id
   draft_id?
@@ -48,11 +49,21 @@ Individual tools own their content, admission, and evidence.
 
 ## Tools
 
-### Project Browser
+### Browser
 
-Project Browser is the Live Preview tool. It is not a general web browser.
+Browser is one user-facing tool with two internal authority modes:
 
-It should continue the existing Live Preview track:
+- Project Preview: the Live Preview tool for local project artifacts;
+- Web: a future Codex-style general browser for user-directed web browsing.
+
+The product should feel unified: the right side opens `Browser`, not two
+unrelated tools. The implementation must keep the two modes separate because
+they carry different source, session, network, download, and agent-observation
+authority.
+
+#### Project Preview Mode
+
+Project Preview should continue the existing Live Preview track:
 
 - main-owned current draft or saved revision source resolver;
 - loopback-only static server for Live Preview V1;
@@ -61,17 +72,16 @@ It should continue the existing Live Preview track:
 - reload, stop, and evidence projection;
 - packaged canary before claiming support.
 
-Project Browser should be the default side workspace tool when a draft has
-previewable web output or the user explicitly opens Preview.
+Project Preview should be the default Browser mode when a draft has previewable
+web output or the user explicitly opens Preview.
 
 It intentionally does not provide an address bar, arbitrary URL navigation,
 downloads, persistent cookies, browser history, password storage, or general
-tabs. Those features belong to a separate General Browser tool.
+tabs. Those features belong to Web mode.
 
-### General Browser
+#### Web Mode
 
-General Browser is a future Codex-style browser tool, separate from Project
-Browser.
+Web mode is a future Codex-style general browser mode.
 
 It may eventually include:
 
@@ -89,10 +99,9 @@ It may eventually include:
 - browser settings;
 - user-visible URL and origin indicators.
 
-General Browser has a different risk profile from Project Browser. It can load
-external pages, hold browsing state, and expose web content to the user and
-possibly to agents. It therefore needs its own authority model before it is
-implemented:
+Web mode has a different risk profile from Project Preview. It can load external
+pages, hold browsing state, and expose web content to the user and possibly to
+agents. It therefore needs its own authority model before it is implemented:
 
 - isolated browser profile and session policy;
 - explicit external navigation policy;
@@ -104,9 +113,13 @@ implemented:
 - no automatic promotion of arbitrary web page content into provider prompt
   context.
 
-General Browser should not reuse Project Browser's preview server or source
-resolver authority. Project Browser is for local project artifacts; General
-Browser is for user-directed web browsing.
+Web mode should not reuse Project Preview's preview server or source resolver
+authority. Project Preview is for local project artifacts; Web mode is for
+user-directed web browsing.
+
+Browser mode switching should be explicit in the authority layer even if the UI
+looks like one browser. A preview tab cannot inherit Web cookies or history, and
+a Web tab cannot become project run evidence without Project Preview admission.
 
 ### Files
 
@@ -199,8 +212,8 @@ The side workspace can open from user action or system context.
 
 User actions:
 
-- Preview button opens Project Browser;
-- New browser tab or URL action opens General Browser after the General Browser
+- Preview button opens Browser in Project Preview mode;
+- New browser tab or URL action opens Browser in Web mode after the Web mode
   authority model exists;
 - Files button opens Files;
 - Changes or Review opens Review;
