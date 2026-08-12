@@ -283,6 +283,60 @@
       }
     },
     {
+      "name": "scheme wording conflict fails closed without semantic classifier",
+      "instruction": "做一个摄影作品集网站改版方案",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent",
+        "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "README scheme wording conflict fails closed without semantic classifier",
+      "instruction": "帮我出一个 README 重构方案",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "future goal request remains read-only clarification",
       "instruction": "进入目标模式，一直帮我改到完成为止",
       "context": {
@@ -304,6 +358,29 @@
         "requiredPermissions": [],
         "permissionResult": "not_required",
         "resultKind": "explanation"
+      }
+    },
+    {
+      "name": "scheme display page remains a build artifact",
+      "instruction": "做一个方案展示页",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["clear_build"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed"
+      },
+      "mainSubmit": {
+        "route": "build",
+        "dispatch": "build",
+        "matchedSignals": ["clear_build"],
+        "requiredPermissions": ["write_project"],
+        "permissionResult": "allowed",
+        "resultKind": "candidate"
       }
     },
     {
