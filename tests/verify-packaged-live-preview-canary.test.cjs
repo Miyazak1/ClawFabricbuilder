@@ -49,7 +49,9 @@ test('live preview canary provider returns local canvas and module source', asyn
   assert.equal(operations.some(([file]) => file === 'index.html'), true);
   assert.equal(operations.some(([file]) => file === 'main.js'), true);
   assert.match(JSON.stringify(payload), /live-canary-canvas/u);
+  assert.match(JSON.stringify(payload), /live-canary-webgl/u);
   assert.match(JSON.stringify(payload), /__clawfabricLivePreviewCanary/u);
+  assert.match(JSON.stringify(payload), /__clawfabricLivePreviewWebgl/u);
   assert.equal(server.snapshot().some((item) => item.response_kind === 'builder_code_change_operations'), true);
 });
 
@@ -80,6 +82,10 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /reload_preview_url_loopback_digest/u);
   assert.match(source, /live_preview_reload_origin_drifted/u);
   assert.match(source, /live_preview_reload_leaked_webcontents/u);
+  assert.match(source, /webgl_available:\s*true/u);
+  assert.match(source, /webgl_nonblank:\s*true/u);
+  assert.match(source, /webgl_renderer_digest/u);
+  assert.match(source, /webgl_renderer_digest_source/u);
   assert.match(source, /data-builder-live-preview-blocked-count/u);
   assert.match(source, /renderer_blocked_request_count_minimum/u);
   assert.match(source, /renderer_block_count_visible:\s*true/u);
@@ -87,4 +93,5 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /release_gate_integration:\s*['"]not_in_verify_release['"]/u);
   assert.doesNotMatch(source, /providerSettings\.replaceCurrent|projectWorkspace\.saveDraft/u);
   assert.doesNotMatch(source, /source_tree_from_renderer|renderer_source_tree|Authorization|Bearer/u);
+  assert.doesNotMatch(source, /UNMASKED_RENDERER_WEBGL['"]?\s*[,)]\s*$/u);
 });

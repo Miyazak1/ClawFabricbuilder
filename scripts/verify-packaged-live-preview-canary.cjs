@@ -111,6 +111,7 @@ function codeChangeOutput(index) {
           `    <h1>${title}</h1>`,
           '    <p>Packaged live preview should execute this local module.</p>',
           '    <canvas id="live-canary-canvas" width="220" height="120"></canvas>',
+          '    <canvas id="live-canary-webgl" width="96" height="64"></canvas>',
           '  </main>',
           '</body>',
           '</html>',
@@ -144,6 +145,20 @@ function codeChangeOutput(index) {
           "context.fillStyle = '#2b3b32';",
           "context.font = '18px sans-serif';",
           "context.fillText('Live', 120, 54);",
+          "const webglCanvas = document.querySelector('#live-canary-webgl');",
+          "const gl = webglCanvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: true }) || webglCanvas.getContext('experimental-webgl', { antialias: false, preserveDrawingBuffer: true });",
+          'if (gl) {',
+          '  gl.clearColor(0.05, 0.32, 0.28, 1);',
+          '  gl.clear(gl.COLOR_BUFFER_BIT);',
+          '  const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");',
+          '  globalThis.__clawfabricLivePreviewWebgl = {',
+          "    available: true,",
+          '    vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : "masked",',
+          '    renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : "masked",',
+          '  };',
+          '} else {',
+          '  globalThis.__clawfabricLivePreviewWebgl = { available: false, vendor: "unavailable", renderer: "unavailable" };',
+          '}',
           '',
         ].join('\n'),
       },
@@ -388,6 +403,32 @@ async function readMainProcessLivePreviewEvidence(app) {
                 || pixels[index + 3] !== 255
               ) nonblank += 1;
             }
+            const webglCanvas = document.querySelector('#live-canary-webgl');
+            let webglEvidence = { available: false, nonblank_pixel_count: 0, renderer_digest_source: 'unavailable' };
+            if (webglCanvas instanceof HTMLCanvasElement) {
+              const gl = webglCanvas.getContext('webgl') || webglCanvas.getContext('experimental-webgl');
+              if (gl) {
+                const webglPixels = new Uint8Array(webglCanvas.width * webglCanvas.height * 4);
+                gl.readPixels(0, 0, webglCanvas.width, webglCanvas.height, gl.RGBA, gl.UNSIGNED_BYTE, webglPixels);
+                let webglNonblank = 0;
+                for (let index = 0; index < webglPixels.length; index += 4) {
+                  if (
+                    webglPixels[index] !== 0
+                    || webglPixels[index + 1] !== 0
+                    || webglPixels[index + 2] !== 0
+                    || webglPixels[index + 3] !== 0
+                  ) webglNonblank += 1;
+                }
+                const marker = globalThis.__clawfabricLivePreviewWebgl ?? null;
+                webglEvidence = {
+                  available: marker?.available === true,
+                  nonblank_pixel_count: webglNonblank,
+                  renderer_digest_source: String(marker?.vendor ?? 'unknown')
+                    + ':'
+                    + String(marker?.renderer ?? 'unknown'),
+                };
+              }
+            }
             let external_fetch_blocked = false;
             try {
               const controller = new AbortController();
@@ -423,6 +464,9 @@ async function readMainProcessLivePreviewEvidence(app) {
               external_navigation_blocked: location.href === originalHref,
               external_window_open_blocked,
               nonblank_pixel_count: nonblank,
+              webgl_available: webglEvidence.available,
+              webgl_nonblank_pixel_count: webglEvidence.nonblank_pixel_count,
+              webgl_renderer_digest_source: webglEvidence.renderer_digest_source,
             };
           })()
         `, true);
@@ -452,6 +496,8 @@ async function waitForMainProcessLivePreviewEvidence(app) {
       && evidence.canvas?.external_navigation_blocked === true
       && evidence.canvas?.external_window_open_blocked === true
       && evidence.canvas?.nonblank_pixel_count > 0
+      && evidence.canvas?.webgl_available === true
+      && evidence.canvas?.webgl_nonblank_pixel_count > 0
     ) return evidence;
     await delay(250);
   }
@@ -479,6 +525,8 @@ async function verifyLivePreviewControls(page, app) {
     update(mainEvidence.preview_url_loopback).digest('hex')}`;
   const reloadPreviewUrlDigest = `sha256:${nodeCrypto.createHash('sha256').
     update(reloadEvidence.preview_url_loopback).digest('hex')}`;
+  const webglRendererDigest = `sha256:${nodeCrypto.createHash('sha256').
+    update(mainEvidence.canvas.webgl_renderer_digest_source).digest('hex')}`;
   if (reloadPreviewUrlDigest !== previewUrlDigest) {
     fail('live_preview_reload_origin_drifted', {
       previewUrlDigest,
@@ -523,6 +571,9 @@ async function verifyLivePreviewControls(page, app) {
     renderer_block_count_visible: true,
     static_fallback_visible_before_live: staticPreviewVisible,
     stop_disposed_webcontents: true,
+    webgl_available: true,
+    webgl_nonblank: true,
+    webgl_renderer_digest: webglRendererDigest,
   });
 }
 

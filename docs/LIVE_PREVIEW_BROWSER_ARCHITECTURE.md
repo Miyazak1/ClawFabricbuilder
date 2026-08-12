@@ -576,7 +576,10 @@ Current checkpoint:
   digest/bool/count summaries for preview URL, DOM title, JS execution, canvas
   pixels, blocked requests, and stop cleanup;
 - defer release-gate integration, app restart cleanup evidence, and
-  WebGL-specific evidence to follow-up LP6 hardening.
+  app restart cleanup evidence to follow-up LP6 hardening;
+- add WebGL-specific packaged evidence by rendering a second local WebGL canvas,
+  proving WebGL availability and nonblank pixels, and outputting only a hashed
+  renderer summary instead of raw GPU strings.
 
 ### Slice LP7: Browser-First Static Preview Retirement
 
