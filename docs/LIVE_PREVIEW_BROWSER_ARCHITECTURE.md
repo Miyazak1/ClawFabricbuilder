@@ -571,8 +571,12 @@ Current checkpoint:
 - verify preview content cannot fetch external HTTPS, open external windows, or
   navigate away from the admitted loopback origin;
 - verify reload returns to ready and stop disposes the preview `WebContents`;
-- defer release-gate integration, restart cleanup evidence, runtime counter
-  projection, and WebGL-specific evidence to follow-up LP6 hardening.
+- harden the canary by re-reading main-process browser evidence after reload,
+  proving no extra loopback `WebContents` remains active, and emitting only
+  digest/bool/count summaries for preview URL, DOM title, JS execution, canvas
+  pixels, blocked requests, and stop cleanup;
+- defer release-gate integration, app restart cleanup evidence, and
+  WebGL-specific evidence to follow-up LP6 hardening.
 
 ## Relationship To MVP Programming Loop
 

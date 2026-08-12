@@ -443,10 +443,11 @@ async function waitForMainProcessLivePreviewEvidence(app) {
     evidence = await readMainProcessLivePreviewEvidence(app).catch(() => null);
     if (
       evidence !== null
-      && evidence.preview_webcontents_count >= 1
+      && evidence.preview_webcontents_count === 1
       && /^http:\/\/127\.0\.0\.1:\d+\//u.test(evidence.preview_url_loopback ?? '')
       && evidence.canvas?.canvas_present === true
       && evidence.canvas?.canary_marker === 'module-executed'
+      && evidence.canvas?.document_title === 'Canvas Canary Updated'
       && evidence.canvas?.external_fetch_blocked === true
       && evidence.canvas?.external_navigation_blocked === true
       && evidence.canvas?.external_window_open_blocked === true
@@ -470,6 +471,20 @@ async function verifyLivePreviewControls(page, app) {
   await waitForButtonEnabled(page, '[data-builder-live-preview-reload="true"]', 'live_preview_reload_disabled');
   await page.locator('[data-builder-live-preview-reload="true"]').first().click();
   await waitForLiveStatus(page, 'ready', 'live_preview_reload_not_ready');
+  const reloadEvidence = await waitForMainProcessLivePreviewEvidence(app);
+  if (reloadEvidence.preview_webcontents_count !== 1) {
+    fail('live_preview_reload_leaked_webcontents', reloadEvidence);
+  }
+  const previewUrlDigest = `sha256:${nodeCrypto.createHash('sha256').
+    update(mainEvidence.preview_url_loopback).digest('hex')}`;
+  const reloadPreviewUrlDigest = `sha256:${nodeCrypto.createHash('sha256').
+    update(reloadEvidence.preview_url_loopback).digest('hex')}`;
+  if (reloadPreviewUrlDigest !== previewUrlDigest) {
+    fail('live_preview_reload_origin_drifted', {
+      previewUrlDigest,
+      reloadPreviewUrlDigest,
+    });
+  }
   const blockedSummary = page.locator('[data-builder-live-preview-blocked-count="true"]').first();
   await blockedSummary.waitFor({ state: 'visible', timeout: 20_000 }).catch(async () => {
     fail('live_preview_blocked_count_not_visible', {
@@ -478,9 +493,11 @@ async function verifyLivePreviewControls(page, app) {
     });
   });
   const blockedSummaryText = await blockedSummary.textContent();
-  if (!/Blocked\s+[1-9]\d*\s+unsafe preview request/u.test(blockedSummaryText ?? '')) {
+  const blockedMatch = /Blocked\s+([1-9]\d*)\s+unsafe preview request/u.exec(blockedSummaryText ?? '');
+  if (blockedMatch === null) {
     fail('live_preview_blocked_count_invalid', { blockedSummaryText });
   }
+  const rendererBlockedCount = Number.parseInt(blockedMatch[1], 10);
   await waitForButtonEnabled(page, '[data-builder-live-preview-stop="true"]', 'live_preview_stop_disabled');
   await page.locator('[data-builder-live-preview-stop="true"]').first().click();
   await waitForLiveStatus(page, 'stopped', 'live_preview_stop_not_observed');
@@ -495,9 +512,14 @@ async function verifyLivePreviewControls(page, app) {
     external_window_open_blocked: true,
     javascript_executed: true,
     loopback_webcontents_observed: true,
-    preview_url_loopback_digest: `sha256:${nodeCrypto.createHash('sha256').
-      update(mainEvidence.preview_url_loopback).digest('hex')}`,
+    preview_document_title_observed: mainEvidence.canvas.document_title,
+    preview_url_loopback_digest: previewUrlDigest,
+    reload_canvas_nonblank: true,
+    reload_javascript_executed: true,
+    reload_loopback_webcontents_observed: true,
+    reload_preview_url_loopback_digest: reloadPreviewUrlDigest,
     reload_ready_observed: true,
+    renderer_blocked_request_count_minimum: rendererBlockedCount,
     renderer_block_count_visible: true,
     static_fallback_visible_before_live: staticPreviewVisible,
     stop_disposed_webcontents: true,
