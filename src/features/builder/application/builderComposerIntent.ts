@@ -435,6 +435,14 @@ export function decideBuilderComposerIntent(
       matchedSignals: ['explicit_plan'],
     });
   }
+  if (isBuilderComposerPlanBuildConflictIntent(normalized)) {
+    return createDecision('clarify', context, {
+      confidence: 'medium',
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+      matchedSignals: ['plan_build_conflict'],
+    });
+  }
   if (VAGUE_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) {
     const hasPriorBuildContext = context.hasPriorBuildContext === true;
     return createDecision(hasPriorBuildContext ? 'build' : 'clarify', context, {

@@ -4729,6 +4729,38 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
   });
 
+  it('fails plan-build wording conflicts closed when semantic routing is unavailable', async () => {
+    const {
+      answer,
+      classifyIntent,
+      container,
+      generate,
+      proposePlan,
+      submit,
+    } = await setup({
+      initiallySaved: true,
+      currentProjectWriteApprovalRequired: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, '帮我做一个静态技术博客实施计划');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction: '帮我做一个静态技术博客实施计划',
+      });
+    });
+    expect(classifyIntent).not.toHaveBeenCalled();
+    expect(proposePlan).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(composer?.getAttribute('data-builder-route')).toBe('clarify');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('plan_build_conflict');
+  });
+
   it('keeps a plan management page as a build artifact without spending semantic routing', async () => {
     const { classifyIntent, container, proposePlan, submit } = await setup({
       initiallySaved: true,

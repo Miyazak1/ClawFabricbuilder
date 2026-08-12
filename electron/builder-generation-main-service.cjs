@@ -323,6 +323,11 @@ const LOCAL_FILE_ARTIFACT_PATTERNS = Object.freeze([
   /(?:创建|新建|生成|写|编写|保存|添加|新增).{0,40}(?:\.md\b|markdown|md\s*(?:文档|文件)|readme|说明文档|文档|文件|笔记|notes?)/u,
   /(?:create|write|generate|add|save).{0,48}(?:\.md\b|markdown|readme|notes?\s+file|document|text\s+file)/u,
 ]);
+const SEMANTIC_PLAN_BUILD_CONFLICT_INTENT_PATTERNS = Object.freeze([
+  /(?:做|写|出|给|制定|规划|生成|创建|整理|梳理|设计).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
+  /(?:当前|这个|项目|文件夹|网站|页面|应用|readme|README).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
+  /\b(?:implementation|execution|migration|refactor|optimization|redesign)\s+(?:plan|proposal)\b/u,
+]);
 const CONTEXTUAL_WORK_INTENT_PATTERNS = Object.freeze([
   /^(?:就这样(?:写|做|改|实现|执行|开始)?|就按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)?|按(?:这个(?:方案|计划)?|刚才(?:的)?(?:方案|计划)?|上面(?:的)?(?:方案|计划)?|前面(?:的)?(?:方案|计划)?)(?:写|做|改|实现|执行)|开始(?:写|做|改|实现|执行)|可以开始了)[。.!！]*$/u,
   /^(?:(?:好|好的|可以|行|嗯)[，,\s]*)?(?:(?:就)?(?:照|按)(?:这个|刚才(?:说的|聊的|讨论的|确认的)?|上面(?:说的)?|前面(?:说的)?|我们刚才(?:说的|聊的|讨论的|确认的)?)(?:方案|计划)?(?:写|做|改|实现|执行|来)|(?:开始|执行)(?:吧|了)?|可以开始(?:了|吧)?)[。.!！]*$/u,
@@ -529,6 +534,15 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
     });
   }
   if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
+  if (matchesAny(SEMANTIC_PLAN_BUILD_CONFLICT_INTENT_PATTERNS, text)) {
+    return routeDecisionHint({
+      route: 'clarify',
+      confidence: 'medium',
+      matchedSignals: ['plan_build_conflict'],
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+    });
+  }
   if (matchesAny(LOCAL_FILE_ARTIFACT_PATTERNS, text)) return buildRouteDecisionHint(['local_file_artifact']);
   if (hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(VAGUE_CHANGE_INTENT_PATTERNS, text)) {

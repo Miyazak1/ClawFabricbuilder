@@ -50,6 +50,18 @@ describe('routeBuilderComposerIntent', () => {
     'Draft a redesign proposal for the portfolio.',
   ])('marks %s as requiring semantic plan/build classification', (instruction) => {
     expect(isBuilderComposerPlanBuildConflictIntent(instruction)).toBe(true);
+    expect(decideBuilderComposerIntent(instruction, {
+      hasWorkspace: true,
+      hasWritePermission: true,
+    })).toMatchObject({
+      route: 'clarify',
+      dispatch: 'reply',
+      matchedSignals: ['plan_build_conflict'],
+      downgradedFrom: 'build',
+      downgradeReason: 'ambiguous_build_intent',
+      requiredPermissions: [],
+      permissionResult: 'not_required',
+    });
   });
 
   it.each([

@@ -256,6 +256,33 @@
       }
     },
     {
+      "name": "plan-build wording conflict fails closed without semantic classifier",
+      "instruction": "帮我做一个静态技术博客实施计划",
+      "context": {
+        "hasWorkspace": true,
+        "hasWritePermission": true
+      },
+      "renderer": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent"
+      },
+      "mainSubmit": {
+        "route": "clarify",
+        "dispatch": "reply",
+        "matchedSignals": ["plan_build_conflict"],
+        "requiredPermissions": [],
+        "permissionResult": "not_required",
+        "downgradedFrom": "build",
+        "downgradeReason": "ambiguous_build_intent",
+        "resultKind": "explanation"
+      }
+    },
+    {
       "name": "future goal request remains read-only clarification",
       "instruction": "进入目标模式，一直帮我改到完成为止",
       "context": {

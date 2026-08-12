@@ -171,10 +171,12 @@ persistent source-change mode that still passes the existing workspace and
 main-owned write-permission gates, and `Plan` is a one-shot plan proposal mode
 that clears after the plan request is admitted. Closing the mode chip returns
 the composer to `Auto`, where ordinary natural language uses deterministic
-controls plus semantic classification. Low-confidence, malformed, or ambiguous
-classification fails closed to clarification before any permission or mutation
-gate. A semantic `build` result still has to pass the existing workspace and
-main-owned write-permission gates.
+controls plus semantic classification. If a whole-sentence plan/build conflict
+is detected but the semantic classifier is unavailable, Builder also fails
+closed to clarification instead of falling back to `build`. Low-confidence,
+malformed, or ambiguous classification fails closed to clarification before any
+permission or mutation gate. A semantic `build` result still has to pass the
+existing workspace and main-owned write-permission gates.
 
 Deterministic controls run before semantic classification. Active-run
 cancel/queue behavior, an explicit composer mode, and continuation of a plan

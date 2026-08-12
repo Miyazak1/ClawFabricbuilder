@@ -21,6 +21,7 @@ const PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS = Object.freeze([
   'exploratory_work',
   'goal_mode_request',
   'local_file_artifact',
+  'plan_build_conflict',
   'pending_build_confirmation',
   'read_only',
   'semantic_route',
