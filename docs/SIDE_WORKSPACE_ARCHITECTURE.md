@@ -19,13 +19,60 @@ workbench:
 - project facts come from main-owned Git, SQLite, source, and runtime authority;
 - renderer UI never fabricates source, command, review, or browser evidence.
 
+## Workspace Tab Model
+
+The Codex-style right panel should be modeled as a tabbed workspace, not as a
+browser tab strip.
+
+The `+` menu creates or reveals different workspace tab types:
+
+- File: file tree plus selected file content;
+- Side Chat: contextual chat bound to a file, diff, browser page, terminal
+  output, or review item;
+- Browser: Project Preview or future Web mode;
+- Terminal: bounded command session;
+- Review: diff and review workspace.
+
+Recent project URLs, local preview origins, files, and app-specific shortcuts
+may appear as recommendations under the same menu, but they still resolve to
+one of those tab types. For example, `localhost:3001` opens a Browser tab, while
+`index.html` can open either a File tab or a Project Preview Browser tab
+depending on the selected command.
+
+This distinction matters because the visible UI may look like "tabs", but each
+tab type carries a different authority domain. A Browser tab may navigate; a
+File tab may read a projected source snapshot; a Review tab may expose save
+actions; a Terminal tab may run only admitted commands. The tab container owns
+selection, ordering, close buttons, keyboard shortcuts, and empty states. It
+does not grant tool authority by itself.
+
+```text
+SideWorkspaceTab
+  tab_id
+  tab_type: browser | file | review | terminal | side_chat
+  title
+  icon
+  closeable
+  project_id
+  conversation_id?
+  source_ref?
+  tool_ref?
+  safe_status_projection
+```
+
+`BrowserTab` is therefore a specialized child model inside a broader
+`SideWorkspaceTab`. Builder should avoid naming the whole right workspace
+"Browser" even while Browser is the first mature tool.
+
 ## Tool Model
 
 Use a stable workspace container with a selected tool:
 
 ```text
 SideWorkspace
-  active_tool: browser | files | review | terminal | side_chat
+  selected_tab_id
+  tabs[]
+  active_tool: browser | file | review | terminal | side_chat
   browser_mode?: project_preview | web
   project_id
   conversation_id
@@ -43,6 +90,7 @@ The container owns layout behavior:
 - focus and keyboard affordances;
 - tool tabs or switcher;
 - per-tool toolbar slot;
+- shared tab strip and new-tab menu;
 - empty, loading, unavailable, and blocked states.
 
 Individual tools own their content, admission, and evidence.

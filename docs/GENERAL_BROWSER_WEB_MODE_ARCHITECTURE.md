@@ -7,6 +7,12 @@ It is not the current Project Preview / Live Preview runtime. Project Preview
 loads local project artifacts through main-owned preview source authority. Web
 mode is a general browser surface for user-directed external browsing.
 
+It also does not define the entire right-side tab system. Browser is one
+`SideWorkspaceTab` type alongside File, Review, Terminal, and Side Chat. Browser
+may have internal page tabs, address bars, downloads, and history, but those
+browser-specific affordances must not become the generic contract for every
+right-side workspace tab.
+
 ## Product Decision
 
 Builder should expose one user-facing `Browser` tool with two internal modes:
@@ -110,9 +116,11 @@ MVP Web mode also must not:
 
 ## Authority Domains
 
-Use one `Browser` UI shell with separate authority domains:
+Use one `Browser` UI shell with separate authority domains. This shell is hosted
+inside a broader Side Workspace tab:
 
 ```text
+SideWorkspaceTab(tab_type: browser)
 Browser
   mode: project_preview | web
   selected_tab_id
