@@ -50,6 +50,10 @@ import {
   type BuilderLivePreviewStatusProjection,
   type BuilderPlanReviewDecision,
   type BuilderPlanReviewRequest,
+  type BuilderSideWorkspaceFileContentProjection,
+  type BuilderSideWorkspaceFileRef,
+  type BuilderSideWorkspaceFileTreeEntry,
+  type BuilderSideWorkspaceFileTreeProjection,
 } from '../application/builderPorts';
 import type { BuilderComposerRouteDecision } from '../application/builderComposerIntent';
 import {
@@ -136,6 +140,10 @@ export type BuilderPageProps = {
   liveOutput?: BuilderLiveOutputSnapshot | null;
   livePreviewOperation?: 'starting' | 'reloading' | 'stopping' | null;
   livePreviewStatus?: BuilderLivePreviewStatusProjection | null;
+  sideWorkspaceFileContent?: BuilderSideWorkspaceFileContentProjection | null;
+  sideWorkspaceFileContentStatus?: 'idle' | 'loading' | 'ready' | 'failed';
+  sideWorkspaceFileTree?: BuilderSideWorkspaceFileTreeProjection | null;
+  sideWorkspaceFileTreeStatus?: 'idle' | 'loading' | 'ready' | 'failed';
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   answerFailureRecordedSuccess?: boolean;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -167,7 +175,9 @@ export type BuilderPageProps = {
   onReloadLivePreview?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onRequestLivePreview?: () => Promise<unknown> | void;
+  onRequestSideWorkspaceFiles?: () => Promise<unknown> | void;
   onSave?: () => void;
+  onSelectSideWorkspaceFile?: (fileRef: BuilderSideWorkspaceFileRef) => Promise<unknown> | void;
   onStopLivePreview?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenProjectLocation?: (projectId: string) => Promise<unknown> | void;
@@ -1654,7 +1664,7 @@ function ActivityPanel({
 function artifactTabLabel(tab: BuilderArtifactTab): string {
   if (tab === 'preview') return 'Preview';
   if (tab === 'changes') return 'Changes';
-  if (tab === 'source') return 'Source';
+  if (tab === 'source') return 'Files';
   if (tab === 'logs') return 'Logs';
   if (tab === 'permissions') return 'Permissions';
   return 'Versions';
@@ -1695,6 +1705,158 @@ const SIDE_WORKSPACE_NEW_TAB_ITEMS: readonly Readonly<{
   { label: 'Terminal', type: 'terminal', status: 'coming_later' },
   { label: 'Review', type: 'review', status: 'available_when_projected' },
 ]);
+
+function sideWorkspaceFileRefKey(fileRef: BuilderSideWorkspaceFileRef | null): string {
+  if (fileRef === null) return 'none';
+  return `${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
+}
+
+function sideWorkspaceFileDepthStyle(depth: number): CSSProperties {
+  return { '--cf-builder-file-depth': Math.max(0, Math.min(12, depth)) } as CSSProperties;
+}
+
+function firstTextFileEntry(
+  tree: BuilderSideWorkspaceFileTreeProjection | null,
+): Extract<BuilderSideWorkspaceFileTreeEntry, { entry_kind: 'text_file' }> | null {
+  return tree?.entries.find((entry): entry is Extract<
+    BuilderSideWorkspaceFileTreeEntry,
+    { entry_kind: 'text_file' }
+  > => entry.entry_kind === 'text_file') ?? null;
+}
+
+function BuilderArtifactFilesPanel({
+  content,
+  contentStatus,
+  fallbackFiles,
+  fallbackSourceFile,
+  onOpenFile,
+  onSelectFallbackFile,
+  onSourceOpenChange,
+  projection,
+  sourceDisclosureOpen,
+  sourceDisclosureRef,
+  treeStatus,
+}: Readonly<{
+  content: BuilderSideWorkspaceFileContentProjection | null;
+  contentStatus: 'idle' | 'loading' | 'ready' | 'failed';
+  fallbackFiles: readonly BuilderProjectSourceFile[];
+  fallbackSourceFile: BuilderProjectSourceFile | null;
+  onOpenFile?: (fileRef: BuilderSideWorkspaceFileRef) => Promise<unknown> | void;
+  onSelectFallbackFile?: (file: BuilderFileName) => void;
+  onSourceOpenChange: (open: boolean) => void;
+  projection: BuilderSideWorkspaceFileTreeProjection | null;
+  sourceDisclosureOpen: boolean;
+  sourceDisclosureRef: Ref<HTMLDetailsElement>;
+  treeStatus: 'idle' | 'loading' | 'ready' | 'failed';
+}>) {
+  if (projection === null && treeStatus !== 'loading' && fallbackSourceFile !== null) {
+    return (
+      <BuilderSourceDisclosure
+        canToggle
+        disclosureRef={sourceDisclosureRef}
+        files={fallbackFiles}
+        onOpenChange={onSourceOpenChange}
+        onSelectFile={onSelectFallbackFile}
+        open={sourceDisclosureOpen}
+        placement="artifact"
+        sourceFile={fallbackSourceFile}
+      />
+    );
+  }
+
+  const selectedRefKey = content === null ? sideWorkspaceFileRefKey(projection?.selected_file_ref ?? null) : sideWorkspaceFileRefKey(content.file_ref);
+  const firstFile = firstTextFileEntry(projection);
+  const fileCount = projection?.entries.filter((entry) => entry.entry_kind === 'text_file').length ?? 0;
+  return (
+    <section
+      aria-label="Project files"
+      className="cf-builder-artifact-files"
+      data-builder-side-workspace-files="true"
+      data-builder-side-workspace-files-status={treeStatus}
+    >
+      <div className="cf-builder-artifact-files-intro">
+        <h4>Files</h4>
+        <p>
+          {projection === null
+            ? treeStatus === 'loading'
+              ? 'Loading files from the current draft.'
+              : 'Files are unavailable for this view.'
+            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}.`}
+        </p>
+      </div>
+      <div className="cf-builder-artifact-files-body">
+        <div className="cf-builder-artifact-file-tree" aria-label="Project file tree">
+          {projection === null ? (
+            <p className="cf-builder-artifact-files-empty" role={treeStatus === 'failed' ? 'alert' : 'status'}>
+              {treeStatus === 'loading' ? 'Loading files...' : 'Current draft files are not available yet.'}
+            </p>
+          ) : (
+            projection.entries.map((entry) => {
+              if (entry.entry_kind === 'directory') {
+                return (
+                  <div
+                    className="cf-builder-artifact-file-entry"
+                    data-builder-side-workspace-file-entry={entry.path}
+                    data-builder-side-workspace-file-kind="directory"
+                    key={`directory:${entry.path}`}
+                    style={sideWorkspaceFileDepthStyle(entry.depth)}
+                  >
+                    <FolderOpen aria-hidden="true" className="size-3.5" />
+                    <span>{entry.name}</span>
+                    <small>{entry.child_count}</small>
+                  </div>
+                );
+              }
+              const active = selectedRefKey === sideWorkspaceFileRefKey(entry.file_ref)
+                || (content === null && firstFile?.path === entry.path);
+              return (
+                <button
+                  className="cf-builder-artifact-file-entry"
+                  data-active={active ? 'true' : undefined}
+                  data-builder-side-workspace-file-entry={entry.path}
+                  data-builder-side-workspace-file-kind="text_file"
+                  key={`file:${entry.path}`}
+                  onClick={() => {
+                    void onOpenFile?.(entry.file_ref);
+                  }}
+                  style={sideWorkspaceFileDepthStyle(entry.depth)}
+                  type="button"
+                >
+                  <FileCode2 aria-hidden="true" className="size-3.5" />
+                  <span>{entry.name}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <section
+          aria-label="Selected file"
+          className="cf-builder-artifact-file-content"
+          data-builder-side-workspace-file-content={content?.path ?? 'none'}
+          data-builder-side-workspace-file-content-status={contentStatus}
+        >
+          {contentStatus === 'loading' ? (
+            <p className="cf-builder-artifact-files-empty" role="status">Loading file...</p>
+          ) : content === null ? (
+            <p className="cf-builder-artifact-files-empty" role={contentStatus === 'failed' ? 'alert' : 'status'}>
+              {contentStatus === 'failed' ? 'This file is unavailable.' : 'Select a file to inspect its content.'}
+            </p>
+          ) : (
+            <>
+              <header className="cf-builder-artifact-file-content-header">
+                <strong>{content.path}</strong>
+                <span>{content.language_hint}{content.content_status === 'truncated' ? ' - truncated' : ''}</span>
+              </header>
+              <pre className="cf-builder-artifact-file-code">
+                <code>{content.text_preview}</code>
+              </pre>
+            </>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
 
 function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
   if (mode === 'read_only_chat') return 'Read-only chat';
@@ -2050,8 +2212,13 @@ function BuilderArtifactSidebar({
   sourceDisclosureOpen,
   sourceDisclosureRef,
   sourceFile,
+  sideWorkspaceFileContent,
+  sideWorkspaceFileContentStatus,
+  sideWorkspaceFileTree,
+  sideWorkspaceFileTreeStatus,
   width,
   widthMaximum,
+  onSelectSideWorkspaceFile,
   onStopLivePreview,
   workingProject,
   history,
@@ -2094,8 +2261,13 @@ function BuilderArtifactSidebar({
   sourceDisclosureOpen: boolean;
   sourceDisclosureRef: Ref<HTMLDetailsElement>;
   sourceFile: BuilderProjectSourceFile | null;
+  sideWorkspaceFileContent: BuilderSideWorkspaceFileContentProjection | null;
+  sideWorkspaceFileContentStatus: 'idle' | 'loading' | 'ready' | 'failed';
+  sideWorkspaceFileTree: BuilderSideWorkspaceFileTreeProjection | null;
+  sideWorkspaceFileTreeStatus: 'idle' | 'loading' | 'ready' | 'failed';
   width: number;
   widthMaximum: number;
+  onSelectSideWorkspaceFile?: (fileRef: BuilderSideWorkspaceFileRef) => Promise<unknown> | void;
   onStopLivePreview?: () => Promise<unknown> | void;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
@@ -2212,16 +2384,22 @@ function BuilderArtifactSidebar({
             />
           </div>
         ) : null}
-        {activeTab === 'source' && sourceFile !== null ? (
-          <BuilderSourceDisclosure
-            canToggle
-            disclosureRef={sourceDisclosureRef}
-            files={files}
-            onOpenChange={onSourceOpenChange}
-            onSelectFile={onSelectFile}
-            open={sourceDisclosureOpen}
-            placement="artifact"
-            sourceFile={sourceFile}
+        {activeTab === 'source' ? (
+          <BuilderArtifactFilesPanel
+            content={sideWorkspaceFileContent}
+            contentStatus={sideWorkspaceFileContentStatus}
+            fallbackFiles={hasUnsavedDraft ? [] : files}
+            fallbackSourceFile={hasUnsavedDraft ? null : sourceFile}
+            onOpenFile={(fileRef) => {
+              onSelectFile?.(fileRef.path);
+              return onSelectSideWorkspaceFile?.(fileRef);
+            }}
+            onSelectFallbackFile={onSelectFile}
+            onSourceOpenChange={onSourceOpenChange}
+            projection={sideWorkspaceFileTree}
+            sourceDisclosureOpen={sourceDisclosureOpen}
+            sourceDisclosureRef={sourceDisclosureRef}
+            treeStatus={sideWorkspaceFileTreeStatus}
           />
         ) : null}
         {activeTab === 'versions' ? (
@@ -2297,8 +2475,10 @@ export function BuilderPage({
   onReloadLivePreview,
   onReviewPlan,
   onRequestLivePreview,
+  onRequestSideWorkspaceFiles,
   onRestoreRevisionAsDraft,
   onSave,
+  onSelectSideWorkspaceFile,
   onStopLivePreview,
   onInspectRevision,
   onShowCurrentRevision,
@@ -2313,6 +2493,10 @@ export function BuilderPage({
   liveOutput = null,
   livePreviewOperation = null,
   livePreviewStatus = null,
+  sideWorkspaceFileContent = null,
+  sideWorkspaceFileContentStatus = 'idle',
+  sideWorkspaceFileTree = null,
+  sideWorkspaceFileTreeStatus = 'idle',
   planReviewFailure = null,
   planReviewInFlight = null,
   planReviewRecorded = null,
@@ -2530,18 +2714,19 @@ export function BuilderPage({
     showLogsPanel ? 'logs' : 'no-logs',
     showPermissionsPanel ? 'permissions' : 'no-permissions',
   ].join('|');
+  const showFilesPanel = sourceFile !== null || hasUnsavedDraft;
   const artifactTabs = useMemo(() => {
     const tabs: BuilderArtifactTab[] = [];
     if (showResultFlow) tabs.push('preview');
     if (hasUnsavedDraft) tabs.push('changes');
-    if (sourceFile !== null) tabs.push('source');
+    if (showFilesPanel) tabs.push('source');
     if (showVersionHistoryPanel) tabs.push('versions');
     if (showLogsPanel) tabs.push('logs');
     if (showPermissionsPanel) tabs.push('permissions');
     return tabs;
-  }, [hasUnsavedDraft, showLogsPanel, showPermissionsPanel, showResultFlow, showVersionHistoryPanel, sourceFile]);
+  }, [hasUnsavedDraft, showFilesPanel, showLogsPanel, showPermissionsPanel, showResultFlow, showVersionHistoryPanel]);
   const hasArtifactControls = artifactTabs.length > 0;
-  const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && sourceFile !== null
+  const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && showFilesPanel
     ? 'source'
     : viewingHistory && showResultFlow
       ? 'preview'
@@ -2551,7 +2736,7 @@ export function BuilderPage({
         ? 'versions'
         : showResultFlow
           ? 'preview'
-          : sourceFile !== null
+          : showFilesPanel
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
@@ -2742,6 +2927,11 @@ export function BuilderPage({
     pendingChangesFocusRef.current = false;
     disclosure.focus({ preventScroll: true });
   }, [showChangesPanel]);
+
+  useEffect(() => {
+    if (activeArtifactTab !== 'source' || !hasUnsavedDraft) return;
+    void onRequestSideWorkspaceFiles?.();
+  }, [activeArtifactTab, hasUnsavedDraft, onRequestSideWorkspaceFiles]);
 
   function updateChatFollowState(): void {
     const scroll = chatScrollRef.current;
@@ -3414,8 +3604,13 @@ export function BuilderPage({
       sourceDisclosureOpen={sourceDisclosureOpen}
       sourceDisclosureRef={sourceDisclosureRef}
       sourceFile={sourceFile}
+      sideWorkspaceFileContent={sideWorkspaceFileContent}
+      sideWorkspaceFileContentStatus={sideWorkspaceFileContentStatus}
+      sideWorkspaceFileTree={sideWorkspaceFileTree}
+      sideWorkspaceFileTreeStatus={sideWorkspaceFileTreeStatus}
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
+      onSelectSideWorkspaceFile={onSelectSideWorkspaceFile}
       onStopLivePreview={onStopLivePreview}
       workingProject={workingProject}
     />

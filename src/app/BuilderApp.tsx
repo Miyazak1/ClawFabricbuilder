@@ -42,9 +42,12 @@ import type {
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
   BuilderSemanticRouteClassification,
+  BuilderSideWorkspaceFileContentProjection,
   BuilderSideWorkspaceFilesPort,
   BuilderSideWorkspaceFileContentRequest,
+  BuilderSideWorkspaceFileRef,
   BuilderSideWorkspaceFileRequest,
+  BuilderSideWorkspaceFileTreeProjection,
 } from '../features/builder/application/builderPorts';
 import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
@@ -1119,6 +1122,26 @@ function planReviewInFlightKey(value: BuilderPlanReviewInFlight): string {
   ].join(':');
 }
 
+function sideWorkspaceFileRefKey(fileRef: BuilderSideWorkspaceFileRef | null): string {
+  if (fileRef === null) return 'none';
+  return `${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
+}
+
+function sideWorkspaceFilesRequestKey(
+  draftId: string | null,
+  request: BuilderSideWorkspaceFileRequest,
+): string {
+  return `${draftId ?? 'none'}:${request.project_id}:${request.conversation_id}`;
+}
+
+function firstSideWorkspaceTextFileRef(
+  projection: BuilderSideWorkspaceFileTreeProjection,
+): BuilderSideWorkspaceFileRef | null {
+  return projection.selected_file_ref
+    ?? projection.entries.find((entry) => entry.entry_kind === 'text_file')?.file_ref
+    ?? null;
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
@@ -1164,6 +1187,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderLivePreviewStatusProjection | null>(null);
   const [livePreviewOperation, setLivePreviewOperation] =
     useState<'starting' | 'reloading' | 'stopping' | null>(null);
+  const [sideWorkspaceFileTreeKey, setSideWorkspaceFileTreeKey] = useState<string | null>(null);
+  const [sideWorkspaceFileTree, setSideWorkspaceFileTree] =
+    useState<BuilderSideWorkspaceFileTreeProjection | null>(null);
+  const [sideWorkspaceFileTreeStatus, setSideWorkspaceFileTreeStatus] =
+    useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [sideWorkspaceFileContentKey, setSideWorkspaceFileContentKey] = useState<string | null>(null);
+  const [sideWorkspaceFileContent, setSideWorkspaceFileContent] =
+    useState<BuilderSideWorkspaceFileContentProjection | null>(null);
+  const [sideWorkspaceFileContentStatus, setSideWorkspaceFileContentStatus] =
+    useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [sideWorkspaceSelectedFileRef, setSideWorkspaceSelectedFileRef] =
+    useState<BuilderSideWorkspaceFileRef | null>(null);
   const [checkRunAvailable, setCheckRunAvailable] =
     useState<BuilderCheckRunAvailableResult | null>(null);
   const [checkRunCompleted, setCheckRunCompleted] =
@@ -1200,6 +1235,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
   const checkRunRequestSequenceRef = useRef(0);
   const automaticCheckRunKeyRef = useRef<string | null>(null);
+  const sideWorkspaceFileTreeSequenceRef = useRef(0);
+  const sideWorkspaceFileContentSequenceRef = useRef(0);
+  const sideWorkspaceFileTreeKeyRef = useRef<string | null>(null);
   const publishSubmitInFlight = useCallback((inFlight: boolean) => {
     submitInFlightRef.current = inFlight;
     setSubmitInFlight(inFlight);
@@ -1350,6 +1388,138 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [conversation.snapshot]);
 
   const currentDraftId = project.snapshot.draft?.draft_id ?? null;
+  const currentSideWorkspaceFilesRequestKey = useMemo(() => {
+    if (
+      currentDraftId === null
+      || conversation.snapshot.project_id === null
+      || conversation.snapshot.conversation === null
+      || conversation.snapshot.conversation.state !== 'ready'
+    ) return null;
+    return sideWorkspaceFilesRequestKey(currentDraftId, {
+      project_id: conversation.snapshot.project_id,
+      conversation_id: conversation.snapshot.conversation.conversation.conversation_id,
+    });
+  }, [conversation.snapshot, currentDraftId]);
+
+  const sideWorkspaceFilesRequest = useCallback((): BuilderSideWorkspaceFileRequest | null => {
+    const conversationSnapshot = conversationSnapshotRef.current;
+    if (
+      projectSnapshotRef.current.draft?.draft_id === undefined
+      || conversationSnapshot.project_id === null
+      || conversationSnapshot.conversation === null
+      || conversationSnapshot.conversation.state !== 'ready'
+    ) return null;
+    return Object.freeze({
+      project_id: conversationSnapshot.project_id,
+      conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+    });
+  }, []);
+
+  const requestSideWorkspaceFiles = useCallback(async () => {
+    const request = sideWorkspaceFilesRequest();
+    if (request === null) return;
+    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
+    const requestKey = sideWorkspaceFilesRequestKey(draftId, request);
+    if (
+      sideWorkspaceFileTreeKeyRef.current === requestKey
+      && (sideWorkspaceFileTreeStatus === 'loading' || sideWorkspaceFileTreeStatus === 'ready')
+    ) return;
+    sideWorkspaceFileTreeKeyRef.current = requestKey;
+    const sequence = sideWorkspaceFileTreeSequenceRef.current + 1;
+    sideWorkspaceFileTreeSequenceRef.current = sequence;
+    setSideWorkspaceFileTreeKey(requestKey);
+    setSideWorkspaceFileTreeStatus('loading');
+    setSideWorkspaceFileTree(null);
+    setSideWorkspaceFileContentKey(null);
+    setSideWorkspaceFileContent(null);
+    setSideWorkspaceFileContentStatus('idle');
+    setSideWorkspaceSelectedFileRef(null);
+    try {
+      const projection = await ports.sideWorkspaceFiles.readCurrentDraftFileTree(request);
+      if (
+        sideWorkspaceFileTreeSequenceRef.current !== sequence
+        || projectSnapshotRef.current.draft?.draft_id !== draftId
+      ) return;
+      setSideWorkspaceFileTree(projection);
+      setSideWorkspaceFileTreeStatus('ready');
+      setSideWorkspaceSelectedFileRef(firstSideWorkspaceTextFileRef(projection));
+    } catch {
+      if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
+      setSideWorkspaceFileTreeKey(requestKey);
+      setSideWorkspaceFileTree(null);
+      setSideWorkspaceFileTreeStatus('failed');
+      setSideWorkspaceFileContentKey(null);
+      setSideWorkspaceFileContent(null);
+      setSideWorkspaceFileContentStatus('failed');
+      setSideWorkspaceSelectedFileRef(null);
+    }
+  }, [ports.sideWorkspaceFiles, sideWorkspaceFileTreeStatus, sideWorkspaceFilesRequest]);
+
+  const selectSideWorkspaceFile = useCallback((fileRef: BuilderSideWorkspaceFileRef) => {
+    setActiveFile(fileRef.path);
+    setSideWorkspaceSelectedFileRef(fileRef);
+  }, []);
+
+  useEffect(() => {
+    const sequence = sideWorkspaceFileContentSequenceRef.current + 1;
+    sideWorkspaceFileContentSequenceRef.current = sequence;
+    let active = true;
+    const loadFileContent = async () => {
+      await Promise.resolve();
+      if (!active || sideWorkspaceFileContentSequenceRef.current !== sequence) return;
+      const request = sideWorkspaceFilesRequest();
+      const fileRef = sideWorkspaceSelectedFileRef;
+      if (
+        request === null
+        || fileRef === null
+        || sideWorkspaceFileTree === null
+      ) {
+        setSideWorkspaceFileContentKey(null);
+        setSideWorkspaceFileContent(null);
+        setSideWorkspaceFileContentStatus('idle');
+        return;
+      }
+      const requestKey = sideWorkspaceFilesRequestKey(projectSnapshotRef.current.draft?.draft_id ?? null, request);
+      const contentKey = `${requestKey}:${sideWorkspaceFileRefKey(fileRef)}`;
+      if (
+        sideWorkspaceFileTreeKey !== requestKey
+        || fileRef.source_tree_digest !== sideWorkspaceFileTree.source_tree_digest
+      ) {
+        setSideWorkspaceFileContentKey(contentKey);
+        setSideWorkspaceFileContent(null);
+        setSideWorkspaceFileContentStatus('failed');
+        return;
+      }
+      setSideWorkspaceFileContentKey(contentKey);
+      setSideWorkspaceFileContentStatus('loading');
+      setSideWorkspaceFileContent(null);
+      try {
+        const projection = await ports.sideWorkspaceFiles.readCurrentDraftFileContent({
+          ...request,
+          file_ref: fileRef,
+        });
+        if (
+          !active
+          || sideWorkspaceFileContentSequenceRef.current !== sequence
+          || sideWorkspaceFileRefKey(projection.file_ref) !== sideWorkspaceFileRefKey(fileRef)
+        ) return;
+        setSideWorkspaceFileContent(projection);
+        setSideWorkspaceFileContentStatus('ready');
+      } catch {
+        if (!active || sideWorkspaceFileContentSequenceRef.current !== sequence) return;
+        setSideWorkspaceFileContent(null);
+        setSideWorkspaceFileContentStatus('failed');
+      }
+    };
+    void loadFileContent();
+    return () => { active = false; };
+  }, [
+    ports.sideWorkspaceFiles,
+    sideWorkspaceFileTree,
+    sideWorkspaceFileTreeKey,
+    sideWorkspaceFilesRequest,
+    sideWorkspaceSelectedFileRef,
+  ]);
 
   useEffect(() => {
     const requestSequence = checkRunRequestSequenceRef.current + 1;
@@ -3077,6 +3247,24 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     && conversation.snapshot.conversation !== null
     && conversation.snapshot.conversation.state === 'ready';
   const visibleLivePreviewStatus = hasVisibleLivePreviewRequest ? livePreviewStatus : null;
+  const visibleSideWorkspaceFileTree = sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey
+    ? sideWorkspaceFileTree
+    : null;
+  const visibleSideWorkspaceFileTreeStatus = currentSideWorkspaceFilesRequestKey !== null
+    && sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey
+    ? sideWorkspaceFileTreeStatus
+    : 'idle';
+  const visibleSideWorkspaceFileContentKey = currentSideWorkspaceFilesRequestKey !== null
+    && sideWorkspaceSelectedFileRef !== null
+    ? `${currentSideWorkspaceFilesRequestKey}:${sideWorkspaceFileRefKey(sideWorkspaceSelectedFileRef)}`
+    : null;
+  const visibleSideWorkspaceFileContent = sideWorkspaceFileContentKey === visibleSideWorkspaceFileContentKey
+    ? sideWorkspaceFileContent
+    : null;
+  const visibleSideWorkspaceFileContentStatus = visibleSideWorkspaceFileContentKey !== null
+    && sideWorkspaceFileContentKey === visibleSideWorkspaceFileContentKey
+    ? sideWorkspaceFileContentStatus
+    : 'idle';
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
@@ -3214,6 +3402,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               liveOutput={liveOutput}
               livePreviewOperation={livePreviewOperation}
               livePreviewStatus={visibleLivePreviewStatus}
+              sideWorkspaceFileContent={visibleSideWorkspaceFileContent}
+              sideWorkspaceFileContentStatus={visibleSideWorkspaceFileContentStatus}
+              sideWorkspaceFileTree={visibleSideWorkspaceFileTree}
+              sideWorkspaceFileTreeStatus={visibleSideWorkspaceFileTreeStatus}
               planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
@@ -3242,11 +3434,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
               onRequestLivePreview={requestLivePreview}
+              onRequestSideWorkspaceFiles={requestSideWorkspaceFiles}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
               onSave={save}
               onStopLivePreview={stopLivePreview}
               onSelectFile={setActiveFile}
+              onSelectSideWorkspaceFile={selectSideWorkspaceFile}
               onRefreshConversation={conversation.refresh}
               onRefreshHistory={history.refresh}
               onReviewPlan={reviewPlan}

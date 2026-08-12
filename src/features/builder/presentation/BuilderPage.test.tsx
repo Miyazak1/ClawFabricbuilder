@@ -7,7 +7,13 @@ import { createBuilderProjectController } from '../application/builderProjectCon
 import { createBuilderConversationController } from '../application/builderConversationController';
 import { createBuilderProjectHistoryController } from '../application/builderProjectHistoryController';
 import { createBuilderProjectCatalogController } from '../application/builderProjectCatalogController';
-import { BuilderGenerationDiagnosticError } from '../application/builderPorts';
+import {
+  BuilderGenerationDiagnosticError,
+  type BuilderSideWorkspaceFileAuthority,
+  type BuilderSideWorkspaceFileContentProjection,
+  type BuilderSideWorkspaceFileRef,
+  type BuilderSideWorkspaceFileTreeProjection,
+} from '../application/builderPorts';
 import { BuilderPage } from './BuilderPage';
 import {
   CONVERSATION_ID,
@@ -56,6 +62,112 @@ const PLAN_SOURCE_READ_APPROVED = Object.freeze({
   approval_scope: 'current_project_plan_source_read',
   authority: 'main_selected_project_bounded_filesystem_read_v1',
 } as const);
+
+const SIDE_WORKSPACE_SOURCE_TREE_DIGEST = `sha256:${'a'.repeat(64)}`;
+const SIDE_WORKSPACE_APP_DIGEST = `sha256:${'b'.repeat(64)}`;
+const SIDE_WORKSPACE_STYLE_DIGEST = `sha256:${'c'.repeat(64)}`;
+const SIDE_WORKSPACE_ADD_DIGEST = `sha256:${'d'.repeat(64)}`;
+const SIDE_WORKSPACE_TOOL_DIGEST = `sha256:${'e'.repeat(64)}`;
+
+type SideWorkspaceFileFixture = Readonly<{
+  contentDigest: string;
+  path: string;
+}>;
+
+function sideWorkspaceFileAuthority(): BuilderSideWorkspaceFileAuthority {
+  return Object.freeze({
+    file_projection_authority: 'main_owned_side_workspace_file_projection_v1',
+    renderer_source_tree: 'not_accepted',
+    renderer_path_authority: 'main_issued_file_ref_only',
+    source_read: 'main_owned_verified_source_tree_only',
+    source_write: 'not_performed',
+    git_write: 'not_performed',
+    sqlite_write: 'not_performed',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    command_execution: false,
+    electron_view_attachment: false,
+    ipc_registration: false,
+    revision_admission: false,
+    save_admission: false,
+    permission_grant: false,
+  });
+}
+
+function sideWorkspaceFileRef(path: string, contentDigest: string): BuilderSideWorkspaceFileRef {
+  return Object.freeze({
+    file_ref_version: 'builder-side-workspace-file-ref.v1',
+    source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
+    path,
+    content_digest: contentDigest,
+  });
+}
+
+function sideWorkspaceFileTree(
+  files: readonly SideWorkspaceFileFixture[] = Object.freeze([
+    Object.freeze({ path: 'src/App.tsx', contentDigest: SIDE_WORKSPACE_APP_DIGEST }),
+    Object.freeze({ path: 'src/styles.css', contentDigest: SIDE_WORKSPACE_STYLE_DIGEST }),
+  ]),
+): BuilderSideWorkspaceFileTreeProjection {
+  const hasSrcDirectory = files.some((file) => file.path.startsWith('src/'));
+  const entries = [
+    ...(hasSrcDirectory ? [
+      Object.freeze({
+        entry_kind: 'directory' as const,
+        path: 'src',
+        name: 'src',
+        parent_path: null,
+        depth: 0,
+        child_count: files.filter((file) => file.path.startsWith('src/')).length,
+      }),
+    ] : []),
+    ...files.map((file) => Object.freeze({
+      entry_kind: 'text_file' as const,
+      path: file.path,
+      name: file.path.split('/').at(-1) ?? file.path,
+      parent_path: file.path.includes('/') ? file.path.split('/').slice(0, -1).join('/') : null,
+      depth: file.path.includes('/') ? 1 : 0,
+      content_digest: file.contentDigest,
+      file_ref: sideWorkspaceFileRef(file.path, file.contentDigest),
+    })),
+  ];
+  return Object.freeze({
+    projection_version: 'builder-side-workspace-file-tree.v1',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    source_kind: 'current_draft',
+    root_label: 'Current draft',
+    source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
+    entries: Object.freeze(entries),
+    selected_file_ref: files[0] === undefined ? null : sideWorkspaceFileRef(files[0].path, files[0].contentDigest),
+    source_ref: Object.freeze({ source_ref_kind: 'current_draft_checkpoint_candidate' }),
+    authority: sideWorkspaceFileAuthority(),
+  });
+}
+
+function sideWorkspaceFileContent(
+  file: SideWorkspaceFileFixture = Object.freeze({
+    path: 'src/App.tsx',
+    contentDigest: SIDE_WORKSPACE_APP_DIGEST,
+  }),
+  textPreview = 'export function App() { return <main />; }\n',
+  languageHint: BuilderSideWorkspaceFileContentProjection['language_hint'] = 'typescript',
+): BuilderSideWorkspaceFileContentProjection {
+  return Object.freeze({
+    projection_version: 'builder-side-workspace-file-content.v1',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    source_kind: 'current_draft',
+    source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
+    file_ref: sideWorkspaceFileRef(file.path, file.contentDigest),
+    path: file.path,
+    language_hint: languageHint,
+    content_status: 'ready',
+    text_preview: textPreview,
+    binary_summary: null,
+    authority: sideWorkspaceFileAuthority(),
+  });
+}
 
 function providerContextDisclosureStatusProjection() {
   return Object.freeze({
@@ -3125,7 +3237,7 @@ describe('BuilderPage v2', () => {
       .toBe('true');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
-    expect(container.querySelector('[data-builder-workspace-control-tab="source"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="source"]')?.textContent).toContain('Files');
     click(container, '[data-builder-side-workspace-new-tab-button="true"]');
     const newTabMenu = container.querySelector('[data-builder-side-workspace-new-tab-menu="true"]');
     expect(newTabMenu).not.toBeNull();
@@ -3325,6 +3437,55 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
+  });
+
+  it('opens current draft files from the side workspace using main-issued file refs', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const onRequestSideWorkspaceFiles = vi.fn();
+    const onSelectSideWorkspaceFile = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Inspect the files."
+        onRequestSideWorkspaceFiles={onRequestSideWorkspaceFiles}
+        onSelectSideWorkspaceFile={onSelectSideWorkspaceFile}
+        sideWorkspaceFileContent={sideWorkspaceFileContent()}
+        sideWorkspaceFileContentStatus="ready"
+        sideWorkspaceFileTree={sideWorkspaceFileTree()}
+        sideWorkspaceFileTreeStatus="ready"
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="source"]');
+
+    const filesPanel = container.querySelector('[data-builder-side-workspace-files="true"]');
+    expect(filesPanel).not.toBeNull();
+    expect(filesPanel?.textContent).toContain('Files');
+    expect(filesPanel?.textContent).toContain('2 files from Current draft');
+    expect(filesPanel?.textContent).toContain('App.tsx');
+    expect(filesPanel?.textContent).toContain('styles.css');
+    expect(filesPanel?.textContent).toContain('export function App()');
+    expect(filesPanel?.querySelector('[data-builder-side-workspace-file-kind="directory"]')?.textContent)
+      .toContain('src');
+    expect(onRequestSideWorkspaceFiles).toHaveBeenCalled();
+
+    click(container, '[data-builder-side-workspace-file-entry="src/styles.css"]');
+
+    expect(onSelectSideWorkspaceFile).toHaveBeenCalledExactlyOnceWith(
+      sideWorkspaceFileRef('src/styles.css', SIDE_WORKSPACE_STYLE_DIGEST),
+    );
+    expect(Object.keys(onSelectSideWorkspaceFile.mock.calls[0]?.[0] ?? {})).toStrictEqual([
+      'file_ref_version',
+      'source_tree_digest',
+      'path',
+      'content_digest',
+    ]);
+    expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('text_preview');
+    expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('entries');
   });
 
   it('opens a read-only permissions artifact tab without exposing authority internals', async () => {
@@ -4468,6 +4629,7 @@ describe('BuilderPage v2', () => {
   it('opens and focuses source in the artifact sidebar after choosing a changed file', async () => {
     const draftReady = await changedDraftSnapshot();
     const onSelectFile = vi.fn();
+    const addFile = Object.freeze({ path: 'src/add.ts', contentDigest: SIDE_WORKSPACE_ADD_DIGEST });
 
     function ControlledBuilderPage() {
       const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -4479,6 +4641,10 @@ describe('BuilderPage v2', () => {
             onSelectFile(file);
             setActiveFile(file);
           }}
+          sideWorkspaceFileContent={sideWorkspaceFileContent(addFile, 'const added = true;\n')}
+          sideWorkspaceFileContentStatus="ready"
+          sideWorkspaceFileTree={sideWorkspaceFileTree([addFile])}
+          sideWorkspaceFileTreeStatus="ready"
           snapshot={draftReady}
         />
       );
@@ -4490,15 +4656,14 @@ describe('BuilderPage v2', () => {
     openWorkspaceChanges(container);
     click(container, '[data-builder-change-card="Added src/add.ts"] button');
 
-    const source = container.querySelector('[data-builder-source-flow="true"]');
+    const source = container.querySelector('[data-builder-side-workspace-files="true"]');
     expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('src/add.ts');
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('source');
-    expect(document.activeElement).toBe(source);
-    expect(container.querySelector('[data-builder-source-code="src/add.ts"] code')?.textContent)
+    expect(container.querySelector('[data-builder-side-workspace-file-content="src/add.ts"] code')?.textContent)
       .toContain('const added = true;');
   });
 
@@ -4923,36 +5088,39 @@ describe('BuilderPage v2', () => {
   it('shows a selected source file in the artifact sidebar', async () => {
     const { draftReady } = await snapshots();
     const onSelectFile = vi.fn();
+    const toolFile = Object.freeze({ path: 'src/tool.py', contentDigest: SIDE_WORKSPACE_TOOL_DIGEST });
     const container = render(
       <BuilderPage
         activeFile="src/tool.py"
         instruction=""
         onSelectFile={onSelectFile}
+        sideWorkspaceFileContent={sideWorkspaceFileContent(toolFile, 'print("hello")\n', 'python')}
+        sideWorkspaceFileContentStatus="ready"
+        sideWorkspaceFileTree={sideWorkspaceFileTree([toolFile])}
+        sideWorkspaceFileTreeStatus="ready"
         snapshot={draftReady}
       />,
     );
     expect(container.textContent).toContain('src/tool.py');
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-source-flow="true"]')).not.toBeNull();
-    expect(container.querySelector('[data-builder-source-flow="true"]')?.closest('[data-builder-chat-main="true"]'))
+    expect(container.querySelector('[data-builder-source-flow="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-files="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-files="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBeNull();
-    expect(container.querySelector('[data-builder-source-flow="true"]')?.closest('[data-builder-artifact-sidebar="true"]'))
+    expect(container.querySelector('[data-builder-side-workspace-files="true"]')?.closest('[data-builder-artifact-sidebar="true"]'))
       .not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('source');
-    expect(container.querySelector('[data-builder-source-flow="true"]')?.classList.contains('cf-builder-chat-flow-surface'))
-      .toBe(false);
-    expect(container.querySelector('details[data-builder-source-flow="true"]')?.getAttribute('open'))
-      .toBe('');
-    expect(container.querySelector('[data-builder-source-file="src/tool.py"]')?.getAttribute('data-active'))
+    expect(container.querySelector('[data-builder-side-workspace-file-entry="src/tool.py"]')?.getAttribute('data-active'))
       .toBe('true');
-    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
+    expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
   });
 
   it('keeps source files accessible from the artifact sidebar when a project has no static preview', async () => {
+    const toolFile = Object.freeze({ path: 'src/tool.py', contentDigest: SIDE_WORKSPACE_TOOL_DIGEST });
     const draftReady = await draftSnapshotFromSourceTrees(
       await createSourceTree([{ path: 'src/tool.py', content: 'print("old")\n' }]),
       await createSourceTree([{ path: 'src/tool.py', content: 'print("new")\n' }]),
@@ -4961,6 +5129,10 @@ describe('BuilderPage v2', () => {
       <BuilderPage
         activeFile={null}
         instruction="Update the script."
+        sideWorkspaceFileContent={sideWorkspaceFileContent(toolFile, 'print("new")\n', 'python')}
+        sideWorkspaceFileContentStatus="ready"
+        sideWorkspaceFileTree={sideWorkspaceFileTree([toolFile])}
+        sideWorkspaceFileTreeStatus="ready"
         snapshot={draftReady}
       />,
     );
@@ -4982,14 +5154,13 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('details[data-builder-source-flow="true"]')).toBeNull();
     click(container, '[data-builder-workspace-menu-button="true"]');
     click(container, '[data-builder-workspace-control-tab="source"]');
-    const source = container.querySelector<HTMLDetailsElement>('details[data-builder-source-flow="true"]');
+    const source = container.querySelector<HTMLElement>('[data-builder-side-workspace-files="true"]');
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
-    expect(source?.getAttribute('open')).toBe('');
-    expect(source?.querySelector('[data-builder-source-summary="true"]')?.textContent)
-      .toContain('1 file - src/tool.py');
-    expect(container.querySelector('[data-builder-source-code="src/tool.py"] code')?.textContent)
+    expect(source?.textContent).toContain('1 file from Current draft');
+    expect(source?.textContent).toContain('src/tool.py');
+    expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
     expect(container.textContent).toContain('Preview unavailable');
     expect(container.textContent).toContain('Three.js');
