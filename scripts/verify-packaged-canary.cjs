@@ -2656,18 +2656,36 @@ async function assertConversationActivityBeforeReviewViaUi(page, review) {
   await page.locator(SELECTORS.conversationActivity).waitFor({ state: 'visible' });
   const latestUserMessage = page.locator(SELECTORS.userMessage).last();
   await latestUserMessage.waitFor({ state: 'visible' });
-  const activity = await boundedBox(page.locator(SELECTORS.conversationActivity), 'canary_review_diff_activity_failed');
-  const userMessage = await boundedBox(latestUserMessage, 'canary_review_diff_activity_failed');
-  if (
-    activity.width < CANARY_CHAT_COLUMN_MIN_WIDTH_PX
-    || userMessage.width < 88
-    || activity.y > review.y + 1
-    || userMessage.y > review.y + 1
-    || boxBottom(activity) > review.y + 1
-    || boxBottom(userMessage) > review.y + 1
-    || boxesOverlap(activity, review)
-    || boxesOverlap(userMessage, review)
-  ) fail('canary_review_diff_activity_failed');
+  let lastDiagnostic = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const activity = await boundedBox(page.locator(SELECTORS.conversationActivity), 'canary_review_diff_activity_failed');
+    const userMessage = await boundedBox(latestUserMessage, 'canary_review_diff_activity_failed');
+    const diagnostic = Object.freeze({
+      activity,
+      review,
+      user_message: userMessage,
+      activity_width_ok: activity.width >= CANARY_CHAT_COLUMN_MIN_WIDTH_PX,
+      user_message_width_ok: userMessage.width >= 88,
+      activity_before_review: activity.y <= review.y + 1 && boxBottom(activity) <= review.y + 1,
+      user_message_before_review: userMessage.y <= review.y + 1 && boxBottom(userMessage) <= review.y + 1,
+      activity_review_overlap: boxesOverlap(activity, review),
+      user_message_review_overlap: boxesOverlap(userMessage, review),
+    });
+    lastDiagnostic = diagnostic;
+    if (
+      diagnostic.activity_width_ok
+      && diagnostic.user_message_width_ok
+      && diagnostic.activity_before_review
+      && diagnostic.user_message_before_review
+      && !diagnostic.activity_review_overlap
+      && !diagnostic.user_message_review_overlap
+    ) {
+      return;
+    }
+    if (typeof page.waitForTimeout !== 'function') break;
+    await page.waitForTimeout(100);
+  }
+  failWithDiagnostic('canary_review_diff_activity_failed', lastDiagnostic);
 }
 
 function draftReviewLayoutFailureCode({
