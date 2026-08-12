@@ -1417,6 +1417,7 @@ async function setup(options: Readonly<{
         },
       }),
     },
+    sideWorkspaceFiles: {},
     taskStream: {
       read: readTaskStream,
       subscribeChanged(listener: (event: unknown) => void) {

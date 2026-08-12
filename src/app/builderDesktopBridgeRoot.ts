@@ -8,11 +8,12 @@ export type BuilderDesktopBridgeRoot = Readonly<{
   providerContextDisclosureApproval: unknown;
   checkRun: unknown;
   livePreview: unknown;
+  sideWorkspaceFiles: unknown;
   taskStream: unknown;
   windowControls: unknown;
 }>;
 
-export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v26';
+export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v27';
 
 const ROOT_KEYS = new Set([
   'bridgeVersion',
@@ -24,6 +25,7 @@ const ROOT_KEYS = new Set([
   'providerContextDisclosureApproval',
   'checkRun',
   'livePreview',
+  'sideWorkspaceFiles',
   'taskStream',
   'windowControls',
 ]);
@@ -79,6 +81,7 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
       providerContextDisclosureApproval: descriptors.providerContextDisclosureApproval.value,
       checkRun: descriptors.checkRun.value,
       livePreview: descriptors.livePreview.value,
+      sideWorkspaceFiles: descriptors.sideWorkspaceFiles.value,
       taskStream: descriptors.taskStream.value,
       windowControls: descriptors.windowControls.value,
     });

@@ -126,6 +126,10 @@ for (const expected of [
   '/electron/builder-packaged-check-runtime-resolver.cjs',
   '/electron/builder-live-preview-ipc-adapter.cjs',
   '/electron/builder-live-preview-ipc-runtime.cjs',
+  '/electron/builder-side-workspace-file-projection.cjs',
+  '/electron/builder-side-workspace-file-main-service.cjs',
+  '/electron/builder-side-workspace-file-ipc-adapter.cjs',
+  '/electron/builder-side-workspace-file-ipc-runtime.cjs',
   '/electron/builder-window-controls-ipc-runtime.cjs',
 ]) {
   assert.equal(packagedFiles.includes(expected), true, expected);
@@ -364,6 +368,8 @@ const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const packagedLivePreviewIpcAdapter = packagedSource('electron/builder-live-preview-ipc-adapter.cjs');
 const packagedLivePreviewIpcRuntime = packagedSource('electron/builder-live-preview-ipc-runtime.cjs');
+const packagedSideWorkspaceFileIpcAdapter = packagedSource('electron/builder-side-workspace-file-ipc-adapter.cjs');
+const packagedSideWorkspaceFileIpcRuntime = packagedSource('electron/builder-side-workspace-file-ipc-runtime.cjs');
 const packagedConversationRecords = packagedSource('electron/builder-conversation-records.cjs');
 const packagedConversationReplay = packagedSource('electron/builder-conversation-replay.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
@@ -435,6 +441,10 @@ const livePreviewChannels = [
   'clawfabric-builder:live-preview:stop-current',
   'clawfabric-builder:live-preview:read-current-status',
 ];
+const sideWorkspaceFileChannels = [
+  'clawfabric-builder:side-workspace-files:read-current-draft-tree',
+  'clawfabric-builder:side-workspace-files:read-current-draft-content',
+];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
   'clawfabric-builder:window-controls:toggle-maximize',
@@ -451,6 +461,7 @@ const preloadChannels = [
   ...providerContextDisclosureApprovalChannels,
   ...checkRunChannels,
   ...livePreviewChannels,
+  ...sideWorkspaceFileChannels,
   ...windowControlsChannels,
 ];
 
@@ -529,6 +540,7 @@ exactObjectKeys(preloadRoot, [
   'providerContextDisclosureApproval',
   'checkRun',
   'livePreview',
+  'sideWorkspaceFiles',
   'windowControls',
 ]);
 const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
@@ -543,6 +555,9 @@ const providerContextDisclosureApprovalProperty = preloadRoot.properties.find(
 );
 const checkRunProperty = preloadRoot.properties.find((property) => property.name.text === 'checkRun');
 const livePreviewProperty = preloadRoot.properties.find((property) => property.name.text === 'livePreview');
+const sideWorkspaceFilesProperty = preloadRoot.properties.find(
+  (property) => property.name.text === 'sideWorkspaceFiles',
+);
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
@@ -554,9 +569,10 @@ assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(providerContextDisclosureApprovalProperty), true);
 assert.equal(ts.isPropertyAssignment(checkRunProperty), true);
 assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
+assert.equal(ts.isPropertyAssignment(sideWorkspaceFilesProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v26');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v27');
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -568,6 +584,7 @@ const providerContextDisclosureApprovalBridge = frozenObjectLiteral(
 );
 const checkRunBridge = frozenObjectLiteral(checkRunProperty.initializer);
 const livePreviewBridge = frozenObjectLiteral(livePreviewProperty.initializer);
+const sideWorkspaceFilesBridge = frozenObjectLiteral(sideWorkspaceFilesProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
 exactObjectKeys(workspaceBridge, [
   'open',
@@ -620,9 +637,13 @@ exactObjectKeys(livePreviewBridge, [
   'stopCurrentPreview',
   'readCurrentPreviewStatus',
 ]);
+exactObjectKeys(sideWorkspaceFilesBridge, [
+  'readCurrentDraftFileTree',
+  'readCurrentDraftFileContent',
+]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  ...Array.from({ length: 29 }, () => 'invoke'),
+  ...Array.from({ length: 31 }, () => 'invoke'),
   'on',
   'removeListener',
   'on',
@@ -730,6 +751,8 @@ assert.equal(
   preloadConstants.get('READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL'),
   livePreviewChannels[3],
 );
+assert.equal(preloadConstants.get('READ_CURRENT_DRAFT_FILE_TREE_CHANNEL'), sideWorkspaceFileChannels[0]);
+assert.equal(preloadConstants.get('READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL'), sideWorkspaceFileChannels[1]);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -834,6 +857,18 @@ exactInvokeMethod(
   'READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL',
   ['request'],
 );
+exactInvokeMethod(
+  sideWorkspaceFilesBridge,
+  'readCurrentDraftFileTree',
+  'READ_CURRENT_DRAFT_FILE_TREE_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  sideWorkspaceFilesBridge,
+  'readCurrentDraftFileContent',
+  'READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL',
+  ['request'],
+);
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'toggleMaximize', 'TOGGLE_MAXIMIZE_WINDOW_CHANNEL', []);
 exactInvokeMethod(windowControlsBridge, 'close', 'CLOSE_WINDOW_CHANNEL', []);
@@ -843,12 +878,14 @@ assert.match(packagedMain, /require\(['"]\.\/builder-provider-settings-ipc-runti
 assert.match(packagedMain, /require\(['"]\.\/builder-permission-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-generation-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-live-preview-ipc-runtime\.cjs['"]\)/u);
+assert.match(packagedMain, /require\(['"]\.\/builder-side-workspace-file-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /require\(['"]\.\/builder-window-controls-ipc-runtime\.cjs['"]\)/u);
 assert.match(packagedMain, /createBuilderProviderSettingsIpcRuntime/u);
 assert.match(packagedMain, /createBuilderPermissionIpcRuntime/u);
 assert.match(packagedMain, /createBuilderGenerationIpcRuntime/u);
 assert.match(packagedMain, /createBuilderCheckRunApprovalIpcRuntime/u);
 assert.match(packagedMain, /createBuilderLivePreviewIpcRuntime/u);
+assert.match(packagedMain, /createBuilderSideWorkspaceFileIpcRuntime/u);
 assert.match(packagedMain, /createBuilderWindowControlsIpcRuntime/u);
 assert.match(packagedMain, /frame:\s*false/u);
 assert.doesNotMatch(packagedMain, /titleBarStyle|titleBarOverlay/u);
@@ -1581,6 +1618,13 @@ for (const channel of permissionChannels) {
 for (const channel of livePreviewChannels) {
   assert.equal(
     packagedLivePreviewIpcAdapter.includes(channel) || packagedLivePreviewIpcRuntime.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of sideWorkspaceFileChannels) {
+  assert.equal(
+    packagedSideWorkspaceFileIpcAdapter.includes(channel) || packagedSideWorkspaceFileIpcRuntime.includes(channel),
     true,
     channel,
   );

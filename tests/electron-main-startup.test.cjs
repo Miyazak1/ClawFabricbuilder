@@ -29,6 +29,8 @@ async function executeMain({
     createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
     createLivePreviewWebContentsViewRuntime: 0,
+    createSideWorkspaceFileMainService: 0,
+    createSideWorkspaceFileRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -50,6 +52,7 @@ async function executeMain({
   let currentDraftCheckSkipService = null;
   let currentDraftLivePreviewSourceService = null;
   let livePreviewMainService = null;
+  let sideWorkspaceFileMainService = null;
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
@@ -257,6 +260,17 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-side-workspace-file-ipc-runtime.cjs') {
+        return {
+          createBuilderSideWorkspaceFileIpcRuntime(options) {
+            calls.createSideWorkspaceFileRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.fileService, sideWorkspaceFileMainService);
+            return runtime(6);
+          },
+        };
+      }
       if (specifier === './builder-live-preview-main-service.cjs') {
         return {
           createBuilderLivePreviewMainService(options) {
@@ -269,6 +283,18 @@ async function executeMain({
               service_version: 'builder-live-preview-main-service.v1',
             });
             return livePreviewMainService;
+          },
+        };
+      }
+      if (specifier === './builder-side-workspace-file-main-service.cjs') {
+        return {
+          createBuilderSideWorkspaceFileMainService(options) {
+            calls.createSideWorkspaceFileMainService += 1;
+            assert.equal(options.current_draft_source_service, currentDraftLivePreviewSourceService);
+            sideWorkspaceFileMainService = Object.freeze({
+              service_version: 'builder-side-workspace-file-main-service.v1',
+            });
+            return sideWorkspaceFileMainService;
           },
         };
       }
@@ -291,7 +317,7 @@ async function executeMain({
             calls.createWindowControlsRuntime += 1;
             assert.equal(options.ipcMain, electron.ipcMain);
             assert.equal(typeof options.mainWindowRef, 'function');
-            return runtime(6);
+            return runtime(7);
           },
         };
       }
@@ -330,6 +356,8 @@ test('a second application instance exits before registering Builder authorities
     createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
     createLivePreviewWebContentsViewRuntime: 0,
+    createSideWorkspaceFileMainService: 0,
+    createSideWorkspaceFileRuntime: 0,
     createPermissionRuntime: 0,
     createSettingsRuntime: 0,
     createWindowControlsRuntime: 0,
@@ -356,13 +384,15 @@ test('window startup failure disposes registered handlers and quits', async () =
     createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
     createLivePreviewWebContentsViewRuntime: 1,
+    createSideWorkspaceFileMainService: 1,
+    createSideWorkspaceFileRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
-    dispose: 6,
+    dispose: 7,
     mkdir: 0,
     quit: 1,
-    register: 7,
+    register: 8,
     setPath: [],
     shutdown: 1,
     whenReady: 1,
@@ -390,9 +420,9 @@ test('does not close generation authority or quit when CheckRun drain is unconfi
   });
   assert.equal(calls.createGenerationRuntime, 1);
   assert.equal(calls.createCheckRunApprovalRuntime, 1);
-  assert.equal(calls.register, 7);
+  assert.equal(calls.register, 8);
   assert.equal(calls.shutdown, 1);
-  assert.equal(calls.dispose, 2);
+  assert.equal(calls.dispose, 3);
   assert.equal(calls.quit, 0);
 });
 
@@ -436,6 +466,8 @@ test('runtime registration failure rolls back previously registered handlers and
     createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
     createLivePreviewWebContentsViewRuntime: 1,
+    createSideWorkspaceFileMainService: 1,
+    createSideWorkspaceFileRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,

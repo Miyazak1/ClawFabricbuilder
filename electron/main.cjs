@@ -17,8 +17,14 @@ const {
   createBuilderLivePreviewIpcRuntime,
 } = require('./builder-live-preview-ipc-runtime.cjs');
 const {
+  createBuilderSideWorkspaceFileIpcRuntime,
+} = require('./builder-side-workspace-file-ipc-runtime.cjs');
+const {
   createBuilderLivePreviewMainService,
 } = require('./builder-live-preview-main-service.cjs');
+const {
+  createBuilderSideWorkspaceFileMainService,
+} = require('./builder-side-workspace-file-main-service.cjs');
 const {
   createBuilderLivePreviewWebContentsViewRuntime,
 } = require('./builder-live-preview-webcontents-view-runtime.cjs');
@@ -253,6 +259,10 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
     mainWindowRef: () => mainWindow,
     now_ms: () => Date.now(),
   });
+  const sideWorkspaceFileService = createBuilderSideWorkspaceFileMainService({
+    current_draft_source_service:
+      generationRuntime.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime(),
+  });
   return Object.freeze([
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
@@ -280,6 +290,11 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
       ipcMain,
       mainWindowRef: () => mainWindow,
       livePreviewService,
+    }),
+    createBuilderSideWorkspaceFileIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      fileService: sideWorkspaceFileService,
     }),
     createBuilderWindowControlsIpcRuntime({
       ipcMain,

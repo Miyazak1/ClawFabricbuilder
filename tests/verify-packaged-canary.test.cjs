@@ -1604,10 +1604,11 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v26',
+      bridge_version: 'builder-preload.v27',
       legacy_namespaces_absent: true,
       check_run_namespace: 'current_draft_identity_methods_only',
       live_preview_namespace: 'current_preview_control_methods_only',
+      side_workspace_files_namespace: 'current_draft_file_read_methods_only',
       plan_review_namespace: 'review_method_only',
       provider_context_disclosure_approval_namespace: 'approve_current_method_only',
     },
@@ -1915,7 +1916,7 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v26',
+    bridgeVersion: 'builder-preload.v27',
     codeGenerator: {
       classifyIntent() { throw new Error('must not route through bridge'); },
       submit() { throw new Error('must not write through bridge'); },
@@ -2080,6 +2081,10 @@ function installBridge(page) {
       async reloadCurrentPreview() { throw new Error('must not reload live preview through bridge'); },
       async stopCurrentPreview() { throw new Error('must not stop live preview through bridge'); },
       async readCurrentPreviewStatus() { throw new Error('must not read live preview through bridge'); },
+    },
+    sideWorkspaceFiles: {
+      async readCurrentDraftFileTree() { throw new Error('must not read files through read canary bridge'); },
+      async readCurrentDraftFileContent() { throw new Error('must not read file content through read canary bridge'); },
     },
     taskStream: {
       async read(request) {
@@ -2664,7 +2669,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v26');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v27');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents[0][1];
   assert.match(source, /providerSettings\.status/u);
@@ -4884,6 +4889,13 @@ test('rejects legacy JSON authority and Git or SQLite evidence drift', () => {
     (error) => error.code === 'canary_evidence_failed',
   );
 
+  const forgedSideWorkspaceFiles = bridgeEvidence(projectId);
+  forgedSideWorkspaceFiles.bridge_contract.side_workspace_files_namespace = 'raw_path_read_methods';
+  assert.throws(
+    () => assertReadEvidence(forgedSideWorkspaceFiles),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
   const forgedProviderContextDisclosureApproval = bridgeEvidence(projectId);
   forgedProviderContextDisclosureApproval
     .bridge_contract.provider_context_disclosure_approval_namespace = 'approve_and_read_request';
@@ -6496,7 +6508,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.match(planModeSource, /release_gate_integration:\s*['"]included_in_verify_release['"]/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v26['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v27['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
@@ -6535,6 +6547,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /check_run_namespace/u);
   assert.match(source, /current_draft_identity_methods_only/u);
   assert.match(source, /live_preview_namespace/u);
+  assert.match(source, /side_workspace_files_namespace/u);
   assert.match(source, /current_preview_control_methods_only/u);
   assert.doesNotMatch(preloadSource, /projectRevisions|projectCatalog/u);
 });

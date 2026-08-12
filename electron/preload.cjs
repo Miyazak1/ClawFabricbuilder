@@ -61,13 +61,17 @@ const STOP_CURRENT_LIVE_PREVIEW_CHANNEL =
   'clawfabric-builder:live-preview:stop-current';
 const READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL =
   'clawfabric-builder:live-preview:read-current-status';
+const READ_CURRENT_DRAFT_FILE_TREE_CHANNEL =
+  'clawfabric-builder:side-workspace-files:read-current-draft-tree';
+const READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL =
+  'clawfabric-builder:side-workspace-files:read-current-draft-content';
 const MINIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:minimize';
 const TOGGLE_MAXIMIZE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:toggle-maximize';
 const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v26',
+  bridgeVersion: 'builder-preload.v27',
   projectWorkspace: Object.freeze({
     open(request) {
       return ipcRenderer.invoke(OPEN_PROJECT_CHANNEL, request);
@@ -239,6 +243,14 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     readCurrentPreviewStatus(request) {
       return ipcRenderer.invoke(READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL, request);
+    },
+  }),
+  sideWorkspaceFiles: Object.freeze({
+    readCurrentDraftFileTree(request) {
+      return ipcRenderer.invoke(READ_CURRENT_DRAFT_FILE_TREE_CHANNEL, request);
+    },
+    readCurrentDraftFileContent(request) {
+      return ipcRenderer.invoke(READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL, request);
     },
   }),
   windowControls: Object.freeze({

@@ -42,6 +42,9 @@ import type {
   BuilderTaskStreamPort,
   BuilderProjectWorkspacePort,
   BuilderSemanticRouteClassification,
+  BuilderSideWorkspaceFilesPort,
+  BuilderSideWorkspaceFileContentRequest,
+  BuilderSideWorkspaceFileRequest,
 } from '../features/builder/application/builderPorts';
 import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
@@ -65,6 +68,10 @@ import {
   BuilderDesktopLivePreviewPortError,
   createBuilderDesktopLivePreviewPort,
 } from '../features/builder/infrastructure/builderDesktopLivePreviewPort';
+import {
+  BuilderDesktopSideWorkspaceFilesPortError,
+  createBuilderDesktopSideWorkspaceFilesPort,
+} from '../features/builder/infrastructure/builderDesktopSideWorkspaceFilesPort';
 import {
   type BuilderConversationControllerSnapshot,
 } from '../features/builder/application/builderConversationController';
@@ -157,6 +164,7 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   providerContextDisclosureApproval: null,
   checkRun: null,
   livePreview: null,
+  sideWorkspaceFiles: null,
   taskStream: null,
   windowControls: null,
 });
@@ -413,6 +421,17 @@ const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_SIDE_WORKSPACE_FILES: BuilderSideWorkspaceFilesPort = Object.freeze({
+  readCurrentDraftFileTree(request: BuilderSideWorkspaceFileRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopSideWorkspaceFilesPortError());
+  },
+  readCurrentDraftFileContent(request: BuilderSideWorkspaceFileContentRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopSideWorkspaceFilesPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -430,6 +449,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   let planReview = UNAVAILABLE_PLAN_REVIEW;
   let livePreview = UNAVAILABLE_LIVE_PREVIEW;
   let checkRun = UNAVAILABLE_CHECK_RUN;
+  let sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -460,7 +480,20 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     checkRun = UNAVAILABLE_CHECK_RUN;
   }
-  return Object.freeze({ checkRun, generator, livePreview, planReview, taskStream, workspace });
+  try {
+    sideWorkspaceFiles = createBuilderDesktopSideWorkspaceFilesPort(root.sideWorkspaceFiles);
+  } catch {
+    sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
+  }
+  return Object.freeze({
+    checkRun,
+    generator,
+    livePreview,
+    planReview,
+    sideWorkspaceFiles,
+    taskStream,
+    workspace,
+  });
 }
 
 function durableProjectId(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): string | null {

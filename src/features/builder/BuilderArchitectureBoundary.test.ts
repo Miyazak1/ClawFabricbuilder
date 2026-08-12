@@ -38,6 +38,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'infrastructure/builderDesktopPermissionPort.ts',
   'infrastructure/builderDesktopProjectWorkspacePort.ts',
   'infrastructure/builderDesktopProviderSettingsPort.ts',
+  'infrastructure/builderDesktopSideWorkspaceFilesPort.ts',
   'infrastructure/builderDesktopTaskStreamPort.ts',
   'presentation/BuilderChangesPanel.tsx',
   'presentation/BuilderComposer.tsx',
@@ -146,6 +147,10 @@ describe('Builder v2 architecture boundary', () => {
       join(BUILDER_ROOT, 'infrastructure', 'builderDesktopLivePreviewPort.ts'),
       'utf8',
     );
+    const sideWorkspaceFilesPort = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopSideWorkspaceFilesPort.ts'),
+      'utf8',
+    );
     const conversationController = readFileSync(
       join(BUILDER_ROOT, 'application', 'builderConversationController.ts'),
       'utf8',
@@ -242,6 +247,13 @@ describe('Builder v2 architecture boundary', () => {
     expect(livePreviewPort).toContain("source_tree_from_renderer: 'not_accepted'");
     expect(livePreviewPort).not.toMatch(
       /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|credential|entry_url|preview_origin|permission_id|revision_receipt/u,
+    );
+    expect(sideWorkspaceFilesPort).toContain("'readCurrentDraftFileTree'");
+    expect(sideWorkspaceFilesPort).toContain("'readCurrentDraftFileContent'");
+    expect(sideWorkspaceFilesPort).toContain("renderer_source_tree !== 'not_accepted'");
+    expect(sideWorkspaceFilesPort).toContain("renderer_path_authority !== 'main_issued_file_ref_only'");
+    expect(sideWorkspaceFilesPort).not.toMatch(
+      /saveDraft|generate|projectWorkspace|providerSettings|credential|entry_url|preview_origin|permission_id|revision_receipt/u,
     );
     expect(conversationController).toContain("port.read({ project_id: projectId })");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);

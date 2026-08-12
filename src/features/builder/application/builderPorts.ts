@@ -388,6 +388,99 @@ export interface BuilderLivePreviewPort {
   readCurrentPreviewStatus(request: BuilderLivePreviewRequest): Promise<BuilderLivePreviewStatusProjection>;
 }
 
+export type BuilderSideWorkspaceFileRef = Readonly<{
+  file_ref_version: 'builder-side-workspace-file-ref.v1';
+  source_tree_digest: string;
+  path: string;
+  content_digest: string;
+}>;
+
+export type BuilderSideWorkspaceFileAuthority = Readonly<{
+  file_projection_authority: 'main_owned_side_workspace_file_projection_v1';
+  renderer_source_tree: 'not_accepted';
+  renderer_path_authority: 'main_issued_file_ref_only';
+  source_read: 'main_owned_verified_source_tree_only';
+  source_write: 'not_performed';
+  git_write: 'not_performed';
+  sqlite_write: 'not_performed';
+  provider_dispatch: false;
+  tool_dispatch: false;
+  command_execution: false;
+  electron_view_attachment: false;
+  ipc_registration: false;
+  revision_admission: false;
+  save_admission: false;
+  permission_grant: false;
+}>;
+
+export type BuilderSideWorkspaceFileTreeEntry = Readonly<
+  | {
+    entry_kind: 'directory';
+    path: string;
+    name: string;
+    parent_path: string | null;
+    depth: number;
+    child_count: number;
+  }
+  | {
+    entry_kind: 'text_file';
+    path: string;
+    name: string;
+    parent_path: string | null;
+    depth: number;
+    content_digest: string;
+    file_ref: BuilderSideWorkspaceFileRef;
+  }
+>;
+
+export type BuilderSideWorkspaceFileTreeProjection = Readonly<{
+  projection_version: 'builder-side-workspace-file-tree.v1';
+  project_id: string;
+  conversation_id: string;
+  source_kind: 'current_draft' | 'saved_revision' | 'inspected_revision';
+  root_label: string;
+  source_tree_digest: string;
+  entries: readonly BuilderSideWorkspaceFileTreeEntry[];
+  selected_file_ref: BuilderSideWorkspaceFileRef | null;
+  source_ref: Readonly<Record<string, unknown>>;
+  authority: BuilderSideWorkspaceFileAuthority;
+}>;
+
+export type BuilderSideWorkspaceFileContentProjection = Readonly<{
+  projection_version: 'builder-side-workspace-file-content.v1';
+  project_id: string;
+  conversation_id: string;
+  source_kind: 'current_draft' | 'saved_revision' | 'inspected_revision';
+  source_tree_digest: string;
+  file_ref: BuilderSideWorkspaceFileRef;
+  path: string;
+  language_hint: 'javascript' | 'typescript' | 'html' | 'css' | 'json' | 'markdown' | 'python' | 'text';
+  content_status: 'ready' | 'truncated';
+  text_preview: string;
+  binary_summary: null;
+  authority: BuilderSideWorkspaceFileAuthority;
+}>;
+
+export type BuilderSideWorkspaceFileRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+}>;
+
+export type BuilderSideWorkspaceFileContentRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  file_ref: BuilderSideWorkspaceFileRef;
+}>;
+
+export interface BuilderSideWorkspaceFilesPort {
+  readCurrentDraftFileTree(
+    request: BuilderSideWorkspaceFileRequest,
+  ): Promise<BuilderSideWorkspaceFileTreeProjection>;
+  readCurrentDraftFileContent(
+    request: BuilderSideWorkspaceFileContentRequest,
+  ): Promise<BuilderSideWorkspaceFileContentProjection>;
+}
+
 export type BuilderPermissionAction =
   | 'context.read'
   | 'project.read'
