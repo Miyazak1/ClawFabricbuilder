@@ -25,7 +25,7 @@ Use a stable workspace container with a selected tool:
 
 ```text
 SideWorkspace
-  active_tool: browser | files | review | terminal | side_chat
+  active_tool: project_browser | general_browser | files | review | terminal | side_chat
   project_id
   conversation_id
   draft_id?
@@ -48,9 +48,9 @@ Individual tools own their content, admission, and evidence.
 
 ## Tools
 
-### Browser
+### Project Browser
 
-Browser is the Live Preview tool.
+Project Browser is the Live Preview tool. It is not a general web browser.
 
 It should continue the existing Live Preview track:
 
@@ -61,8 +61,52 @@ It should continue the existing Live Preview track:
 - reload, stop, and evidence projection;
 - packaged canary before claiming support.
 
-Browser should be the default side workspace tool when a draft has previewable
-web output or the user explicitly opens Preview.
+Project Browser should be the default side workspace tool when a draft has
+previewable web output or the user explicitly opens Preview.
+
+It intentionally does not provide an address bar, arbitrary URL navigation,
+downloads, persistent cookies, browser history, password storage, or general
+tabs. Those features belong to a separate General Browser tool.
+
+### General Browser
+
+General Browser is a future Codex-style browser tool, separate from Project
+Browser.
+
+It may eventually include:
+
+- address bar;
+- back, forward, reload, and stop;
+- tabs and new tab;
+- page search;
+- zoom;
+- screenshot;
+- print;
+- downloads;
+- history;
+- cookie and browser data controls;
+- optional import of cookies or passwords;
+- browser settings;
+- user-visible URL and origin indicators.
+
+General Browser has a different risk profile from Project Browser. It can load
+external pages, hold browsing state, and expose web content to the user and
+possibly to agents. It therefore needs its own authority model before it is
+implemented:
+
+- isolated browser profile and session policy;
+- explicit external navigation policy;
+- download admission and target directory controls;
+- cookie, history, cache, and site data retention controls;
+- user consent before agent reads page text, DOM, screenshots, cookies, or
+  credentials;
+- clear separation between browser observations and build instructions;
+- no automatic promotion of arbitrary web page content into provider prompt
+  context.
+
+General Browser should not reuse Project Browser's preview server or source
+resolver authority. Project Browser is for local project artifacts; General
+Browser is for user-directed web browsing.
 
 ### Files
 
@@ -155,7 +199,9 @@ The side workspace can open from user action or system context.
 
 User actions:
 
-- Preview button opens Browser;
+- Preview button opens Project Browser;
+- New browser tab or URL action opens General Browser after the General Browser
+  authority model exists;
 - Files button opens Files;
 - Changes or Review opens Review;
 - approved check/command may open Terminal in the future;
