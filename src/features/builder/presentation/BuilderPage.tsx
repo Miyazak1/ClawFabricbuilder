@@ -1686,6 +1686,22 @@ function sideWorkspaceTabTypeForArtifactTab(tab: BuilderArtifactTab): BuilderSid
   return 'review';
 }
 
+function artifactTabForSideWorkspaceTabType(
+  type: BuilderSideWorkspaceTabType,
+  availableTabs: readonly BuilderArtifactTab[],
+): BuilderArtifactTab | null {
+  if (type === 'browser') return availableTabs.includes('preview') ? 'preview' : null;
+  if (type === 'file') return availableTabs.includes('source') ? 'source' : null;
+  if (type === 'terminal') return availableTabs.includes('logs') ? 'logs' : null;
+  if (type === 'review') {
+    if (availableTabs.includes('changes')) return 'changes';
+    if (availableTabs.includes('permissions')) return 'permissions';
+    if (availableTabs.includes('versions')) return 'versions';
+    return null;
+  }
+  return null;
+}
+
 function SideWorkspaceNewTabIcon({ type }: Readonly<{ type: BuilderSideWorkspaceTabType }>) {
   if (type === 'browser') return <Eye aria-hidden="true" className="size-3.5" />;
   if (type === 'file') return <FileCode2 aria-hidden="true" className="size-3.5" />;
@@ -2201,6 +2217,7 @@ function BuilderArtifactSidebar({
   activeTab,
   approvalMode,
   artifactTabs,
+  availableArtifactTabs,
   changes,
   changesOpen,
   currentProjectWriteApproval,
@@ -2220,6 +2237,8 @@ function BuilderArtifactSidebar({
   onResizeKeyDown,
   onRestoreRevisionAsDraft,
   onSelectArtifactTab,
+  onCloseArtifactTab,
+  onOpenWorkspaceTab,
   onRequestLivePreview,
   onResizeStart,
   resizing,
@@ -2249,6 +2268,7 @@ function BuilderArtifactSidebar({
   activeTab: BuilderArtifactTab;
   approvalMode: BuilderComposerApprovalMode;
   artifactTabs: readonly BuilderArtifactTab[];
+  availableArtifactTabs: readonly BuilderArtifactTab[];
   changes: BuilderSourceTreeChanges;
   changesOpen: boolean;
   currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
@@ -2269,6 +2289,8 @@ function BuilderArtifactSidebar({
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onSelectArtifactTab: (tab: BuilderArtifactTab) => void;
+  onCloseArtifactTab: (tab: BuilderArtifactTab) => void;
+  onOpenWorkspaceTab: (type: BuilderSideWorkspaceTabType) => void;
   onRequestLivePreview?: () => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   resizing: boolean;
@@ -2334,22 +2356,40 @@ function BuilderArtifactSidebar({
           {artifactTabs.map((tab) => {
             const label = tab === 'source' ? sourceTabLabel : artifactTabLabel(tab);
             return (
-              <button
-                aria-selected={activeTab === tab}
+              <div
                 className="cf-builder-side-workspace-tab"
                 data-active={activeTab === tab ? 'true' : undefined}
                 data-builder-side-workspace-tab="true"
                 data-builder-side-workspace-tab-kind={sideWorkspaceTabTypeForArtifactTab(tab)}
-                data-builder-side-workspace-tool={tab}
                 key={tab}
-                onClick={() => onSelectArtifactTab(tab)}
-                role="tab"
-                title={label}
-                type="button"
               >
-                <ArtifactTabIcon tab={tab} />
-                <span>{label}</span>
-              </button>
+                <button
+                  aria-selected={activeTab === tab}
+                  className="cf-builder-side-workspace-tab-main"
+                  data-builder-side-workspace-tab-kind={sideWorkspaceTabTypeForArtifactTab(tab)}
+                  data-builder-side-workspace-tool={tab}
+                  onClick={() => onSelectArtifactTab(tab)}
+                  role="tab"
+                  title={label}
+                  type="button"
+                >
+                  <ArtifactTabIcon tab={tab} />
+                  <span>{label}</span>
+                </button>
+                <button
+                  aria-label={`Close ${label} tab`}
+                  className="cf-builder-side-workspace-tab-close"
+                  data-builder-side-workspace-close-tab={tab}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCloseArtifactTab(tab);
+                  }}
+                  title={`Close ${label} tab`}
+                  type="button"
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -2373,22 +2413,31 @@ function BuilderArtifactSidebar({
               data-builder-side-workspace-new-tab-menu="true"
               role="menu"
             >
-              {SIDE_WORKSPACE_NEW_TAB_ITEMS.map((item) => (
-                <button
-                  aria-disabled={item.status === 'coming_later'}
-                  className="cf-builder-side-workspace-new-tab-menu-item"
-                  data-builder-side-workspace-new-tab-kind={item.type}
-                  data-status={item.status}
-                  disabled={item.status === 'coming_later'}
-                  key={item.type}
-                  role="menuitem"
-                  type="button"
-                >
-                  <SideWorkspaceNewTabIcon type={item.type} />
-                  <span>{item.label}</span>
-                  {item.status === 'coming_later' ? <small>Later</small> : null}
-                </button>
-              ))}
+              {SIDE_WORKSPACE_NEW_TAB_ITEMS.map((item) => {
+                const availableTab = artifactTabForSideWorkspaceTabType(item.type, availableArtifactTabs);
+                const disabled = item.status === 'coming_later' || availableTab === null;
+                return (
+                  <button
+                    aria-disabled={disabled}
+                    className="cf-builder-side-workspace-new-tab-menu-item"
+                    data-builder-side-workspace-new-tab-kind={item.type}
+                    data-status={item.status}
+                    disabled={disabled}
+                    key={item.type}
+                    onClick={() => {
+                      if (disabled) return;
+                      setNewTabMenuOpen(false);
+                      onOpenWorkspaceTab(item.type);
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <SideWorkspaceNewTabIcon type={item.type} />
+                    <span>{item.label}</span>
+                    {item.status === 'coming_later' ? <small>Later</small> : null}
+                  </button>
+                );
+              })}
             </div>
           ) : null}
         </div>
@@ -2776,17 +2825,27 @@ export function BuilderPage({
               : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
+    openTabs: readonly BuilderArtifactTab[];
     identity: string;
   }>>(() => ({
     active: defaultArtifactTab,
+    openTabs: defaultArtifactTab === null ? [] : [defaultArtifactTab],
     identity: artifactPanelIdentity,
   }));
+  const requestedOpenArtifactTabs = artifactPanelState.identity === artifactPanelIdentity
+    ? artifactPanelState.openTabs.filter((tab) => artifactTabs.includes(tab))
+    : defaultArtifactTab === null ? [] : [defaultArtifactTab];
+  const openArtifactTabs = artifactPanelState.identity === artifactPanelIdentity || defaultArtifactTab === null
+    ? requestedOpenArtifactTabs
+    : [defaultArtifactTab];
   const requestedArtifactTab = artifactPanelState.identity === artifactPanelIdentity
     ? artifactPanelState.active
     : defaultArtifactTab;
-  const activeArtifactTab = requestedArtifactTab !== null && artifactTabs.includes(requestedArtifactTab)
-    ? requestedArtifactTab
-    : null;
+  const activeArtifactTab = requestedArtifactTab === null
+    ? null
+    : openArtifactTabs.includes(requestedArtifactTab)
+      ? requestedArtifactTab
+      : openArtifactTabs[0] ?? null;
   const showArtifactSidebar = activeArtifactTab !== null;
   const activeWorkspaceMenuLabel = activeArtifactTab === null ? 'Workspace' : artifactTabLabel(activeArtifactTab);
   const workspaceMenuVisible = workspaceMenuOpen && hasArtifactControls;
@@ -2998,11 +3057,25 @@ export function BuilderPage({
 
   function setActiveArtifactTab(active: BuilderArtifactTab | null): void {
     setArtifactPanelState((panelState) => {
-      if (panelState.identity === artifactPanelIdentity && panelState.active === active) {
+      const baseOpenTabs = panelState.identity === artifactPanelIdentity
+        ? panelState.openTabs.filter((tab) => artifactTabs.includes(tab))
+        : [];
+      const nextOpenTabs = active === null
+        ? []
+        : baseOpenTabs.includes(active)
+          ? baseOpenTabs
+          : [...baseOpenTabs, active];
+      if (
+        panelState.identity === artifactPanelIdentity
+        && panelState.active === active
+        && panelState.openTabs.length === nextOpenTabs.length
+        && panelState.openTabs.every((tab, index) => tab === nextOpenTabs[index])
+      ) {
         return panelState;
       }
       return {
         active,
+        openTabs: nextOpenTabs,
         identity: artifactPanelIdentity,
       };
     });
@@ -3013,6 +3086,30 @@ export function BuilderPage({
     setActiveArtifactTab(tab);
     if (tab === 'changes') setChangesPanelOpen(true);
     if (tab === 'source') setSourceDisclosureOpen(true);
+  }
+
+  function closeArtifactTab(tab: BuilderArtifactTab): void {
+    shouldFollowChatRef.current = false;
+    setArtifactPanelState((panelState) => {
+      const baseOpenTabs = panelState.identity === artifactPanelIdentity
+        ? panelState.openTabs.filter((openTab) => artifactTabs.includes(openTab))
+        : openArtifactTabs;
+      const nextOpenTabs = baseOpenTabs.filter((openTab) => openTab !== tab);
+      const nextActive = panelState.active === tab
+        ? nextOpenTabs.at(-1) ?? null
+        : panelState.active;
+      return {
+        active: nextActive,
+        openTabs: nextOpenTabs,
+        identity: artifactPanelIdentity,
+      };
+    });
+  }
+
+  function openSideWorkspaceTab(type: BuilderSideWorkspaceTabType): void {
+    const tab = artifactTabForSideWorkspaceTabType(type, artifactTabs);
+    if (tab === null) return;
+    openArtifactTab(tab);
   }
 
   function toggleWorkspaceMenu(): void {
@@ -3601,7 +3698,8 @@ export function BuilderPage({
     <BuilderArtifactSidebar
       activeTab={activeArtifactTab}
       approvalMode={approvalMode}
-      artifactTabs={artifactTabs}
+      artifactTabs={openArtifactTabs}
+      availableArtifactTabs={artifactTabs}
       changes={changes}
       changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
       currentProjectWriteApproval={currentProjectWriteApproval}
@@ -3615,8 +3713,10 @@ export function BuilderPage({
       livePreviewStatus={livePreviewStatus}
       onExpandPreview={openExpandedPreview}
       onApproveProviderContextDisclosure={onApproveProviderContextDisclosure}
+      onCloseArtifactTab={closeArtifactTab}
       onInspectRevision={onInspectRevision}
       onOpenFile={openChangedFile}
+      onOpenWorkspaceTab={openSideWorkspaceTab}
       onRefreshHistory={onRefreshHistory}
       onReloadLivePreview={onReloadLivePreview}
       onResizeKeyDown={resizeArtifactWithKeyboard}
@@ -3731,8 +3831,10 @@ export function BuilderPage({
               data-builder-show-current-version="true"
               disabled={busy || typeof onShowCurrentRevision !== 'function'}
               onClick={() => {
+                const currentTab = showResultFlow ? 'preview' : 'versions';
                 setArtifactPanelState({
-                  active: showResultFlow ? 'preview' : 'versions',
+                  active: currentTab,
+                  openTabs: [currentTab],
                   identity: currentArtifactPanelIdentity,
                 });
                 void onShowCurrentRevision?.();

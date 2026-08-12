@@ -46,6 +46,18 @@ actions; a Terminal tab may run only admitted commands. The tab container owns
 selection, ordering, close buttons, keyboard shortcuts, and empty states. It
 does not grant tool authority by itself.
 
+Current implementation checkpoint:
+
+- the right workspace uses an open-tab shell rather than a fixed tool switcher;
+- projected Browser/Preview, Files, Review/Changes, Logs, Permissions, and
+  Versions can appear as tabs when their facts are available;
+- tabs can be closed without deleting drafts, stopping runtimes, or changing
+  save/review authority;
+- the `+` menu reopens available tool types and keeps future Terminal and Side
+  Chat entries blocked until their authority models are ready;
+- file tabs display the selected file name and render read-only projected
+  content beside the file browser.
+
 ```text
 SideWorkspaceTab
   tab_id

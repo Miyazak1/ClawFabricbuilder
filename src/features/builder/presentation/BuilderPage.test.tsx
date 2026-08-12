@@ -3194,14 +3194,10 @@ describe('BuilderPage v2', () => {
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')
       ?.getAttribute('data-builder-side-workspace-tab-kind'))
       .toBe('browser');
-    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')
-      ?.getAttribute('data-builder-side-workspace-tab-kind'))
-      .toBe('review');
-    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')
-      ?.getAttribute('data-builder-side-workspace-tab-kind'))
-      .toBe('review');
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')).toBeNull();
     expect(sideWorkspaceTabs?.textContent).toContain('Preview');
-    expect(sideWorkspaceTabs?.textContent).toContain('Changes');
+    expect(sideWorkspaceTabs?.textContent).not.toContain('Changes');
     const artifactResizeHandle = artifactSidebar?.querySelector('[data-builder-artifact-resize-handle="true"]');
     expect(artifactResizeHandle).not.toBeNull();
     expect(artifactResizeHandle?.getAttribute('role')).toBe('separator');
@@ -3486,6 +3482,39 @@ describe('BuilderPage v2', () => {
     ]);
     expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('text_preview');
     expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('entries');
+  });
+
+  it('lets side workspace tabs close and reopen by tool type', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Review the workspace."
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="changes"]');
+    expect(container.querySelector('[data-builder-side-workspace-tool="changes"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('changes');
+
+    click(container, '[data-builder-side-workspace-close-tab="changes"]');
+
+    expect(container.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-tool="preview"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('preview');
+
+    click(container, '[data-builder-side-workspace-new-tab-button="true"]');
+    click(container, '[data-builder-side-workspace-new-tab-kind="review"]');
+
+    expect(container.querySelector('[data-builder-side-workspace-tool="changes"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('changes');
   });
 
   it('opens a read-only permissions artifact tab without exposing authority internals', async () => {

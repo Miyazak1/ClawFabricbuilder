@@ -1251,27 +1251,64 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-side-workspace-tab {
   display: inline-flex;
   min-width: 0;
-  max-width: 132px;
+  max-width: 168px;
   height: 30px;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   border-radius: 7px;
-  padding: 0 9px;
+  padding: 0 4px 0 0;
   font-size: 12px;
   font-weight: 650;
   line-height: 1;
 }
 
-.cf-builder-side-workspace-tab > span {
+.cf-builder-side-workspace-tab-main {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0 5px 0 8px;
+}
+
+.cf-builder-side-workspace-tab-main > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.cf-builder-side-workspace-tab-close {
+  display: inline-flex;
+  width: 20px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.68;
+  padding: 0;
+}
+
+.cf-builder-side-workspace-tab-close:hover,
+.cf-builder-side-workspace-tab-close:focus-visible {
+  background: color-mix(in srgb, var(--cf-text) 9%, transparent);
+  opacity: 1;
+  outline: none;
+}
+
 .cf-builder-side-workspace-tab:hover,
-.cf-builder-side-workspace-tab:focus-visible,
+.cf-builder-side-workspace-tab:has(.cf-builder-side-workspace-tab-main:focus-visible),
 .cf-builder-side-workspace-new-tab-button:hover,
 .cf-builder-side-workspace-new-tab-button:focus-visible,
 .cf-builder-side-workspace-new-tab-menu-item:hover,
