@@ -85,7 +85,7 @@ describe('Builder desktop layout styles', () => {
     expect(source).toContain('.cf-builder-chat-shell {');
     expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, var(--cf-builder-artifact-width, 480px));');
     expect(source).toContain('.cf-builder-chat-shell[data-builder-artifact-sidebar-visible="false"]');
-    expect(sidebar).toContain('grid-template-rows: minmax(0, 1fr);');
+    expect(sidebar).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(sidebar).toContain('overflow: hidden;');
     expect(sidebar).toContain('border-left: 1px solid var(--cf-border);');
     expect(handle).toContain('cursor: col-resize;');
@@ -94,11 +94,9 @@ describe('Builder desktop layout styles', () => {
     expect(handle).toContain('touch-action: none;');
     expect(styleBlock(source, '.cf-builder-artifact-resize-handle::after')).toContain('opacity: 0;');
     expect(source).toContain('.cf-builder-artifact-resize-handle[data-builder-artifact-resizing="true"]::after');
-    expect(source).not.toContain('.cf-builder-artifact-tabs');
-    expect(source).not.toContain('.cf-builder-artifact-view-menu-wrap');
-    expect(source).not.toContain('.cf-builder-artifact-view-button');
-    expect(source).not.toContain('.cf-builder-artifact-view-menu');
-    expect(source).not.toContain('.cf-builder-artifact-tab');
+    expect(source).toContain('.cf-builder-side-workspace-tabs');
+    expect(source).toContain('.cf-builder-side-workspace-tab-list');
+    expect(source).toContain('.cf-builder-side-workspace-new-tab-menu');
     expect(source).not.toContain('.cf-builder-artifact-utility-bar');
     expect(body).toContain('grid-template-rows: minmax(0, 1fr);');
     expect(source).not.toContain(

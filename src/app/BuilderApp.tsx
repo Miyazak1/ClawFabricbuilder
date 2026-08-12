@@ -1873,6 +1873,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         activityRestoreLoadsInFlightRef.current.delete(loadKey);
         return;
       }
+      if (
+        pendingProjectActivityRestoreRef.current?.epoch !== commandEpoch
+        || pendingProjectActivityRestoreRef.current.projectId !== visibleProjectId
+      ) {
+        activityRestoreLoadAttemptsRef.current.delete(loadKey);
+        activityRestoreLoadsInFlightRef.current.delete(loadKey);
+        return;
+      }
       const attemptCount = activityRestoreLoadAttemptsRef.current.get(loadKey) ?? 0;
       if (attemptCount >= MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS) {
         activityRestoreLoadsInFlightRef.current.delete(loadKey);
@@ -2004,11 +2012,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ) return;
     let pendingProjectActivityRestore = pendingProjectActivityRestoreRef.current;
     if (pendingProjectActivityRestore === null) {
+      if (project.snapshot.savedProject !== null) return;
       const restoreProbeKey = [
         workspaceEpochRef.current,
         visibleProjectId,
-        project.snapshot.savedProject?.target.revision_receipt_digest
-          ?? project.snapshot.workingProjectId
+        project.snapshot.workingProjectId
           ?? project.snapshot.conversationProjectId
           ?? 'current',
       ].join(':');
