@@ -2264,38 +2264,111 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   overflow: hidden;
 }
 
-.cf-builder-artifact-files-intro {
-  display: grid;
-  gap: 4px;
+.cf-builder-artifact-files-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid var(--cf-border);
-  padding: 12px 14px;
+  padding: 9px 12px;
 }
 
-.cf-builder-artifact-files-intro h4,
-.cf-builder-artifact-files-intro p {
-  margin: 0;
+.cf-builder-artifact-files-path {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
-.cf-builder-artifact-files-intro h4 {
+.cf-builder-artifact-files-path strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--cf-text);
   font-size: 13px;
   font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.cf-builder-artifact-files-intro p {
+.cf-builder-artifact-files-path span,
+.cf-builder-artifact-files-count {
   color: var(--cf-text-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.cf-builder-artifact-files-path span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-builder-artifact-files-count {
+  flex: 0 0 auto;
+  font-weight: 650;
 }
 
 .cf-builder-artifact-files-body {
   display: grid;
   min-height: 0;
   min-width: 0;
-  grid-template-rows: minmax(120px, 0.85fr) minmax(0, 1.15fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 34%);
   overflow: hidden;
-  padding: 10px 14px 14px;
+}
+
+.cf-builder-artifact-file-browser {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  border-left: 1px solid var(--cf-border);
+  background: color-mix(in srgb, var(--cf-surface) 68%, transparent);
+  padding: 10px 10px 12px;
+}
+
+.cf-builder-artifact-file-browser-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cf-builder-artifact-file-browser-header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cf-text);
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-builder-artifact-file-browser-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cf-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-builder-artifact-file-filter {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: var(--cf-surface);
+  color: var(--cf-text-subtle);
+  font-size: 12px;
+  line-height: 1;
+  padding: 8px 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cf-builder-artifact-file-tree {
@@ -2362,9 +2435,9 @@ button.cf-builder-artifact-file-entry:focus-visible {
   min-width: 0;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--cf-border);
-  border-radius: 8px;
-  background: var(--cf-surface);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .cf-builder-artifact-file-content-header {
@@ -2416,6 +2489,18 @@ button.cf-builder-artifact-file-entry:focus-visible {
   color: var(--cf-text-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+@media (max-width: 1180px) {
+  .cf-builder-artifact-files-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(120px, 34%);
+  }
+
+  .cf-builder-artifact-file-browser {
+    border-top: 1px solid var(--cf-border);
+    border-left: 0;
+  }
 }
 
 .cf-builder-artifact-sidebar .cf-builder-version-panel {

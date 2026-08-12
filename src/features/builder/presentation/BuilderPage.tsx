@@ -1715,6 +1715,11 @@ function sideWorkspaceFileDepthStyle(depth: number): CSSProperties {
   return { '--cf-builder-file-depth': Math.max(0, Math.min(12, depth)) } as CSSProperties;
 }
 
+function sideWorkspaceFileDisplayName(path: string | null): string {
+  if (path === null || path.trim().length === 0) return 'Files';
+  return path.split('/').filter(Boolean).at(-1) ?? path;
+}
+
 function firstTextFileEntry(
   tree: BuilderSideWorkspaceFileTreeProjection | null,
 ): Extract<BuilderSideWorkspaceFileTreeEntry, { entry_kind: 'text_file' }> | null {
@@ -1767,6 +1772,8 @@ function BuilderArtifactFilesPanel({
   const selectedRefKey = content === null ? sideWorkspaceFileRefKey(projection?.selected_file_ref ?? null) : sideWorkspaceFileRefKey(content.file_ref);
   const firstFile = firstTextFileEntry(projection);
   const fileCount = projection?.entries.filter((entry) => entry.entry_kind === 'text_file').length ?? 0;
+  const selectedPath = content?.path ?? projection?.selected_file_ref?.path ?? firstFile?.path ?? null;
+  const selectedName = sideWorkspaceFileDisplayName(selectedPath);
   return (
     <section
       aria-label="Project files"
@@ -1774,61 +1781,26 @@ function BuilderArtifactFilesPanel({
       data-builder-side-workspace-files="true"
       data-builder-side-workspace-files-status={treeStatus}
     >
-      <div className="cf-builder-artifact-files-intro">
-        <h4>Files</h4>
-        <p>
+      <div className="cf-builder-artifact-files-toolbar">
+        <div className="cf-builder-artifact-files-path">
+          <strong>{selectedName}</strong>
+          <span>
+            {selectedPath ?? (
+              projection === null
+                ? treeStatus === 'loading'
+                  ? 'Loading files from the current draft.'
+                  : 'Files are unavailable for this view.'
+                : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}.`
+            )}
+          </span>
+        </div>
+        <span className="cf-builder-artifact-files-count">
           {projection === null
-            ? treeStatus === 'loading'
-              ? 'Loading files from the current draft.'
-              : 'Files are unavailable for this view.'
-            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}.`}
-        </p>
+            ? 'Files'
+            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}`}
+        </span>
       </div>
       <div className="cf-builder-artifact-files-body">
-        <div className="cf-builder-artifact-file-tree" aria-label="Project file tree">
-          {projection === null ? (
-            <p className="cf-builder-artifact-files-empty" role={treeStatus === 'failed' ? 'alert' : 'status'}>
-              {treeStatus === 'loading' ? 'Loading files...' : 'Current draft files are not available yet.'}
-            </p>
-          ) : (
-            projection.entries.map((entry) => {
-              if (entry.entry_kind === 'directory') {
-                return (
-                  <div
-                    className="cf-builder-artifact-file-entry"
-                    data-builder-side-workspace-file-entry={entry.path}
-                    data-builder-side-workspace-file-kind="directory"
-                    key={`directory:${entry.path}`}
-                    style={sideWorkspaceFileDepthStyle(entry.depth)}
-                  >
-                    <FolderOpen aria-hidden="true" className="size-3.5" />
-                    <span>{entry.name}</span>
-                    <small>{entry.child_count}</small>
-                  </div>
-                );
-              }
-              const active = selectedRefKey === sideWorkspaceFileRefKey(entry.file_ref)
-                || (content === null && firstFile?.path === entry.path);
-              return (
-                <button
-                  className="cf-builder-artifact-file-entry"
-                  data-active={active ? 'true' : undefined}
-                  data-builder-side-workspace-file-entry={entry.path}
-                  data-builder-side-workspace-file-kind="text_file"
-                  key={`file:${entry.path}`}
-                  onClick={() => {
-                    void onOpenFile?.(entry.file_ref);
-                  }}
-                  style={sideWorkspaceFileDepthStyle(entry.depth)}
-                  type="button"
-                >
-                  <FileCode2 aria-hidden="true" className="size-3.5" />
-                  <span>{entry.name}</span>
-                </button>
-              );
-            })
-          )}
-        </div>
         <section
           aria-label="Selected file"
           className="cf-builder-artifact-file-content"
@@ -1853,6 +1825,57 @@ function BuilderArtifactFilesPanel({
             </>
           )}
         </section>
+        <aside className="cf-builder-artifact-file-browser" aria-label="Project file browser">
+          <div className="cf-builder-artifact-file-browser-header">
+            <strong>Files</strong>
+            <span>{projection?.root_label ?? 'Current draft'}</span>
+          </div>
+          <div className="cf-builder-artifact-file-filter" aria-hidden="true">Filter files...</div>
+          <div className="cf-builder-artifact-file-tree" aria-label="Project file tree">
+            {projection === null ? (
+              <p className="cf-builder-artifact-files-empty" role={treeStatus === 'failed' ? 'alert' : 'status'}>
+                {treeStatus === 'loading' ? 'Loading files...' : 'Current draft files are not available yet.'}
+              </p>
+            ) : (
+              projection.entries.map((entry) => {
+                if (entry.entry_kind === 'directory') {
+                  return (
+                    <div
+                      className="cf-builder-artifact-file-entry"
+                      data-builder-side-workspace-file-entry={entry.path}
+                      data-builder-side-workspace-file-kind="directory"
+                      key={`directory:${entry.path}`}
+                      style={sideWorkspaceFileDepthStyle(entry.depth)}
+                    >
+                      <FolderOpen aria-hidden="true" className="size-3.5" />
+                      <span>{entry.name}</span>
+                      <small>{entry.child_count}</small>
+                    </div>
+                  );
+                }
+                const active = selectedRefKey === sideWorkspaceFileRefKey(entry.file_ref)
+                  || (content === null && firstFile?.path === entry.path);
+                return (
+                  <button
+                    className="cf-builder-artifact-file-entry"
+                    data-active={active ? 'true' : undefined}
+                    data-builder-side-workspace-file-entry={entry.path}
+                    data-builder-side-workspace-file-kind="text_file"
+                    key={`file:${entry.path}`}
+                    onClick={() => {
+                      void onOpenFile?.(entry.file_ref);
+                    }}
+                    style={sideWorkspaceFileDepthStyle(entry.depth)}
+                    type="button"
+                  >
+                    <FileCode2 aria-hidden="true" className="size-3.5" />
+                    <span>{entry.name}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
       </div>
     </section>
   );
@@ -2272,6 +2295,13 @@ function BuilderArtifactSidebar({
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
+  const sourceTabLabel = sideWorkspaceFileDisplayName(
+    sideWorkspaceFileContent?.path
+      ?? sideWorkspaceFileTree?.selected_file_ref?.path
+      ?? firstTextFileEntry(sideWorkspaceFileTree)?.path
+      ?? sourceFile?.path
+      ?? null,
+  );
   return (
     <aside
       aria-label="Project artifact"
@@ -2301,24 +2331,27 @@ function BuilderArtifactSidebar({
           className="cf-builder-side-workspace-tab-list"
           role="tablist"
         >
-          {artifactTabs.map((tab) => (
-            <button
-              aria-selected={activeTab === tab}
-              className="cf-builder-side-workspace-tab"
-              data-active={activeTab === tab ? 'true' : undefined}
-              data-builder-side-workspace-tab="true"
-              data-builder-side-workspace-tab-kind={sideWorkspaceTabTypeForArtifactTab(tab)}
-              data-builder-side-workspace-tool={tab}
-              key={tab}
-              onClick={() => onSelectArtifactTab(tab)}
-              role="tab"
-              title={artifactTabLabel(tab)}
-              type="button"
-            >
-              <ArtifactTabIcon tab={tab} />
-              <span>{artifactTabLabel(tab)}</span>
-            </button>
-          ))}
+          {artifactTabs.map((tab) => {
+            const label = tab === 'source' ? sourceTabLabel : artifactTabLabel(tab);
+            return (
+              <button
+                aria-selected={activeTab === tab}
+                className="cf-builder-side-workspace-tab"
+                data-active={activeTab === tab ? 'true' : undefined}
+                data-builder-side-workspace-tab="true"
+                data-builder-side-workspace-tab-kind={sideWorkspaceTabTypeForArtifactTab(tab)}
+                data-builder-side-workspace-tool={tab}
+                key={tab}
+                onClick={() => onSelectArtifactTab(tab)}
+                role="tab"
+                title={label}
+                type="button"
+              >
+                <ArtifactTabIcon tab={tab} />
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </div>
         <div className="cf-builder-side-workspace-new-tab-wrap">
           <button
