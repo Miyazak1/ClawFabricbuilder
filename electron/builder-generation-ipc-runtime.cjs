@@ -273,6 +273,16 @@ class BuilderGenerationProjectWritePermissionRequiredError extends Error {
   }
 }
 
+class BuilderGenerationWorkspaceChangedError extends Error {
+  constructor() {
+    super('The project changed while AI was working. Review it and try again.');
+    this.name = 'BuilderGenerationWorkspaceChangedError';
+    this.code = 'builder_generation_workspace_changed';
+    this.retryable = true;
+    this.stack = `${this.name}: ${this.message}`;
+  }
+}
+
 function fail() {
   throw new BuilderGenerationIpcRuntimeError();
 }
@@ -287,6 +297,10 @@ function failGenerationProjectWritePermissionRequired() {
 
 function failGenerationBaseUnavailable() {
   throw new BuilderGenerationKernelError('builder_generation_base_unavailable');
+}
+
+function failGenerationWorkspaceChanged() {
+  throw new BuilderGenerationWorkspaceChangedError();
 }
 
 function isPlainObject(value) {
@@ -1595,7 +1609,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (
         !isPlainObject(admission)
         || Object.getOwnPropertyDescriptor(admission, 'project_id')?.value !== projectId
-      ) fail();
+      ) failGenerationWorkspaceChanged();
       activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
       try {
         return await service.generate_draft_continuation({

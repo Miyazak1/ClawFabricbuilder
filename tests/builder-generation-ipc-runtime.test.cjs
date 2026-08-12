@@ -3496,7 +3496,7 @@ test('rejects draft continuation admission for a different selected project befo
         instruction: "Reject a mismatched continuation admission."
       })`, runtimeModule.context),
     ),
-    { code: 'builder_generation_ipc_runtime_unavailable' },
+    { code: 'builder_generation_workspace_changed' },
   );
   assert.equal(draftContinuationAdmissions.length, 1);
   assert.equal(draftContinuationAdmissions[0].draft_id, `builder-generation-draft:${'3'.repeat(64)}`);
