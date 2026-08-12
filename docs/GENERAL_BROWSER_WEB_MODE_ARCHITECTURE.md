@@ -43,6 +43,48 @@ Codex-like side panel:
 - visible URL, origin, and security state;
 - bounded page observation for agents with user consent.
 
+## Product Model: Browser Versus Browser-Use
+
+The built-in Browser and Browser-use-style automation are related but not the
+same product layer.
+
+The Browser is the user-visible workspace:
+
+- tabs;
+- address bar;
+- navigation controls;
+- downloads;
+- history;
+- cookies and site data;
+- browser settings;
+- visible page state.
+
+Browser-use-style automation is an agent runtime on top of that browser:
+
+- observe the page;
+- decide the next action;
+- click, type, scroll, select, upload, or download;
+- verify the page changed as expected;
+- stop and ask when a page, account, payment, credential, or sensitive form
+  requires human judgment.
+
+Builder should not treat "Browser exists" as "agents may control Browser".
+Agent observation and action authority must be separate admissions layered on
+top of the ordinary browser shell.
+
+```text
+Browser Shell
+-> Browser Profile / Settings
+-> Browser Navigation Admission
+-> Browser Observation Admission
+-> Browser Action Admission
+-> Agent Browser Control Runtime
+```
+
+This lets Builder support normal user browsing first, then add agent control
+without silently turning every open web page into provider prompt context or an
+automation target.
+
 ## Non-Goals
 
 Web mode must not:
@@ -57,6 +99,14 @@ Web mode must not:
 - expose raw browser storage, cookies, passwords, or history to renderer code;
 - allow page content to call app IPC;
 - share a session with Project Preview tabs.
+
+MVP Web mode also must not:
+
+- import passwords;
+- enable full Chrome DevTools Protocol control by default;
+- let an agent operate logged-in accounts without a visible per-site approval;
+- complete payments or other high-risk transactions;
+- persist browsing data without an explicit profile choice.
 
 ## Authority Domains
 
@@ -101,11 +151,16 @@ The first implementation should start with pure contracts before runtime or UI.
 builder-browser-profile.v1
   profile_id
   persistence: ephemeral | local_persistent
+  browser_enabled
+  default_url_open_target
+  local_url_open_target
   cookie_policy
   history_policy
   download_policy
   password_import_policy
   agent_observation_default
+  agent_action_default
+  cdp_access_policy
   authority
 ```
 
@@ -167,6 +222,34 @@ builder-browser-observation-admission.v1
 Agent observation is separate from navigation. A page being open does not mean
 the agent can read it.
 
+### Agent Action Admission
+
+```text
+builder-browser-action-admission.v1
+  tab_id
+  profile_id
+  origin
+  action_scope: click | type | scroll | select | upload | download | wait
+  consent_kind: one_time | session | origin
+  sensitive_action_policy
+  expires_at_ms
+  authority
+```
+
+Action admission is separate from observation. A page being readable does not
+mean the agent can click buttons, submit forms, enter credentials, upload files,
+or download files.
+
+Sensitive actions must pause for user approval:
+
+- login and account switching;
+- credential fields;
+- payment or purchase flows;
+- destructive account actions;
+- legal, medical, financial, or identity forms;
+- file upload from the user's machine;
+- downloads that write to disk.
+
 ### Download Admission
 
 ```text
@@ -206,6 +289,8 @@ evidence.
 
 Web mode needs explicit data controls before it becomes a normal feature:
 
+- master Browser enable/disable setting;
+- default target for ordinary URLs and local URLs;
 - clear browsing data by profile;
 - view and clear history;
 - view and clear downloads;
@@ -213,6 +298,11 @@ Web mode needs explicit data controls before it becomes a normal feature:
 - cookie import/export policy;
 - password import policy;
 - per-origin agent observation consent;
+- per-origin agent action consent;
+- per-origin blocked/allowed website list;
+- permission defaults for camera, microphone, geolocation, notifications,
+  clipboard, popups, downloads, and private-network access;
+- high-risk developer access policy for complete browser debugging or CDP;
 - visible indication when a page is being observed by an agent.
 
 Default posture should be conservative:
@@ -220,8 +310,95 @@ Default posture should be conservative:
 - ephemeral profile first;
 - no password import in MVP;
 - no background observation;
+- no background action;
 - no provider egress without user-visible consent;
 - no downloads without explicit destination.
+
+Suggested settings groups:
+
+```text
+Browser Settings
+  General
+    browser_enabled
+    default_url_open_target: system_browser | builder_browser
+    local_url_open_target: project_preview | builder_browser | system_browser
+    annotation_capture_default: ask | include | never
+
+  Browsing Data
+    clear_browsing_data
+    history_management
+    site_data_management
+    download_history_management
+
+  Autofill And Passwords
+    password_import_policy: disabled | user_import_only
+    password_manager_policy: disabled | local_profile_only
+    contact_info_policy: disabled | local_profile_only
+
+  Downloads
+    default_download_directory_ref
+    ask_before_download
+    download_history_policy
+
+  Permissions
+    site_permission_defaults
+    website_overrides
+    agent_observation_default: ask
+    agent_action_default: ask
+    history_access_default: ask
+
+  Developer Mode
+    cdp_access_policy: disabled | explicit_high_risk_approval
+```
+
+Complete browser debugging or CDP access belongs behind a high-risk developer
+gate. It can expose more page internals than normal observation and may see
+cross-frame, network, storage, or debugging data. It should be disabled by
+default and require explicit, visible approval.
+
+## Agent Browser Control Runtime
+
+Browser-use-style capability should be introduced only after the ordinary Web
+mode is reliable.
+
+The runtime loop is:
+
+```text
+observe -> plan action -> request/verify admission -> act -> observe -> stop
+```
+
+Required observation sources:
+
+- screenshot;
+- visible text;
+- accessibility tree;
+- bounded DOM summary;
+- console and network summaries;
+- selected element references from annotation mode.
+
+Required action primitives:
+
+- click;
+- type;
+- scroll;
+- select option;
+- wait for selector or navigation;
+- upload only from an admitted file ref;
+- download only through Download Admission.
+
+Each action must produce bounded evidence:
+
+- action id;
+- tab/profile/origin binding;
+- element or coordinate ref;
+- before/after observation digest;
+- blocked or completed status;
+- redacted error summary.
+
+The runtime must never expose cookies, passwords, hidden form values, full DOM,
+raw screenshots, raw console logs, or browser storage to the renderer or
+provider unless a separate redacted observation projection and user consent
+allow it.
 
 ## Relationship To Project Preview
 
@@ -256,8 +433,8 @@ Define the unified Browser shell with split modes and privacy boundaries.
 ### GB1: Pure Main-Side Contracts
 
 Add profile, tab, navigation admission, observation admission, download
-admission, and observation projection contracts. No Electron runtime, no
-preload, no UI.
+admission, action admission, and observation projection contracts. No Electron
+runtime, no preload, no UI.
 
 ### GB2: Isolated WebContents Runtime
 
@@ -279,6 +456,21 @@ Add download admission, history, clear browsing data, and site-data controls.
 Add screenshot/text/DOM-summary observation only after consent contracts and
 redacted evidence projections are stable.
 
+### GB6: Agent Browser Control Runtime
+
+Add Browser-use-style action primitives only after Web mode and observation
+consent are stable.
+
+Evidence:
+
+- actions are admitted separately from observation;
+- sensitive pages pause for user approval;
+- before/after observation digests are recorded;
+- downloads, uploads, credentials, payments, and destructive actions fail closed
+  without explicit user approval;
+- provider prompt context receives only approved redacted observation
+  projections, not raw browser state.
+
 ## Maturity Gates
 
 Do not claim Web mode is Codex-like until:
@@ -289,6 +481,8 @@ Do not claim Web mode is Codex-like until:
 - downloads are admitted and bounded;
 - cookies/history/cache are inspectable and clearable;
 - agent observation has visible consent and revocation;
+- agent actions have visible consent, stop control, and revocation;
+- complete debugging/CDP access is disabled by default and gated as high-risk;
 - external pages cannot call app IPC;
 - Project Preview and Web mode cannot share cookies, history, source authority,
   or evidence authority;

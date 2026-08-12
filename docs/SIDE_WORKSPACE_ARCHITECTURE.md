@@ -124,6 +124,26 @@ Browser mode switching should be explicit in the authority layer even if the UI
 looks like one browser. A preview tab cannot inherit Web cookies or history, and
 a Web tab cannot become project run evidence without Project Preview admission.
 
+Browser-use-style automation is a later layer on top of Web mode, not the
+definition of the Browser itself. The side workspace may eventually let an agent
+observe and operate a Web tab, but only through explicit observation and action
+admissions. User browsing, agent page observation, and agent page control must
+remain separable states in the tool status projection.
+
+Browser settings should therefore be treated as product infrastructure, not a
+minor preferences page:
+
+- master Browser enablement;
+- default target for ordinary URLs and local URLs;
+- profile persistence and clear browsing data;
+- history, site data, downloads, and per-site permissions;
+- user approval defaults for agent observation and agent actions;
+- high-risk developer access such as complete browser debugging or CDP.
+
+Project Preview should ignore Web-mode browser settings except for shared UI
+layout preferences. Web-mode permissions, cookies, history, downloads, and agent
+control grants must never flow back into Project Preview.
+
 ### Files
 
 Files should be the next tool after Browser is reliable.
@@ -246,6 +266,8 @@ Main owns:
 - Git candidate and revision evidence;
 - SQLite conversation and review facts;
 - Live Preview source resolver and WebContentsView runtime;
+- Browser profile, navigation, download, observation, and future action
+  admissions;
 - CheckRun/Terminal process lifecycle;
 - save, discard, restore, and future commit/push admission.
 
@@ -262,7 +284,8 @@ Renderer must not submit:
 - source tree bodies;
 - arbitrary filesystem paths as authority;
 - raw shell commands;
-- browser URLs;
+- browser URLs as authority outside a navigation admission;
+- browser commands, hidden page state, cookies, passwords, or raw DOM;
 - provider prompts or private context;
 - Git object ids as unverified authority;
 - save/revision facts.
