@@ -596,6 +596,27 @@ function latestRestorableDraftForProjectId(
   return null;
 }
 
+function hasPendingDraftRestoreProjectionHint(
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+  visibleProjectId: string,
+): boolean {
+  if (
+    conversationSnapshot.status !== 'ready'
+    || conversationSnapshot.conversation?.state !== 'ready'
+    || conversationSnapshot.project_id !== visibleProjectId
+  ) return false;
+  const reviewState = conversationSnapshot.conversation.review_state_projection ?? null;
+  if (
+    reviewState !== null
+    && reviewState.draft_id.length > 0
+    && (reviewState.can_discard || reviewState.can_save)
+  ) return true;
+  const checkpointStatus = conversationSnapshot.conversation.draft_checkpoint_status_projection ?? null;
+  return checkpointStatus !== null
+    && checkpointStatus.status === 'ready'
+    && (checkpointStatus.can_restore || checkpointStatus.can_save_version);
+}
+
 function planReviewKey(turnId: string, runId: string): string {
   return `${turnId}:${runId}`;
 }
@@ -1859,8 +1880,19 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           visibleProjectId,
         );
         if (target === null) {
-          activityRestoreLoadAttemptsRef.current.set(loadKey, 1);
-          globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+          if (hasPendingDraftRestoreProjectionHint(currentConversation, visibleProjectId)) {
+            activityRestoreLoadAttemptsRef.current.set(loadKey, 1);
+            globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+            return;
+          }
+          activityRestoreLoadAttemptsRef.current.delete(loadKey);
+          activityRestoreLoadsInFlightRef.current.delete(loadKey);
+          if (
+            pendingProjectActivityRestoreRef.current?.epoch === commandEpoch
+            && pendingProjectActivityRestoreRef.current.projectId === visibleProjectId
+          ) {
+            pendingProjectActivityRestoreRef.current = null;
+          }
         } else {
           activityRestoreLoadAttemptsRef.current.delete(loadKey);
           activityRestoreLoadsInFlightRef.current.delete(loadKey);
@@ -1887,7 +1919,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         }
         const target = latestRestorableDraftForProjectId(loaded, projectSnapshotRef.current, visibleProjectId);
         if (target === null) {
-          if (attemptCount + 1 < MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS) {
+          if (
+            hasPendingDraftRestoreProjectionHint(loaded, visibleProjectId)
+            && attemptCount + 1 < MAX_PENDING_DRAFT_ACTIVITY_LOAD_ATTEMPTS
+          ) {
             globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
             return;
           }

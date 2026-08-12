@@ -3885,6 +3885,58 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('does not refollow chat for live text updates within the same output chunk', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    const { restore, spy } = installScrollIntoViewSpy();
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mounted.push({ container, root });
+    const liveOutput = (text: string) => ({
+      state: 'streaming' as const,
+      request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+      project_id: PROJECT_ID,
+      text,
+      chunk_count: 1,
+    });
+
+    try {
+      act(() => {
+        root.render(
+          <BuilderPage
+            activeFile={null}
+            conversationSnapshot={activity}
+            instruction=""
+            liveOutput={liveOutput('Planning a quiet timer UI.')}
+            snapshot={saved}
+          />,
+        );
+      });
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('Planning a quiet timer UI.');
+      spy.mockClear();
+
+      act(() => {
+        root.render(
+          <BuilderPage
+            activeFile={null}
+            conversationSnapshot={activity}
+            instruction=""
+            liveOutput={liveOutput('Planning a quiet timer UI with calmer spacing.')}
+            snapshot={saved}
+          />,
+        );
+      });
+
+      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+        .toContain('calmer spacing');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it('renders queued active-run follow-ups as a distinct user message', async () => {
     const { saved } = await snapshots();
     const activity = await queuedFollowupActivity();

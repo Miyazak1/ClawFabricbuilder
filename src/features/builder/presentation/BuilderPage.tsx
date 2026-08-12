@@ -2558,7 +2558,7 @@ export function BuilderPage({
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
-      : `${visibleLiveOutput.request_id}:${visibleLiveOutput.chunk_count}:${visibleLiveOutput.text}`;
+      : `${visibleLiveOutput.request_id}:${visibleLiveOutput.state}:${visibleLiveOutput.chunk_count}`;
     const conversation = activity?.conversation;
     if (conversation?.state !== 'ready') return `${activity?.status ?? 'no-activity'}:${liveCursor}`;
     const items = conversation.conversation.items;
