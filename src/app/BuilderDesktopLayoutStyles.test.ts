@@ -443,11 +443,14 @@ describe('Builder desktop layout styles', () => {
     expect(artifactDisclosure).toContain('min-width: 0;');
     expect(artifactDisclosure).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(artifactDisclosure).toContain('overflow: hidden;');
+    expect(artifactBody).toContain('display: grid;');
     expect(artifactBody).toContain('grid-template-rows: auto minmax(0, 1fr);');
-    expect(artifactBody).toContain('height: 100%;');
+    expect(artifactBody).not.toContain('height: 100%;');
     expect(artifactBody).toContain('min-width: 0;');
     expect(artifactBody).toContain('overflow: hidden;');
-    expect(artifactCode).toContain('height: 100%;');
+    expect(artifactCode).not.toContain('height: 100%;');
+    expect(artifactCode).toContain('align-self: stretch;');
+    expect(artifactCode).toContain('min-height: 0;');
     expect(artifactCode).toContain('min-width: 0;');
     expect(artifactCode).toContain('max-height: none;');
     expect(artifactCode).toContain('max-width: 100%;');
