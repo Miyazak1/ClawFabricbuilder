@@ -190,6 +190,15 @@ function liveOutputEvidence() {
   };
 }
 
+function automaticCheckRunEvidence() {
+  return {
+    agent_ran_check_automatically: true,
+    command_profile_selected_by_main: true,
+    packaged_runtime_executed: true,
+    status: 'passed',
+  };
+}
+
 function input(overrides = {}) {
   return JSON.stringify({
     executable_path: path.join(process.cwd(), 'release', 'win-unpacked', 'ClawFabric Builder.exe'),
@@ -230,10 +239,6 @@ class FakeLocator {
     if (this.page.failClicks.has(this.selector)) throw new Error('secret-marker');
     if (this.selector === SELECTORS.submitTurn) {
       submitFakeCanaryInstruction(this.page);
-    }
-    if (this.selector === SELECTORS.runCheck) {
-      if (this.page.checkRunAvailable !== true) throw new Error('project check unavailable');
-      this.page.checkRunStatus = 'passed';
     }
     if (this.selector === SELECTORS.skipCheck) {
       if (!this.page.unsavedDraftVisible || this.page.checkRunStatus !== 'not_run') {
@@ -295,7 +300,7 @@ class FakeLocator {
       this.page.requirePlanSourceReadApproval = false;
       this.page.recordPlanAttempt();
     }
-    if (this.selector === SELECTORS.workspaceControlChanges) {
+    if (this.selector === SELECTORS.workspaceControlChanges || this.selector === SELECTORS.reviewOpenChanges) {
       this.page.changesPanelVisible = true;
       this.page.changesDisclosureOpen = true;
       this.page.workspaceMenuVisible = false;
@@ -433,7 +438,6 @@ class FakeLocator {
     }
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
-    if (this.selector === SELECTORS.runCheck) return this.page.checkRunAvailable;
     if (this.selector === SELECTORS.skipCheck) {
       return this.page.unsavedDraftVisible && this.page.checkRunStatus === 'not_run';
     }
@@ -448,7 +452,6 @@ class FakeLocator {
     if (this.selector === SELECTORS.currentVersion) {
       return this.page.forcedVersionLabel ?? this.page.versionLabel;
     }
-    if (this.selector === SELECTORS.runCheck) return 'Run npm test';
     if (this.selector === SELECTORS.versionSavedActivity) {
       if (this.page.savedActivityTextOverride !== null) return this.page.savedActivityTextOverride;
       if (this.page.savedActivityRevision <= 0) return '';
@@ -521,10 +524,19 @@ class FakeLocator {
 
   async boundingBox() {
     this.page.events.push(['boundingBox', this.selector]);
-    if (this.page.reviewLayoutBoxes.has(this.selector)) {
-      return this.page.reviewLayoutBoxes.get(this.selector);
+    const reviewLayoutSelector = this.reviewLayoutSelector();
+    if (this.page.reviewLayoutBoxes.has(reviewLayoutSelector)) {
+      return this.page.reviewLayoutBoxes.get(reviewLayoutSelector);
     }
     return { x: 0, y: 0, width: 120, height: 32 };
+  }
+
+  reviewLayoutSelector() {
+    if (this.page.reviewLayoutBoxes.has(this.selector)) return this.selector;
+    for (const selector of this.page.reviewLayoutBoxes.keys()) {
+      if (this.selector.endsWith(` ${selector}`)) return selector;
+    }
+    return this.selector;
   }
 
   async waitFor(options) {
@@ -542,6 +554,7 @@ class FakeLocator {
       return;
     }
     if (this.selector === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`) {
+      if (this.page.checkRunAvailable === true) this.page.checkRunStatus = 'passed';
       this.page.assertSelectorVisibility(this.selector, this.page.checkRunStatus === 'passed', state);
       return;
     }
@@ -565,7 +578,11 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.liveOutputVisible, state);
       return;
     }
-    if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.workspaceControlChanges) {
+    if (
+      this.selector === SELECTORS.reviewCheckpoint
+      || this.selector === SELECTORS.workspaceControlChanges
+      || this.selector === SELECTORS.reviewOpenChanges
+    ) {
       this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
       return;
     }
@@ -760,7 +777,7 @@ class FakePage {
     this.changesPanelVisible = false;
     this.changesDisclosureOpen = false;
     this.changesTextOverride = null;
-    this.checkRunAvailable = false;
+    this.checkRunAvailable = true;
     this.checkRunStatus = 'not_run';
     this.composerAddMenuVisible = false;
     this.briefCorrectionActive = false;
@@ -827,7 +844,7 @@ class FakePage {
       [SELECTORS.reviewSummary, { x: 364, y: 254, width: 420, height: 17 }],
       [SELECTORS.reviewNote, { x: 364, y: 274, width: 500, height: 22 }],
       [SELECTORS.reviewActions, { x: 542, y: 308, width: 256, height: 32 }],
-      [SELECTORS.discardDraft, { x: 542, y: 308, width: 128, height: 32 }],
+      [SELECTORS.reviewMore, { x: 542, y: 308, width: 32, height: 32 }],
       [SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 }],
       [SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 }],
       [SELECTORS.resultFlow, { x: 948, y: 96, width: 324, height: 520 }],
@@ -2589,6 +2606,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
   assert.deepEqual(draftEvidence, {
+    check_run: automaticCheckRunEvidence(),
     live_output: liveOutputEvidence(),
     pre_save_catalog_empty: true,
     review_diff: reviewDiffEvidence(),
@@ -2679,18 +2697,16 @@ test('runs the main-selected project check before saving Version 1', async (t) =
   const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
 
   assert.deepEqual(draftEvidence.check_run, {
-    approval_action: 'Run npm test',
-    command_profile_selected_by_main: true,
-    packaged_runtime_executed: true,
-    status: 'passed',
+    ...automaticCheckRunEvidence(),
   });
-  const checkClick = page.events.findIndex(
-    (event) => event[0] === 'click' && event[1] === SELECTORS.runCheck,
-  );
   const saveClick = page.events.findIndex(
     (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
   );
-  assert.ok(checkClick >= 0 && checkClick < saveClick);
+  const passedStatusWait = page.events.findIndex(
+    (event) => event[0] === 'waitFor'
+      && event[1] === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
+  );
+  assert.ok(passedStatusWait >= 0 && passedStatusWait < saveClick);
 });
 
 test('approves current project write gate before waiting for draft output', async (t) => {
@@ -2703,6 +2719,7 @@ test('approves current project write gate before waiting for draft output', asyn
   const draftEvidence = await generateProjectViaUi(page, 'Make a focus timer.');
 
   assert.deepEqual(draftEvidence, {
+    check_run: automaticCheckRunEvidence(),
     live_output: liveOutputEvidence(),
     pre_save_catalog_empty: true,
     review_diff: reviewDiffEvidence(),
@@ -2766,13 +2783,13 @@ test('observes draft review diff before Save without leaking internal evidence',
     page.events.filter((event) => event[0] === 'boundingBox').map((event) => event[1]),
     [
       SELECTORS.reviewCheckpoint,
-      SELECTORS.reviewCopy,
-      SELECTORS.reviewTitle,
-      SELECTORS.reviewSummary,
-      SELECTORS.reviewNote,
-      SELECTORS.reviewActions,
-      SELECTORS.discardDraft,
-      SELECTORS.saveVersion,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewCopy}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewTitle}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewSummary}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewNote}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewActions}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewMore}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.saveVersion}`,
       SELECTORS.conversationActivity,
       SELECTORS.userMessage,
       SELECTORS.chatScroll,
@@ -2922,7 +2939,7 @@ test('rejects draft review actions that overlap the preview explanation', async 
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 374, y: 288, width: 256, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.discardDraft, { x: 374, y: 288, width: 128, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewMore, { x: 374, y: 288, width: 32, height: 32 });
   page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 510, y: 288, width: 120, height: 32 });
 
   await assert.rejects(
@@ -3015,6 +3032,10 @@ test('rejects draft changes panels that overlap the review checkpoint', async ()
     event[0] === 'click'
     && event[1] === SELECTORS.workspaceControlChanges
   )), true);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
 });
 
 test('rejects draft artifact sidebar without a draggable resize handle', async () => {
@@ -3932,6 +3953,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   const pendingFacts = assertTaskStreamPendingCandidateFacts(pendingEvidence, firstRevision, 2);
 
   assert.deepEqual(pending, {
+    check_run: automaticCheckRunEvidence(),
     live_output: liveOutputEvidence(),
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
@@ -4047,6 +4069,7 @@ test('observes a local Markdown artifact draft through workspace and review gate
   const evidence = await readSanitizedBridgeEvidence(page, firstRevision.project_id);
 
   assert.deepEqual(draft, {
+    check_run: automaticCheckRunEvidence(),
     live_output: liveOutputEvidence(),
     pre_save_catalog_empty: true,
     review_diff: reviewDiffEvidence(),
@@ -4102,6 +4125,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   const update = await updateProjectViaUi(page, firstRevision);
 
   assert.deepEqual(update, {
+    check_run: automaticCheckRunEvidence(),
     live_output: liveOutputEvidence(),
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
@@ -5249,6 +5273,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
   });
   assert.deepEqual(result.draft, {
     initial: {
+      check_run: automaticCheckRunEvidence(),
       live_output: liveOutputEvidence(),
       pre_save_catalog_empty: true,
       review_diff: reviewDiffEvidence(),
@@ -5271,6 +5296,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       unsaved_draft_restored: true,
     },
     update: {
+      check_run: automaticCheckRunEvidence(),
       live_output: liveOutputEvidence(),
       previous_revision_verified_before_save: true,
       review_diff: reviewDiffEvidence(),
@@ -5534,7 +5560,10 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     assert.equal(Object.hasOwn(launch.env, 'PATH'), true);
   }
   const allPageEvents = electron.pages.flatMap((candidate) => candidate.events);
-  const scopedLocators = allPageEvents.filter((event) => event[0] === 'scopedLocator');
+  const scopedLocators = allPageEvents.filter((event) => (
+    event[0] === 'scopedLocator'
+    && event[1] === SELECTORS.projectCatalog
+  ));
   assert.equal(scopedLocators.length, 2);
   assert.equal(scopedLocators[0][1], SELECTORS.projectCatalog);
   assert.equal(

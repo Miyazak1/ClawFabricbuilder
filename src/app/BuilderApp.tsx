@@ -1166,6 +1166,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const submitInFlightInstructionRef = useRef<string | null>(null);
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
   const checkRunRequestSequenceRef = useRef(0);
+  const automaticCheckRunKeyRef = useRef<string | null>(null);
   const publishSubmitInFlight = useCallback((inFlight: boolean) => {
     submitInFlightRef.current = inFlight;
     setSubmitInFlight(inFlight);
@@ -1382,6 +1383,22 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setCheckRunOperation('failed');
     }
   }, [checkRunAvailable, checkRunOperation, conversation, ports.checkRun]);
+
+  useEffect(() => {
+    const draftId = currentDraftId;
+    if (
+      draftId === null
+      || checkRunAvailable?.draft_id !== draftId
+      || checkRunCompleted?.draft_id === draftId
+      || checkRunOperation !== null
+    ) return;
+    const profile = checkRunAvailable.available_checks[0] ?? null;
+    if (profile === null) return;
+    const automaticCheckRunKey = `${draftId}:${profile.command_profile_id}`;
+    if (automaticCheckRunKeyRef.current === automaticCheckRunKey) return;
+    automaticCheckRunKeyRef.current = automaticCheckRunKey;
+    void runCheck(profile);
+  }, [checkRunAvailable, checkRunCompleted, checkRunOperation, currentDraftId, runCheck]);
 
   const skipCheck = useCallback(async () => {
     const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
@@ -3209,7 +3226,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRequestLivePreview={requestLivePreview}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
-              onRunCheck={runCheck}
               onSkipCheck={skipCheck}
               onSave={save}
               onStopLivePreview={stopLivePreview}

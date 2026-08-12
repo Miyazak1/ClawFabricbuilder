@@ -163,7 +163,6 @@ export type BuilderPageProps = {
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
-  onRunCheck?: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
   onSkipCheck?: () => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
@@ -2197,7 +2196,6 @@ export function BuilderPage({
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
-  onRunCheck,
   onSkipCheck,
   onReloadLivePreview,
   onReviewPlan,
@@ -3017,7 +3015,6 @@ export function BuilderPage({
       discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
       hasContent={hasContent}
       onRejectDraft={onRejectDraft}
-      onRunCheck={onRunCheck}
       onSkipCheck={reviewState?.check_status === 'not_run' ? onSkipCheck : undefined}
       onSave={onSave}
       preview={preview}

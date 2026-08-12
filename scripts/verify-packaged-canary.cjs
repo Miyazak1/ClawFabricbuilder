@@ -141,12 +141,12 @@ const SELECTORS = Object.freeze({
   reviewCheckpoint: '[data-builder-review-checkpoint="true"]',
   reviewCopy: '[data-builder-review-copy="true"]',
   reviewNote: '[data-builder-review-note="true"]',
+  reviewMore: '[data-builder-review-more="true"]',
   discardDraft: '[data-builder-discard-draft="true"]',
   reviewOpenChanges: '[data-builder-review-open-changes="true"]',
   reviewOpenPreview: '[data-builder-review-open-preview="true"]',
   reviewSummary: '[data-builder-review-summary="true"]',
   reviewTitle: '[data-builder-review-title="true"]',
-  runCheck: '[data-builder-run-check]',
   skipCheck: '[data-builder-skip-check="true"]',
   checkRunStatus: '[data-builder-check-run-status]',
   saveVersion: '[data-builder-save-version="true"]',
@@ -2341,16 +2341,22 @@ async function generateProjectViaUi(page, idea) {
     await page.locator(SELECTORS.unsavedDraft)
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    checkRun = await waitForAutomaticProjectCheckViaUi(page);
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
-    checkRun = await runFirstAvailableProjectCheckViaUi(page);
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     const preSave = await readSanitizedBridgeEvidence(page);
     if (preSave.catalog.projects.length !== 0 || preSave.current !== null) {
-      fail('canary_draft_failed');
+      failWithDiagnostic(
+        'canary_draft_failed',
+        await collectInitialDraftFailureDiagnostic(page, 'pre_save_evidence_not_empty'),
+      );
     }
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_draft_failed');
+    failWithDiagnostic(
+      'canary_draft_failed',
+      await collectInitialDraftFailureDiagnostic(page, 'draft_evidence_step_failed'),
+    );
   }
   try {
     await clickSaveVersionViaUi(page);
@@ -2383,27 +2389,86 @@ async function generateProjectViaUi(page, idea) {
   });
 }
 
-async function runFirstAvailableProjectCheckViaUi(page) {
-  if (await optionalLocatorVisible(page, SELECTORS.runCheck) !== true) return null;
+async function collectInitialDraftFailureDiagnostic(page, failurePoint) {
+  const bridgeEvidence = await readOptionalDraftBridgeEvidence(page);
+  return Object.freeze({
+    diagnostic_version: 'builder-canary-initial-draft-diagnostic.v1',
+    failure_point: failurePoint,
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    project_error: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-error'),
+    active_notice_kind: await optionalLocatorAttribute(
+      page,
+      '[data-builder-conversation-notice]',
+      'data-builder-conversation-notice',
+    ),
+    unsaved_draft_visible: await optionalLocatorVisible(page, SELECTORS.unsavedDraft),
+    unsaved_draft_text: await optionalLocatorText(page, SELECTORS.unsavedDraft),
+    review_visible: await optionalLocatorVisible(page, SELECTORS.reviewCheckpoint),
+    review_text: await optionalLocatorText(page, SELECTORS.reviewCheckpoint),
+    save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    save_text: await optionalLocatorText(page, SELECTORS.saveVersion),
+    review_more_visible: await optionalLocatorVisible(page, SELECTORS.reviewMore),
+    visible_buttons: await readVisibleButtonTexts(page),
+    bridge: bridgeEvidence,
+  });
+}
+
+async function readOptionalDraftBridgeEvidence(page) {
   try {
-    const button = page.locator(SELECTORS.runCheck).first();
-    const label = await button.textContent();
-    if (typeof label !== 'string' || !/^\s*Run npm test\s*$/u.test(label)) {
-      fail('canary_check_run_failed');
-    }
-    await button.click();
+    const evidence = await readSanitizedBridgeEvidence(page);
+    return Object.freeze({
+      read_ok: true,
+      catalog_count: Array.isArray(evidence.catalog?.projects) ? evidence.catalog.projects.length : null,
+      current_state: evidence.current?.state ?? null,
+      task_stream_state: evidence.task_stream?.conversation?.state ?? null,
+      task_stream_item_count: Array.isArray(evidence.task_stream?.conversation?.items)
+        ? evidence.task_stream.conversation.items.length
+        : null,
+    });
+  } catch (error) {
+    return Object.freeze({
+      read_ok: false,
+      error_code: error instanceof BuilderPackagedCanaryError ? error.code : null,
+    });
+  }
+}
+
+async function readVisibleButtonTexts(page) {
+  try {
+    return await page.evaluate(() => {
+      const visible = (element) => {
+        if (!(element instanceof globalThis.HTMLElement)) return false;
+        const style = globalThis.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.visibility !== 'hidden'
+          && style.display !== 'none'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      return Array.from(globalThis.document.querySelectorAll('button'))
+        .filter((button) => visible(button))
+        .map((button) => button.textContent?.replace(/\s+/gu, ' ').trim() ?? '')
+        .filter((text) => text.length > 0)
+        .slice(0, 24);
+    });
+  } catch {
+    return Object.freeze([]);
+  }
+}
+
+async function waitForAutomaticProjectCheckViaUi(page) {
+  try {
     await page.locator(
       `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
     ).waitFor({ state: 'visible', timeout: 120_000 });
     return Object.freeze({
-      approval_action: 'Run npm test',
+      agent_ran_check_automatically: true,
       command_profile_selected_by_main: true,
       packaged_runtime_executed: true,
       status: 'passed',
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    const profileId = await optionalLocatorAttribute(page, SELECTORS.runCheck, 'data-builder-run-check');
     failWithDiagnostic('canary_check_run_failed', Object.freeze({
       check_operation: await optionalLocatorAttribute(
         page,
@@ -2416,7 +2481,7 @@ async function runFirstAvailableProjectCheckViaUi(page) {
         'data-builder-check-run-status',
       ),
       check_status_text: await optionalLocatorText(page, SELECTORS.checkRunStatus),
-      bridge_check_run: await readCheckRunFailureDiagnostic(page, profileId),
+      bridge_check_run: await readCheckRunFailureDiagnostic(page, null),
     }));
   }
 }
@@ -2618,10 +2683,9 @@ function draftReviewLayoutFailureCode({
   }
   for (const action of actions) {
     if (
-      action.width < 88
+      action.width < 28
       || action.height < 28
       || action.height > 48
-      || action.width / action.height < 2
       || !boxContains(actionGroup, action)
     ) return 'canary_review_diff_checkpoint_action_geometry_failed';
   }
@@ -2644,15 +2708,16 @@ async function assertDraftReviewLayoutViaUi(page) {
   const code = 'canary_review_diff_checkpoint_layout_failed';
   let lastFailureCode = code;
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const review = await boundedBox(page.locator(SELECTORS.reviewCheckpoint), code);
-    const copy = await boundedBox(page.locator(SELECTORS.reviewCopy), code);
-    const title = await boundedBox(page.locator(SELECTORS.reviewTitle), code);
-    const summary = await boundedBox(page.locator(SELECTORS.reviewSummary), code);
-    const note = await boundedBox(page.locator(SELECTORS.reviewNote), code);
-    const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions), code);
+    const reviewLocator = page.locator(SELECTORS.reviewCheckpoint).last();
+    const review = await boundedBox(reviewLocator, code);
+    const copy = await boundedBox(reviewLocator.locator(SELECTORS.reviewCopy), code);
+    const title = await boundedBox(reviewLocator.locator(SELECTORS.reviewTitle), code);
+    const summary = await boundedBox(reviewLocator.locator(SELECTORS.reviewSummary), code);
+    const note = await boundedBox(reviewLocator.locator(SELECTORS.reviewNote), code);
+    const actionGroup = await boundedBox(reviewLocator.locator(SELECTORS.reviewActions), code);
     const actions = [
-      await boundedBox(page.locator(SELECTORS.discardDraft), code),
-      await boundedBox(page.locator(SELECTORS.saveVersion), code),
+      await boundedBox(reviewLocator.locator(SELECTORS.reviewMore), code),
+      await boundedBox(reviewLocator.locator(SELECTORS.saveVersion), code),
     ];
     const failureCode = draftReviewLayoutFailureCode({
       actionGroup,
@@ -2856,8 +2921,28 @@ async function inspectDraftReviewDiffViaUi(page) {
     });
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_review_diff_failed');
+    failWithDiagnostic(
+      'canary_review_diff_failed',
+      await collectReviewDiffFailureDiagnostic(page),
+    );
   }
+}
+
+async function collectReviewDiffFailureDiagnostic(page) {
+  return Object.freeze({
+    diagnostic_version: 'builder-canary-review-diff-diagnostic.v1',
+    project_status: await optionalLocatorAttribute(page, SELECTORS.projectPage, 'data-builder-project-status'),
+    review_visible: await optionalLocatorVisible(page, SELECTORS.reviewCheckpoint),
+    review_text: await optionalLocatorText(page, SELECTORS.reviewCheckpoint),
+    review_more_visible: await optionalLocatorVisible(page, SELECTORS.reviewMore),
+    save_visible: await optionalLocatorVisible(page, SELECTORS.saveVersion),
+    workspace_menu_button_visible: await optionalLocatorVisible(page, SELECTORS.workspaceMenuButton),
+    workspace_changes_visible: await optionalLocatorVisible(page, SELECTORS.workspaceControlChanges),
+    changes_panel_visible: await optionalLocatorVisible(page, SELECTORS.changesPanel),
+    change_card_visible: await optionalLocatorVisible(page, SELECTORS.changeCard),
+    change_diff_visible: await optionalLocatorVisible(page, SELECTORS.changeDiff),
+    visible_buttons: await readVisibleButtonTexts(page),
+  });
 }
 
 async function retryFailedDraftViaUi(page, idea, replacementIdea = CANARY_UPDATE_INSTRUCTION) {
@@ -3385,6 +3470,7 @@ async function createUpdateDraftViaUi(
   fsModule = fs,
 ) {
   let draftReviewDiff = null;
+  let checkRun = null;
   let liveOutput = null;
   let step = 'start';
   try {
@@ -3417,8 +3503,9 @@ async function createUpdateDraftViaUi(
     await page.locator(SELECTORS.unsavedDraft)
       .getByText('Unsaved draft', { exact: true })
       .waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
+    checkRun = await waitForAutomaticProjectCheckViaUi(page);
     draftReviewDiff = await inspectDraftReviewDiffViaUi(page);
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible' });
     const preSave = await readSanitizedBridgeEvidence(
       page,
       currentProject.project_id,
@@ -3436,6 +3523,7 @@ async function createUpdateDraftViaUi(
     fail('canary_update_draft_failed');
   }
   return Object.freeze({
+    ...(checkRun === null ? {} : { check_run: checkRun }),
     live_output: liveOutput,
     previous_revision_verified_before_save: true,
     review_diff: draftReviewDiff,
@@ -7446,7 +7534,13 @@ async function runPackagedCanary(rawInput, options = {}) {
       0,
     );
     const network = recorder.snapshot();
-    if (network.renderer_unexpected_network_count !== 0) fail('canary_evidence_failed');
+    if (network.renderer_unexpected_network_count !== 0) {
+      failWithDiagnostic('canary_evidence_failed', Object.freeze({
+        diagnostic_version: 'builder-canary-final-evidence-diagnostic.v1',
+        comparison: 'restart_network',
+        renderer_unexpected_network_count: network.renderer_unexpected_network_count,
+      }));
+    }
     const restartRevisionUnchanged = (
       restartEvidence.catalog.projects.length === updatedEvidence.catalog.projects.length
       && restartProject.project_id === updatedProject.project_id
@@ -7456,9 +7550,36 @@ async function runPackagedCanary(rawInput, options = {}) {
       && restartProject.tree_oid === updatedProject.tree_oid
       && samePreviewEvidence(restartPreviewEvidence, updatedPreviewEvidence)
     );
-    if (!restartRevisionUnchanged) fail('canary_evidence_failed');
+    if (!restartRevisionUnchanged) {
+      failWithDiagnostic('canary_evidence_failed', Object.freeze({
+        diagnostic_version: 'builder-canary-final-evidence-diagnostic.v1',
+        comparison: 'restart_revision',
+        catalog_count_after_save: updatedEvidence.catalog.projects.length,
+        catalog_count_after_restart: restartEvidence.catalog.projects.length,
+        project_id_matches: restartProject.project_id === updatedProject.project_id,
+        revision_number_matches: restartProject.revision_number === updatedProject.revision_number,
+        revision_receipt_digest_matches:
+          restartProject.revision_receipt_digest === updatedProject.revision_receipt_digest,
+        commit_oid_matches: restartProject.commit_oid === updatedProject.commit_oid,
+        tree_oid_matches: restartProject.tree_oid === updatedProject.tree_oid,
+        preview_matches: samePreviewEvidence(restartPreviewEvidence, updatedPreviewEvidence),
+      }));
+    }
     const restartTaskStreamUnchanged = digestCanonical(restartTaskStream) === digestCanonical(updatedTaskStream);
-    if (!restartTaskStreamUnchanged) fail('canary_evidence_failed');
+    if (!restartTaskStreamUnchanged) {
+      failWithDiagnostic('canary_evidence_failed', Object.freeze({
+        diagnostic_version: 'builder-canary-final-evidence-diagnostic.v1',
+        comparison: 'restart_task_stream',
+        updated_task_stream_digest: digestCanonical(updatedTaskStream),
+        restart_task_stream_digest: digestCanonical(restartTaskStream),
+        updated_candidate_ready_count: updatedTaskStream.candidate_ready_count,
+        restart_candidate_ready_count: restartTaskStream.candidate_ready_count,
+        updated_check_state: updatedTaskStream.check_run_outcome_projection?.state ?? null,
+        restart_check_state: restartTaskStream.check_run_outcome_projection?.state ?? null,
+        updated_check_status: updatedTaskStream.check_run_outcome_projection?.status ?? null,
+        restart_check_status: restartTaskStream.check_run_outcome_projection?.status ?? null,
+      }));
+    }
     const restartContinuationPlan = await proposePlanViaUi(
       restartedPage,
       updatedRevision,

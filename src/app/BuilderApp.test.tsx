@@ -6197,7 +6197,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|parent_oid|credential|provider/iu);
   });
 
-  it('runs only a discovered draft check after the explicit Review action', async () => {
+  it('automatically runs the discovered draft check before enabling Save', async () => {
     const {
       approveAndRunCurrentDraftCheck,
       container,
@@ -6217,14 +6217,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-run-check]')?.textContent).toContain('Run npm test');
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
     });
-    expect(readCurrentDraftAvailableChecks).toHaveBeenCalledWith({
-      draft_id: expect.stringMatching(/^builder-generation-draft:/u),
-    });
-    expect(approveAndRunCurrentDraftCheck).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-run-check]')).toBeNull();
 
-    click(container, 'Run npm test');
     await waitFor(() => {
       expect(approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),

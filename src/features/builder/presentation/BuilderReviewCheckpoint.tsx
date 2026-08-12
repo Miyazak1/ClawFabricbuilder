@@ -1,5 +1,5 @@
 import { useState, type Ref } from 'react';
-import { CircleCheck, CircleX, Ellipsis, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
+import { CircleCheck, CircleX, Ellipsis, GitCompareArrows, LoaderCircle, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
@@ -19,7 +19,6 @@ export type BuilderReviewCheckpointProps = Readonly<{
   discardLabel: string;
   hasContent: boolean;
   onRejectDraft?: () => void;
-  onRunCheck?: (profile: BuilderCheckRunProfile) => void;
   onSkipCheck?: () => void;
   onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
@@ -39,7 +38,6 @@ export function BuilderReviewCheckpoint({
   discardLabel,
   hasContent,
   onRejectDraft,
-  onRunCheck,
   onSkipCheck,
   onSave,
   preview,
@@ -71,7 +69,7 @@ export function BuilderReviewCheckpoint({
           ? `${recordedStatus.label}. ${recordedStatus.summary}`
           : checkRunProfiles.length === 0
             ? 'No project checks found.'
-            : 'Not checked.';
+            : 'Checking automatically...';
   const CheckStatusIcon = checkRunOperation === 'loading'
     || checkRunOperation === 'running'
     || checkRunOperation === 'skipping'
@@ -142,23 +140,6 @@ export function BuilderReviewCheckpoint({
             {checkStatusText}
           </span>
         </div>
-        {checkRunProfiles.length > 0 ? (
-          <div className="cf-builder-review-check-actions" data-builder-check-run-actions="true">
-            {checkRunProfiles.map((profile) => (
-              <button
-                className="cf-builder-review-check-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-                data-builder-run-check={profile.command_profile_id}
-                disabled={checksBusy || typeof onRunCheck !== 'function'}
-                key={profile.command_profile_id}
-                onClick={() => onRunCheck?.(profile)}
-                type="button"
-              >
-                <Play aria-hidden="true" className="size-3.5" />
-                Run {profile.command_display}
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
       <div
         className="cf-builder-review-actions"

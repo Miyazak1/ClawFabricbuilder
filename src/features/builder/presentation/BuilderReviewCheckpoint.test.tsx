@@ -233,8 +233,7 @@ describe('BuilderReviewCheckpoint', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('offers only discovered checks and makes the selected check an explicit action', () => {
-    const onRunCheck = vi.fn();
+  it('summarizes automatic discovered checks without exposing a run button', () => {
     const container = render(
       <BuilderReviewCheckpoint
         canReject
@@ -244,7 +243,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkRunStatus={passedCheck}
         discardLabel="Discard draft"
         hasContent
-        onRunCheck={onRunCheck}
         preview={null}
         reviewState={reviewState('ready')}
         saveLabel="Save version"
@@ -253,11 +251,8 @@ describe('BuilderReviewCheckpoint', () => {
 
     expect(container.querySelector('[data-builder-check-run-status="passed"]')?.textContent)
       .toContain('completed successfully');
-    expect(container.querySelector('[data-builder-check-run-actions="true"]')?.textContent)
-      .toContain('Run npm test');
-    click(container, `[data-builder-run-check="${checkProfile.command_profile_id}"]`);
-    expect(onRunCheck).toHaveBeenCalledTimes(1);
-    expect(onRunCheck).toHaveBeenCalledWith(checkProfile);
+    expect(container.querySelector('[data-builder-check-run-actions="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-run-check]')).toBeNull();
   });
 
   it('restores running and unavailable outcomes from durable task activity', () => {
@@ -270,7 +265,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkRunProfiles={[checkProfile]}
         discardLabel="Discard draft"
         hasContent
-        onRunCheck={() => undefined}
         preview={null}
         reviewState={reviewState('ready')}
         saveLabel="Save version"
@@ -278,7 +272,7 @@ describe('BuilderReviewCheckpoint', () => {
     );
     expect(running.querySelector('[data-builder-check-run-status="running"]')?.textContent)
       .toContain('Running project check');
-    expect(running.querySelector<HTMLButtonElement>('[data-builder-run-check]')?.disabled).toBe(true);
+    expect(running.querySelector('[data-builder-run-check]')).toBeNull();
 
     const unavailable = render(
       <BuilderReviewCheckpoint
