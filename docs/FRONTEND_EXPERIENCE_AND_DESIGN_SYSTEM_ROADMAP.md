@@ -201,7 +201,9 @@ right workspace becomes an inspectable tool surface.
 ## Composer Model
 
 The composer remains a single natural-language input. Users should not have to
-manually choose Chat or Build for every message.
+manually choose Chat or Build for every message, but they must be able to lock
+the next stretch of work into `Ask` or `Build` when automatic routing is not
+what they intend.
 
 The executable routing contract is defined in
 [Composer Intent Routing Architecture](COMPOSER_INTENT_ROUTING_ARCHITECTURE.md).
@@ -213,9 +215,9 @@ The composer contains:
 
 - workspace context bar: current project/source folder state, local context, and
   a clear-current-workspace control when no unsaved draft is awaiting review;
-- add menu: attachments, source context, plan mode, and later plugin/tool
-  entries;
-- explicit plan command;
+- add menu: attachments, source context, Ask mode, Plan mode, Build mode, and
+  later plugin/tool entries;
+- explicit composer mode chips;
 - permission mode control;
 - send button;
 - contextual status such as `Direction updated`,
@@ -232,20 +234,26 @@ MVP entries:
 
 - **Files and folders**: choose or attach source context, then show it as a
   composer chip. Reading content still follows permission rules.
+- **Ask mode**: keep subsequent sends read-only until the user switches mode or
+  clears the chip.
 - **Plan mode**: make the next submitted message route to `plan`, even if the
   wording is ordinary. It should appear as an active composer chip and be
   removable before sending.
+- **Build mode**: keep subsequent sends in source-change intent until the user
+  switches mode or clears the chip. It still passes workspace, write-permission,
+  review, and save gates.
 
 Approval mode is adjacent to the `+` menu rather than hidden inside it. The
 bottom-left composer tools should read as:
 
 ```text
-[Files/Plan] [Approval mode]
+[Files / Ask / Plan / Build] [Approval mode]
 ```
 
-This keeps added context and execution policy separate: `+` changes what is
-attached or how the next message is interpreted, while Approval mode changes
-the read/write admission preference for side-effecting work.
+This keeps intent and permission separate: `+` changes what is attached or how
+messages are interpreted, while Approval mode changes the read/write admission
+preference for side-effecting work. `Ask` and `Build` are persistent mode
+overrides. `Plan` is one-shot and clears after the plan request is admitted.
 
 Later entries:
 
@@ -344,6 +352,18 @@ still require explicit execution intent plus write permission.
 Plan mode may run for either a saved project or a bound local workspace before
 Version 1 exists. Source folders define the read boundary; Save Version is the
 later acceptance step, not a prerequisite for planning.
+
+Composer mode persistence:
+
+- `Auto` is the default and uses deterministic routing plus semantic
+  classification for ambiguous plan/build sentences.
+- `Ask mode` persists across sends and forces read-only answer behavior until
+  cleared.
+- `Build mode` persists across sends and forces execution intent through the
+  normal workspace, permission, review, and save gates until cleared.
+- `Plan mode` is one-shot and clears as soon as the plan request is admitted.
+- Accepting a plan should hand off directly to Build execution after the
+  required write approval; it must not ask the user to restate the plan.
 
 The internal route should evolve from `answer | build` to:
 
@@ -773,8 +793,8 @@ Scope:
   durable enough to explain what memory is being used;
 - feed the brief into build execution.
 - keep Brief as internal working context rather than a composer `+` menu entry;
-- introduce the composer `+` menu as the place for Plan mode, while keeping
-  plugin/tool entries hidden until their gates exist.
+- introduce the composer `+` menu as the place for Ask, Plan, and Build mode,
+  while keeping plugin/tool entries hidden until their gates exist.
 
 Exit criteria:
 
@@ -784,7 +804,9 @@ Exit criteria:
 - contextual execution builds from the brief;
 - ambiguous contextual execution asks for confirmation.
 - selecting Plan mode from the `+` menu creates a visible composer mode chip and
-  routes the next submit to `plan` without writing files.
+  routes the next submit to `plan` without writing files;
+- selecting Ask or Build mode creates a persistent visible chip that continues
+  routing future sends until it is cleared or changed.
 
 Current checkpoint:
 
@@ -795,10 +817,10 @@ Current checkpoint:
 - the user can keep chatting naturally while the router uses the internal brief
   to decide whether short phrases such as `按刚才方案做` have enough context to
   build;
-- the composer `+` menu exposes Plan mode but not Brief. Brief updates remain a
-  natural-language path such as "保存这个方向，后面按这个来：..."; renderer and
-  main both classify that public signal as `update_brief` / `brief_update`
-  without creating a draft or adding a second submit button;
+- the composer `+` menu exposes Ask, Plan, and Build mode but not Brief. Brief
+  updates remain a natural-language path such as "保存这个方向，后面按这个来：...";
+  renderer and main both classify that public signal as `update_brief` /
+  `brief_update` without creating a draft or adding a second submit button;
 - provider, credential, source tree, Git, digest, and receipt details remain
   hidden from all default composer memory surfaces;
 - the Artifact Logs surface can show a read-only `Current direction` summary
