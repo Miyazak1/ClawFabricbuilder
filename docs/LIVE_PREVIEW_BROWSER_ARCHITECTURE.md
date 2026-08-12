@@ -575,11 +575,13 @@ Current checkpoint:
   proving no extra loopback `WebContents` remains active, and emitting only
   digest/bool/count summaries for preview URL, DOM title, JS execution, canvas
   pixels, blocked requests, and stop cleanup;
-- defer release-gate integration, app restart cleanup evidence, and
-  app restart cleanup evidence to follow-up LP6 hardening;
 - add WebGL-specific packaged evidence by rendering a second local WebGL canvas,
   proving WebGL availability and nonblank pixels, and outputting only a hashed
-  renderer summary instead of raw GPU strings.
+  renderer summary instead of raw GPU strings;
+- add app restart cleanup evidence by starting Live Preview, closing the app
+  without pressing Stop, relaunching with the same guarded user data, and
+  proving no loopback preview `WebContents` is restored or leaked;
+- defer release-gate integration to a later release decision.
 
 ### Slice LP7: Browser-First Static Preview Retirement
 

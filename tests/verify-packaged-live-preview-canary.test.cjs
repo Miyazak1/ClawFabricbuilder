@@ -86,6 +86,12 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /webgl_nonblank:\s*true/u);
   assert.match(source, /webgl_renderer_digest/u);
   assert.match(source, /webgl_renderer_digest_source/u);
+  assert.match(source, /app_restart_cleanup_checked:\s*true/u);
+  assert.match(source, /app_restart_cleanup_closed_active_preview:\s*true/u);
+  assert.match(source, /app_restart_no_loopback_webcontents:\s*true/u);
+  assert.match(source, /app_restart_reopened_with_same_user_data:\s*true/u);
+  assert.match(source, /live_preview_app_restart_leaked_webcontents/u);
+  assert.match(source, /live_preview_restart_cleanup_precondition_failed/u);
   assert.match(source, /data-builder-live-preview-blocked-count/u);
   assert.match(source, /renderer_blocked_request_count_minimum/u);
   assert.match(source, /renderer_block_count_visible:\s*true/u);

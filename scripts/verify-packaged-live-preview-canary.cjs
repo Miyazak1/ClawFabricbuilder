@@ -504,16 +504,32 @@ async function waitForMainProcessLivePreviewEvidence(app) {
   fail('live_preview_webcontents_evidence_failed', evidence);
 }
 
-async function verifyLivePreviewControls(page, app) {
+async function startLivePreviewAndReadEvidence(page, app) {
   await page.locator(SELECTORS.workspaceMenuButton).click().catch(() => {});
   await page.locator(SELECTORS.workspaceControlPreview).click().catch(() => {});
-  const staticPreviewVisible = await page.locator(SELECTORS.preview).isVisible().catch(() => false);
   await waitForButtonEnabled(page, '[data-builder-preview-mode="live"]', 'live_preview_mode_disabled');
   await page.locator('[data-builder-preview-mode="live"]').first().click();
   await waitForButtonEnabled(page, '[data-builder-live-preview-start="true"]', 'live_preview_start_disabled');
   await page.locator('[data-builder-live-preview-start="true"]').first().click();
   await waitForLiveStatus(page, 'ready', 'live_preview_not_ready');
-  const mainEvidence = await waitForMainProcessLivePreviewEvidence(app);
+  return waitForMainProcessLivePreviewEvidence(app);
+}
+
+async function stopLivePreviewAndVerifyDisposed(page, app) {
+  await waitForButtonEnabled(page, '[data-builder-live-preview-stop="true"]', 'live_preview_stop_disabled');
+  await page.locator('[data-builder-live-preview-stop="true"]').first().click();
+  await waitForLiveStatus(page, 'stopped', 'live_preview_stop_not_observed');
+  const stoppedEvidence = await readMainProcessLivePreviewEvidence(app);
+  if ((stoppedEvidence?.preview_webcontents_count ?? 1) !== 0) {
+    fail('live_preview_stop_did_not_dispose', stoppedEvidence);
+  }
+}
+
+async function verifyLivePreviewControls(page, app) {
+  await page.locator(SELECTORS.workspaceMenuButton).click().catch(() => {});
+  await page.locator(SELECTORS.workspaceControlPreview).click().catch(() => {});
+  const staticPreviewVisible = await page.locator(SELECTORS.preview).isVisible().catch(() => false);
+  const mainEvidence = await startLivePreviewAndReadEvidence(page, app);
   await waitForButtonEnabled(page, '[data-builder-live-preview-reload="true"]', 'live_preview_reload_disabled');
   await page.locator('[data-builder-live-preview-reload="true"]').first().click();
   await waitForLiveStatus(page, 'ready', 'live_preview_reload_not_ready');
@@ -546,13 +562,7 @@ async function verifyLivePreviewControls(page, app) {
     fail('live_preview_blocked_count_invalid', { blockedSummaryText });
   }
   const rendererBlockedCount = Number.parseInt(blockedMatch[1], 10);
-  await waitForButtonEnabled(page, '[data-builder-live-preview-stop="true"]', 'live_preview_stop_disabled');
-  await page.locator('[data-builder-live-preview-stop="true"]').first().click();
-  await waitForLiveStatus(page, 'stopped', 'live_preview_stop_not_observed');
-  const stoppedEvidence = await readMainProcessLivePreviewEvidence(app);
-  if ((stoppedEvidence?.preview_webcontents_count ?? 1) !== 0) {
-    fail('live_preview_stop_did_not_dispose', stoppedEvidence);
-  }
+  await stopLivePreviewAndVerifyDisposed(page, app);
   return Object.freeze({
     canvas_nonblank: true,
     external_fetch_blocked: true,
@@ -575,6 +585,44 @@ async function verifyLivePreviewControls(page, app) {
     webgl_nonblank: true,
     webgl_renderer_digest: webglRendererDigest,
   });
+}
+
+async function verifyLivePreviewAppRestartCleanup({
+  app,
+  executablePath,
+  page,
+  projectRootPath,
+  userDataPath,
+}) {
+  const preCloseEvidence = await startLivePreviewAndReadEvidence(page, app);
+  if (preCloseEvidence.preview_webcontents_count !== 1) {
+    fail('live_preview_restart_cleanup_precondition_failed', preCloseEvidence);
+  }
+  await app.close();
+  await delay(500);
+  const restartedApp = await electron.launch({
+    args: [],
+    executablePath,
+    env: sanitizeLaunchEnvironment(process.env, userDataPath, projectRootPath),
+  });
+  try {
+    const restartedPage = await restartedApp.firstWindow();
+    await readSanitizedBridgeEvidence(restartedPage);
+    const restartedEvidence = await readMainProcessLivePreviewEvidence(restartedApp);
+    if ((restartedEvidence?.preview_webcontents_count ?? 1) !== 0) {
+      fail('live_preview_app_restart_leaked_webcontents', restartedEvidence);
+    }
+    return Object.freeze({
+      app_restart_cleanup_checked: true,
+      app_restart_cleanup_closed_active_preview: true,
+      app_restart_no_loopback_webcontents: true,
+      app_restart_reopened_with_same_user_data: true,
+      restartedApp,
+    });
+  } catch (error) {
+    await restartedApp.close().catch(() => {});
+    throw error;
+  }
 }
 
 async function run() {
@@ -613,6 +661,15 @@ async function run() {
     await createUnsavedDraftViaUi(page, LIVE_PREVIEW_UPDATE_INSTRUCTION);
     step = 'verify_live_preview';
     const livePreview = await verifyLivePreviewControls(page, app);
+    step = 'verify_live_preview_restart_cleanup';
+    const restartCleanup = await verifyLivePreviewAppRestartCleanup({
+      app,
+      executablePath,
+      page,
+      projectRootPath,
+      userDataPath,
+    });
+    app = restartCleanup.restartedApp;
     const result = Object.freeze({
       result_version: RESULT_VERSION,
       executable_path: executablePath,
@@ -627,6 +684,10 @@ async function run() {
       saved_project_id_digest: `sha256:${nodeCrypto.createHash('sha256').
         update(savedProject.project_id).digest('hex')}`,
       ...livePreview,
+      app_restart_cleanup_checked: restartCleanup.app_restart_cleanup_checked,
+      app_restart_cleanup_closed_active_preview: restartCleanup.app_restart_cleanup_closed_active_preview,
+      app_restart_no_loopback_webcontents: restartCleanup.app_restart_no_loopback_webcontents,
+      app_restart_reopened_with_same_user_data: restartCleanup.app_restart_reopened_with_same_user_data,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return result;
