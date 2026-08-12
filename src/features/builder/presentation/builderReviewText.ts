@@ -42,7 +42,7 @@ export function builderReviewPreviewStatus(
     );
     const runtimeOnlyLabels = previewLimitationLabels(runtimeOnlyLimitations);
     if (runtimeOnlyLabels.length > 0) {
-      return `Preview may need live support here: ${runtimeOnlyLabels.join(', ')} cannot run in the static preview. The files may still be ready; open Changes before saving.`;
+      return `Preview may need live support here: ${runtimeOnlyLabels.join(', ')} cannot run in the static preview. The files may still be ready for review.`;
     }
     if (preview.preview_runtime_limitations.includes('javascript_removed')) {
       return 'Static preview is ready. HTML and CSS are shown here; JavaScript is disabled in this preview.';

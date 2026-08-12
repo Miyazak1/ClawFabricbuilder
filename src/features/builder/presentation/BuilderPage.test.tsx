@@ -2806,12 +2806,12 @@ describe('BuilderPage v2', () => {
       .toContain('Version 1');
     expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
       .toContain('Keep revising here');
-    expect(container.textContent).toContain('Review the draft preview, files, and changes before saving this version.');
+    expect(container.textContent).toContain('The review workspace is ready before saving this version.');
     const completion = container.querySelector('[data-builder-completion-summary="true"]');
     expect(completion?.getAttribute('data-builder-completion-result')).toBe('candidate');
     expect(completion?.textContent).toContain('A draft is ready for review.');
     expect(completion?.textContent).toContain('A small project.');
-    expect(completion?.textContent).toContain('Review Preview and Changes, then save a version if it looks right.');
+    expect(completion?.textContent).toContain('Review the workspace, then save a version if it looks right.');
     const completionSteps = completion?.querySelector('[data-builder-completion-steps="true"]');
     expect(completionSteps?.textContent).toContain('Recorded steps');
     expect(completionSteps?.textContent).toContain('Read the current project context.');
@@ -3289,7 +3289,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.getAttribute('data-builder-activity-role'))
       .toBe('assistant');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
-      .toContain('Review the draft preview, files, and changes before saving this version.');
+      .toContain('The review workspace is ready before saving this version.');
     expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
@@ -4392,7 +4392,7 @@ describe('BuilderPage v2', () => {
     expect(review?.textContent).toContain('Preview may need live support here');
     expect(review?.textContent).toContain('Three.js/WebGL');
     expect(review?.textContent).toContain('canvas animation');
-    expect(review?.textContent).toContain('open Changes before saving');
+    expect(review?.textContent).toContain('ready for review');
     expect(blocked).not.toBeNull();
     expect(limitation?.textContent).toContain('Preview unavailable here');
     expect(limitation?.textContent).toContain('needs live preview support');

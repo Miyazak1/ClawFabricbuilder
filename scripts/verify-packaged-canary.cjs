@@ -6805,7 +6805,7 @@ async function capturePreviewEvidence(page, gate, attempt = 0) {
         || !limitationText.includes('Preview unavailable here')
         || !limitationText.includes('The files were generated')
         || !limitationText.includes('live preview support')
-        || !limitationText.includes('Review Changes or Source before saving')
+        || !limitationText.includes('Use the review workspace before saving')
         || !/(?:3D|WebGL|JavaScript modules|canvas|live preview)/iu.test(limitationText)
         || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(limitationText)
       ) fail('canary_preview_runtime_text_failed');

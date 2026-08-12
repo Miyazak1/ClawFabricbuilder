@@ -5145,7 +5145,7 @@ test('captures runtime-unavailable preview evidence without claiming a rendered 
   page.previewLimitationTextOverride = [
     'Preview unavailable here',
     'The files were generated, but this draft needs live preview support before it can be shown here.',
-    'Review Changes or Source before saving.',
+    'Use the review workspace before saving.',
     'It uses JavaScript modules, so the visible result may be incomplete here.',
   ].join(' ');
 

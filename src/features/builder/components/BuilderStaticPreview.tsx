@@ -88,7 +88,7 @@ export function BuilderStaticPreview({
           <h3 className="cf-builder-preview-runtime-title">Preview unavailable here</h3>
           <p className="cf-builder-preview-note">
             The files were generated, but this draft needs live preview support before it can be
-            shown here. Review Changes or Source before saving.
+            shown here. Use the review workspace before saving.
           </p>
           {projection.preview_runtime_limitations.length > 0 ? (
             <ul className="cf-builder-preview-limitation-list">

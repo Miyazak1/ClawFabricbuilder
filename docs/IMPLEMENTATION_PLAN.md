@@ -635,8 +635,9 @@ Evidence requirements:
   second send button. For an unsaved draft, the Review/Save action strip appears
   before the compact result summary and becomes the generation-complete landing
   target, so the next user decision is visible before any large artifact surface.
-  Preview and Changes actions open the corresponding artifact tab instead of
-  placing large panes inside the conversation scroll. The preview surface
+  Preview, Changes, Source, and related review tools stay in the right workspace
+  instead of becoming repeated chat-flow buttons or large panes inside the
+  conversation scroll. The preview surface
   explicitly marks the first-release static-only runtime boundary, so
   JavaScript, Three.js, canvas, server, network, or backend-dependent drafts can
   explain a blank preview without claiming the generated files failed. Restoring

@@ -998,7 +998,7 @@ function completionSummary(
       happened: 'A draft is ready for review.',
       changed: item.candidate.summary,
       next: hasUnsavedDraft
-        ? 'Review Preview and Changes, then save a version if it looks right.'
+        ? 'Review the workspace, then save a version if it looks right.'
         : 'Review the available result before deciding what to do next.',
     };
   }
@@ -1024,7 +1024,7 @@ function activityDisplayRole(item: BuilderConversationItem): 'assistant' | 'stat
 
 function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
   return hasUnsavedDraft
-    ? 'Review the draft preview, files, and changes before saving this version.'
+    ? 'The review workspace is ready before saving this version.'
     : 'Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.';
 }
 
