@@ -2719,8 +2719,30 @@ function draftReviewLayoutFailureCode({
   return null;
 }
 
+function draftReviewLayoutDiagnostic({
+  actionGroup,
+  actions,
+  copy,
+  note,
+  review,
+  summary,
+  title,
+}) {
+  return Object.freeze({
+    action_group: actionGroup,
+    action_boxes: Object.freeze(actions),
+    child_containment: Object.freeze(actions.map((action) => boxContains(actionGroup, action))),
+    copy,
+    note,
+    review,
+    summary,
+    title,
+  });
+}
+
 function shouldRetryDraftReviewLayoutFailure(code) {
   return code === 'canary_review_diff_checkpoint_child_bounds_failed'
+    || code === 'canary_review_diff_checkpoint_action_geometry_failed'
     || code === 'canary_review_diff_checkpoint_text_stack_failed';
 }
 
@@ -2750,7 +2772,17 @@ async function assertDraftReviewLayoutViaUi(page) {
     });
     if (failureCode === null) return review;
     lastFailureCode = failureCode;
-    if (!shouldRetryDraftReviewLayoutFailure(failureCode)) fail(failureCode);
+    if (!shouldRetryDraftReviewLayoutFailure(failureCode)) {
+      failWithDiagnostic(failureCode, draftReviewLayoutDiagnostic({
+        actionGroup,
+        actions,
+        copy,
+        note,
+        review,
+        summary,
+        title,
+      }));
+    }
     if (typeof page.waitForTimeout !== 'function') break;
     await page.waitForTimeout(100);
   }
