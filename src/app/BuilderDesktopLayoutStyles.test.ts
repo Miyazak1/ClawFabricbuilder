@@ -378,11 +378,13 @@ describe('Builder desktop layout styles', () => {
     const previewCard = styleBlock(source, '.cf-builder-artifact-preview-card');
     const previewBody = styleBlock(source, '.cf-builder-artifact-preview-card .cf-builder-flow-card-body');
     const previewFrame = styleBlock(source, '.cf-builder-artifact-preview-card .cf-builder-preview-frame');
+    const previewHeader = styleBlock(source, '.cf-builder-artifact-preview-card .cf-builder-static-preview > header');
 
     expect(previewCard).toContain('height: 100%;');
     expect(previewCard).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(previewBody).toContain('overflow: auto;');
     expect(previewFrame).toContain('min-height: clamp(420px, calc(100vh - 220px), 760px);');
+    expect(previewHeader).toContain('display: none;');
     expect(styleBlock(source, '.cf-builder-artifact-preview-card :where(.cf-builder-preview-runtime-notice)'))
       .toContain('grid-template-columns: minmax(0, 1fr);');
     expect(source).not.toContain('.cf-builder-draft-landing .cf-builder-static-preview .cf-builder-preview-frame');

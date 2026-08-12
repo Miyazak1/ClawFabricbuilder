@@ -2316,7 +2316,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-artifact-preview-card .cf-builder-static-preview {
   height: 100%;
-  gap: 8px;
+  gap: 0;
 }
 
 .cf-builder-artifact-preview-card .cf-builder-preview-frame {
@@ -2325,15 +2325,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .cf-builder-artifact-preview-card .cf-builder-static-preview > header {
-  align-items: baseline;
-  gap: 8px;
-}
-
-.cf-builder-artifact-preview-card .cf-builder-static-preview > header h2 {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .cf-builder-artifact-preview-card :where(.cf-builder-preview-runtime-notice) {
