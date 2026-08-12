@@ -160,6 +160,111 @@ external network, long-running services, and process isolation.
 V2 and V3 are post-MVP tracks. They must not block the current CheckRun,
 Review/Save, restart recovery, or packaged MVP canary gates.
 
+### V2 Dev-Server Adapter Contracts
+
+Dynamic framework preview starts from a separate contract chain. It must not be
+implemented by letting the renderer pass a command, URL, port, or project path.
+
+```text
+LivePreviewSourceAdmission
+-> LivePreviewDevServerCommandProfile
+-> LivePreviewDevServerApproval
+-> LivePreviewDevServerAdmission
+-> future DevServerRuntime
+-> Browser Preview WebContentsView
+```
+
+`LivePreviewDevServerCommandProfile` is a main-owned profile for a discovered
+development server command:
+
+```text
+builder-live-preview-dev-server-command-profile.v1
+  command_profile_id
+  project_id
+  source_tree_digest
+  command_kind: dev_server
+  command_display
+  script_digest
+  cwd
+  package_manager
+  script_name
+  discovered_from
+  requires_user_approval
+  risk_class
+  authority
+```
+
+V2 starts with `package.json:scripts.dev` only. `start`, custom server scripts,
+backend processes, and install commands require later policy because they can
+represent a different runtime and security profile.
+
+`LivePreviewDevServerApproval` records the user-visible permission to start the
+specific discovered dev-server profile for the specific source admission:
+
+```text
+builder-live-preview-dev-server-approval.v1
+  approval_id
+  project_id
+  conversation_id
+  source_admission_id
+  source_tree_digest
+  command_profile_id
+  script_digest
+  purpose: live_preview_dev_server
+  approved_at_ms
+  expires_at_ms
+  revoked
+  authority
+```
+
+`LivePreviewDevServerAdmission` is the final pre-runtime fact:
+
+```text
+builder-live-preview-dev-server-admission.v1
+  admission_id
+  project_id
+  conversation_id
+  source_kind
+  preview_kind: live_dev_server_web
+  source_admission_id
+  source_tree_digest
+  source_ref_digest
+  command_profile_ref
+  approval_ref
+  port_policy
+  process_policy
+  network_policy
+  lifecycle
+  authority
+```
+
+The admission does not start a process. It only proves that a later runtime may
+start one if all identities still match. The runtime still has to revalidate the
+source admission, command profile, approval freshness, selected loopback port,
+health check, and shutdown cleanup.
+
+Renderer must never provide:
+
+- command text;
+- `source_tree` or file contents;
+- filesystem paths;
+- preview URL;
+- port;
+- environment variables;
+- install request;
+- WebContents/session identifiers.
+
+Main-owned policies for V2:
+
+- bind only to `127.0.0.1`;
+- select or validate the loopback port in main;
+- run only the digest-bound main script, not arbitrary renderer text;
+- do not install dependencies automatically;
+- project logs are projected as redacted summaries only;
+- external requests, private network, downloads, and `window.open` are blocked
+  by default;
+- cleanup is required on Stop, reload, window close, and app shutdown.
+
 ## Architecture Overview
 
 ```text
@@ -613,6 +718,34 @@ Current checkpoint:
 - do not delete `BuilderStaticPreview` until post-Live Preview V2, after
   dynamic dev-server preview has its own permission, process lifecycle, network
   policy, packaged canary, and rollback evidence.
+
+### Slice LP8: Dynamic Dev-Server Admission
+
+Add V2 dev-server preview contracts before starting any framework dev server.
+
+Current checkpoint:
+
+- add `builder-live-preview-dev-server-command-profile.v1`;
+- add `builder-live-preview-dev-server-approval.v1`;
+- add `builder-live-preview-dev-server-admission.v1`;
+- bind source admission, source tree digest, command profile, script digest,
+  project, conversation, approval freshness, and purpose;
+- define loopback-only port policy, bounded process lifecycle, redacted log
+  projection, default-deny external network, blocked downloads, and shutdown
+  cleanup requirements;
+- keep process spawn, package install, WebContentsView attachment, IPC
+  registration, provider/tool dispatch, source mutation, Save, and Revision
+  admission explicitly not started.
+
+Deferred LP8 runtime work:
+
+- discover dev-server command profiles from fresh ProjectUnderstanding;
+- materialize a bounded runtime workspace;
+- start the selected dev server only after explicit user approval;
+- probe readiness on the owned loopback port;
+- attach Browser Preview to that loopback origin;
+- collect packaged evidence for JS/canvas/WebGL, reload, stop, restart cleanup,
+  blocked external navigation, blocked downloads, and redacted logs.
 
 ## Relationship To MVP Programming Loop
 
