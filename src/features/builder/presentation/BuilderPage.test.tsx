@@ -1656,6 +1656,11 @@ function click(container: HTMLElement, selector: string): void {
   act(() => button?.click());
 }
 
+function openWorkspaceChanges(container: HTMLElement): void {
+  click(container, '[data-builder-workspace-menu-button="true"]');
+  click(container, '[data-builder-workspace-control-tab="changes"]');
+}
+
 function changeInput(container: HTMLElement, selector: string, value: string): void {
   const input = container.querySelector<HTMLInputElement>(selector);
   expect(input).not.toBeNull();
@@ -3118,7 +3123,7 @@ describe('BuilderPage v2', () => {
     expect(conversation).not.toBeNull();
     expect(draftLanding).not.toBeNull();
     expect(review).not.toBeNull();
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('compact-decision-actions');
     expect(composer).not.toBeNull();
     expect(artifactSummary).not.toBeNull();
     expect(preview).not.toBeNull();
@@ -3249,7 +3254,7 @@ describe('BuilderPage v2', () => {
     expect(expandedResult?.closest('[data-builder-artifact-sidebar="true"]')).toBeNull();
     click(container, '[data-builder-close-expanded-preview="true"]');
     expect(container.querySelector('[data-builder-expanded-preview="true"]')).toBeNull();
-    click(container, '[data-builder-review-open-changes="true"]');
+    openWorkspaceChanges(container);
     const updatedArtifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const changesFlow = container.querySelector('[data-builder-changes-flow="true"]');
     const changes = container.querySelector('[data-builder-changes-panel="true"]');
@@ -3269,7 +3274,10 @@ describe('BuilderPage v2', () => {
       .toContain('file');
     expect(versions).toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
-    expect(document.activeElement).toBe(changesDisclosure);
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+      .toContain('Changes');
+    expect(container.querySelector('[data-builder-open-artifact-preview="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-open-artifact-changes="true"]')).toBeNull();
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
@@ -3517,13 +3525,14 @@ describe('BuilderPage v2', () => {
       expect(result?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
 
       spy.mockClear();
-      click(container, '[data-builder-review-open-changes="true"]');
+      openWorkspaceChanges(container);
       const changes = container.querySelector('[data-builder-changes-flow="true"]');
       const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
       expect(changes).not.toBeNull();
       expect(changesDisclosure).not.toBeNull();
       expect(changesDisclosure?.open).toBe(true);
-      expect(document.activeElement).toBe(changesDisclosure);
+      expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+        .toContain('Changes');
       expect(spy).not.toHaveBeenCalled();
       expect(changes?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     } finally {
@@ -4251,7 +4260,7 @@ describe('BuilderPage v2', () => {
     expect(landing).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
     expect(reviewStrip?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
-    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
+    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('compact-decision-actions');
     expect(reviewStrip?.textContent).toContain('Review before saving');
     expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(reviewStrip?.textContent).toContain('Static preview is ready');
@@ -4263,7 +4272,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-disclosure="true"]')).toBeNull();
-    click(container, '[data-builder-review-open-changes="true"]');
+    openWorkspaceChanges(container);
     const changesPanel = container.querySelector('[data-builder-changes-panel="true"]');
     const changesFlow = container.querySelector('[data-builder-changes-flow="true"]');
     const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
@@ -4274,7 +4283,8 @@ describe('BuilderPage v2', () => {
     expect(changesPanel?.closest('[data-builder-changes-flow="true"]')).toBe(changesFlow);
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
-    expect(document.activeElement).toBe(changesDisclosure);
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
+      .toContain('Changes');
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(container.querySelector('[data-builder-change-card="Changed index.html"]')?.textContent)
@@ -4357,7 +4367,7 @@ describe('BuilderPage v2', () => {
     const copy = review?.querySelector('.cf-builder-review-copy');
     const checks = review?.querySelector('[data-builder-review-checks="true"]');
     const actions = review?.querySelector('[data-builder-draft-review-actions="true"]');
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
+    expect(review?.getAttribute('data-builder-review-layout')).toBe('compact-decision-actions');
     expect(copy).not.toBeNull();
     expect(checks).not.toBeNull();
     expect(actions).not.toBeNull();
@@ -4365,7 +4375,8 @@ describe('BuilderPage v2', () => {
     expect(actions?.previousElementSibling).toBe(checks);
     expect(copy?.textContent).toContain('Review before saving');
     expect(copy?.textContent).toContain('file changes');
-    expect(actions?.textContent).toContain('Changes');
+    expect(actions?.textContent).not.toContain('Changes');
+    expect(actions?.textContent).not.toContain('Preview');
     expect(actions?.textContent).toContain('Discard draft');
     expect(actions?.textContent).toContain('Save version');
     expect(review?.textContent).not.toMatch(
@@ -4395,7 +4406,7 @@ describe('BuilderPage v2', () => {
     const container = render(<ControlledBuilderPage />);
     expect(container.querySelector('[data-builder-source-flow="true"]')).toBeNull();
 
-    click(container, '[data-builder-review-open-changes="true"]');
+    openWorkspaceChanges(container);
     click(container, '[data-builder-change-card="Added src/add.ts"] button');
 
     const source = container.querySelector('[data-builder-source-flow="true"]');
@@ -4425,7 +4436,7 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    click(container, '[data-builder-review-open-changes="true"]');
+    openWorkspaceChanges(container);
     const diffTexts = [...container.querySelectorAll(
       '[data-builder-change-diff="index.html"] .cf-builder-change-diff-text',
     )].map((node) => node.textContent ?? '');

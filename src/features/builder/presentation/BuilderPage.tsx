@@ -1953,23 +1953,13 @@ function BuilderArtifactLogsPanel({
 }
 
 function BuilderArtifactSummary({
-  activeTab,
   changes,
   hasContent,
-  onOpenChanges,
-  onOpenPreview,
   preview,
-  showChanges,
-  showPreview,
 }: Readonly<{
-  activeTab: BuilderArtifactTab | null;
   changes: BuilderSourceTreeChanges;
   hasContent: boolean;
-  onOpenChanges: () => void;
-  onOpenPreview: () => void;
   preview: BuilderProjectControllerSnapshot['preview'];
-  showChanges: boolean;
-  showPreview: boolean;
 }>) {
   return (
     <section
@@ -1990,32 +1980,6 @@ function BuilderArtifactSummary({
             {builderChangesSummary(changes)}
           </p>
         </div>
-      </div>
-      <div className="cf-builder-artifact-summary-actions">
-        {showPreview ? (
-          <button
-            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-            data-active={activeTab === 'preview' ? 'true' : undefined}
-            data-builder-open-artifact-preview="true"
-            onClick={onOpenPreview}
-            type="button"
-          >
-            <Eye aria-hidden="true" className="size-3.5" />
-            Preview
-          </button>
-        ) : null}
-        {showChanges ? (
-          <button
-            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-            data-active={activeTab === 'changes' ? 'true' : undefined}
-            data-builder-open-artifact-changes="true"
-            onClick={onOpenChanges}
-            type="button"
-          >
-            <GitCompareArrows aria-hidden="true" className="size-3.5" />
-            Changes
-          </button>
-        ) : null}
       </div>
     </section>
   );
@@ -2739,8 +2703,14 @@ export function BuilderPage({
   }
 
   function openWorkspaceMenuTab(tab: BuilderArtifactTab): void {
+    if (tab === 'changes') pendingChangesFocusRef.current = true;
     openArtifactTab(tab);
     setWorkspaceMenuOpen(false);
+    if (tab === 'preview') {
+      window.requestAnimationFrame(() => {
+        document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
+      });
+    }
   }
 
   function minimizeArtifactSidebar(): void {
@@ -2859,27 +2829,6 @@ export function BuilderPage({
       pendingSourceFocusRef.current = false;
       disclosure.focus();
     }
-  }
-
-  function openChangesPanel(): void {
-    pendingChangesFocusRef.current = true;
-    shouldFollowChatRef.current = false;
-    openArtifactTab('changes');
-    const disclosure = document.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
-    if (disclosure !== null) {
-      pendingChangesFocusRef.current = false;
-      disclosure.open = true;
-      disclosure.focus({ preventScroll: true });
-      return;
-    }
-    document.getElementById('builder-tool-changes')?.focus({ preventScroll: true });
-  }
-
-  function openPreviewPanel(): void {
-    openArtifactTab('preview');
-    window.requestAnimationFrame(() => {
-      document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
-    });
   }
 
   function openExpandedPreview(): void {
@@ -3067,8 +3016,6 @@ export function BuilderPage({
       checkpointRef={draftReviewRef}
       discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
       hasContent={hasContent}
-      onOpenChanges={openChangesPanel}
-      onOpenPreview={openPreviewPanel}
       onRejectDraft={onRejectDraft}
       onRunCheck={onRunCheck}
       onSkipCheck={reviewState?.check_status === 'not_run' ? onSkipCheck : undefined}
@@ -3236,14 +3183,9 @@ export function BuilderPage({
   const showArtifactSummary = hasUnsavedDraft && (showResultFlow || hasContent);
   const artifactSummary = showArtifactSummary ? (
     <BuilderArtifactSummary
-      activeTab={activeArtifactTab}
       changes={changes}
       hasContent={hasContent}
-      onOpenChanges={openChangesPanel}
-      onOpenPreview={openPreviewPanel}
       preview={preview}
-      showChanges={hasUnsavedDraft}
-      showPreview={showResultFlow}
     />
   ) : null;
   const workspaceControls = openLocationProjectId !== null || hasArtifactControls ? (

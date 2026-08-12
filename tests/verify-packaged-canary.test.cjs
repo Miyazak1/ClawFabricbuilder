@@ -295,14 +295,13 @@ class FakeLocator {
       this.page.requirePlanSourceReadApproval = false;
       this.page.recordPlanAttempt();
     }
-    if (this.selector === SELECTORS.reviewOpenChanges) {
+    if (this.selector === SELECTORS.workspaceControlChanges) {
       this.page.changesPanelVisible = true;
       this.page.changesDisclosureOpen = true;
+      this.page.workspaceMenuVisible = false;
     }
     if (
-      this.selector === SELECTORS.artifactTabPreview
-      || this.selector === SELECTORS.previewOpenArtifact
-      || this.selector === SELECTORS.workspaceControlPreview
+      this.selector === SELECTORS.workspaceControlPreview
     ) {
       this.page.previewVisible = true;
       this.page.versionHistoryVisible = false;
@@ -566,7 +565,7 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.liveOutputVisible, state);
       return;
     }
-    if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.reviewOpenChanges) {
+    if (this.selector === SELECTORS.reviewCheckpoint || this.selector === SELECTORS.workspaceControlChanges) {
       this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
       return;
     }
@@ -827,9 +826,7 @@ class FakePage {
       [SELECTORS.reviewTitle, { x: 364, y: 234, width: 200, height: 18 }],
       [SELECTORS.reviewSummary, { x: 364, y: 254, width: 420, height: 17 }],
       [SELECTORS.reviewNote, { x: 364, y: 274, width: 500, height: 22 }],
-      [SELECTORS.reviewActions, { x: 326, y: 308, width: 500, height: 32 }],
-      [SELECTORS.reviewOpenPreview, { x: 326, y: 308, width: 96, height: 32 }],
-      [SELECTORS.reviewOpenChanges, { x: 430, y: 308, width: 104, height: 32 }],
+      [SELECTORS.reviewActions, { x: 542, y: 308, width: 256, height: 32 }],
       [SELECTORS.discardDraft, { x: 542, y: 308, width: 128, height: 32 }],
       [SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 }],
       [SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 }],
@@ -2749,8 +2746,12 @@ test('observes draft review diff before Save without leaking internal evidence',
   assert.deepEqual(evidence, reviewDiffEvidence());
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), true);
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.reviewOpenChanges
+  )), false);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'first').map((event) => event[1]),
     [
@@ -2770,8 +2771,6 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.reviewSummary,
       SELECTORS.reviewNote,
       SELECTORS.reviewActions,
-      SELECTORS.reviewOpenPreview,
-      SELECTORS.reviewOpenChanges,
       SELECTORS.discardDraft,
       SELECTORS.saveVersion,
       SELECTORS.conversationActivity,
@@ -2808,7 +2807,7 @@ test('rejects conversation activity that overlaps the draft review checkpoint', 
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -2823,7 +2822,7 @@ test('rejects draft review actions that leave the checkpoint before Save', async
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -2900,7 +2899,7 @@ test('rejects squeezed draft review action geometry before Save', async () => {
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -2915,17 +2914,16 @@ test('rejects draft review copy that visually overlaps itself', async () => {
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
 test('rejects draft review actions that overlap the preview explanation', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 374, y: 288, width: 392, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.reviewOpenChanges, { x: 374, y: 288, width: 112, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.discardDraft, { x: 494, y: 288, width: 128, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 630, y: 288, width: 120, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 374, y: 288, width: 256, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.discardDraft, { x: 374, y: 288, width: 128, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 510, y: 288, width: 120, height: 32 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -2933,7 +2931,7 @@ test('rejects draft review actions that overlap the preview explanation', async 
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -2948,7 +2946,7 @@ test('rejects draft artifact preview rendered inside the chat area', async () =>
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -3015,7 +3013,7 @@ test('rejects draft changes panels that overlap the review checkpoint', async ()
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), true);
 });
 
@@ -3030,7 +3028,7 @@ test('rejects draft artifact sidebar without a draggable resize handle', async (
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.reviewOpenChanges
+    && event[1] === SELECTORS.workspaceControlChanges
   )), false);
 });
 
@@ -5023,8 +5021,6 @@ test('opens preview through public artifact workspace controls before capture', 
   gate.allow();
   page.artifactsAllowed = true;
   page.previewVisible = false;
-  page.failClicks.add(SELECTORS.artifactTabPreview);
-  page.failClicks.add(SELECTORS.previewOpenArtifact);
 
   const evidence = await capturePreviewEvidence(page, gate);
 
@@ -5032,9 +5028,6 @@ test('opens preview through public artifact workspace controls before capture', 
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
     [
-      SELECTORS.previewOpenArtifact,
-      SELECTORS.artifactViewButton,
-      SELECTORS.artifactTabPreview,
       SELECTORS.workspaceMenuButton,
       SELECTORS.workspaceControlPreview,
     ],

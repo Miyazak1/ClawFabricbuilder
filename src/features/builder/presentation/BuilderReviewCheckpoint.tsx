@@ -1,5 +1,5 @@
 import type { Ref } from 'react';
-import { CircleCheck, CircleOff, CircleX, Eye, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
+import { CircleCheck, CircleOff, CircleX, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
@@ -18,8 +18,6 @@ export type BuilderReviewCheckpointProps = Readonly<{
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
   discardLabel: string;
   hasContent: boolean;
-  onOpenChanges: () => void;
-  onOpenPreview: () => void;
   onRejectDraft?: () => void;
   onRunCheck?: (profile: BuilderCheckRunProfile) => void;
   onSkipCheck?: () => void;
@@ -40,8 +38,6 @@ export function BuilderReviewCheckpoint({
   checkRunStatus = null,
   discardLabel,
   hasContent,
-  onOpenChanges,
-  onOpenPreview,
   onRejectDraft,
   onRunCheck,
   onSkipCheck,
@@ -90,7 +86,7 @@ export function BuilderReviewCheckpoint({
     <section
       aria-label="Draft review"
       className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="desktop-stacked-actions"
+      data-builder-review-layout="compact-decision-actions"
       data-builder-review-checkpoint="true"
       ref={checkpointRef}
       tabIndex={-1}
@@ -177,24 +173,6 @@ export function BuilderReviewCheckpoint({
         data-builder-draft-review-actions="true"
         data-builder-review-actions="true"
       >
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-          data-builder-review-open-preview="true"
-          onClick={onOpenPreview}
-          type="button"
-        >
-          <Eye aria-hidden="true" className="size-3.5" />
-          Preview
-        </button>
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
-          data-builder-review-open-changes="true"
-          onClick={onOpenChanges}
-          type="button"
-        >
-          <GitCompareArrows aria-hidden="true" className="size-3.5" />
-          Changes
-        </button>
         <button
           className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
           data-builder-discard-draft="true"

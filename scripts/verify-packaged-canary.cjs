@@ -66,12 +66,8 @@ const SELECTORS = Object.freeze({
   artifactResizeHandle: '[data-builder-artifact-resize-handle="true"]',
   artifactSidebar: '[data-builder-artifact-sidebar="true"]',
   artifactSummary: '[data-builder-artifact-summary="true"]',
-  artifactTabChanges: '[data-builder-artifact-tab="changes"]',
   artifactTabPermissions: '[data-builder-artifact-tab="permissions"]',
-  artifactTabPreview: '[data-builder-artifact-tab="preview"]',
   artifactTabVersions: '[data-builder-artifact-tab="versions"]',
-  artifactViewButton: '[data-builder-artifact-view-button="true"]',
-  artifactViewMenu: '[data-builder-artifact-view-menu="true"]',
   composerAddMenuButton: '[data-builder-composer-add-menu-button="true"]',
   composerAddAskMode: '[data-builder-composer-add-ask-mode="true"]',
   composerAddBuildMode: '[data-builder-composer-add-build-mode="true"]',
@@ -121,6 +117,7 @@ const SELECTORS = Object.freeze({
   versionSavedActivity: '[data-builder-activity-card="Version saved"]',
   versionHistory: '[data-builder-version-history="true"]',
   workspaceChip: '[data-builder-workspace-chip="true"]',
+  workspaceControlChanges: '[data-builder-workspace-control-tab="changes"]',
   workspaceControlPreview: '[data-builder-workspace-control-tab="preview"]',
   workspaceControlVersions: '[data-builder-workspace-control-tab="versions"]',
   workspaceMenu: '[data-builder-workspace-menu="true"]',
@@ -135,7 +132,6 @@ const SELECTORS = Object.freeze({
   preview: '[data-builder-static-preview="true"]',
   previewFrame: '[data-builder-static-preview="true"] iframe[title$=" preview"]',
   previewLimitation: '[data-builder-preview-limitation="true"]',
-  previewOpenArtifact: '[data-builder-open-artifact-preview="true"]',
   previewRuntimeBlocked: '[data-builder-preview-runtime-blocked="true"]',
   previewUnavailable: '[data-builder-preview-unavailable="true"]',
   retryDraft: '[data-builder-retry-draft="true"]',
@@ -2655,8 +2651,6 @@ async function assertDraftReviewLayoutViaUi(page) {
     const note = await boundedBox(page.locator(SELECTORS.reviewNote), code);
     const actionGroup = await boundedBox(page.locator(SELECTORS.reviewActions), code);
     const actions = [
-      await boundedBox(page.locator(SELECTORS.reviewOpenPreview), code),
-      await boundedBox(page.locator(SELECTORS.reviewOpenChanges), code),
       await boundedBox(page.locator(SELECTORS.discardDraft), code),
       await boundedBox(page.locator(SELECTORS.saveVersion), code),
     ];
@@ -2824,8 +2818,10 @@ async function inspectDraftReviewDiffViaUi(page) {
     const reviewBox = await assertDraftReviewLayoutViaUi(page);
     await assertConversationActivityBeforeReviewViaUi(page, reviewBox);
     const artifactBox = await assertDraftArtifactPreviewLayoutViaUi(page, reviewBox);
-    await page.locator(SELECTORS.reviewOpenChanges).waitFor({ state: 'visible' });
-    await page.locator(SELECTORS.reviewOpenChanges).click();
+    await page.locator(SELECTORS.workspaceMenuButton).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.workspaceMenuButton).click();
+    await page.locator(SELECTORS.workspaceControlChanges).waitFor({ state: 'visible' });
+    await page.locator(SELECTORS.workspaceControlChanges).click();
     await page.locator(SELECTORS.changesPanel).waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeCard).first().waitFor({ state: 'visible' });
     await page.locator(SELECTORS.changeDiff).first().waitFor({ state: 'visible' });
@@ -6592,10 +6588,6 @@ async function waitForArtifactPreviewTab(page) {
 
 const PREVIEW_SURFACE_DIAGNOSTIC_SELECTORS = Object.freeze({
   artifact_sidebar: SELECTORS.artifactSidebar,
-  artifact_tab_preview: SELECTORS.artifactTabPreview,
-  artifact_view_button: SELECTORS.artifactViewButton,
-  artifact_view_menu: SELECTORS.artifactViewMenu,
-  preview_open_artifact: SELECTORS.previewOpenArtifact,
   preview_surface: SELECTORS.preview,
   preview_unavailable: SELECTORS.previewUnavailable,
   result_flow: SELECTORS.resultFlow,
@@ -6647,18 +6639,6 @@ async function failPreviewSurface(page) {
 async function openPreviewSurfaceViaUi(page) {
   if (await hasVisiblePreviewSurface(page)) return;
   const attempts = [
-    async () => {
-      await page.locator(SELECTORS.previewOpenArtifact).click({ timeout: 3000 });
-      if (await waitForArtifactPreviewTab(page)) return true;
-      return false;
-    },
-    async () => {
-      await page.locator(SELECTORS.artifactViewButton).click({ timeout: 3000 });
-      await page.locator(SELECTORS.artifactViewMenu).waitFor({ state: 'visible', timeout: 3000 });
-      await page.locator(SELECTORS.artifactTabPreview).click({ timeout: 3000 });
-      if (await waitForArtifactPreviewTab(page)) return true;
-      return false;
-    },
     async () => {
       await page.locator(SELECTORS.workspaceMenuButton).click({ timeout: 3000 });
       await page.locator(SELECTORS.workspaceMenu).waitFor({ state: 'visible', timeout: 3000 });

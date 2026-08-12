@@ -141,7 +141,6 @@ describe('Builder desktop layout styles', () => {
     const draftLanding = styleBlock(source, '.cf-builder-draft-landing');
     const draftLandingSurfaces = styleBlock(source, '.cf-builder-draft-landing > .cf-builder-chat-flow-surface');
     const artifactSummary = styleBlock(source, '.cf-builder-artifact-summary');
-    const artifactSummaryActions = styleBlock(source, '.cf-builder-artifact-summary-actions');
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
@@ -180,9 +179,7 @@ describe('Builder desktop layout styles', () => {
     expect(artifactSummary).toContain('border-top: 1px solid var(--cf-border);');
     expect(artifactSummary).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(artifactSummary).not.toContain('border-radius');
-    expect(artifactSummaryActions).toContain('flex-wrap: wrap;');
-    expect(artifactSummaryActions).toContain('justify-content: flex-start;');
-    expect(artifactSummaryActions).toContain('padding-left: 38px;');
+    expect(source).not.toContain('.cf-builder-artifact-summary-actions');
     expect(changesFlow).toContain('display: grid;');
     expect(changesFlow).toContain('overflow: hidden;');
     expect(changesPanel).toContain('height: 100%;');

@@ -133,9 +133,7 @@ function checkOutcome(state: 'running' | 'unavailable'): BuilderCheckRunOutcomeP
 }
 
 describe('BuilderReviewCheckpoint', () => {
-  it('renders the draft review actions without changing public selectors', () => {
-    const onOpenChanges = vi.fn();
-    const onOpenPreview = vi.fn();
+  it('renders compact draft decision actions without repeating artifact navigation', () => {
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const checkpointRef = createRef<HTMLElement>();
@@ -147,8 +145,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkpointRef={checkpointRef}
         discardLabel="Discard draft"
         hasContent
-        onOpenChanges={onOpenChanges}
-        onOpenPreview={onOpenPreview}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
@@ -159,7 +155,7 @@ describe('BuilderReviewCheckpoint', () => {
 
     const checkpoint = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(checkpoint).toBe(checkpointRef.current);
-    expect(checkpoint?.getAttribute('data-builder-review-layout')).toBe('desktop-stacked-actions');
+    expect(checkpoint?.getAttribute('data-builder-review-layout')).toBe('compact-decision-actions');
     expect(container.querySelector('[data-builder-review-title="true"]')?.textContent)
       .toBe('Review before saving');
     expect(container.querySelector('[data-builder-review-summary="true"]')?.textContent)
@@ -168,13 +164,11 @@ describe('BuilderReviewCheckpoint', () => {
       .toContain('Preview unavailable.');
     expect(container.querySelector('[data-builder-review-state="ready"]')?.textContent)
       .toContain('recoverable draft');
+    expect(container.querySelector('[data-builder-review-open-preview="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-open-changes="true"]')).toBeNull();
 
-    click(container, '[data-builder-review-open-preview="true"]');
-    click(container, '[data-builder-review-open-changes="true"]');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
-    expect(onOpenPreview).toHaveBeenCalledTimes(1);
-    expect(onOpenChanges).toHaveBeenCalledTimes(1);
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
   });
@@ -189,8 +183,6 @@ describe('BuilderReviewCheckpoint', () => {
         changes={changes({ comparison_kind: 'no_draft', total_count: 0, added_count: 0, modified_count: 0 })}
         discardLabel="Discarding..."
         hasContent={false}
-        onOpenChanges={() => undefined}
-        onOpenPreview={() => undefined}
         onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
@@ -222,8 +214,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkRunStatus={passedCheck}
         discardLabel="Discard draft"
         hasContent
-        onOpenChanges={() => undefined}
-        onOpenPreview={() => undefined}
         onRunCheck={onRunCheck}
         preview={null}
         reviewState={reviewState('ready')}
@@ -250,8 +240,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkRunProfiles={[checkProfile]}
         discardLabel="Discard draft"
         hasContent
-        onOpenChanges={() => undefined}
-        onOpenPreview={() => undefined}
         onRunCheck={() => undefined}
         preview={null}
         reviewState={reviewState('ready')}
@@ -271,8 +259,6 @@ describe('BuilderReviewCheckpoint', () => {
         checkRunProfiles={[checkProfile]}
         discardLabel="Discard draft"
         hasContent
-        onOpenChanges={() => undefined}
-        onOpenPreview={() => undefined}
         preview={null}
         reviewState={reviewState('ready')}
         saveLabel="Save version"

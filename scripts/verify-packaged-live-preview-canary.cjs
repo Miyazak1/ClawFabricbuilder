@@ -458,7 +458,8 @@ async function waitForMainProcessLivePreviewEvidence(app) {
 }
 
 async function verifyLivePreviewControls(page, app) {
-  await page.locator(SELECTORS.artifactTabPreview).click().catch(() => {});
+  await page.locator(SELECTORS.workspaceMenuButton).click().catch(() => {});
+  await page.locator(SELECTORS.workspaceControlPreview).click().catch(() => {});
   const staticPreviewVisible = await page.locator(SELECTORS.preview).isVisible().catch(() => false);
   await waitForButtonEnabled(page, '[data-builder-preview-mode="live"]', 'live_preview_mode_disabled');
   await page.locator('[data-builder-preview-mode="live"]').first().click();
