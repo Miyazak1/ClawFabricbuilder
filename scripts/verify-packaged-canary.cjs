@@ -2824,7 +2824,7 @@ async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
       'canary_review_diff_artifact_resize_geometry_failed',
     );
     const result = await boundedBox(
-      page.locator(SELECTORS.resultFlow),
+      page.locator(SELECTORS.artifactSidebar).locator(SELECTORS.resultFlow),
       'canary_review_diff_artifact_result_geometry_failed',
     );
     const save = await boundedBox(
@@ -2847,11 +2847,14 @@ async function assertDraftArtifactPreviewLayoutViaUi(page, review) {
       && failureCode !== 'canary_review_diff_artifact_summary_vertical_failed'
     ) {
       failWithDiagnostic(failureCode, Object.freeze({
+        result_box: geometryDiagnosticBox(result),
+        result_inside_sidebar: boxContains(sidebar, result),
         review_bottom_overflow_px: Math.max(0, boxBottom(review) - boxBottom(scroll)),
         review_height_px: review.height,
         review_top_offset_px: review.y - scroll.y,
         save_bottom_overflow_px: Math.max(0, boxBottom(save) - boxBottom(scroll)),
         save_top_offset_px: save.y - scroll.y,
+        sidebar_box: geometryDiagnosticBox(sidebar),
         scroll_height_px: scroll.height,
       }));
     }
@@ -2904,6 +2907,15 @@ function draftArtifactPreviewLayoutFailureCode({
     return 'canary_review_diff_artifact_overlap_failed';
   }
   return null;
+}
+
+function geometryDiagnosticBox(box) {
+  return Object.freeze({
+    height: box.height,
+    width: box.width,
+    x: box.x,
+    y: box.y,
+  });
 }
 
 async function assertChangesPanelLayoutViaUi(page, review, artifact) {
