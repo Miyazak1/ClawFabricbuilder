@@ -1,5 +1,5 @@
 import { useState, type Ref } from 'react';
-import { Eye, Maximize2, Play, RefreshCw, StopCircle } from 'lucide-react';
+import { Eye, Play, RefreshCw, StopCircle } from 'lucide-react';
 
 import { BuilderStaticPreview } from '../components/BuilderStaticPreview';
 import type { BuilderLivePreviewStatusProjection } from '../application/builderPorts';
@@ -34,7 +34,6 @@ function livePreviewBlockedSummary(status: BuilderLivePreviewStatusProjection | 
 export function BuilderResultPanel({
   livePreviewOperation = null,
   livePreviewStatus = null,
-  onExpandPreview,
   onReloadLivePreview,
   onRequestLivePreview,
   onStopLivePreview,
@@ -60,6 +59,7 @@ export function BuilderResultPanel({
     : placement === 'expanded'
       ? 'cf-builder-preview-panel cf-builder-result-card cf-builder-expanded-preview-card'
       : 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-chat-flow-surface';
+  const showToolbar = placement !== 'artifact';
   return (
     <section
       aria-label="Project result"
@@ -71,103 +71,93 @@ export function BuilderResultPanel({
       ref={panelRef}
       tabIndex={-1}
     >
-      <div className="cf-builder-result-toolbar">
-        <span className="cf-builder-result-toolbar-label">
-          <Eye aria-hidden="true" className="size-4" />
-          Result
-        </span>
-        <span className="cf-builder-preview-mode-switch" role="group" aria-label="Preview mode">
-          <button
-            aria-pressed={visiblePreviewMode === 'static'}
-            className="cf-builder-preview-mode-button"
-            data-active={visiblePreviewMode === 'static' ? 'true' : undefined}
-            data-builder-preview-mode="static"
-            onClick={() => setPreviewMode('static')}
-            type="button"
-          >
-            Static
-          </button>
-          <button
-            aria-label={canEnterLivePreview ? 'Live preview' : 'Browser preview unavailable'}
-            aria-pressed={visiblePreviewMode === 'live'}
-            className="cf-builder-preview-mode-button"
-            data-active={visiblePreviewMode === 'live' ? 'true' : undefined}
-            data-builder-preview-mode="live"
-            disabled={!canEnterLivePreview}
-            onClick={() => {
-              if (canEnterLivePreview) setPreviewMode('live');
-            }}
-            title={canEnterLivePreview ? 'Open live preview' : 'Browser preview unavailable'}
-            type="button"
-          >
-            Live
-          </button>
-        </span>
-        <span className="cf-builder-result-toolbar-actions">
-          {visiblePreviewMode === 'live' ? (
-            <>
-              <button
-                aria-label="Start live preview"
-                className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-                data-builder-live-preview-start="true"
-                disabled={
-                  livePreviewOperation !== null
-                  || typeof onRequestLivePreview !== 'function'
-                  || livePreviewStatus === null
-                  || livePreviewStatus?.can_start === false
-                }
-                onClick={() => { void onRequestLivePreview?.(); }}
-                title="Start live preview"
-                type="button"
-              >
-                <Play aria-hidden="true" className="size-3.5" />
-              </button>
-              <button
-                aria-label="Reload live preview"
-                className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-                data-builder-live-preview-reload="true"
-                disabled={
-                  livePreviewOperation !== null
-                  || typeof onReloadLivePreview !== 'function'
-                  || livePreviewStatus?.can_reload !== true
-                }
-                onClick={() => { void onReloadLivePreview?.(); }}
-                title="Reload live preview"
-                type="button"
-              >
-                <RefreshCw aria-hidden="true" className="size-3.5" />
-              </button>
-              <button
-                aria-label="Stop live preview"
-                className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-                data-builder-live-preview-stop="true"
-                disabled={
-                  livePreviewOperation !== null
-                  || typeof onStopLivePreview !== 'function'
-                  || livePreviewStatus?.can_stop !== true
-                }
-                onClick={() => { void onStopLivePreview?.(); }}
-                title="Stop live preview"
-                type="button"
-              >
-                <StopCircle aria-hidden="true" className="size-3.5" />
-              </button>
-            </>
-          ) : null}
-          {placement === 'artifact' && typeof onExpandPreview === 'function' ? (
+      {showToolbar ? (
+        <div className="cf-builder-result-toolbar">
+          <span className="cf-builder-result-toolbar-label">
+            <Eye aria-hidden="true" className="size-4" />
+            Result
+          </span>
+          <span className="cf-builder-preview-mode-switch" role="group" aria-label="Preview mode">
             <button
-              aria-label="Expand preview"
-              className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
-              data-builder-expand-preview="true"
-              onClick={onExpandPreview}
-              title="Expand preview"
+              aria-pressed={visiblePreviewMode === 'static'}
+              className="cf-builder-preview-mode-button"
+              data-active={visiblePreviewMode === 'static' ? 'true' : undefined}
+              data-builder-preview-mode="static"
+              onClick={() => setPreviewMode('static')}
               type="button"
             >
-              <Maximize2 aria-hidden="true" className="size-3.5" />
+              Static
             </button>
-          ) : null}
-        </span>
-      </div>
+            <button
+              aria-label={canEnterLivePreview ? 'Live preview' : 'Browser preview unavailable'}
+              aria-pressed={visiblePreviewMode === 'live'}
+              className="cf-builder-preview-mode-button"
+              data-active={visiblePreviewMode === 'live' ? 'true' : undefined}
+              data-builder-preview-mode="live"
+              disabled={!canEnterLivePreview}
+              onClick={() => {
+                if (canEnterLivePreview) setPreviewMode('live');
+              }}
+              title={canEnterLivePreview ? 'Open live preview' : 'Browser preview unavailable'}
+              type="button"
+            >
+              Live
+            </button>
+          </span>
+          <span className="cf-builder-result-toolbar-actions">
+            {visiblePreviewMode === 'live' ? (
+              <>
+                <button
+                  aria-label="Start live preview"
+                  className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+                  data-builder-live-preview-start="true"
+                  disabled={
+                    livePreviewOperation !== null
+                    || typeof onRequestLivePreview !== 'function'
+                    || livePreviewStatus === null
+                    || livePreviewStatus?.can_start === false
+                  }
+                  onClick={() => { void onRequestLivePreview?.(); }}
+                  title="Start live preview"
+                  type="button"
+                >
+                  <Play aria-hidden="true" className="size-3.5" />
+                </button>
+                <button
+                  aria-label="Reload live preview"
+                  className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+                  data-builder-live-preview-reload="true"
+                  disabled={
+                    livePreviewOperation !== null
+                    || typeof onReloadLivePreview !== 'function'
+                    || livePreviewStatus?.can_reload !== true
+                  }
+                  onClick={() => { void onReloadLivePreview?.(); }}
+                  title="Reload live preview"
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" className="size-3.5" />
+                </button>
+                <button
+                  aria-label="Stop live preview"
+                  className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center"
+                  data-builder-live-preview-stop="true"
+                  disabled={
+                    livePreviewOperation !== null
+                    || typeof onStopLivePreview !== 'function'
+                    || livePreviewStatus?.can_stop !== true
+                  }
+                  onClick={() => { void onStopLivePreview?.(); }}
+                  title="Stop live preview"
+                  type="button"
+                >
+                  <StopCircle aria-hidden="true" className="size-3.5" />
+                </button>
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
       <div className="cf-builder-flow-card-body">
         {visiblePreviewMode === 'live' ? (
           <section

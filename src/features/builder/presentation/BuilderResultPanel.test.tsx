@@ -54,7 +54,7 @@ describe('BuilderResultPanel', () => {
       .toContain('Preview unavailable');
   });
 
-  it('keeps artifact preview expansion in the result toolbar', () => {
+  it('omits the legacy result toolbar from artifact preview placement', () => {
     const onExpandPreview = vi.fn();
     const container = render(
       <BuilderResultPanel
@@ -65,11 +65,10 @@ describe('BuilderResultPanel', () => {
     );
 
     const expand = container.querySelector<HTMLButtonElement>('[data-builder-expand-preview="true"]');
-    expect(expand).not.toBeNull();
-    expect(expand?.closest('.cf-builder-result-toolbar')).not.toBeNull();
-    expect(expand?.closest('[data-builder-result-placement="artifact"]')).not.toBeNull();
-    act(() => expand?.click());
-    expect(onExpandPreview).toHaveBeenCalledOnce();
+    expect(expand).toBeNull();
+    expect(container.querySelector('.cf-builder-result-toolbar')).toBeNull();
+    expect(container.querySelector('[data-builder-result-placement="artifact"]')).not.toBeNull();
+    expect(onExpandPreview).not.toHaveBeenCalled();
   });
 
   it('keeps routine static preview explanation out of the artifact result panel', async () => {
@@ -140,7 +139,6 @@ describe('BuilderResultPanel', () => {
           },
         }}
         onRequestLivePreview={onRequestLivePreview}
-        placement="artifact"
         projection={null}
       />,
     );

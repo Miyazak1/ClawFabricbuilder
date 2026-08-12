@@ -1492,11 +1492,97 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0 10px;
 }
 
-.cf-builder-side-workspace-browser-address span {
+.cf-builder-side-workspace-browser-address input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  padding: 0;
+  text-align: center;
+}
+
+.cf-builder-side-workspace-browser-address input::placeholder {
+  color: var(--cf-text-subtle);
+}
+
+.cf-builder-side-workspace-browser-address span,
+.cf-builder-side-workspace-browser-address input {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cf-builder-side-workspace-empty {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--cf-text-muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.cf-builder-side-workspace-empty h4,
+.cf-builder-side-workspace-empty p {
+  max-width: 320px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cf-builder-side-workspace-empty h4 {
+  color: var(--cf-text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.cf-builder-side-workspace-empty p {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cf-builder-side-workspace-terminal {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: #111512;
+  color: #e6eee8;
+}
+
+.cf-builder-side-workspace-terminal-screen {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 18px;
+  scrollbar-width: thin;
+}
+
+.cf-builder-side-workspace-terminal-screen p,
+.cf-builder-side-workspace-terminal-note {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cf-builder-side-workspace-terminal-prompt {
+  margin-top: 14px;
+}
+
+.cf-builder-side-workspace-terminal-note {
+  border-top: 1px solid rgba(230, 238, 232, 0.12);
+  color: rgba(230, 238, 232, 0.62);
+  padding: 10px 14px;
 }
 
 .cf-builder-artifact-summary {
@@ -2194,6 +2280,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-side-workspace-browser .cf-builder-artifact-preview-card {
   height: auto;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .cf-builder-result-toolbar {

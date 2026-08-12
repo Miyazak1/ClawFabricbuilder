@@ -3196,8 +3196,8 @@ describe('BuilderPage v2', () => {
       .toBe('browser');
     expect(artifactSidebar?.querySelector('[data-builder-side-workspace-browser-toolbar="true"]'))
       .not.toBeNull();
-    expect(artifactSidebar?.querySelector('[data-builder-side-workspace-browser-address="true"]')?.textContent)
-      .toContain('Project preview');
+    expect(artifactSidebar?.querySelector<HTMLInputElement>('[data-builder-side-workspace-browser-address="true"] input')?.value)
+      .toBe('Project preview');
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')).toBeNull();
     expect(sideWorkspaceTabs?.textContent).toContain('Preview');
@@ -3230,7 +3230,7 @@ describe('BuilderPage v2', () => {
     expect(workspaceMenu?.textContent).toContain('Preview');
     expect(workspaceMenu?.textContent).toContain('Changes');
     expect(workspaceMenu?.textContent).toContain('Permissions');
-    expect(workspaceMenu?.textContent).not.toContain('Terminal');
+    expect(workspaceMenu?.textContent).toContain('Terminal');
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
       .toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-checked'))
@@ -3253,10 +3253,10 @@ describe('BuilderPage v2', () => {
     expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="review"]')?.textContent)
       .toContain('Add');
     expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="side_chat"]')?.textContent)
-      .toContain('Later');
+      .toContain('Add');
     expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="terminal"]')
       ?.getAttribute('aria-disabled'))
-      .toBe('true');
+      .toBe('false');
     click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-minimize-artifact="true"]')?.getAttribute('aria-label'))
@@ -3288,7 +3288,7 @@ describe('BuilderPage v2', () => {
     expect(artifactSummary?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(false);
     expect(preview?.getAttribute('aria-label')).toBe('Project result');
-    expect(preview?.textContent).toContain('Result');
+    expect(preview?.querySelector('.cf-builder-result-toolbar')).toBeNull();
     expect(preview?.textContent).not.toContain('Preview is isolated');
     expect(composer?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(composer?.closest('[data-builder-artifact-sidebar="true"]')).toBeNull();
@@ -3534,6 +3534,19 @@ describe('BuilderPage v2', () => {
       .toContain('Open');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('changes');
+
+    click(container, '[data-builder-side-workspace-new-tab-kind="terminal"]');
+    expect(container.querySelector('[data-builder-side-workspace-tool="terminal_placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-terminal-placeholder="true"]')?.textContent)
+      .toContain('Windows PowerShell');
+    click(container, '[data-builder-side-workspace-close-tab="terminal_placeholder"]');
+    expect(container.querySelector('[data-builder-side-workspace-tool="terminal_placeholder"]')).toBeNull();
+
+    click(container, '[data-builder-side-workspace-new-tab-button="true"]');
+    click(container, '[data-builder-side-workspace-new-tab-kind="side_chat"]');
+    expect(container.querySelector('[data-builder-side-workspace-tool="side_chat_placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-chat-placeholder="true"]')?.textContent)
+      .toContain('Side chat');
   });
 
   it('opens a read-only permissions artifact tab without exposing authority internals', async () => {

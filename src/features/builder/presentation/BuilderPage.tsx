@@ -22,9 +22,11 @@ import {
   FileCode2,
   FolderOpen,
   GitCompareArrows,
+  Globe2,
   History,
   ListChecks,
   LockKeyhole,
+  Maximize2,
   Menu,
   Minimize2,
   MoreVertical,
@@ -34,6 +36,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  SquareTerminal,
   StopCircle,
   UserRound,
   X,
@@ -221,7 +224,16 @@ const ARTIFACT_MAX_WIDTH_PX = 760;
 const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
 const ARTIFACT_KEYBOARD_STEP_PX = 24;
 const ARTIFACT_KEYBOARD_LARGE_STEP_PX = 80;
-type BuilderArtifactTab = 'changes' | 'logs' | 'permissions' | 'preview' | 'source' | 'versions';
+type BuilderArtifactTab =
+  | 'browser_placeholder'
+  | 'changes'
+  | 'logs'
+  | 'permissions'
+  | 'preview'
+  | 'side_chat_placeholder'
+  | 'source'
+  | 'terminal_placeholder'
+  | 'versions';
 type BuilderSideWorkspaceTabType = 'browser' | 'file' | 'review' | 'side_chat' | 'terminal';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
@@ -1667,27 +1679,34 @@ function ActivityPanel({
 }
 
 function artifactTabLabel(tab: BuilderArtifactTab): string {
+  if (tab === 'browser_placeholder') return 'New tab';
   if (tab === 'preview') return 'Preview';
   if (tab === 'changes') return 'Changes';
   if (tab === 'source') return 'Files';
   if (tab === 'logs') return 'Logs';
   if (tab === 'permissions') return 'Permissions';
+  if (tab === 'side_chat_placeholder') return 'Side Chat';
+  if (tab === 'terminal_placeholder') return 'Terminal';
   return 'Versions';
 }
 
 function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
-  if (tab === 'preview') return <Eye aria-hidden="true" className="size-3.5" />;
+  if (tab === 'browser_placeholder') return <Globe2 aria-hidden="true" className="size-3.5" />;
+  if (tab === 'preview') return <Globe2 aria-hidden="true" className="size-3.5" />;
   if (tab === 'changes') return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
   if (tab === 'source') return <FileCode2 aria-hidden="true" className="size-3.5" />;
   if (tab === 'logs') return <ListChecks aria-hidden="true" className="size-3.5" />;
   if (tab === 'permissions') return <ShieldCheck aria-hidden="true" className="size-3.5" />;
+  if (tab === 'side_chat_placeholder') return <Bot aria-hidden="true" className="size-3.5" />;
+  if (tab === 'terminal_placeholder') return <SquareTerminal aria-hidden="true" className="size-3.5" />;
   return <History aria-hidden="true" className="size-3.5" />;
 }
 
 function sideWorkspaceTabTypeForArtifactTab(tab: BuilderArtifactTab): BuilderSideWorkspaceTabType {
-  if (tab === 'preview') return 'browser';
+  if (tab === 'browser_placeholder' || tab === 'preview') return 'browser';
   if (tab === 'source') return 'file';
-  if (tab === 'logs') return 'terminal';
+  if (tab === 'logs' || tab === 'terminal_placeholder') return 'terminal';
+  if (tab === 'side_chat_placeholder') return 'side_chat';
   return 'review';
 }
 
@@ -1695,9 +1714,13 @@ function artifactTabForSideWorkspaceTabType(
   type: BuilderSideWorkspaceTabType,
   availableTabs: readonly BuilderArtifactTab[],
 ): BuilderArtifactTab | null {
-  if (type === 'browser') return availableTabs.includes('preview') ? 'preview' : null;
+  if (type === 'browser') {
+    if (availableTabs.includes('preview')) return 'preview';
+    return availableTabs.includes('browser_placeholder') ? 'browser_placeholder' : null;
+  }
   if (type === 'file') return availableTabs.includes('source') ? 'source' : null;
-  if (type === 'terminal') return availableTabs.includes('logs') ? 'logs' : null;
+  if (type === 'terminal') return availableTabs.includes('terminal_placeholder') ? 'terminal_placeholder' : null;
+  if (type === 'side_chat') return availableTabs.includes('side_chat_placeholder') ? 'side_chat_placeholder' : null;
   if (type === 'review') {
     if (availableTabs.includes('changes')) return 'changes';
     if (availableTabs.includes('permissions')) return 'permissions';
@@ -1708,9 +1731,9 @@ function artifactTabForSideWorkspaceTabType(
 }
 
 function SideWorkspaceNewTabIcon({ type }: Readonly<{ type: BuilderSideWorkspaceTabType }>) {
-  if (type === 'browser') return <Eye aria-hidden="true" className="size-3.5" />;
+  if (type === 'browser') return <Globe2 aria-hidden="true" className="size-3.5" />;
   if (type === 'file') return <FileCode2 aria-hidden="true" className="size-3.5" />;
-  if (type === 'terminal') return <ListChecks aria-hidden="true" className="size-3.5" />;
+  if (type === 'terminal') return <SquareTerminal aria-hidden="true" className="size-3.5" />;
   if (type === 'side_chat') return <Bot aria-hidden="true" className="size-3.5" />;
   return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
 }
@@ -1718,12 +1741,12 @@ function SideWorkspaceNewTabIcon({ type }: Readonly<{ type: BuilderSideWorkspace
 const SIDE_WORKSPACE_NEW_TAB_ITEMS: readonly Readonly<{
   label: string;
   type: BuilderSideWorkspaceTabType;
-  status: 'available_when_projected' | 'coming_later';
+  status: 'available_when_projected';
 }>[] = Object.freeze([
   { label: 'File', type: 'file', status: 'available_when_projected' },
-  { label: 'Side Chat', type: 'side_chat', status: 'coming_later' },
+  { label: 'Side Chat', type: 'side_chat', status: 'available_when_projected' },
   { label: 'Browser', type: 'browser', status: 'available_when_projected' },
-  { label: 'Terminal', type: 'terminal', status: 'coming_later' },
+  { label: 'Terminal', type: 'terminal', status: 'available_when_projected' },
   { label: 'Review', type: 'review', status: 'available_when_projected' },
 ]);
 
@@ -1919,14 +1942,20 @@ function BuilderArtifactFilesPanel({
 }
 
 function BuilderSideWorkspaceBrowserToolbar({
+  addressMode = 'project_preview',
   livePreviewStatus,
+  onExpandPreview,
   onReloadLivePreview,
 }: Readonly<{
+  addressMode?: 'new_tab' | 'project_preview';
   livePreviewStatus: BuilderLivePreviewStatusProjection | null;
+  onExpandPreview?: () => void;
   onReloadLivePreview?: () => Promise<unknown> | void;
 }>) {
   const canReload = typeof onReloadLivePreview === 'function' && livePreviewStatus?.can_reload === true;
-  const addressLabel = livePreviewStatus?.status === 'ready'
+  const addressLabel = addressMode === 'new_tab'
+    ? ''
+    : livePreviewStatus?.status === 'ready'
     ? 'Project live preview'
     : 'Project preview';
   return (
@@ -1952,22 +1981,91 @@ function BuilderSideWorkspaceBrowserToolbar({
           <RefreshCw aria-hidden="true" className="size-3.5" />
         </button>
       </span>
-      <div
+      <label
         aria-label="Preview address"
         className="cf-builder-side-workspace-browser-address"
         data-builder-side-workspace-browser-address="true"
       >
-        <span>{addressLabel}</span>
-      </div>
+        <input
+          aria-label="Browser address"
+          placeholder="Enter URL"
+          readOnly
+          value={addressLabel}
+        />
+      </label>
       <span className="cf-builder-side-workspace-browser-tools" aria-label="Browser tools">
         <button aria-label="Downloads unavailable" disabled title="Downloads unavailable" type="button">
           <Download aria-hidden="true" className="size-3.5" />
         </button>
+        {typeof onExpandPreview === 'function' ? (
+          <button
+            aria-label="Expand preview"
+            data-builder-expand-preview="true"
+            onClick={onExpandPreview}
+            title="Expand preview"
+            type="button"
+          >
+            <Maximize2 aria-hidden="true" className="size-3.5" />
+          </button>
+        ) : null}
         <button aria-label="Browser menu unavailable" disabled title="Browser menu unavailable" type="button">
           <MoreVertical aria-hidden="true" className="size-3.5" />
         </button>
       </span>
     </div>
+  );
+}
+
+function BuilderSideWorkspaceBrowserPlaceholder() {
+  return (
+    <section
+      aria-label="Browser new tab"
+      className="cf-builder-side-workspace-browser"
+      data-builder-side-workspace-browser-placeholder="true"
+    >
+      <BuilderSideWorkspaceBrowserToolbar
+        addressMode="new_tab"
+        livePreviewStatus={null}
+      />
+      <div className="cf-builder-side-workspace-empty cf-builder-side-workspace-browser-empty">
+        <Globe2 aria-hidden="true" className="size-7" />
+        <h4>Start browsing</h4>
+        <p>URL browsing is not connected yet. Project previews still open in the Browser tab when available.</p>
+      </div>
+    </section>
+  );
+}
+
+function BuilderSideWorkspaceTerminalPlaceholder() {
+  return (
+    <section
+      aria-label="Terminal"
+      className="cf-builder-side-workspace-terminal"
+      data-builder-side-workspace-terminal-placeholder="true"
+    >
+      <div className="cf-builder-side-workspace-terminal-screen" aria-hidden="true">
+        <p>Windows PowerShell</p>
+        <p>Copyright (C) Microsoft Corporation. All rights reserved.</p>
+        <p className="cf-builder-side-workspace-terminal-prompt">PS Project&gt;</p>
+      </div>
+      <p className="cf-builder-side-workspace-terminal-note">
+        Terminal runtime is not connected yet.
+      </p>
+    </section>
+  );
+}
+
+function BuilderSideWorkspaceChatPlaceholder() {
+  return (
+    <section
+      aria-label="Side chat"
+      className="cf-builder-side-workspace-empty"
+      data-builder-side-workspace-chat-placeholder="true"
+    >
+      <Bot aria-hidden="true" className="size-7" />
+      <h4>Side chat</h4>
+      <p>Side chat will share this workspace without changing the main task thread.</p>
+    </section>
   );
 }
 
@@ -2491,7 +2589,7 @@ function BuilderArtifactSidebar({
             >
               {SIDE_WORKSPACE_NEW_TAB_ITEMS.map((item) => {
                 const availableTab = artifactTabForSideWorkspaceTabType(item.type, availableArtifactTabs);
-                const disabled = item.status === 'coming_later' || availableTab === null;
+                const disabled = availableTab === null;
                 const opened = availableTab !== null && openTabSet.has(availableTab);
                 return (
                   <button
@@ -2513,9 +2611,7 @@ function BuilderArtifactSidebar({
                     <SideWorkspaceNewTabIcon type={item.type} />
                     <span>{item.label}</span>
                     <small>
-                      {item.status === 'coming_later'
-                        ? 'Later'
-                        : availableTab === null
+                      {availableTab === null
                           ? 'Unavailable'
                           : opened
                             ? 'Open'
@@ -2529,6 +2625,9 @@ function BuilderArtifactSidebar({
         </div>
       </header>
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
+        {activeTab === 'browser_placeholder' ? (
+          <BuilderSideWorkspaceBrowserPlaceholder />
+        ) : null}
         {activeTab === 'preview' ? (
           <section
             aria-label="Browser preview workspace"
@@ -2537,6 +2636,7 @@ function BuilderArtifactSidebar({
           >
             <BuilderSideWorkspaceBrowserToolbar
               livePreviewStatus={livePreviewStatus}
+              onExpandPreview={onExpandPreview}
               onReloadLivePreview={onReloadLivePreview}
             />
             <BuilderResultPanel
@@ -2579,6 +2679,12 @@ function BuilderArtifactSidebar({
             sourceDisclosureRef={sourceDisclosureRef}
             treeStatus={sideWorkspaceFileTreeStatus}
           />
+        ) : null}
+        {activeTab === 'side_chat_placeholder' ? (
+          <BuilderSideWorkspaceChatPlaceholder />
+        ) : null}
+        {activeTab === 'terminal_placeholder' ? (
+          <BuilderSideWorkspaceTerminalPlaceholder />
         ) : null}
         {activeTab === 'versions' ? (
           <VersionHistoryPanel
@@ -2896,11 +3002,18 @@ export function BuilderPage({
   const artifactTabs = useMemo(() => {
     const tabs: BuilderArtifactTab[] = [];
     if (showResultFlow) tabs.push('preview');
+    if (!showResultFlow && (hasUnsavedDraft || showFilesPanel || showVersionHistoryPanel || showLogsPanel || showPermissionsPanel)) {
+      tabs.push('browser_placeholder');
+    }
     if (hasUnsavedDraft) tabs.push('changes');
     if (showFilesPanel) tabs.push('source');
     if (showVersionHistoryPanel) tabs.push('versions');
     if (showLogsPanel) tabs.push('logs');
     if (showPermissionsPanel) tabs.push('permissions');
+    if (tabs.length > 0) {
+      tabs.push('terminal_placeholder');
+      tabs.push('side_chat_placeholder');
+    }
     return tabs;
   }, [hasUnsavedDraft, showFilesPanel, showLogsPanel, showPermissionsPanel, showResultFlow, showVersionHistoryPanel]);
   const hasArtifactControls = artifactTabs.length > 0;
