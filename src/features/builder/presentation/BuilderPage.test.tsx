@@ -3074,6 +3074,22 @@ describe('BuilderPage v2', () => {
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
     expect(artifactSidebar).not.toBeNull();
     expect(artifactSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('preview');
+    const sideWorkspaceTabs = artifactSidebar?.querySelector('[data-builder-side-workspace-tabs="true"]');
+    expect(sideWorkspaceTabs).not.toBeNull();
+    expect(sideWorkspaceTabs?.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')?.getAttribute('aria-selected'))
+      .toBe('true');
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')
+      ?.getAttribute('data-builder-side-workspace-tab-kind'))
+      .toBe('browser');
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')
+      ?.getAttribute('data-builder-side-workspace-tab-kind'))
+      .toBe('review');
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')
+      ?.getAttribute('data-builder-side-workspace-tab-kind'))
+      .toBe('review');
+    expect(sideWorkspaceTabs?.textContent).toContain('Preview');
+    expect(sideWorkspaceTabs?.textContent).toContain('Changes');
     const artifactResizeHandle = artifactSidebar?.querySelector('[data-builder-artifact-resize-handle="true"]');
     expect(artifactResizeHandle).not.toBeNull();
     expect(artifactResizeHandle?.getAttribute('role')).toBe('separator');
@@ -3110,6 +3126,17 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="source"]')).toBeNull();
+    click(container, '[data-builder-side-workspace-new-tab-button="true"]');
+    const newTabMenu = container.querySelector('[data-builder-side-workspace-new-tab-menu="true"]');
+    expect(newTabMenu).not.toBeNull();
+    expect(newTabMenu?.textContent).toContain('File');
+    expect(newTabMenu?.textContent).toContain('Side Chat');
+    expect(newTabMenu?.textContent).toContain('Browser');
+    expect(newTabMenu?.textContent).toContain('Terminal');
+    expect(newTabMenu?.textContent).toContain('Review');
+    expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="terminal"]')
+      ?.getAttribute('aria-disabled'))
+      .toBe('true');
     click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-minimize-artifact="true"]')?.getAttribute('aria-label'))

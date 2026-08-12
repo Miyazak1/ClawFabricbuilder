@@ -26,6 +26,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Play,
+  Plus,
   RefreshCw,
   ShieldCheck,
   StopCircle,
@@ -207,6 +208,7 @@ const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
 const ARTIFACT_KEYBOARD_STEP_PX = 24;
 const ARTIFACT_KEYBOARD_LARGE_STEP_PX = 80;
 type BuilderArtifactTab = 'changes' | 'logs' | 'permissions' | 'preview' | 'source' | 'versions';
+type BuilderSideWorkspaceTabType = 'browser' | 'file' | 'review' | 'side_chat' | 'terminal';
 
 function clampArtifactWidth(value: number, maximum = ARTIFACT_MAX_WIDTH_PX): number {
   if (!Number.isFinite(value)) return ARTIFACT_DEFAULT_WIDTH_PX;
@@ -1668,6 +1670,33 @@ function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
   return <History aria-hidden="true" className="size-3.5" />;
 }
 
+function sideWorkspaceTabTypeForArtifactTab(tab: BuilderArtifactTab): BuilderSideWorkspaceTabType {
+  if (tab === 'preview') return 'browser';
+  if (tab === 'source') return 'file';
+  if (tab === 'logs') return 'terminal';
+  return 'review';
+}
+
+function SideWorkspaceNewTabIcon({ type }: Readonly<{ type: BuilderSideWorkspaceTabType }>) {
+  if (type === 'browser') return <Eye aria-hidden="true" className="size-3.5" />;
+  if (type === 'file') return <FileCode2 aria-hidden="true" className="size-3.5" />;
+  if (type === 'terminal') return <ListChecks aria-hidden="true" className="size-3.5" />;
+  if (type === 'side_chat') return <Bot aria-hidden="true" className="size-3.5" />;
+  return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
+}
+
+const SIDE_WORKSPACE_NEW_TAB_ITEMS: readonly Readonly<{
+  label: string;
+  type: BuilderSideWorkspaceTabType;
+  status: 'available_when_projected' | 'coming_later';
+}>[] = Object.freeze([
+  { label: 'File', type: 'file', status: 'available_when_projected' },
+  { label: 'Side Chat', type: 'side_chat', status: 'coming_later' },
+  { label: 'Browser', type: 'browser', status: 'available_when_projected' },
+  { label: 'Terminal', type: 'terminal', status: 'coming_later' },
+  { label: 'Review', type: 'review', status: 'available_when_projected' },
+]);
+
 function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
   if (mode === 'read_only_chat') return 'Read-only chat';
   if (mode === 'allow_current_project') return 'Allow current project';
@@ -1987,6 +2016,7 @@ function BuilderArtifactSummary({
 function BuilderArtifactSidebar({
   activeTab,
   approvalMode,
+  artifactTabs,
   changes,
   changesOpen,
   currentProjectWriteApproval,
@@ -2005,6 +2035,7 @@ function BuilderArtifactSidebar({
   onReloadLivePreview,
   onResizeKeyDown,
   onRestoreRevisionAsDraft,
+  onSelectArtifactTab,
   onRequestLivePreview,
   onResizeStart,
   resizing,
@@ -2028,6 +2059,7 @@ function BuilderArtifactSidebar({
 }: Readonly<{
   activeTab: BuilderArtifactTab;
   approvalMode: BuilderComposerApprovalMode;
+  artifactTabs: readonly BuilderArtifactTab[];
   changes: BuilderSourceTreeChanges;
   changesOpen: boolean;
   currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
@@ -2047,6 +2079,7 @@ function BuilderArtifactSidebar({
   onReloadLivePreview?: () => Promise<unknown> | void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onSelectArtifactTab: (tab: BuilderArtifactTab) => void;
   onRequestLivePreview?: () => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   resizing: boolean;
@@ -2067,6 +2100,7 @@ function BuilderArtifactSidebar({
   onStopLivePreview?: () => Promise<unknown> | void;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
+  const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   return (
     <aside
       aria-label="Project artifact"
@@ -2090,6 +2124,71 @@ function BuilderArtifactSidebar({
         title="Resize artifact panel"
         type="button"
       />
+      <header className="cf-builder-side-workspace-tabs" data-builder-side-workspace-tabs="true">
+        <div
+          aria-label="Side workspace tabs"
+          className="cf-builder-side-workspace-tab-list"
+          role="tablist"
+        >
+          {artifactTabs.map((tab) => (
+            <button
+              aria-selected={activeTab === tab}
+              className="cf-builder-side-workspace-tab"
+              data-active={activeTab === tab ? 'true' : undefined}
+              data-builder-side-workspace-tab="true"
+              data-builder-side-workspace-tab-kind={sideWorkspaceTabTypeForArtifactTab(tab)}
+              data-builder-side-workspace-tool={tab}
+              key={tab}
+              onClick={() => onSelectArtifactTab(tab)}
+              role="tab"
+              title={artifactTabLabel(tab)}
+              type="button"
+            >
+              <ArtifactTabIcon tab={tab} />
+              <span>{artifactTabLabel(tab)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="cf-builder-side-workspace-new-tab-wrap">
+          <button
+            aria-expanded={newTabMenuOpen}
+            aria-haspopup="menu"
+            aria-label="Open workspace tab"
+            className="cf-builder-side-workspace-new-tab-button"
+            data-builder-side-workspace-new-tab-button="true"
+            onClick={() => setNewTabMenuOpen((open) => !open)}
+            title="Open workspace tab"
+            type="button"
+          >
+            <Plus aria-hidden="true" className="size-3.5" />
+          </button>
+          {newTabMenuOpen ? (
+            <div
+              aria-label="Open workspace tab"
+              className="cf-builder-side-workspace-new-tab-menu"
+              data-builder-side-workspace-new-tab-menu="true"
+              role="menu"
+            >
+              {SIDE_WORKSPACE_NEW_TAB_ITEMS.map((item) => (
+                <button
+                  aria-disabled={item.status === 'coming_later'}
+                  className="cf-builder-side-workspace-new-tab-menu-item"
+                  data-builder-side-workspace-new-tab-kind={item.type}
+                  data-status={item.status}
+                  disabled={item.status === 'coming_later'}
+                  key={item.type}
+                  role="menuitem"
+                  type="button"
+                >
+                  <SideWorkspaceNewTabIcon type={item.type} />
+                  <span>{item.label}</span>
+                  {item.status === 'coming_later' ? <small>Later</small> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </header>
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'preview' ? (
           <BuilderResultPanel
@@ -3282,6 +3381,7 @@ export function BuilderPage({
     <BuilderArtifactSidebar
       activeTab={activeArtifactTab}
       approvalMode={approvalMode}
+      artifactTabs={artifactTabs}
       changes={changes}
       changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
       currentProjectWriteApproval={currentProjectWriteApproval}
@@ -3304,6 +3404,7 @@ export function BuilderPage({
       onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
       onRequestLivePreview={onRequestLivePreview}
       resizing={artifactResizing}
+      onSelectArtifactTab={openArtifactTab}
       onSelectFile={onSelectFile}
       onSourceOpenChange={setSourceDisclosureOpen}
       planSourceReadApproval={planSourceReadApproval}
