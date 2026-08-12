@@ -1,5 +1,5 @@
-import type { Ref } from 'react';
-import { CircleCheck, CircleX, GitCompareArrows, LoaderCircle, Play, Save } from 'lucide-react';
+import { useState, type Ref } from 'react';
+import { CircleCheck, CircleX, Ellipsis, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
@@ -84,6 +84,10 @@ export function BuilderReviewCheckpoint({
         : null;
   const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
   const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
+  const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
+  const showSkipAction = typeof onSkipCheck === 'function';
+  const showDiscardAction = typeof onRejectDraft === 'function';
+  const showSecondaryActions = showSkipAction || showDiscardAction;
   return (
     <section
       aria-label="Draft review"
@@ -155,34 +159,68 @@ export function BuilderReviewCheckpoint({
             ))}
           </div>
         ) : null}
-        {typeof onSkipCheck === 'function' ? (
-          <div className="cf-builder-review-check-actions" data-builder-check-skip-actions="true">
-            <button
-              className="cf-builder-review-quiet-button inline-flex min-h-8 items-center justify-center px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              data-builder-skip-check="true"
-              disabled={checksBusy}
-              onClick={onSkipCheck}
-              type="button"
-            >
-              Skip check
-            </button>
-          </div>
-        ) : null}
       </div>
       <div
         className="cf-builder-review-actions"
         data-builder-draft-review-actions="true"
         data-builder-review-actions="true"
       >
-        <button
-          className="cf-builder-review-quiet-button cf-builder-review-danger-action inline-flex min-h-8 shrink-0 items-center justify-center px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-discard-draft="true"
-          disabled={!canReject}
-          onClick={onRejectDraft}
-          type="button"
-        >
-          {discardLabel}
-        </button>
+        {showSecondaryActions ? (
+          <div className="cf-builder-review-more-wrap">
+            <button
+              aria-expanded={secondaryActionsOpen}
+              aria-haspopup="menu"
+              aria-label="More review actions"
+              className="cf-builder-review-more-button inline-flex min-h-8 shrink-0 items-center justify-center px-2 text-xs font-medium"
+              data-builder-review-more="true"
+              onClick={() => setSecondaryActionsOpen((open) => !open)}
+              title="More review actions"
+              type="button"
+            >
+              <Ellipsis aria-hidden="true" className="size-3.5" />
+            </button>
+            {secondaryActionsOpen ? (
+              <div
+                className="cf-builder-review-more-menu"
+                data-builder-review-more-menu="true"
+                role="menu"
+              >
+                {showSkipAction ? (
+                  <button
+                    className="cf-builder-review-menu-item"
+                    data-builder-skip-check="true"
+                    disabled={checksBusy}
+                    onClick={() => {
+                      setSecondaryActionsOpen(false);
+                      onSkipCheck?.();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <CircleCheck aria-hidden="true" className="size-3.5" />
+                    Skip check
+                  </button>
+                ) : null}
+                {showDiscardAction ? (
+                  <button
+                    className="cf-builder-review-menu-item cf-builder-review-danger-action"
+                    data-builder-discard-draft="true"
+                    disabled={!canReject}
+                    onClick={() => {
+                      setSecondaryActionsOpen(false);
+                      onRejectDraft?.();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" className="size-3.5" />
+                    {discardLabel}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {showSaveAction ? (
           <button
             className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"

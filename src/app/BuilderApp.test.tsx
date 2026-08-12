@@ -5703,9 +5703,10 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
     });
     readTaskStream.mockClear();
+    click(container, '[data-builder-review-more="true"]');
     click(container, 'Discard draft');
 
     await waitFor(() => {
@@ -6255,12 +6256,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-skip-check="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
       expect(container.textContent).toContain('Run a project check or choose Skip check before saving.');
       expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     });
     expect(saveDraft).not.toHaveBeenCalled();
 
+    click(container, '[data-builder-review-more="true"]');
     click(container, 'Skip check');
     await waitFor(() => {
       expect(skipCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({

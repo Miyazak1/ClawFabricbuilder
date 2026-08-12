@@ -166,7 +166,10 @@ describe('BuilderReviewCheckpoint', () => {
       .toContain('recoverable draft');
     expect(container.querySelector('[data-builder-review-open-preview="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-review-open-changes="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
 
+    click(container, '[data-builder-review-more="true"]');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
@@ -191,12 +194,13 @@ describe('BuilderReviewCheckpoint', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
-      .toContain('Discarding...');
     expect(container.querySelector('[data-builder-save-version="true"]')?.textContent)
       .toContain('Saving...');
     expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
       .toContain('verified draft checkpoint');
+    click(container, '[data-builder-review-more="true"]');
+    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
+      .toContain('Discarding...');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
     expect(onRejectDraft).not.toHaveBeenCalled();
@@ -204,6 +208,7 @@ describe('BuilderReviewCheckpoint', () => {
   });
 
   it('keeps blocked Save out of the chat flow until review is actually saveable', () => {
+    const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const container = render(
       <BuilderReviewCheckpoint
@@ -212,6 +217,7 @@ describe('BuilderReviewCheckpoint', () => {
         changes={changes()}
         discardLabel="Discard draft"
         hasContent
+        onRejectDraft={onRejectDraft}
         onSave={onSave}
         preview={null}
         reviewState={reviewState('blocked')}
@@ -222,6 +228,7 @@ describe('BuilderReviewCheckpoint', () => {
     expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
       .toContain('verified draft checkpoint');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    click(container, '[data-builder-review-more="true"]');
     expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
     expect(onSave).not.toHaveBeenCalled();
   });

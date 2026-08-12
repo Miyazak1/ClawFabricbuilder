@@ -265,6 +265,8 @@ describe('Builder desktop layout styles', () => {
     const copy = styleBlock(source, '.cf-builder-review-copy');
     const copyBody = styleBlock(source, '.cf-builder-review-copy-body');
     const actions = styleBlock(source, '.cf-builder-review-actions');
+    const moreWrap = styleBlock(source, '.cf-builder-review-more-wrap');
+    const moreMenu = styleBlock(source, '.cf-builder-review-more-menu');
     const actionButtons = styleBlock(source, '.cf-builder-review-actions > button');
     const saveAction = styleBlock(source, '.cf-builder-review-actions > [data-builder-save-version="true"]');
     const versionAction = styleBlock(source, '.cf-builder-version-item > button');
@@ -302,6 +304,12 @@ describe('Builder desktop layout styles', () => {
     expect(actions).toContain('padding-left: 0;');
     expect(actions).toContain('row-gap: 8px;');
     expect(actions).not.toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
+    expect(moreWrap).toContain('position: relative;');
+    expect(moreWrap).toContain('margin-right: auto;');
+    expect(moreMenu).toContain('position: absolute;');
+    expect(moreMenu).toContain('bottom: calc(100% + 4px);');
+    expect(moreMenu).toContain('box-shadow: var(--cf-shadow-md);');
+    expect(source).toMatch(/\.cf-builder-review-menu-item \{[\s\S]*?white-space: nowrap;/u);
     expect(actionButtons).toContain('flex: 0 1 auto;');
     expect(actionButtons).toContain('width: auto;');
     expect(actionButtons).toContain('min-height: 32px;');
@@ -310,6 +318,8 @@ describe('Builder desktop layout styles', () => {
     expect(saveAction).toContain('min-width: 132px;');
     expect(versionAction).toContain('grid-column: 2;');
     expect(source).not.toMatch(/\.cf-builder-review-actions \{[\s\S]*?padding-left: 38px/u);
+    expect(source).toContain('.cf-builder-review-more-button:focus-visible');
+    expect(source).toContain('.cf-builder-review-menu-item:focus-visible');
   });
 
   it('keeps conversation activity in normal layout flow above review and changes', () => {

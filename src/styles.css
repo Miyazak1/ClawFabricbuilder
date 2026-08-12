@@ -1564,6 +1564,65 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--cf-text);
 }
 
+.cf-builder-review-more-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  margin-right: auto;
+}
+
+.cf-builder-review-more-button,
+.cf-builder-review-menu-item {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.cf-builder-review-more-button {
+  width: 32px;
+  background: transparent;
+  color: var(--cf-text-muted);
+}
+
+.cf-builder-review-more-button:hover {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
+.cf-builder-review-more-menu {
+  position: absolute;
+  z-index: 8;
+  bottom: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  min-width: 156px;
+  gap: 2px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-bg);
+  box-shadow: var(--cf-shadow-md);
+  padding: 4px;
+}
+
+.cf-builder-review-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  background: transparent;
+  color: var(--cf-text-soft);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cf-builder-review-menu-item:hover:not(:disabled) {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
 .cf-builder-review-danger-action {
   color: var(--cf-danger-text);
 }
@@ -1591,11 +1650,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 116px;
   max-width: 100%;
   white-space: nowrap;
-}
-
-.cf-builder-review-actions > [data-builder-discard-draft="true"] {
-  min-width: 0;
-  margin-right: auto;
 }
 
 .cf-builder-review-actions > [data-builder-save-version="true"] {
@@ -2810,6 +2864,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cf-builder-secondary-button:focus-visible,
 .cf-builder-review-check-button:focus-visible,
 .cf-builder-review-quiet-button:focus-visible,
+.cf-builder-review-more-button:focus-visible,
+.cf-builder-review-menu-item:focus-visible,
 .cf-builder-nav-button:focus-visible,
 .cf-builder-tab:focus-visible,
 .cf-builder-project-row:focus-visible {
