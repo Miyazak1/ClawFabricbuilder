@@ -83,6 +83,9 @@ tabs. Those features belong to Web mode.
 
 Web mode is a future Codex-style general browser mode.
 
+See [General Browser Web Mode Architecture](GENERAL_BROWSER_WEB_MODE_ARCHITECTURE.md)
+for the detailed contracts and maturity gates.
+
 It may eventually include:
 
 - address bar;
