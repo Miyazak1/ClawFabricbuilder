@@ -1769,6 +1769,13 @@ function sideWorkspaceFileBreadcrumb(path: string | null): readonly string[] {
   return path.split('/').filter(Boolean);
 }
 
+function sideWorkspaceCodeLines(text: string): readonly string[] {
+  const normalized = text.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
+  const lines = normalized.split('\n');
+  if (lines.length > 1 && lines.at(-1) === '') return lines.slice(0, -1);
+  return lines;
+}
+
 function firstTextFileEntry(
   tree: BuilderSideWorkspaceFileTreeProjection | null,
 ): Extract<BuilderSideWorkspaceFileTreeEntry, { entry_kind: 'text_file' }> | null {
@@ -1857,7 +1864,7 @@ function BuilderArtifactFilesPanel({
         <span className="cf-builder-artifact-files-count">
           {projection === null
             ? 'Files'
-            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} from ${projection.root_label}`}
+            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
         </span>
       </div>
       <div className="cf-builder-artifact-files-body">
@@ -1879,9 +1886,24 @@ function BuilderArtifactFilesPanel({
                 <strong>{content.path}</strong>
                 <span>{content.language_hint}{content.content_status === 'truncated' ? ' - truncated' : ''}</span>
               </header>
-              <pre className="cf-builder-artifact-file-code">
-                <code>{content.text_preview}</code>
-              </pre>
+              <ol
+                aria-label={`${content.path} source preview`}
+                className="cf-builder-artifact-file-code"
+                data-builder-side-workspace-code-viewer="true"
+              >
+                {sideWorkspaceCodeLines(content.text_preview).map((line, index) => (
+                  <li
+                    className="cf-builder-artifact-file-code-line"
+                    data-builder-side-workspace-code-line={index + 1}
+                    key={`${index}:${line}`}
+                  >
+                    <span className="cf-builder-artifact-file-code-number" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <code>{line.length === 0 ? ' ' : line}</code>
+                  </li>
+                ))}
+              </ol>
             </>
           )}
         </section>

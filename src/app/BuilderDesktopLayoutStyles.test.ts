@@ -477,6 +477,35 @@ describe('Builder desktop layout styles', () => {
     expect(artifactCodeText).toContain('min-width: 0;');
   });
 
+  it('presents side workspace files as an editor-like code viewer', () => {
+    const source = styles();
+    const filesBody = styleBlock(source, '.cf-builder-artifact-files-body');
+    const fileBrowser = styleBlock(source, '.cf-builder-artifact-file-browser');
+    const fileCount = styleBlockContaining(source, '.cf-builder-artifact-files-count', 'border: 0;');
+    const fileHeader = styleBlock(source, '.cf-builder-artifact-file-content-header');
+    const fileHeaderMeta = styleBlock(source, '.cf-builder-artifact-file-content-header span');
+    const codeViewer = styleBlock(source, '.cf-builder-artifact-file-code');
+    const codeLine = styleBlock(source, '.cf-builder-artifact-file-code-line');
+    const codeNumber = styleBlock(source, '.cf-builder-artifact-file-code-number');
+    const codeText = styleBlock(source, '.cf-builder-artifact-file-code code');
+
+    expect(filesBody).toContain('grid-template-columns: minmax(0, 1fr) clamp(190px, 34%, 260px);');
+    expect(fileBrowser).toContain('background: color-mix(in srgb, var(--cf-bg) 84%, var(--cf-surface));');
+    expect(fileCount).toContain('border: 0;');
+    expect(fileCount).toContain('background: transparent;');
+    expect(fileHeader).toContain('display: grid;');
+    expect(fileHeader).toContain('grid-template-columns: minmax(0, 1fr) auto;');
+    expect(fileHeaderMeta).toContain('border-radius: 999px;');
+    expect(codeViewer).toContain('display: grid;');
+    expect(codeViewer).toContain('font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;');
+    expect(codeViewer).toContain('white-space: pre;');
+    expect(codeLine).toContain('grid-template-columns: 44px minmax(0, 1fr);');
+    expect(codeLine).toContain('min-width: max-content;');
+    expect(codeNumber).toContain('position: sticky;');
+    expect(codeNumber).toContain('user-select: none;');
+    expect(codeText).toContain('font: inherit;');
+  });
+
   it('keeps the draft-gated composer as a lightweight status row', () => {
     const source = styles();
     const reviewGate = styleBlock(source, '.cf-builder-composer-review-gate');

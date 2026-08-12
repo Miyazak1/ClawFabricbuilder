@@ -3489,10 +3489,14 @@ describe('BuilderPage v2', () => {
     const filesPanel = container.querySelector('[data-builder-side-workspace-files="true"]');
     expect(filesPanel).not.toBeNull();
     expect(filesPanel?.textContent).toContain('Files');
-    expect(filesPanel?.textContent).toContain('2 files from Current draft');
+    expect(filesPanel?.textContent).toContain('2 files');
+    expect(filesPanel?.textContent).toContain('Current draft');
     expect(filesPanel?.textContent).toContain('App.tsx');
     expect(filesPanel?.textContent).toContain('styles.css');
     expect(filesPanel?.textContent).toContain('export function App()');
+    expect(filesPanel?.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
+    expect(filesPanel?.querySelector('[data-builder-side-workspace-code-line="1"]')?.textContent)
+      .toContain('export function App()');
     expect(filesPanel?.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
       .toContain('/src/App.tsx');
     expect(filesPanel?.querySelector('[data-builder-side-workspace-file-kind="directory"]')?.textContent)
@@ -5173,7 +5177,7 @@ describe('BuilderPage v2', () => {
         activeFile="src/tool.py"
         instruction=""
         onSelectFile={onSelectFile}
-        sideWorkspaceFileContent={sideWorkspaceFileContent(toolFile, 'print("hello")\n', 'python')}
+        sideWorkspaceFileContent={sideWorkspaceFileContent(toolFile, 'print("hello")\nprint("bye")\n', 'python')}
         sideWorkspaceFileContentStatus="ready"
         sideWorkspaceFileTree={sideWorkspaceFileTree([toolFile])}
         sideWorkspaceFileTreeStatus="ready"
@@ -5195,6 +5199,11 @@ describe('BuilderPage v2', () => {
       .toBe('true');
     expect(container.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
       .toContain('/src/tool.py');
+    expect(container.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-code-line="1"]')?.textContent)
+      .toContain('print("hello")');
+    expect(container.querySelector('[data-builder-side-workspace-code-line="2"]')?.textContent)
+      .toContain('print("bye")');
     expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
@@ -5239,8 +5248,9 @@ describe('BuilderPage v2', () => {
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
-    expect(source?.textContent).toContain('1 file from Current draft');
+    expect(source?.textContent).toContain('1 file');
     expect(source?.textContent).toContain('src/tool.py');
+    expect(container.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
     expect(container.textContent).toContain('Preview unavailable');
