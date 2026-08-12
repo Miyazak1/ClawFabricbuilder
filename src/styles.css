@@ -1533,7 +1533,39 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   flex: 0 1 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 4px;
+}
+
+.cf-builder-review-check-button,
+.cf-builder-review-quiet-button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.cf-builder-review-check-button {
+  background: var(--cf-surface);
+  border-color: var(--cf-border);
+  color: var(--cf-text-soft);
+}
+
+.cf-builder-review-check-button:hover:not(:disabled) {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
+.cf-builder-review-quiet-button {
+  background: transparent;
+  color: var(--cf-text-muted);
+}
+
+.cf-builder-review-quiet-button:hover:not(:disabled) {
+  background: var(--cf-surface-muted);
+  color: var(--cf-text);
+}
+
+.cf-builder-review-danger-action {
+  color: var(--cf-danger-text);
 }
 
 .cf-builder-review-actions {
@@ -1559,6 +1591,11 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 116px;
   max-width: 100%;
   white-space: nowrap;
+}
+
+.cf-builder-review-actions > [data-builder-discard-draft="true"] {
+  min-width: 0;
+  margin-right: auto;
 }
 
 .cf-builder-review-actions > [data-builder-save-version="true"] {
@@ -2771,6 +2808,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .cf-builder-primary-button:focus-visible,
 .cf-builder-secondary-button:focus-visible,
+.cf-builder-review-check-button:focus-visible,
+.cf-builder-review-quiet-button:focus-visible,
 .cf-builder-nav-button:focus-visible,
 .cf-builder-tab:focus-visible,
 .cf-builder-project-row:focus-visible {

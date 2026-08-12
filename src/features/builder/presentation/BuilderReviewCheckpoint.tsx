@@ -1,5 +1,5 @@
 import type { Ref } from 'react';
-import { CircleCheck, CircleOff, CircleX, GitCompareArrows, LoaderCircle, Play, Save, Trash2 } from 'lucide-react';
+import { CircleCheck, CircleX, GitCompareArrows, LoaderCircle, Play, Save } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
@@ -140,7 +140,7 @@ export function BuilderReviewCheckpoint({
           <div className="cf-builder-review-check-actions" data-builder-check-run-actions="true">
             {checkRunProfiles.map((profile) => (
               <button
-                className="cf-builder-secondary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+                className="cf-builder-review-check-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
                 data-builder-run-check={profile.command_profile_id}
                 disabled={checksBusy || typeof onRunCheck !== 'function'}
                 key={profile.command_profile_id}
@@ -156,13 +156,12 @@ export function BuilderReviewCheckpoint({
         {typeof onSkipCheck === 'function' ? (
           <div className="cf-builder-review-check-actions" data-builder-check-skip-actions="true">
             <button
-              className="cf-builder-secondary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              className="cf-builder-review-quiet-button inline-flex min-h-8 items-center justify-center px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
               data-builder-skip-check="true"
               disabled={checksBusy}
               onClick={onSkipCheck}
               type="button"
             >
-              <CircleOff aria-hidden="true" className="size-3.5" />
               Skip check
             </button>
           </div>
@@ -174,13 +173,12 @@ export function BuilderReviewCheckpoint({
         data-builder-review-actions="true"
       >
         <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          className="cf-builder-review-quiet-button cf-builder-review-danger-action inline-flex min-h-8 shrink-0 items-center justify-center px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
           data-builder-discard-draft="true"
           disabled={!canReject}
           onClick={onRejectDraft}
           type="button"
         >
-          <Trash2 aria-hidden="true" className="size-3.5" />
           {discardLabel}
         </button>
         <button
