@@ -643,10 +643,13 @@ blocking a merely unchecked draft.
 
 The latest packaged release checkpoint also proves the desktop CheckRun path:
 `verify:release` runs lint, unit tests, boundary tests, package verification,
-packaged launch smoke, and the packaged provider canary. The canary covers a
-discovered `npm test` check, main-selected CommandProfile approval, packaged
-runtime execution, visible CheckRun status, Save gate behavior, restart
-recovery, and hidden internal evidence.
+packaged launch smoke, the packaged provider canary, and the packaged
+Plan-mode/mode-switching canary. The canaries cover a discovered `npm test`
+check, main-selected CommandProfile approval, packaged runtime execution,
+visible CheckRun status, Save gate behavior, restart recovery, hidden internal
+evidence, persistent Ask/Build modes, one-shot Plan mode, whole-sentence
+semantic plan routing, approved-plan execution into an unsaved draft, and
+continuing that draft without forcing Save Version.
 
 `builder-check-failure-triage.v1` now adds the first bounded diagnostic bridge
 for failed CheckRun records. It consumes only an already verified CheckRun,

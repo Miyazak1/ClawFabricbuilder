@@ -167,6 +167,8 @@ test('build and package scripts require production artifact verification', () =>
   assert.match(packageJson.scripts['verify:release'], /npm run dist/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-launch/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-canary(?:\s|$)/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-plan-mode/u);
+  assert.doesNotMatch(packageJson.scripts['verify:release'], /verify:packaged-live-preview/u);
   assert.doesNotMatch(packageJson.scripts['verify:release'], /deepseek/u);
   assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:release/u);
   assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:packaged-canary:deepseek/u);

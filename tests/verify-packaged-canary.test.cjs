@@ -6472,6 +6472,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /SELECTORS\.saveVersion/u);
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
+  assert.match(planModeSource, /release_gate_integration:\s*['"]included_in_verify_release['"]/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
   assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v26['"]/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);

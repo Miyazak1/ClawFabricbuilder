@@ -23,7 +23,7 @@
     "verify:packaged-live-preview": "node scripts/verify-packaged-live-preview-canary.cjs",
     "verify:packaged-plan-mode": "node scripts/verify-packaged-plan-mode-canary.cjs",
     "verify:packaged-canary:deepseek": "node scripts/verify-deepseek-packaged-canary.cjs",
-    "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary",
+    "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary && npm run verify:packaged-plan-mode",
     "verify:release:deepseek": "npm run verify:release && npm run verify:packaged-canary:deepseek",
     "pack": "npm run build && electron-builder --dir && npm run verify:package",
     "dist": "npm run build && electron-builder --win nsis && npm run verify:package"

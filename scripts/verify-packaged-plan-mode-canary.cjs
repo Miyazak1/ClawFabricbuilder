@@ -544,6 +544,7 @@ async function run() {
       provider_plan_request_observed: true,
       provider_code_change_request_observed: true,
       project_root_basename: path.basename(projectRootPath),
+      release_gate_integration: 'included_in_verify_release',
       schema_version: CANARY_INPUT_VERSION,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
