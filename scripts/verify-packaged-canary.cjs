@@ -1921,6 +1921,7 @@ async function waitForComposerRoute(page, expectedRoute, expectedDispatch) {
 }
 
 async function waitForPreviewSurface(page) {
+  await openPreviewSurfaceViaUi(page);
   const staticPreview = page.locator(SELECTORS.preview).waitFor({ state: 'visible' })
     .then(() => 'static_preview', () => 'static_preview_timeout');
   const unavailablePreview = page.locator(SELECTORS.previewUnavailable).waitFor({ state: 'visible' })
