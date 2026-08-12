@@ -203,6 +203,29 @@ describe('BuilderReviewCheckpoint', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('keeps blocked Save out of the chat flow until review is actually saveable', () => {
+    const onSave = vi.fn();
+    const container = render(
+      <BuilderReviewCheckpoint
+        canReject
+        canSave={false}
+        changes={changes()}
+        discardLabel="Discard draft"
+        hasContent
+        onSave={onSave}
+        preview={null}
+        reviewState={reviewState('blocked')}
+        saveLabel="Save version"
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
+      .toContain('verified draft checkpoint');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('offers only discovered checks and makes the selected check an explicit action', () => {
     const onRunCheck = vi.fn();
     const container = render(

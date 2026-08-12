@@ -6257,8 +6257,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-skip-check="true"]')).not.toBeNull();
       expect(container.textContent).toContain('Run a project check or choose Skip check before saving.');
-      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
-        .toBe(true);
+      expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     });
     expect(saveDraft).not.toHaveBeenCalled();
 
@@ -6267,6 +6266,7 @@ describe('BuilderApp v2', () => {
       expect(skipCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
       });
+      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')).not.toBeNull();
       expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
         .toBe(false);
       expect(container.textContent).toContain('Check skipped');

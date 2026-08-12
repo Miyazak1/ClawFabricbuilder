@@ -82,6 +82,8 @@ export function BuilderReviewCheckpoint({
       : recordedStatus !== null
         ? CircleX
         : null;
+  const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
+  const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
   return (
     <section
       aria-label="Draft review"
@@ -181,16 +183,18 @@ export function BuilderReviewCheckpoint({
         >
           {discardLabel}
         </button>
-        <button
-          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-save-version="true"
-          disabled={!canSave}
-          onClick={onSave}
-          type="button"
-        >
-          <Save aria-hidden="true" className="size-3.5" />
-          {saveLabel}
-        </button>
+        {showSaveAction ? (
+          <button
+            className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            data-builder-save-version="true"
+            disabled={!canSave}
+            onClick={onSave}
+            type="button"
+          >
+            <Save aria-hidden="true" className="size-3.5" />
+            {saveLabel}
+          </button>
+        ) : null}
       </div>
     </section>
   );

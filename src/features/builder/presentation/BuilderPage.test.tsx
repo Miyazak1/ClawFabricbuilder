@@ -2916,11 +2916,9 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
       .toContain('verified draft checkpoint');
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
-      .toBe(true);
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector<HTMLButtonElement>('[data-builder-discard-draft="true"]')?.disabled)
       .toBe(false);
-    click(container, '[data-builder-save-version="true"]');
     click(container, '[data-builder-discard-draft="true"]');
     expect(onSave).not.toHaveBeenCalled();
     expect(onRejectDraft).toHaveBeenCalledOnce();
@@ -2942,9 +2940,7 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
       .toContain('project check failed');
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
-      .toBe(true);
-    click(container, '[data-builder-save-version="true"]');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
   });
 
@@ -3519,6 +3515,7 @@ describe('BuilderPage v2', () => {
       expect(spy).toHaveBeenCalled();
       expect(spy.mock.contexts.at(-1)).toBe(review);
       expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
+      expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
       expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
       expect(result?.closest('[data-builder-draft-landing="true"]')).toBeNull();
