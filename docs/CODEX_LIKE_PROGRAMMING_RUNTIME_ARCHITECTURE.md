@@ -637,9 +637,10 @@ The current `builder-check-run-outcome-projection.v1` is deliberately narrower
 than FailureTriage. It preserves a safe current-draft outcome across refresh and
 restart and distinguishes not-run, running, completed, and unavailable reads,
 but it carries only fixed public copy. It must not be treated as diagnostic or
-repair evidence. FailureTriage still requires a separate bounded, redacted,
-candidate-bound diagnostic contract before any automatic repair loop can use
-check output.
+repair evidence. `builder-check-failure-triage.v1` is the first separate
+bounded, redacted, candidate-bound diagnostic contract for failed CheckRun
+records. It does not yet persist triage, project it to the renderer, or feed a
+provider repair request.
 
 ### Edit Intent Plan
 
@@ -993,11 +994,12 @@ Evidence:
 
 Current checkpoint: CheckRun MVP now has main-owned current-draft approval,
 candidate-bound execution admission, bounded packaged npm-script runtime,
-immutable CheckRun v2 facts, explicit durable skip evidence, ReviewState/Save
-gate integration, renderer-safe status/outcome projection, and packaged release
-canary coverage for a discovered `npm test` check. The runtime still does not
-claim arbitrary terminal authority, dependency installation, networked command
-execution, or provider-suggested shell execution.
+immutable CheckRun v2 facts, explicit durable skip evidence, bounded main-only
+FailureTriage for failed CheckRun facts, ReviewState/Save gate integration,
+renderer-safe status/outcome projection, and packaged release canary coverage
+for a discovered `npm test` check. The runtime still does not claim arbitrary
+terminal authority, dependency installation, networked command execution, or
+provider-suggested shell execution.
 
 ### Slice P4: Repair Loop MVP
 

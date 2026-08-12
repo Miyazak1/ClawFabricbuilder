@@ -648,9 +648,16 @@ discovered `npm test` check, main-selected CommandProfile approval, packaged
 runtime execution, visible CheckRun status, Save gate behavior, restart
 recovery, and hidden internal evidence.
 
+`builder-check-failure-triage.v1` now adds the first bounded diagnostic bridge
+for failed CheckRun records. It consumes only an already verified CheckRun,
+binds the triage to the current candidate/draft/check digest, classifies the
+fixed failure class into a repairable/user-action bucket, and records a bounded
+next-action hint without raw output, source reads, provider dispatch, command
+execution, Git/SQLite writes, Save authority, IPC, or renderer authority.
+
 Remaining Slice 6 gaps are narrower: richer environment-readiness projection,
-bounded diagnostic evidence for FailureTriage, explicit cancellation controls,
-and repair-loop input remain later checkpoints.
+FailureTriage persistence/projection, explicit cancellation controls, and
+repair-loop input remain later checkpoints.
 
 ## Slice 7: Save Version And Restart Recovery Canary
 
