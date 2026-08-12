@@ -2317,6 +2317,7 @@ function BuilderArtifactSidebar({
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
+  const openTabSet = useMemo(() => new Set<BuilderArtifactTab>(artifactTabs), [artifactTabs]);
   const sourceTabLabel = sideWorkspaceFileDisplayName(
     sideWorkspaceFileContent?.path
       ?? sideWorkspaceFileTree?.selected_file_ref?.path
@@ -2330,6 +2331,7 @@ function BuilderArtifactSidebar({
       className="cf-builder-artifact-sidebar"
       data-builder-artifact-sidebar="true"
       data-builder-artifact-tab-active={activeTab}
+      data-builder-side-workspace-open-tab-count={artifactTabs.length}
       ref={sidebarRef}
     >
       <button
@@ -2416,11 +2418,13 @@ function BuilderArtifactSidebar({
               {SIDE_WORKSPACE_NEW_TAB_ITEMS.map((item) => {
                 const availableTab = artifactTabForSideWorkspaceTabType(item.type, availableArtifactTabs);
                 const disabled = item.status === 'coming_later' || availableTab === null;
+                const opened = availableTab !== null && openTabSet.has(availableTab);
                 return (
                   <button
                     aria-disabled={disabled}
                     className="cf-builder-side-workspace-new-tab-menu-item"
                     data-builder-side-workspace-new-tab-kind={item.type}
+                    data-open={opened ? 'true' : undefined}
                     data-status={item.status}
                     disabled={disabled}
                     key={item.type}
@@ -2434,7 +2438,15 @@ function BuilderArtifactSidebar({
                   >
                     <SideWorkspaceNewTabIcon type={item.type} />
                     <span>{item.label}</span>
-                    {item.status === 'coming_later' ? <small>Later</small> : null}
+                    <small>
+                      {item.status === 'coming_later'
+                        ? 'Later'
+                        : availableTab === null
+                          ? 'Unavailable'
+                          : opened
+                            ? 'Open'
+                            : 'Add'}
+                    </small>
                   </button>
                 );
               })}
@@ -3094,9 +3106,10 @@ export function BuilderPage({
       const baseOpenTabs = panelState.identity === artifactPanelIdentity
         ? panelState.openTabs.filter((openTab) => artifactTabs.includes(openTab))
         : openArtifactTabs;
+      const closedIndex = baseOpenTabs.indexOf(tab);
       const nextOpenTabs = baseOpenTabs.filter((openTab) => openTab !== tab);
       const nextActive = panelState.active === tab
-        ? nextOpenTabs.at(-1) ?? null
+        ? nextOpenTabs[Math.max(0, closedIndex)] ?? nextOpenTabs.at(-1) ?? null
         : panelState.active;
       return {
         active: nextActive,

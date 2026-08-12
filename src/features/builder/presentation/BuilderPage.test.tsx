@@ -3242,6 +3242,14 @@ describe('BuilderPage v2', () => {
     expect(newTabMenu?.textContent).toContain('Browser');
     expect(newTabMenu?.textContent).toContain('Terminal');
     expect(newTabMenu?.textContent).toContain('Review');
+    expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="browser"]')?.textContent)
+      .toContain('Open');
+    expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="file"]')?.textContent)
+      .toContain('Add');
+    expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="review"]')?.textContent)
+      .toContain('Add');
+    expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="side_chat"]')?.textContent)
+      .toContain('Later');
     expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="terminal"]')
       ?.getAttribute('aria-disabled'))
       .toBe('true');
@@ -3510,9 +3518,14 @@ describe('BuilderPage v2', () => {
       .toBe('preview');
 
     click(container, '[data-builder-side-workspace-new-tab-button="true"]');
+    expect(container.querySelector('[data-builder-side-workspace-new-tab-kind="review"]')?.textContent)
+      .toContain('Add');
     click(container, '[data-builder-side-workspace-new-tab-kind="review"]');
 
     expect(container.querySelector('[data-builder-side-workspace-tool="changes"]')).not.toBeNull();
+    click(container, '[data-builder-side-workspace-new-tab-button="true"]');
+    expect(container.querySelector('[data-builder-side-workspace-new-tab-kind="review"]')?.textContent)
+      .toContain('Open');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('changes');
   });
