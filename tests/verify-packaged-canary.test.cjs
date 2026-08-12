@@ -6458,6 +6458,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /ask_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /ask_mode_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /semantic_plan_rejected:\s*true/u);
+  assert.match(planModeSource, /semantic_plan_route_signal_observed:\s*true/u);
+  assert.match(planModeSource, /semantic_plan_signal_mismatch/u);
   assert.match(planModeSource, /build_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /build_mode_requested_write_approval:\s*true/u);
   assert.match(planModeSource, /build_mode_skipped_classifier:\s*true/u);

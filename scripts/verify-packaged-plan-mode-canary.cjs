@@ -394,6 +394,8 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
   const composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
   const composerDispatch = await page.locator(SELECTORS.composer).
     getAttribute('data-builder-route-dispatch');
+  const composerSignals = await page.locator(SELECTORS.composer).
+    getAttribute('data-builder-route-signals');
   const providerRequests = providerServer.snapshot();
   if (!providerRequests.some((request) => (
     request.response_kind === 'builder_semantic_route_classification'
@@ -406,6 +408,9 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
   if (composerRoute !== 'plan' || composerDispatch !== 'plan') {
     fail('semantic_plan_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute });
   }
+  if (composerSignals !== 'semantic_route') {
+    fail('semantic_plan_signal_mismatch', { composer_signals: composerSignals });
+  }
   await clickByRole(page, 'button', 'Reject');
   await page.locator(SELECTORS.planRejected).waitFor({ state: 'visible', timeout: 30_000 });
   await page.locator(SELECTORS.planReviewActions).waitFor({ state: 'hidden', timeout: 30_000 });
@@ -413,6 +418,7 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
     plan_source_read_approved: approvedSourceRead,
     semantic_classifier_observed: true,
     semantic_plan_rejected: true,
+    semantic_plan_route_signal_observed: true,
   });
 }
 
@@ -521,6 +527,7 @@ async function run() {
       plan_mode_chip_visible: true,
       semantic_classifier_observed: semanticPlan.semantic_classifier_observed,
       semantic_plan_rejected: semanticPlan.semantic_plan_rejected,
+      semantic_plan_route_signal_observed: semanticPlan.semantic_plan_route_signal_observed,
       semantic_plan_source_read_approved: semanticPlan.plan_source_read_approved,
       plan_source_read_approved: approvedSourceRead,
       plan_review_actions_visible: true,
