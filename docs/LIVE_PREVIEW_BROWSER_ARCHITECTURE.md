@@ -578,6 +578,37 @@ Current checkpoint:
 - defer release-gate integration, app restart cleanup evidence, and
   WebGL-specific evidence to follow-up LP6 hardening.
 
+### Slice LP7: Browser-First Static Preview Retirement
+
+Move Preview from a static-first surface to a Browser-first surface after LP6
+is stable.
+
+LP7 does not delete Static Preview immediately. It makes Static Preview a
+fallback path and prepares the later deletion gate.
+
+Required prerequisites:
+
+- packaged Live Preview canary is stable for current drafts;
+- saved revision Browser Preview has packaged evidence;
+- restart cleanup proves no orphaned `WebContents`, session, or loopback server;
+- failed Live Preview states fall back to a clear safe preview or diagnostic
+  state;
+- Browser Preview preserves the existing static-preview safety guarantees:
+  no source mutation, no app IPC, no Node/preload, no provider/tool dispatch,
+  deterministic restart restoration, and nonblank visual evidence.
+
+Current checkpoint:
+
+- keep the current `Preview` tab name;
+- make Browser/Live the default render path only for admitted web previews;
+- move `Static` behind a secondary `Safe preview` or diagnostic affordance once
+  Browser evidence is mature;
+- keep Static Preview as hidden fallback when Browser admission, runtime,
+  permission, restart, or evidence checks fail;
+- do not delete `BuilderStaticPreview` until post-Live Preview V2, after
+  dynamic dev-server preview has its own permission, process lifecycle, network
+  policy, packaged canary, and rollback evidence.
+
 ## Relationship To MVP Programming Loop
 
 Live Preview is not required for the first MVP loop. The MVP may ship with
