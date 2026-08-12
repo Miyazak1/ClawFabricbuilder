@@ -26,7 +26,7 @@
     "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary && npm run verify:packaged-plan-mode",
     "verify:release:deepseek": "npm run verify:release && npm run verify:packaged-canary:deepseek",
     "pack": "npm run build && electron-builder --dir && npm run verify:package",
-    "dist": "npm run build && electron-builder --win nsis && npm run verify:package"
+    "dist": "npm run build && node scripts/build-windows-release.cjs && npm run verify:package"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
