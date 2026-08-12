@@ -110,7 +110,7 @@ const COPY = Object.freeze({
   waiting_for_check: Object.freeze({
     status: 'waiting',
     label: 'Ready for review',
-    summary: 'Run a check or skip it before saving.',
+    summary: 'Builder has not finished checking this draft yet.',
   }),
   preparing_review: Object.freeze({
     status: 'active',

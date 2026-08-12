@@ -72,7 +72,7 @@ function projectionError(error) {
   return true;
 }
 
-test('blocks an unchecked checkpoint until the user runs or explicitly skips a check', () => {
+test('blocks an unchecked checkpoint without exposing a user-facing check action', () => {
   const result = projectBuilderReviewState(reviewInput());
 
   assert.equal(result.projection_version, BUILDER_REVIEW_STATE_PROJECTION_VERSION);

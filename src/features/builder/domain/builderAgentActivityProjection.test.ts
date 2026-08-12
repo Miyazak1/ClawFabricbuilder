@@ -58,7 +58,7 @@ describe('sanitizeBuilderAgentActivityProjectionWire', () => {
         phase: 'waiting_for_check',
         status: 'waiting',
         label: 'Ready for review',
-        summary: 'Run a project check or choose Skip check before saving.',
+        summary: 'Builder has not finished checking this draft yet.',
       },
       authority: {
         ...projection().authority,

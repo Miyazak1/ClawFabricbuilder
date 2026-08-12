@@ -1400,29 +1400,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     void runCheck(profile);
   }, [checkRunAvailable, checkRunCompleted, checkRunOperation, currentDraftId, runCheck]);
 
-  const skipCheck = useCallback(async () => {
-    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
-    if (draftId === null || checkRunOperation === 'running' || checkRunOperation === 'skipping') return;
-    const requestSequence = checkRunRequestSequenceRef.current + 1;
-    checkRunRequestSequenceRef.current = requestSequence;
-    setCheckRunOperation('skipping');
-    try {
-      await ports.checkRun.skipCurrentDraftCheck({ draft_id: draftId });
-      if (
-        checkRunRequestSequenceRef.current !== requestSequence
-        || projectSnapshotRef.current.draft?.draft_id !== draftId
-      ) return;
-      setCheckRunOperation(null);
-      await conversation.refresh();
-    } catch {
-      if (
-        checkRunRequestSequenceRef.current !== requestSequence
-        || projectSnapshotRef.current.draft?.draft_id !== draftId
-      ) return;
-      setCheckRunOperation('failed');
-    }
-  }, [checkRunOperation, conversation, ports.checkRun]);
-
   useEffect(() => {
     if (queuedActiveRunFollowup === null) return undefined;
     const dispatchQueuedFollowup = () => {
@@ -3234,7 +3211,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRequestLivePreview={requestLivePreview}
               onCancel={cancel}
               onRejectDraft={rejectDraft}
-              onSkipCheck={skipCheck}
               onSave={save}
               onStopLivePreview={stopLivePreview}
               onSelectFile={setActiveFile}

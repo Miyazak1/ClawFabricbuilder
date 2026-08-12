@@ -58,7 +58,7 @@ class BuilderCheckRunSaveGateError extends Error {
         : selected === 'builder_check_run_save_gate_failed'
           ? 'The project check must pass before this version can be saved.'
           : selected === 'builder_check_run_save_gate_not_checked'
-            ? 'Run a project check or explicitly choose to save without checking.'
+            ? 'Builder has not finished checking this draft yet.'
           : 'The project check could not be verified for saving.');
     this.name = 'BuilderCheckRunSaveGateError';
     this.code = selected;

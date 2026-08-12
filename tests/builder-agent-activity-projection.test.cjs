@@ -165,7 +165,7 @@ test('projects terminal plan and review facts into waiting, ready, and blocked s
     review_state_projection: reviewState({
       status: 'blocked',
       label: 'Review not ready',
-      summary: 'Run a project check or choose Skip check before saving.',
+      summary: 'Builder has not finished checking this draft yet.',
       check_status: 'not_run',
       can_save: false,
       blocking_reasons: ['check_not_run'],
@@ -178,7 +178,7 @@ test('projects terminal plan and review facts into waiting, ready, and blocked s
   assert.equal(notChecked.current.phase, 'waiting_for_check');
   assert.equal(notChecked.current.status, 'waiting');
   assert.equal(notChecked.current.label, 'Ready for review');
-  assert.equal(notChecked.current.summary, 'Run a project check or choose Skip check before saving.');
+  assert.equal(notChecked.current.summary, 'Builder has not finished checking this draft yet.');
 
   const checkRunning = projectBuilderAgentActivity(input({
     active_turn_id: null,

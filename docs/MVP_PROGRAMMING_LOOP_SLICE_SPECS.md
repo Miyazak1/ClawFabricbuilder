@@ -575,7 +575,8 @@ Denied in MVP:
 - timeout handling;
 - output summary truncation;
 - failed check does not save version;
-- skipped check creates explicit skip evidence.
+- no-check/skip evidence remains main-owned and is not exposed as a routine
+  user button.
 
 ### Current Implementation Checkpoint
 
@@ -617,9 +618,9 @@ Git authorities. An unconfirmed drain stops shutdown before those authorities
 close. Direct cancellation can remain a later optimization because the runner
 already bounds timeout and process-tree termination. Preload and renderer do
 now expose only the fixed current-draft availability and explicit approval
-commands. The Review Workspace can run a discovered check and display its
-bounded status without receiving a command line, raw output, runtime identity,
-or process handle.
+commands. The Review Workspace displays the automatically selected check status
+without receiving a command line, raw output, runtime identity, or process
+handle.
 
 `builder-check-run-outcome-projection.v1` now closes the refresh/restart gap
 between the stored terminal CheckRun and the active candidate registry. It
@@ -630,16 +631,17 @@ silently becoming an apparently saveable `Not checked` draft. The Task Stream
 and renderer receive no CheckRun id, candidate id, digest, output, path, or Save
 authority.
 
-Explicit `Skip check` is now a durable candidate-bound decision, not a
-renderer-only convenience. `builder-check-skip-decision.v1`,
+Skip/no-check evidence remains a durable candidate-bound decision, not a
+renderer-only convenience or a routine user-facing button.
+`builder-check-skip-decision.v1`,
 `builder-check-skip-decision-store.v1`, and
 `builder-check-skip-current-draft-service.v1` record/replay the owner decision
 only after main verifies the current candidate, active activity guard, absence
 of a CheckRun for that candidate, and the current DraftCheckpoint. The
 CheckRun status service, ReviewState, SaveGate, IPC adapter/runtime, preload,
 renderer port, and Review Workspace all consume the same fixed `skipped`
-projection. Save admission may therefore allow an explicit skip while still
-blocking a merely unchecked draft.
+projection. Save admission may therefore allow a verified no-check decision
+while still blocking a merely unchecked draft.
 
 The latest packaged release checkpoint also proves the desktop CheckRun path:
 `verify:release` runs lint, unit tests, boundary tests, package verification,

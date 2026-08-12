@@ -7,7 +7,7 @@ export type BuilderReviewStateProjectionWire = Readonly<{
     | 'A recoverable draft is ready to inspect and save.'
     | 'A recoverable draft is checked and ready to inspect and save.'
     | 'You chose to save this recoverable draft without running a project check.'
-    | 'Run a project check or choose Skip check before saving.'
+    | 'Builder has not finished checking this draft yet.'
     | 'Waiting for a verified draft checkpoint before saving.'
     | 'The latest project check failed. Review it before saving.'
     | 'The latest project check did not finish. Run it again before saving.'
@@ -117,7 +117,7 @@ export function sanitizeBuilderReviewStateProjectionWire(
             : checkStatus === 'unavailable'
               ? 'Builder could not verify the project check status.'
               : checkStatus === 'not_run'
-                ? 'Run a project check or choose Skip check before saving.'
+                ? 'Builder has not finished checking this draft yet.'
                 : checkStatus === 'passed'
                   ? 'A recoverable draft is checked and ready to inspect and save.'
                   : 'You chose to save this recoverable draft without running a project check.';

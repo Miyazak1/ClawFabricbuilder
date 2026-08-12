@@ -19,7 +19,6 @@ export type BuilderReviewCheckpointProps = Readonly<{
   discardLabel: string;
   hasContent: boolean;
   onRejectDraft?: () => void;
-  onSkipCheck?: () => void;
   onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
   reviewState: BuilderReviewStateProjectionWire | null;
@@ -38,7 +37,6 @@ export function BuilderReviewCheckpoint({
   discardLabel,
   hasContent,
   onRejectDraft,
-  onSkipCheck,
   onSave,
   preview,
   reviewState,
@@ -46,10 +44,6 @@ export function BuilderReviewCheckpoint({
   checkpointRef,
 }: BuilderReviewCheckpointProps) {
   const restoredRunning = checkRunOperation === null && checkRunOutcome?.state === 'running';
-  const checksBusy = checkRunOperation === 'loading'
-    || checkRunOperation === 'running'
-    || checkRunOperation === 'skipping'
-    || restoredRunning;
   const recordedStatus = checkRunStatus ?? (
     checkRunOutcome?.state === 'completed'
       || checkRunOutcome?.state === 'skipped'
@@ -83,9 +77,8 @@ export function BuilderReviewCheckpoint({
   const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
   const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
   const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
-  const showSkipAction = typeof onSkipCheck === 'function';
   const showDiscardAction = typeof onRejectDraft === 'function';
-  const showSecondaryActions = showSkipAction || showDiscardAction;
+  const showSecondaryActions = showDiscardAction;
   return (
     <section
       aria-label="Draft review"
@@ -166,22 +159,6 @@ export function BuilderReviewCheckpoint({
                 data-builder-review-more-menu="true"
                 role="menu"
               >
-                {showSkipAction ? (
-                  <button
-                    className="cf-builder-review-menu-item"
-                    data-builder-skip-check="true"
-                    disabled={checksBusy}
-                    onClick={() => {
-                      setSecondaryActionsOpen(false);
-                      onSkipCheck?.();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <CircleCheck aria-hidden="true" className="size-3.5" />
-                    Skip check
-                  </button>
-                ) : null}
                 {showDiscardAction ? (
                   <button
                     className="cf-builder-review-menu-item cf-builder-review-danger-action"

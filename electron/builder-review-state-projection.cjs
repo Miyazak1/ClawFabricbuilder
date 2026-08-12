@@ -193,7 +193,7 @@ function reviewCopy(checkpointReady, checkStatus) {
   if (checkStatus === 'not_run') {
     return Object.freeze({
       label: 'Review not ready',
-      summary: 'Run a project check or choose Skip check before saving.',
+      summary: 'Builder has not finished checking this draft yet.',
     });
   }
   return Object.freeze({

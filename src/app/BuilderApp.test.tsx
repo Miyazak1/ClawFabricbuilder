@@ -296,7 +296,7 @@ function uncheckedReviewTaskStreamWire() {
       ...wire.review_state_projection,
       status: 'blocked',
       label: 'Review not ready',
-      summary: 'Run a project check or choose Skip check before saving.',
+      summary: 'Builder has not finished checking this draft yet.',
       check_status: 'not_run',
       can_save: false,
       blocking_reasons: ['check_not_run'],
@@ -6235,7 +6235,7 @@ describe('BuilderApp v2', () => {
       .toBe(false);
   });
 
-  it('requires an explicit skip decision before saving an unchecked draft', async () => {
+  it('keeps unchecked drafts blocked without exposing manual check controls', async () => {
     const {
       container,
       saveDraft,
@@ -6255,22 +6255,13 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
-      expect(container.textContent).toContain('Run a project check or choose Skip check before saving.');
+      expect(container.textContent).toContain('Builder has not finished checking this draft yet.');
       expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     });
     expect(saveDraft).not.toHaveBeenCalled();
-
     click(container, '[data-builder-review-more="true"]');
-    click(container, 'Skip check');
-    await waitFor(() => {
-      expect(skipCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
-        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
-      });
-      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')).not.toBeNull();
-      expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
-        .toBe(false);
-      expect(container.textContent).toContain('Check skipped');
-    });
+    expect(container.textContent).not.toContain('Skip check');
+    expect(skipCurrentDraftCheck).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
