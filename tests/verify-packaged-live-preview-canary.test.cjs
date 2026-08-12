@@ -92,6 +92,7 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /app_restart_reopened_with_same_user_data:\s*true/u);
   assert.match(source, /live_preview_app_restart_leaked_webcontents/u);
   assert.match(source, /live_preview_restart_cleanup_precondition_failed/u);
+  assert.doesNotMatch(source, /SELECTORS\.saveVersion\)\.waitFor\(\{ state: 'visible'/u);
   assert.match(source, /data-builder-live-preview-blocked-count/u);
   assert.match(source, /renderer_blocked_request_count_minimum/u);
   assert.match(source, /renderer_block_count_visible:\s*true/u);

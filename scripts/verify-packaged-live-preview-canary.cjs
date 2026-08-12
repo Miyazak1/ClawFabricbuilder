@@ -334,7 +334,7 @@ async function createUnsavedDraftViaUi(page, instruction) {
         getAttribute('data-builder-project-status').catch(() => null),
     });
   }
-  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.reviewCheckpoint).waitFor({ state: 'visible', timeout: 30_000 });
   return Object.freeze({ unsaved_draft_observed: true });
 }
 

@@ -643,7 +643,7 @@ exactObjectKeys(sideWorkspaceFilesBridge, [
 ]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  ...Array.from({ length: 31 }, () => 'invoke'),
+  ...Array.from({ length: 29 }, () => 'invoke'),
   'on',
   'removeListener',
   'on',
@@ -651,7 +651,7 @@ assert.deepEqual(rendererPropertyAccesses, [
   ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 14 }, () => 'invoke'),
+  ...Array.from({ length: 16 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -1353,10 +1353,13 @@ assert.match(packagedPreload, /clawfabric-builder:check-run:approve-current-draf
 assert.match(packagedPreload, /clawfabric-builder:check-run:skip-current-draft-check/u);
 assert.match(packagedPreload, /livePreview/u);
 assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
+assert.match(packagedPreload, /sideWorkspaceFiles/u);
+assert.match(packagedPreload, /clawfabric-builder:side-workspace-files:read-current-draft-tree/u);
+assert.match(packagedPreload, /clawfabric-builder:side-workspace-files:read-current-draft-content/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 47);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 49);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
