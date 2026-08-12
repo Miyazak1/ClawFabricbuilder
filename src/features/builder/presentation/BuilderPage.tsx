@@ -1973,6 +1973,11 @@ function BuilderSideWorkspaceBrowserToolbar({
     : livePreviewStatus?.status === 'ready'
     ? 'Project live preview'
     : 'Project preview';
+  const blockedSummary = livePreviewStatus !== null && livePreviewStatus.blocked_request_count > 0
+    ? `Blocked ${livePreviewStatus.blocked_request_count} unsafe preview request${
+      livePreviewStatus.blocked_request_count === 1 ? '' : 's'
+    }`
+    : null;
   return (
     <div
       aria-label="Browser preview controls"
@@ -2009,6 +2014,15 @@ function BuilderSideWorkspaceBrowserToolbar({
           value={addressLabel}
         />
       </label>
+      {blockedSummary !== null ? (
+        <span
+          className="cf-builder-side-workspace-browser-status"
+          data-builder-live-preview-blocked-count="true"
+          title={blockedSummary}
+        >
+          {blockedSummary}
+        </span>
+      ) : null}
       <span className="cf-builder-side-workspace-browser-tools" aria-label="Browser tools">
         <button
           aria-label="Start live preview"

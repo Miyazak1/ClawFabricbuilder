@@ -3209,6 +3209,8 @@ describe('BuilderPage v2', () => {
       .not.toBeNull();
     expect(artifactSidebar?.querySelector('[data-builder-live-preview-stop="true"]'))
       .not.toBeNull();
+    expect(artifactSidebar?.querySelector('[data-builder-live-preview-blocked-count="true"]'))
+      .toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')).toBeNull();
     expect(sideWorkspaceTabs?.textContent).toContain('Preview');
