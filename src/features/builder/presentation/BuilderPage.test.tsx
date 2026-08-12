@@ -3198,6 +3198,17 @@ describe('BuilderPage v2', () => {
       .not.toBeNull();
     expect(artifactSidebar?.querySelector<HTMLInputElement>('[data-builder-side-workspace-browser-address="true"] input')?.value)
       .toBe('Project preview');
+    expect(artifactSidebar?.querySelector('[data-builder-live-preview-panel="true"]')
+      ?.getAttribute('data-builder-live-preview-status'))
+      .toBe('unknown');
+    expect(artifactSidebar?.querySelector('[data-builder-result-placement="artifact"] .cf-builder-result-toolbar'))
+      .toBeNull();
+    expect(artifactSidebar?.querySelector('[data-builder-live-preview-start="true"]'))
+      .not.toBeNull();
+    expect(artifactSidebar?.querySelector('[data-builder-live-preview-reload="true"]'))
+      .not.toBeNull();
+    expect(artifactSidebar?.querySelector('[data-builder-live-preview-stop="true"]'))
+      .not.toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="permissions"]')).toBeNull();
     expect(sideWorkspaceTabs?.textContent).toContain('Preview');

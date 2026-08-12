@@ -1943,16 +1943,31 @@ function BuilderArtifactFilesPanel({
 
 function BuilderSideWorkspaceBrowserToolbar({
   addressMode = 'project_preview',
+  livePreviewOperation,
   livePreviewStatus,
   onExpandPreview,
+  onRequestLivePreview,
   onReloadLivePreview,
+  onStopLivePreview,
 }: Readonly<{
   addressMode?: 'new_tab' | 'project_preview';
+  livePreviewOperation?: 'starting' | 'reloading' | 'stopping' | null;
   livePreviewStatus: BuilderLivePreviewStatusProjection | null;
   onExpandPreview?: () => void;
+  onRequestLivePreview?: () => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
+  onStopLivePreview?: () => Promise<unknown> | void;
 }>) {
-  const canReload = typeof onReloadLivePreview === 'function' && livePreviewStatus?.can_reload === true;
+  const operation = livePreviewOperation ?? null;
+  const canStart = operation === null
+    && typeof onRequestLivePreview === 'function'
+    && livePreviewStatus?.can_start === true;
+  const canReload = operation === null
+    && typeof onReloadLivePreview === 'function'
+    && livePreviewStatus?.can_reload === true;
+  const canStop = operation === null
+    && typeof onStopLivePreview === 'function'
+    && livePreviewStatus?.can_stop === true;
   const addressLabel = addressMode === 'new_tab'
     ? ''
     : livePreviewStatus?.status === 'ready'
@@ -1975,6 +1990,7 @@ function BuilderSideWorkspaceBrowserToolbar({
           aria-label="Reload preview"
           disabled={!canReload}
           onClick={() => { void onReloadLivePreview?.(); }}
+          data-builder-live-preview-reload="true"
           title={canReload ? 'Reload preview' : 'Reload preview unavailable'}
           type="button"
         >
@@ -1994,6 +2010,26 @@ function BuilderSideWorkspaceBrowserToolbar({
         />
       </label>
       <span className="cf-builder-side-workspace-browser-tools" aria-label="Browser tools">
+        <button
+          aria-label="Start live preview"
+          data-builder-live-preview-start="true"
+          disabled={!canStart}
+          onClick={() => { void onRequestLivePreview?.(); }}
+          title={canStart ? 'Start live preview' : 'Start live preview unavailable'}
+          type="button"
+        >
+          <Play aria-hidden="true" className="size-3.5" />
+        </button>
+        <button
+          aria-label="Stop live preview"
+          data-builder-live-preview-stop="true"
+          disabled={!canStop}
+          onClick={() => { void onStopLivePreview?.(); }}
+          title={canStop ? 'Stop live preview' : 'Stop live preview unavailable'}
+          type="button"
+        >
+          <StopCircle aria-hidden="true" className="size-3.5" />
+        </button>
         <button aria-label="Downloads unavailable" disabled title="Downloads unavailable" type="button">
           <Download aria-hidden="true" className="size-3.5" />
         </button>
@@ -2633,11 +2669,16 @@ function BuilderArtifactSidebar({
             aria-label="Browser preview workspace"
             className="cf-builder-side-workspace-browser"
             data-builder-side-workspace-browser="true"
+            data-builder-live-preview-panel="true"
+            data-builder-live-preview-status={livePreviewStatus?.status ?? 'unknown'}
           >
             <BuilderSideWorkspaceBrowserToolbar
+              livePreviewOperation={livePreviewOperation}
               livePreviewStatus={livePreviewStatus}
               onExpandPreview={onExpandPreview}
+              onRequestLivePreview={onRequestLivePreview}
               onReloadLivePreview={onReloadLivePreview}
+              onStopLivePreview={onStopLivePreview}
             />
             <BuilderResultPanel
               livePreviewOperation={livePreviewOperation}

@@ -507,8 +507,6 @@ async function waitForMainProcessLivePreviewEvidence(app) {
 async function startLivePreviewAndReadEvidence(page, app) {
   await page.locator(SELECTORS.workspaceMenuButton).click().catch(() => {});
   await page.locator(SELECTORS.workspaceControlPreview).click().catch(() => {});
-  await waitForButtonEnabled(page, '[data-builder-preview-mode="live"]', 'live_preview_mode_disabled');
-  await page.locator('[data-builder-preview-mode="live"]').first().click();
   await waitForButtonEnabled(page, '[data-builder-live-preview-start="true"]', 'live_preview_start_disabled');
   await page.locator('[data-builder-live-preview-start="true"]').first().click();
   await waitForLiveStatus(page, 'ready', 'live_preview_not_ready');
