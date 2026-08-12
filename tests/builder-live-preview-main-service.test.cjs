@@ -175,6 +175,53 @@ function runtimeHarness() {
   return { calls, runtime };
 }
 
+function cleanupFailingRuntimeHarness() {
+  const selected = runtimeHarness();
+  return {
+    calls: selected.calls,
+    runtime: {
+      ...selected.runtime,
+      async start(input) {
+        selected.calls.push(['start', input.admission.selected_entry_path, input.static_server.entry_url]);
+        const view = {
+          id: 'view-cleanup-failure',
+          bounds: null,
+          setBounds(bounds) {
+            view.bounds = bounds;
+            selected.calls.push(['bounds', bounds]);
+          },
+        };
+        return {
+          handle_version: 'builder-live-preview-webcontents-view-handle.v1',
+          admission_id: input.admission.admission_id,
+          project_id: input.admission.project_id,
+          readStatus() {
+            return {
+              status: 'ready',
+              navigation_block_count: 0,
+              network_block_count: 0,
+              permission_block_count: 0,
+              download_block_count: 0,
+              window_open_block_count: 0,
+            };
+          },
+          readMainOnlyWebContentsViewForAttachment() {
+            return view;
+          },
+          async reload() {
+            selected.calls.push(['reload']);
+          },
+          async stop() {
+            selected.calls.push(['stop']);
+            await input.static_server.stop();
+            throw new Error('private cleanup failure');
+          },
+        };
+      },
+    },
+  };
+}
+
 function sourceServiceHarness({ fail = false } = {}) {
   const calls = [];
   const service = {
@@ -282,6 +329,25 @@ test('shutdown stops active preview before disposing runtime', async () => {
 
   assert.deepEqual(selected.window.calls.map((item) => item[0]), ['add', 'remove']);
   assert.deepEqual(selected.runtime.calls.slice(-2).map((item) => item[0]), ['stop', 'dispose']);
+});
+
+test('shutdown reports cleanup_required without blocking app quit', async () => {
+  const source = sourceServiceHarness();
+  const runtime = cleanupFailingRuntimeHarness();
+  const window = windowHarness();
+  const service = createBuilderLivePreviewMainService({
+    current_draft_source_service: source.service,
+    webcontents_view_runtime: runtime.runtime,
+    mainWindowRef: () => window.window,
+    now_ms() { return 2_000; },
+  });
+  await service.request_current_draft_live_preview(request());
+
+  const result = await service.shutdown();
+
+  assert.deepEqual(result, { shutdown: true, cleanup_required: true });
+  assert.deepEqual(window.calls.map((item) => item[0]), ['add', 'remove']);
+  assert.deepEqual(runtime.calls.slice(-2).map((item) => item[0]), ['stop', 'dispose']);
 });
 
 test('main service source stays preview-specific without provider, save, or package authority', () => {

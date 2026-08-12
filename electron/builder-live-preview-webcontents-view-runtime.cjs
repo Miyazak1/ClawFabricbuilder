@@ -1,5 +1,6 @@
 'use strict';
 
+const { setTimeout: delay } = require('node:timers/promises');
 const { types: utilTypes } = require('node:util');
 
 const {
@@ -94,6 +95,7 @@ const WEB_PREFERENCES = Object.freeze({
 });
 const PREVIEW_ORIGIN_PATTERN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u;
 const PREVIEW_URL_PATTERN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/[A-Za-z0-9._~!$&'()*+,;=:@/%-]*$/u;
+const CLEANUP_STEP_TIMEOUT_MS = 1_000;
 const ERROR_MESSAGES = Object.freeze({
   builder_live_preview_webcontents_view_runtime_invalid:
     'Builder live preview browser runtime is unavailable.',
@@ -396,6 +398,17 @@ function statusFor(state) {
   return freezeDeep(status);
 }
 
+async function boundedCleanup(operation) {
+  try {
+    return await Promise.race([
+      operation(),
+      delay(CLEANUP_STEP_TIMEOUT_MS).then(() => false),
+    ]);
+  } catch {
+    return false;
+  }
+}
+
 async function stopHandle(state) {
   if (state.status === 'stopped') return statusFor(state);
   state.status = 'stopped';
@@ -408,16 +421,14 @@ async function stopHandle(state) {
   } catch {
     cleanupFailed = true;
   }
-  try {
-    await Reflect.apply(state.clearStorageData, state.electronSession, [{}]);
-  } catch {
-    cleanupFailed = true;
-  }
-  try {
-    await Reflect.apply(state.stopServer, undefined, []);
-  } catch {
-    cleanupFailed = true;
-  }
+  const storageCleared = await boundedCleanup(
+    () => Reflect.apply(state.clearStorageData, state.electronSession, [{}]),
+  );
+  if (storageCleared === false) cleanupFailed = true;
+  const serverStopped = await boundedCleanup(
+    () => Reflect.apply(state.stopServer, undefined, []),
+  );
+  if (serverStopped === false) cleanupFailed = true;
   state.activeMap.delete(state.admission_id);
   if (cleanupFailed) fail('builder_live_preview_webcontents_view_runtime_cleanup_required');
   return statusFor(state);

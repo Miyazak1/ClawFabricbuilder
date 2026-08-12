@@ -420,9 +420,18 @@ function createBuilderLivePreviewMainService(rawOptions) {
     stop_current_live_preview: stop,
     read_current_live_preview_status: readStatus,
     async shutdown() {
-      await stopActive();
-      await disposeRuntime();
-      return freezeDeep({ shutdown: true });
+      let cleanupRequired = false;
+      try {
+        await stopActive();
+      } catch {
+        cleanupRequired = true;
+      }
+      try {
+        await disposeRuntime();
+      } catch {
+        cleanupRequired = true;
+      }
+      return freezeDeep({ shutdown: true, cleanup_required: cleanupRequired });
     },
   });
 }

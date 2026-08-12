@@ -57,7 +57,7 @@ function staticServer(value = admission(), overrides = {}) {
   return server;
 }
 
-function electronHarness({ loadFailure = false, clearFailure = false } = {}) {
+function electronHarness({ loadFailure = false, clearFailure = false, clearNeverResolves = false } = {}) {
   const views = [];
   const sessions = [];
   class WebContentsView {
@@ -118,8 +118,10 @@ function electronHarness({ loadFailure = false, clearFailure = false } = {}) {
           handlers.set(eventName, handler);
         },
         async clearStorageData(options) {
-          if (clearFailure) throw new Error('private clear failure');
           item.clearStorageCalls.push(options);
+          if (clearNeverResolves) return new Promise(() => {});
+          if (clearFailure) throw new Error('private clear failure');
+          return undefined;
         },
       };
       sessions.push(item);
@@ -326,6 +328,23 @@ test('reload and stop stay main-owned and clean up view, session, and static ser
   assert.deepEqual(SERVER_CALLS.get(server), ['stop']);
   assert.equal(runtime.activeCount(), 0);
   assert.equal((await handle.stop()).status, 'stopped');
+});
+
+test('stop does not hang when storage cleanup stalls', async () => {
+  const previewAdmission = admission();
+  const server = staticServer(previewAdmission);
+  const harness = electronHarness({ clearNeverResolves: true });
+  const runtime = runtimeFor(harness);
+  const handle = await runtime.start({ admission: previewAdmission, static_server: server });
+
+  await assertFixedAsyncError(
+    () => handle.stop(),
+    'builder_live_preview_webcontents_view_runtime_cleanup_required',
+  );
+  assert.equal(harness.views[0].webContents.isDestroyed(), true);
+  assert.deepEqual(harness.sessions[0].clearStorageCalls, [{}]);
+  assert.deepEqual(SERVER_CALLS.get(server), ['stop']);
+  assert.equal(runtime.activeCount(), 0);
 });
 
 test('fails closed on stale admissions, duplicate previews, server drift, and load failures', async () => {
