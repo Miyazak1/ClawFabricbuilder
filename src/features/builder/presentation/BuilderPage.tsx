@@ -96,7 +96,10 @@ import {
   type BuilderComposerContextStatus,
   type BuilderComposerMode,
 } from './BuilderComposer';
-import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
+import {
+  BuilderDraftWorkspaceActions,
+  BuilderReviewCheckpoint,
+} from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
 import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
 import { builderChangesSummary, builderReviewPreviewStatus } from './builderReviewText';
@@ -1513,7 +1516,7 @@ function standaloneAgentActivity(
   projection: BuilderAgentActivityProjectionWire | null,
   entries: readonly ActivityEntry[],
 ): BuilderAgentActivityProjectionWire | null {
-  if (projection?.current.phase !== 'running_checks' || projection.current.status !== 'active') return null;
+  if (projection === null || projection.current.status === 'complete') return null;
   const alreadyShown = entries.some((entry) => (
     entry.entry_kind === 'work_status'
     && entry.turnId === projection.current.turn_id
@@ -3709,25 +3712,15 @@ export function BuilderPage({
   })();
   const draftReview = hasUnsavedDraft ? (
     <BuilderReviewCheckpoint
-      canReject={canReject}
-      canSave={canSave}
       checkRunOperation={checkRunOperation}
       checkRunOutcome={checkRunOutcome}
       checkRunProfiles={checkRunProfiles}
       checkRunStatus={checkRunStatus}
       changes={changes}
       checkpointRef={draftReviewRef}
-      discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
       hasContent={hasContent}
-      onRejectDraft={onRejectDraft}
-      onSave={onSave}
       preview={preview}
       reviewState={reviewState}
-      saveLabel={status === 'saving'
-        ? 'Saving...'
-        : status === 'save_unknown'
-          ? 'Try Save again'
-          : 'Save version'}
     />
   ) : null;
 
@@ -3889,7 +3882,7 @@ export function BuilderPage({
       preview={preview}
     />
   ) : null;
-  const workspaceControls = openLocationProjectId !== null || hasArtifactControls ? (
+  const workspaceControls = openLocationProjectId !== null || hasArtifactControls || hasUnsavedDraft ? (
     <div
       aria-label="Workspace artifact controls"
       className="cf-builder-workspace-controls"
@@ -3897,6 +3890,21 @@ export function BuilderPage({
       data-builder-workspace-drawer-visible={showArtifactSidebar ? 'true' : 'false'}
       role="group"
     >
+      {hasUnsavedDraft ? (
+        <BuilderDraftWorkspaceActions
+          canReject={canReject}
+          canSave={canSave}
+          discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
+          onRejectDraft={onRejectDraft}
+          onSave={onSave}
+          reviewState={reviewState}
+          saveLabel={status === 'saving'
+            ? 'Saving...'
+            : status === 'save_unknown'
+              ? 'Try Save again'
+              : 'Save version'}
+        />
+      ) : null}
       {openLocationProjectId !== null ? (
         <button
           aria-label="Open location"

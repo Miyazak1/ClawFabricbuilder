@@ -3283,6 +3283,52 @@ test('starts draft continuation work only from the current pending candidate hea
   }
 });
 
+test('consumes a queued follow-up when it continues the current unsaved draft', () => {
+  const item = fixture();
+  try {
+    const context = begin(item.service);
+    const queued = item.service.record_queued_followup({
+      context,
+      message: 'Make the pending draft responsive.',
+    });
+    const queuedEvent = queued.events.at(-1);
+    const candidate = candidateResult(queued);
+    const terminal = item.service.complete_candidate({
+      context: queued,
+      candidate_result: candidate,
+      assistant_text: 'A timer draft is ready to review.',
+    });
+    const admission = draftContinuationAdmission(queued, terminal, candidate);
+
+    const continuation = item.service.begin_draft_continuation_work({
+      admission,
+      instruction: 'Make the pending draft responsive.',
+      request_digest: DRAFT_CONTINUATION_REQUEST_DIGEST,
+      queued_followup: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        message_id: queuedEvent.payload.message.message_id,
+      },
+    });
+
+    assert.deepEqual(continuation.events.slice(-3).map((event) => event.event_type), [
+      'turn_submitted',
+      'turn_followup_consumed',
+      'run_started',
+    ]);
+    const consumed = continuation.events.at(-2);
+    assert.equal(consumed.payload.message_id, queuedEvent.payload.message.message_id);
+    assert.equal(consumed.payload.consuming_turn_id, continuation.ids.turn_id);
+    assert.deepEqual(
+      item.service.read_stream({ project_id: PROJECT_ID }).conversation.items.slice(-3)
+        .map((entry) => entry.item_kind),
+      ['user_message', 'queued_followup_consumed', 'run_started'],
+    );
+  } finally {
+    item.close();
+  }
+});
+
 test('rejects draft continuation work after head drift or candidate review', () => {
   const staleItem = fixture();
   const rejectedItem = fixture(300, 3_000);

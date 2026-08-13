@@ -7,7 +7,10 @@ import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChange
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
-import { BuilderReviewCheckpoint } from './BuilderReviewCheckpoint';
+import {
+  BuilderDraftWorkspaceActions,
+  BuilderReviewCheckpoint,
+} from './BuilderReviewCheckpoint';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ container: HTMLDivElement; root: Root }> = [];
@@ -133,29 +136,21 @@ function checkOutcome(state: 'running' | 'unavailable'): BuilderCheckRunOutcomeP
 }
 
 describe('BuilderReviewCheckpoint', () => {
-  it('renders compact draft decision actions without repeating artifact navigation', () => {
-    const onRejectDraft = vi.fn();
-    const onSave = vi.fn();
+  it('renders compact review evidence without mutation actions in the chat flow', () => {
     const checkpointRef = createRef<HTMLElement>();
     const container = render(
       <BuilderReviewCheckpoint
-        canReject
-        canSave
         changes={changes()}
         checkpointRef={checkpointRef}
-        discardLabel="Discard draft"
         hasContent
-        onRejectDraft={onRejectDraft}
-        onSave={onSave}
         preview={null}
         reviewState={reviewState('ready')}
-        saveLabel="Save version"
       />,
     );
 
     const checkpoint = container.querySelector('[data-builder-review-checkpoint="true"]');
     expect(checkpoint).toBe(checkpointRef.current);
-    expect(checkpoint?.getAttribute('data-builder-review-layout')).toBe('compact-decision-actions');
+    expect(checkpoint?.getAttribute('data-builder-review-layout')).toBe('status-only');
     expect(container.querySelector('[data-builder-review-title="true"]')?.textContent)
       .toBe('Review before saving');
     expect(container.querySelector('[data-builder-review-summary="true"]')?.textContent)
@@ -167,66 +162,51 @@ describe('BuilderReviewCheckpoint', () => {
     expect(container.querySelector('[data-builder-review-open-preview="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-review-open-changes="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
 
+  it('keeps draft mutation commands together in the workspace action group', () => {
+    const onRejectDraft = vi.fn();
+    const onSave = vi.fn();
+    const container = render(
+      <BuilderDraftWorkspaceActions
+        canReject
+        canSave
+        discardLabel="Discard draft"
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        reviewState={reviewState('ready')}
+        saveLabel="Save version"
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-workspace-draft-actions="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')?.textContent).toContain('Save version');
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
     click(container, '[data-builder-review-more="true"]');
+    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent).toContain('Discard draft');
     click(container, '[data-builder-discard-draft="true"]');
     click(container, '[data-builder-save-version="true"]');
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps draft mutation actions disabled while preserving the visible labels', () => {
+  it('keeps blocked Save out of the workspace group while preserving discard', () => {
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
     const container = render(
-      <BuilderReviewCheckpoint
-        canReject={false}
-        canSave={false}
-        changes={changes({ comparison_kind: 'no_draft', total_count: 0, added_count: 0, modified_count: 0 })}
-        discardLabel="Discarding..."
-        hasContent={false}
-        onRejectDraft={onRejectDraft}
-        onSave={onSave}
-        preview={null}
-        reviewState={reviewState('blocked')}
-        saveLabel="Saving..."
-      />,
-    );
-
-    expect(container.querySelector('[data-builder-save-version="true"]')?.textContent)
-      .toContain('Saving...');
-    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
-      .toContain('verified draft checkpoint');
-    click(container, '[data-builder-review-more="true"]');
-    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
-      .toContain('Discarding...');
-    click(container, '[data-builder-discard-draft="true"]');
-    click(container, '[data-builder-save-version="true"]');
-    expect(onRejectDraft).not.toHaveBeenCalled();
-    expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it('keeps blocked Save out of the chat flow until review is actually saveable', () => {
-    const onRejectDraft = vi.fn();
-    const onSave = vi.fn();
-    const container = render(
-      <BuilderReviewCheckpoint
+      <BuilderDraftWorkspaceActions
         canReject
         canSave={false}
-        changes={changes()}
         discardLabel="Discard draft"
-        hasContent
         onRejectDraft={onRejectDraft}
         onSave={onSave}
-        preview={null}
         reviewState={reviewState('blocked')}
         saveLabel="Save version"
       />,
     );
 
-    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
-      .toContain('verified draft checkpoint');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     click(container, '[data-builder-review-more="true"]');
     expect(container.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
@@ -236,16 +216,12 @@ describe('BuilderReviewCheckpoint', () => {
   it('summarizes automatic discovered checks without exposing a run button', () => {
     const container = render(
       <BuilderReviewCheckpoint
-        canReject
-        canSave
         changes={changes()}
         checkRunProfiles={[checkProfile]}
         checkRunStatus={passedCheck}
-        discardLabel="Discard draft"
         hasContent
         preview={null}
         reviewState={reviewState('ready')}
-        saveLabel="Save version"
       />,
     );
 
@@ -258,16 +234,12 @@ describe('BuilderReviewCheckpoint', () => {
   it('restores running and unavailable outcomes from durable task activity', () => {
     const running = render(
       <BuilderReviewCheckpoint
-        canReject
-        canSave={false}
         changes={changes()}
         checkRunOutcome={checkOutcome('running')}
         checkRunProfiles={[checkProfile]}
-        discardLabel="Discard draft"
         hasContent
         preview={null}
         reviewState={reviewState('ready')}
-        saveLabel="Save version"
       />,
     );
     expect(running.querySelector('[data-builder-check-run-status="running"]')?.textContent)
@@ -276,16 +248,12 @@ describe('BuilderReviewCheckpoint', () => {
 
     const unavailable = render(
       <BuilderReviewCheckpoint
-        canReject
-        canSave={false}
         changes={changes()}
         checkRunOutcome={checkOutcome('unavailable')}
         checkRunProfiles={[checkProfile]}
-        discardLabel="Discard draft"
         hasContent
         preview={null}
         reviewState={reviewState('ready')}
-        saveLabel="Save version"
       />,
     );
     expect(unavailable.querySelector('[data-builder-check-run-status="unavailable"]')?.textContent)

@@ -700,9 +700,11 @@ export function createBuilderDesktopCodeGeneratorPort(
       }]).then(unwrapGenerationEnvelope);
     },
     continueDraft(request: Parameters<BuilderCodeGeneratorPort['continueDraft']>[0]) {
+      const queued = queuedFollowupPayload(request.queued_followup);
       return callBridge(bridge, bridge.continueDraft, [{
         draft_id: safeDraftId(request.draft_id),
         instruction: request.instruction,
+        ...(queued === undefined ? {} : { queued_followup: queued }),
       }]).then(unwrapGenerationEnvelope);
     },
     generateApprovedPlan(request: Parameters<BuilderCodeGeneratorPort['generateApprovedPlan']>[0]) {

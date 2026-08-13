@@ -248,6 +248,21 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(continueDraft.mock.calls[0][0]).not.toHaveProperty('source_tree');
     expect(result).toEqual(draft);
     expect(Object.isFrozen(result)).toBe(true);
+    const queuedFollowup = Object.freeze({
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    });
+    await port.continueDraft({
+      draft_id: DRAFT_ID,
+      instruction: request.instruction,
+      queued_followup: queuedFollowup,
+    });
+    expect(continueDraft).toHaveBeenLastCalledWith({
+      draft_id: DRAFT_ID,
+      instruction: request.instruction,
+      queued_followup: queuedFollowup,
+    });
     expect(() => port.continueDraft({
       draft_id: 'builder-generation-draft:not-a-draft-id',
       instruction: request.instruction,

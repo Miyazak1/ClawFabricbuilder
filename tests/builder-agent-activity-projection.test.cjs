@@ -177,7 +177,7 @@ test('projects terminal plan and review facts into waiting, ready, and blocked s
   }));
   assert.equal(notChecked.current.phase, 'waiting_for_check');
   assert.equal(notChecked.current.status, 'waiting');
-  assert.equal(notChecked.current.label, 'Ready for review');
+  assert.equal(notChecked.current.label, 'Checks pending');
   assert.equal(notChecked.current.summary, 'Builder has not finished checking this draft yet.');
 
   const checkRunning = projectBuilderAgentActivity(input({

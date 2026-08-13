@@ -22,6 +22,8 @@
     "verify:packaged-canary": "node scripts/verify-packaged-canary-default.cjs",
     "verify:packaged-live-preview": "node scripts/verify-packaged-live-preview-canary.cjs",
     "verify:packaged-plan-mode": "node scripts/verify-packaged-plan-mode-canary.cjs",
+    "verify:packaged-active-followup": "node scripts/verify-packaged-active-followup-canary.cjs",
+    "verify:packaged-experience": "npm run verify:packaged-canary && npm run verify:packaged-plan-mode && npm run verify:packaged-active-followup && npm run verify:packaged-live-preview",
     "verify:packaged-canary:deepseek": "node scripts/verify-deepseek-packaged-canary.cjs",
     "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary && npm run verify:packaged-plan-mode",
     "verify:release:deepseek": "npm run verify:release && npm run verify:packaged-canary:deepseek",

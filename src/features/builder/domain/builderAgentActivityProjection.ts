@@ -60,7 +60,7 @@ const COPY = Object.freeze({
   editing: ['active', 'Changing files'],
   running_local_step: ['active', 'Running local step'],
   running_checks: ['active', 'Running checks'],
-  waiting_for_check: ['waiting', 'Ready for review'],
+  waiting_for_check: ['waiting', 'Checks pending'],
   preparing_review: ['active', 'Preparing review'],
   responding: ['active', 'Writing response'],
   stopping: ['active', 'Stopping work'],

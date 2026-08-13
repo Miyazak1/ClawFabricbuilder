@@ -1051,6 +1051,7 @@ export function createBuilderProjectController(
           : await dependencies.generator.continueDraft({
             draft_id: retainedDraft.draft_id,
             instruction: request.instruction,
+            ...(queuedFollowup === null ? {} : { queued_followup: queuedFollowup }),
           });
         if (isExplanationResult(result)) {
           const answered = await sanitizeBuilderGenerationAnswer(result, request);

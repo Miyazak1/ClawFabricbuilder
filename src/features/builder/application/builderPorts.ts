@@ -182,7 +182,11 @@ export interface BuilderCodeGeneratorPort {
   ): Promise<BuilderSemanticRouteClassification>;
   submit(request: BuilderGenerationTurnRequest): Promise<unknown>;
   generate(request: BuilderGenerationRequest): Promise<unknown>;
-  continueDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;
+  continueDraft(request: Readonly<{
+    draft_id: string;
+    instruction: string;
+    queued_followup?: BuilderQueuedFollowupReference | null;
+  }>): Promise<unknown>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<unknown>;
   proposePlan(request: BuilderGenerationRequest): Promise<unknown>;
   preparePlanSourceReadApproval(

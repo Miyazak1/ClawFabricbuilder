@@ -3258,6 +3258,23 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(Object.hasOwn(continuedDrafts[0], 'existing_project_id'), false);
   assert.equal(Object.hasOwn(continuedDrafts[0], 'request_digest'), false);
   assert.equal(Object.hasOwn(continuedDrafts[0], 'source_tree'), false);
+  await ipcMain.handlers.get(CONTINUE_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      draft_id: "builder-generation-draft:${'2'.repeat(64)}",
+      instruction: "Run the queued draft follow-up.",
+      queued_followup: {
+        turn_id: "builder-turn:123e4567-e89b-42d3-a456-426614174000",
+        run_id: "builder-run:123e4567-e89b-42d3-a456-426614174000",
+        message_id: "builder-message:123e4567-e89b-42d3-a456-426614174088"
+      }
+    })`, runtimeModule.context),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(continuedDrafts[1].queued_followup)), {
+    turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+    message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+  });
   await ipcMain.handlers.get(PROPOSE_PLAN_CHANNEL)(
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Plan this saved-project change." })', runtimeModule.context),

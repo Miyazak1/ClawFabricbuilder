@@ -10,37 +10,109 @@ import { builderChangesSummary, builderReviewPreviewStatus } from './builderRevi
 
 export type BuilderReviewCheckpointProps = Readonly<{
   changes: BuilderSourceTreeChanges;
-  canReject: boolean;
-  canSave: boolean;
   checkRunOperation?: 'loading' | 'running' | 'skipping' | 'failed' | null;
   checkRunOutcome?: BuilderCheckRunOutcomeProjectionWire | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
-  discardLabel: string;
   hasContent: boolean;
-  onRejectDraft?: () => void;
-  onSave?: () => void;
   preview: BuilderSourceTreePreviewProjection | null;
   reviewState: BuilderReviewStateProjectionWire | null;
-  saveLabel: string;
   checkpointRef?: Ref<HTMLElement>;
 }>;
 
-export function BuilderReviewCheckpoint({
-  changes,
+export type BuilderDraftWorkspaceActionsProps = Readonly<{
+  canReject: boolean;
+  canSave: boolean;
+  discardLabel: string;
+  onRejectDraft?: () => void;
+  onSave?: () => void;
+  reviewState: BuilderReviewStateProjectionWire | null;
+  saveLabel: string;
+}>;
+
+export function BuilderDraftWorkspaceActions({
   canReject,
   canSave,
+  discardLabel,
+  onRejectDraft,
+  onSave,
+  reviewState,
+  saveLabel,
+}: BuilderDraftWorkspaceActionsProps) {
+  const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
+  const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
+  const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
+  const showDiscardAction = typeof onRejectDraft === 'function';
+  return (
+    <div
+      aria-label="Draft actions"
+      className="cf-builder-workspace-draft-actions"
+      data-builder-workspace-draft-actions="true"
+      role="group"
+    >
+      {showSaveAction ? (
+        <button
+          className="cf-builder-primary-button cf-builder-workspace-save-button"
+          data-builder-save-version="true"
+          disabled={!canSave}
+          onClick={onSave}
+          type="button"
+        >
+          <Save aria-hidden="true" className="size-3.5" />
+          {saveLabel}
+        </button>
+      ) : null}
+      {showDiscardAction ? (
+        <div className="cf-builder-workspace-draft-more-wrap">
+          <button
+            aria-expanded={secondaryActionsOpen}
+            aria-haspopup="menu"
+            aria-label="More review actions"
+            className="cf-builder-workspace-control-button"
+            data-builder-review-more="true"
+            onClick={() => setSecondaryActionsOpen((open) => !open)}
+            title="More review actions"
+            type="button"
+          >
+            <Ellipsis aria-hidden="true" className="size-3.5" />
+          </button>
+          {secondaryActionsOpen ? (
+            <div
+              className="cf-builder-review-more-menu cf-builder-workspace-draft-more-menu"
+              data-builder-review-more-menu="true"
+              role="menu"
+            >
+              <button
+                className="cf-builder-review-menu-item cf-builder-review-danger-action"
+                data-builder-discard-draft="true"
+                disabled={!canReject}
+                onClick={() => {
+                  setSecondaryActionsOpen(false);
+                  onRejectDraft?.();
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <Trash2 aria-hidden="true" className="size-3.5" />
+                {discardLabel}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function BuilderReviewCheckpoint({
+  changes,
   checkRunOperation = null,
   checkRunOutcome = null,
   checkRunProfiles = [],
   checkRunStatus = null,
-  discardLabel,
   hasContent,
-  onRejectDraft,
-  onSave,
   preview,
   reviewState,
-  saveLabel,
   checkpointRef,
 }: BuilderReviewCheckpointProps) {
   const restoredRunning = checkRunOperation === null && checkRunOutcome?.state === 'running';
@@ -74,16 +146,11 @@ export function BuilderReviewCheckpoint({
       : recordedStatus !== null
         ? CircleX
         : null;
-  const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
-  const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
-  const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
-  const showDiscardAction = typeof onRejectDraft === 'function';
-  const showSecondaryActions = showDiscardAction;
   return (
     <section
       aria-label="Draft review"
       className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="compact-decision-actions"
+      data-builder-review-layout="status-only"
       data-builder-review-checkpoint="true"
       ref={checkpointRef}
       tabIndex={-1}
@@ -133,64 +200,6 @@ export function BuilderReviewCheckpoint({
             {checkStatusText}
           </span>
         </div>
-      </div>
-      <div
-        className="cf-builder-review-actions"
-        data-builder-draft-review-actions="true"
-        data-builder-review-actions="true"
-      >
-        {showSecondaryActions ? (
-          <div className="cf-builder-review-more-wrap">
-            <button
-              aria-expanded={secondaryActionsOpen}
-              aria-haspopup="menu"
-              aria-label="More review actions"
-              className="cf-builder-review-more-button inline-flex min-h-8 shrink-0 items-center justify-center px-2 text-xs font-medium"
-              data-builder-review-more="true"
-              onClick={() => setSecondaryActionsOpen((open) => !open)}
-              title="More review actions"
-              type="button"
-            >
-              <Ellipsis aria-hidden="true" className="size-3.5" />
-            </button>
-            {secondaryActionsOpen ? (
-              <div
-                className="cf-builder-review-more-menu"
-                data-builder-review-more-menu="true"
-                role="menu"
-              >
-                {showDiscardAction ? (
-                  <button
-                    className="cf-builder-review-menu-item cf-builder-review-danger-action"
-                    data-builder-discard-draft="true"
-                    disabled={!canReject}
-                    onClick={() => {
-                      setSecondaryActionsOpen(false);
-                      onRejectDraft?.();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" className="size-3.5" />
-                    {discardLabel}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {showSaveAction ? (
-          <button
-            className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-            data-builder-save-version="true"
-            disabled={!canSave}
-            onClick={onSave}
-            type="button"
-          >
-            <Save aria-hidden="true" className="size-3.5" />
-            {saveLabel}
-          </button>
-        ) : null}
       </div>
     </section>
   );

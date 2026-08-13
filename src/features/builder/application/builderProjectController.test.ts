@@ -935,6 +935,27 @@ describe('Builder project controller v2', () => {
     expect(result.draft?.project_id).toBe(PROJECT_ID);
   });
 
+  it('keeps a queued active-run reference on unsaved draft continuation', async () => {
+    const { continueDraft, controller, submit } = setup();
+    await controller.open(PROJECT_ID);
+    await controller.submit('Make a timer.');
+    submit.mockClear();
+    const queuedFollowup = Object.freeze({
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+    });
+
+    await controller.submit('Make it responsive.', queuedFollowup);
+
+    expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: DRAFT_ID,
+      instruction: 'Make it responsive.',
+      queued_followup: queuedFollowup,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it('answers while keeping the current unsaved draft review available', async () => {
     const { answer, answerDraft, continueDraft, controller, saveDraft } = setup();
     await controller.open(PROJECT_ID);

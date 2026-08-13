@@ -422,12 +422,23 @@ function publicInstructionRequest(rawRequest) {
 
 function draftContinuationRequest(rawRequest) {
   try {
-    const descriptors = exactDataDescriptors(rawRequest, ['draft_id', 'instruction']);
+    if (!isPlainObject(rawRequest)) throw new Error();
+    const keys = Reflect.ownKeys(rawRequest);
+    const hasQueuedFollowup = keys.includes('queued_followup');
+    const descriptors = exactDataDescriptors(
+      rawRequest,
+      hasQueuedFollowup
+        ? ['draft_id', 'instruction', 'queued_followup']
+        : ['draft_id', 'instruction'],
+    );
     const draftId = descriptors.draft_id.value;
     if (typeof draftId !== 'string' || !DRAFT_ID_PATTERN.test(draftId)) throw new Error();
     return Object.freeze({
       draft_id: draftId,
       instruction: descriptors.instruction.value,
+      queued_followup: hasQueuedFollowup
+        ? queuedFollowupReference(descriptors.queued_followup.value)
+        : null,
     });
   } catch {
     throw new BuilderGenerationKernelError('builder_generation_request_invalid');
@@ -1615,6 +1626,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return await service.generate_draft_continuation({
           draft_id: continuationRequest.draft_id,
           instruction: request.instruction,
+          ...(continuationRequest.queued_followup === null
+            ? {}
+            : { queued_followup: continuationRequest.queued_followup }),
         });
       } finally {
         const remaining = (activeRequests.get(requestId) ?? 1) - 1;

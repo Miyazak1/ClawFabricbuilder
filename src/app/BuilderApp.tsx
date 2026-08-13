@@ -581,6 +581,9 @@ type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   state: 'pending' | 'approving' | 'failed';
 }>;
 
+const CHECK_RUN_DISCOVERY_MAX_ATTEMPTS = 12;
+const CHECK_RUN_DISCOVERY_RETRY_DELAY_MS = 100;
+
 function latestRestorableDraft(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
   projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -1535,18 +1538,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       setCheckRunOperation('loading');
-      try {
-        const result = await ports.checkRun.readCurrentDraftAvailableChecks({ draft_id: currentDraftId });
-        if (!active
-          || checkRunRequestSequenceRef.current !== requestSequence
-          || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
-        setCheckRunAvailable(result);
-        setCheckRunOperation(null);
-      } catch {
-        if (!active
-          || checkRunRequestSequenceRef.current !== requestSequence
-          || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
-        setCheckRunOperation('failed');
+      for (let attempt = 1; attempt <= CHECK_RUN_DISCOVERY_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const result = await ports.checkRun.readCurrentDraftAvailableChecks({ draft_id: currentDraftId });
+          if (!active
+            || checkRunRequestSequenceRef.current !== requestSequence
+            || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
+          setCheckRunAvailable(result);
+          setCheckRunOperation(null);
+          return;
+        } catch {
+          if (!active
+            || checkRunRequestSequenceRef.current !== requestSequence
+            || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
+          if (attempt === CHECK_RUN_DISCOVERY_MAX_ATTEMPTS) {
+            setCheckRunOperation('failed');
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, CHECK_RUN_DISCOVERY_RETRY_DELAY_MS);
+          });
+        }
       }
     };
     void loadAvailableChecks();
@@ -1847,6 +1859,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [conversation]);
 
+  const runBuildInstruction = useCallback((
+    instruction: string,
+    composerMode: BuilderComposerMode | null,
+    queuedFollowup: BuilderQueuedFollowupReference | null,
+  ) => {
+    if (
+      composerMode === 'build'
+      && queuedFollowup === null
+      && projectSnapshotRef.current.draft === null
+    ) {
+      return project.generate(instruction);
+    }
+    return project.submit(instruction, queuedFollowup);
+  }, [project]);
+
   const createWorkspaceProject = useCallback(async (projectTitle: string) => {
     if (projectTitle.trim().length === 0) return;
     if (submitInFlightRef.current) return;
@@ -1967,7 +1994,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setComposerRouteDecision(routeEvidence);
       setIdea('');
       setLiveOutput(null);
-      const buildResult = await project.submit(submittedIdea, pendingBuild.queuedFollowup);
+      const buildResult = await runBuildInstruction(
+        submittedIdea,
+        pendingBuild.composerMode,
+        pendingBuild.queuedFollowup,
+      );
       if (workspaceEpochRef.current !== commandEpoch) return;
       if (!shouldClearSubmittedIdea(buildResult)) setIdea(submittedIdea);
       await readActivityAfterTerminal(buildResult, commandEpoch);
@@ -1983,6 +2014,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     project,
     publishSubmitInFlight,
     readActivityAfterTerminal,
+    runBuildInstruction,
   ]);
 
   const refreshActiveConversation = useCallback(async (commandEpoch: number) => {
@@ -2708,7 +2740,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setLiveOutput(null);
       const shouldSubmitToConversationWorkPath = decision.dispatch === 'build';
       const result = shouldSubmitToConversationWorkPath
-        ? await project.submit(submittedIdea, options.queuedFollowup ?? null)
+        ? await runBuildInstruction(
+          submittedIdea,
+          activeComposerMode,
+          options.queuedFollowup ?? null,
+        )
         : await project.answer(submittedIdea, options.queuedFollowup ?? null);
       if (workspaceEpochRef.current !== commandEpoch) return;
       const answerTerminalProjectId = shouldSubmitToConversationWorkPath
@@ -2742,6 +2778,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     publishLockedComposerSubmit,
     publishSubmitInFlight,
     readActivityAfterTerminal,
+    runBuildInstruction,
     reviewPlan,
     submitPlanInstruction,
   ]);
@@ -2970,7 +3007,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         routeTaskId,
       ));
       setIdea('');
-      const result = await project.submit(prompt.instruction, prompt.queuedFollowup);
+      const result = await runBuildInstruction(
+        prompt.instruction,
+        prompt.composerMode,
+        prompt.queuedFollowup,
+      );
       if (workspaceEpochRef.current !== commandEpoch) return;
       if (!shouldClearSubmittedIdea(result)) setIdea(prompt.instruction);
       await readActivityAfterTerminal(result, commandEpoch);
@@ -2990,9 +3031,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     createComposerRouteEvidence,
     continueApprovedPlanAfterWriteApproval,
     ports.generator,
-    project,
     publishSubmitInFlight,
     readActivityAfterTerminal,
+    runBuildInstruction,
   ]);
 
   const dismissPlanSourceReadApproval = useCallback(() => {

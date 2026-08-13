@@ -2717,10 +2717,17 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   function sanitizeDraftContinuationGenerationRequest(rawRequest) {
-    exactObject(rawRequest, ['draft_id', 'instruction']);
+    const keys = Reflect.ownKeys(rawRequest);
+    const hasQueuedFollowup = keys.includes('queued_followup');
+    exactObject(rawRequest, hasQueuedFollowup
+      ? ['draft_id', 'instruction', 'queued_followup']
+      : ['draft_id', 'instruction']);
     return freezeDeep({
       draft_id: safeDraftId(valueAt(rawRequest, 'draft_id')),
       instruction: valueAt(rawRequest, 'instruction'),
+      queued_followup: hasQueuedFollowup
+        ? sanitizeQueuedFollowupReference(valueAt(rawRequest, 'queued_followup'))
+        : null,
     });
   }
 
@@ -2957,6 +2964,9 @@ function createBuilderGenerationMainService(rawOptions) {
           admission: continuation.admission,
           instruction: request.instruction,
           request_digest: request.request_digest,
+          ...(continuation.queued_followup === null
+            ? {}
+            : { queued_followup: continuation.queued_followup }),
         }],
       );
       bindDraftContinuationContextToCurrentTaskAddress(conversationContext, continuation);
@@ -3966,6 +3976,7 @@ function createBuilderGenerationMainService(rawOptions) {
       return await startDraftContinuationGenerate(request, freezeDeep({
         ...continuationContext,
         instruction: request.instruction,
+        queued_followup: continuationRequest.queued_followup,
       }));
     } catch (error) {
       if (request !== null) {

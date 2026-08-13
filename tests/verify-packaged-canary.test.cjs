@@ -166,10 +166,11 @@ function reviewDiffEvidence() {
     completion_landing_review_and_artifact_preview_visible: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
-    review_actions_layout_stable: true,
+    draft_actions_in_workspace_toolbar: true,
     review_changes_do_not_overlap: true,
     review_checkpoint_visible: true,
     review_internal_layout_stable: true,
+    review_status_only_layout_stable: true,
   };
 }
 
@@ -847,9 +848,11 @@ class FakePage {
       [SELECTORS.reviewTitle, { x: 364, y: 234, width: 200, height: 18 }],
       [SELECTORS.reviewSummary, { x: 364, y: 254, width: 420, height: 17 }],
       [SELECTORS.reviewNote, { x: 364, y: 274, width: 500, height: 22 }],
-      [SELECTORS.reviewActions, { x: 542, y: 308, width: 256, height: 32 }],
-      [SELECTORS.reviewMore, { x: 542, y: 308, width: 32, height: 32 }],
-      [SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 }],
+      [SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 }],
+      [SELECTORS.workspaceControls, { x: 612, y: 4, width: 296, height: 38 }],
+      [SELECTORS.workspaceDraftActions, { x: 616, y: 8, width: 158, height: 30 }],
+      [SELECTORS.reviewMore, { x: 744, y: 8, width: 30, height: 30 }],
+      [SELECTORS.saveVersion, { x: 616, y: 8, width: 124, height: 30 }],
       [SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 }],
       [SELECTORS.resultFlow, { x: 948, y: 96, width: 324, height: 520 }],
       [SELECTORS.changesFlow, { x: 948, y: 96, width: 324, height: 520 }],
@@ -2823,9 +2826,11 @@ test('observes draft review diff before Save without leaking internal evidence',
       `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewTitle}`,
       `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewSummary}`,
       `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewNote}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewActions}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewMore}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.saveVersion}`,
+      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewChecks}`,
+      SELECTORS.workspaceControls,
+      SELECTORS.workspaceDraftActions,
+      SELECTORS.saveVersion,
+      SELECTORS.reviewMore,
       SELECTORS.conversationActivity,
       SELECTORS.userMessage,
       SELECTORS.chatScroll,
@@ -2833,7 +2838,6 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.artifactSidebar,
       SELECTORS.artifactResizeHandle,
       `${SELECTORS.artifactSidebar} ${SELECTORS.resultFlow}`,
-      SELECTORS.saveVersion,
       SELECTORS.chatScroll,
       SELECTORS.changesFlow,
       SELECTORS.changesPanel,
@@ -2864,10 +2868,10 @@ test('rejects conversation activity that overlaps the draft review checkpoint', 
   )), false);
 });
 
-test('rejects draft review actions that leave the checkpoint before Save', async () => {
+test('rejects check status that leaves the draft review checkpoint', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 1016, y: 308, width: 568, height: 32 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -2882,10 +2886,10 @@ test('rejects draft review actions that leave the checkpoint before Save', async
 test('retries transient draft review child bounds while preserving strict geometry checks', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 1016, y: 286, width: 24, height: 96 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 1016, y: 286, width: 568, height: 32 });
   page.waitForTimeout = async (ms) => {
     page.events.push(['waitForTimeout', ms]);
-    page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 120, height: 32 });
+    page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 });
   };
 
   assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
@@ -2898,10 +2902,10 @@ test('retries transient draft review child bounds while preserving strict geomet
 test('retries transient draft review text stack before rejecting layout overlap', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 326, y: 288, width: 500, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 288, width: 568, height: 32 });
   page.waitForTimeout = async (ms) => {
     page.events.push(['waitForTimeout', ms]);
-    page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 326, y: 308, width: 500, height: 32 });
+    page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 });
   };
 
   assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
@@ -2911,7 +2915,7 @@ test('retries transient draft review text stack before rejecting layout overlap'
   );
 });
 
-test('rejects draft review checkpoint bounds that cannot support review actions', async () => {
+test('rejects draft review checkpoint bounds that cannot support status evidence', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 300, height: 136 });
@@ -2921,13 +2925,13 @@ test('rejects draft review checkpoint bounds that cannot support review actions'
     (error) => error.code === 'canary_review_diff_checkpoint_width_failed',
   );
 
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 84 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 79 });
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
     (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
   );
 
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 421 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 361 });
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
     (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
@@ -2941,14 +2945,14 @@ test('rejects draft review checkpoint bounds that cannot support review actions'
   );
 });
 
-test('rejects squeezed draft review action geometry before Save', async () => {
+test('rejects squeezed draft action geometry in the workspace toolbar', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 24, height: 32 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_action_geometry_failed',
+    (error) => error.code === 'canary_review_diff_workspace_actions_layout_failed',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2971,12 +2975,10 @@ test('rejects draft review copy that visually overlaps itself', async () => {
   )), false);
 });
 
-test('rejects draft review actions that overlap the preview explanation', async () => {
+test('rejects draft check status that overlaps the preview explanation', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewActions, { x: 374, y: 288, width: 256, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.reviewMore, { x: 374, y: 288, width: 32, height: 32 });
-  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 510, y: 288, width: 120, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 288, width: 568, height: 32 });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
@@ -3003,7 +3005,7 @@ test('rejects draft artifact preview rendered inside the chat area', async () =>
   )), false);
 });
 
-test('rejects draft artifact summaries that are too narrow or before review actions', async () => {
+test('rejects draft artifact summaries that are too narrow or before review status', async () => {
   const narrow = new FakePage();
   narrow.unsavedDraftVisible = true;
   narrow.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 372, width: 320, height: 72 });

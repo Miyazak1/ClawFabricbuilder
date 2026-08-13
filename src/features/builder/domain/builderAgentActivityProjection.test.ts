@@ -57,7 +57,7 @@ describe('sanitizeBuilderAgentActivityProjectionWire', () => {
         ...projection().current,
         phase: 'waiting_for_check',
         status: 'waiting',
-        label: 'Ready for review',
+        label: 'Checks pending',
         summary: 'Builder has not finished checking this draft yet.',
       },
       authority: {

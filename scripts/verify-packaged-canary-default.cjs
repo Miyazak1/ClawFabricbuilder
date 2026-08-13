@@ -237,8 +237,21 @@ function closeServer(server) {
   });
 }
 
-async function createLocalCanaryProviderServer() {
-  const state = { codeChangeCount: 0, requests: [] };
+async function createLocalCanaryProviderServer(options = {}) {
+  const deferredCodeChangeResponses = Number.isSafeInteger(options.deferCodeChangeResponses)
+    && options.deferCodeChangeResponses > 0
+    ? options.deferCodeChangeResponses
+    : 0;
+  const deferCodeChangeResponsesAfter = Number.isSafeInteger(options.deferCodeChangeResponsesAfter)
+    && options.deferCodeChangeResponsesAfter > 0
+    ? options.deferCodeChangeResponsesAfter
+    : 0;
+  const state = {
+    codeChangeCount: 0,
+    deferredCodeChangeResponses,
+    pendingResponseReleases: [],
+    requests: [],
+  };
   const server = http.createServer(async (request, response) => {
     try {
       if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -261,6 +274,16 @@ async function createLocalCanaryProviderServer() {
         stream: body.stream === true,
       }));
       if (state.requests.length > 20) state.requests.shift();
+      if (
+        responseKind === 'builder_code_change_operations'
+        && state.codeChangeCount > deferCodeChangeResponsesAfter
+        && state.deferredCodeChangeResponses > 0
+      ) {
+        state.deferredCodeChangeResponses -= 1;
+        await new Promise((resolve) => {
+          state.pendingResponseReleases.push(resolve);
+        });
+      }
       if (body.stream === true) {
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end(providerStream(content));
@@ -279,9 +302,26 @@ async function createLocalCanaryProviderServer() {
     await closeServer(server);
     throw new BuilderPackagedCanaryError('canary_launch_failed');
   }
+  const releaseNext = () => {
+    const release = state.pendingResponseReleases.shift();
+    if (release === undefined) return false;
+    release();
+    return true;
+  };
+  const releaseAll = () => {
+    while (releaseNext()) {
+      // Drain every response before app or server cleanup.
+    }
+  };
   return Object.freeze({
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
-    close: () => closeServer(server),
+    close: () => {
+      releaseAll();
+      return closeServer(server);
+    },
+    pendingResponseCount: () => state.pendingResponseReleases.length,
+    releaseAll,
+    releaseNext,
     snapshot: () => Object.freeze(state.requests.map((item) => ({ ...item }))),
   });
 }

@@ -859,11 +859,18 @@ function sanitizeApprovedPlanWorkRequest(value) {
 }
 
 function sanitizeDraftContinuationWorkRequest(value) {
-  exactObject(value, ['admission', 'instruction', 'request_digest']);
+  const keys = Reflect.ownKeys(value);
+  const hasQueuedFollowup = keys.includes('queued_followup');
+  exactObject(value, hasQueuedFollowup
+    ? ['admission', 'instruction', 'request_digest', 'queued_followup']
+    : ['admission', 'instruction', 'request_digest']);
   return freezeDeep({
     admission: sanitizeBuilderDraftContinuationAdmission(valueAt(value, 'admission')),
     instruction: safeText(valueAt(value, 'instruction'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
+    queued_followup: hasQueuedFollowup
+      ? sanitizeQueuedFollowupReference(valueAt(value, 'queued_followup'))
+      : null,
   });
 }
 
@@ -1812,13 +1819,30 @@ function createBuilderConversationMainService(rawOptions) {
           }),
         },
       });
+      const followupConsumption = request.queued_followup === null
+        ? null
+        : eventAt({
+          projectId: admission.project_id,
+          conversationId: admission.conversation_id,
+          sequence: first.sequence + 1,
+          commandId: newId(options.createUuid, 'builder-command'),
+          eventType: 'turn_followup_consumed',
+          previous: eventHead(first),
+          payload: {
+            turn_id: request.queued_followup.turn_id,
+            run_id: request.queued_followup.run_id,
+            message_id: request.queued_followup.message_id,
+            consuming_turn_id: ids.turn_id,
+            consuming_message_id: ids.message_id,
+          },
+        });
       const second = eventAt({
         projectId: admission.project_id,
         conversationId: admission.conversation_id,
-        sequence: first.sequence + 1,
+        sequence: (followupConsumption ?? first).sequence + 1,
         commandId: ids.run_command_id,
         eventType: 'run_started',
-        previous: eventHead(first),
+        previous: eventHead(followupConsumption ?? first),
         payload: {
           turn_id: ids.turn_id,
           run_id: ids.run_id,
@@ -1832,7 +1856,7 @@ function createBuilderConversationMainService(rawOptions) {
         project,
         conversation,
         expectedHead: state.head,
-        events: [first, second],
+        events: followupConsumption === null ? [first, second] : [first, followupConsumption, second],
         recordedAtMs,
       });
       const context = freezeDeep({

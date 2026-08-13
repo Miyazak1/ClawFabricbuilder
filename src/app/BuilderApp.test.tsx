@@ -413,6 +413,7 @@ async function setup(options: Readonly<{
   multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
   checkRunAvailable?: boolean;
+  failCheckRunReadAttempts?: number;
   checkRunStatus?: 'passed' | 'failed' | 'incomplete';
   uncheckedUntilSkip?: boolean;
   semanticIntentRoute?: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
@@ -443,9 +444,14 @@ async function setup(options: Readonly<{
   let resolveGenerate: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
   let approvedPlanGenerateAttempts = 0;
+  let checkRunReadAttempts = 0;
   let currentProjectWriteAllowed = options.currentProjectWriteApprovalRequired !== true;
   let planReviewRecorded = false;
   const readCurrentDraftAvailableChecks = vi.fn(async (request: unknown) => {
+    checkRunReadAttempts += 1;
+    if (checkRunReadAttempts <= (options.failCheckRunReadAttempts ?? 0)) {
+      throw new Error('check run discovery is temporarily unavailable');
+    }
     const draftId = (request as { draft_id: string }).draft_id;
     return {
       result_version: 'builder-check-run-current-draft-read-result.v1',
@@ -2417,6 +2423,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
     expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).not.toHaveBeenCalled();
     expect(continueDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
       .toBe('Ask about this draft, or describe the next change...');
@@ -2468,7 +2475,8 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
-    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(submit).not.toHaveBeenCalled();
     expect(classifyIntent).not.toHaveBeenCalled();
 
     click(container, '[data-builder-clear-composer-mode="true"]');
@@ -2486,8 +2494,8 @@ describe('BuilderApp v2', () => {
       });
     });
     expect(classifyIntent).not.toHaveBeenCalled();
-    expect(submit).toHaveBeenCalledOnce();
-    expect(generate).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledOnce();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
@@ -2518,7 +2526,8 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
     });
-    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(submit).not.toHaveBeenCalled();
     expect(classifyIntent).not.toHaveBeenCalled();
 
     click(container, '[data-builder-clear-composer-mode="true"]');
@@ -2540,8 +2549,8 @@ describe('BuilderApp v2', () => {
     });
     expect(answer).not.toHaveBeenCalled();
     expect(continueDraft).not.toHaveBeenCalled();
-    expect(submit).toHaveBeenCalledOnce();
-    expect(generate).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledOnce();
     expect(saveDraft).not.toHaveBeenCalled();
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('plan');
@@ -4302,6 +4311,11 @@ describe('BuilderApp v2', () => {
       expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
         instruction: 'Make it responsive.',
+        queued_followup: {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174088',
+          run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+          turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
+        },
       });
     });
     expect(steer).not.toHaveBeenCalled();
@@ -5059,6 +5073,7 @@ describe('BuilderApp v2', () => {
     const {
       classifyIntent,
       container,
+      generate,
       prepareCurrentProjectWriteApproval,
       submit,
     } = await setup({
@@ -5089,6 +5104,13 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_permission');
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('composer_mode_build');
+    expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).not.toBeNull();
+
+    click(container, '[data-builder-approve-current-project-write="true"]');
+    await waitFor(() => {
+      expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: '这个文件夹是什么结构？' });
+    });
+    expect(submit).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).not.toBeNull();
   });
 
@@ -6234,6 +6256,39 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
       .toBe(false);
+  });
+
+  it('retries automatic check discovery when the draft workspace is briefly unavailable', async () => {
+    const {
+      approveAndRunCurrentDraftCheck,
+      container,
+      readCurrentDraftAvailableChecks,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      checkRunStatus: 'passed',
+      failCheckRunReadAttempts: 2,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledTimes(3);
+      expect(approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      });
+    });
+    expect(container.querySelector(
+      '[data-builder-check-run-status="passed"]',
+    )).not.toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
   });
 
   it('keeps unchecked drafts blocked without exposing manual check controls', async () => {
