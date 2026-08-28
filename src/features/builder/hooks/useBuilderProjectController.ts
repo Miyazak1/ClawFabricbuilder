@@ -14,7 +14,11 @@ import {
 } from '../application/builderProjectController';
 
 export type UseBuilderProjectControllerOptions = Readonly<
-  BuilderProjectControllerDependencies & { projectId?: string }
+  BuilderProjectControllerDependencies & {
+    preserveSelectionWhenProjectIdUndefined?: boolean;
+    projectId?: string;
+    taskAddressId?: string | null;
+  }
 >;
 
 export type UseBuilderProjectControllerResult = Readonly<{
@@ -22,6 +26,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   retainConversationProject: BuilderProjectController['retainConversationProject'];
   clearWorkspaceSelection: BuilderProjectController['clearWorkspaceSelection'];
   createLocalProject: BuilderProjectController['createLocalProject'];
+  createNewLocalProject: BuilderProjectController['createNewLocalProject'];
   submit: BuilderProjectController['submit'];
   answer: BuilderProjectController['answer'];
   proposePlan: BuilderProjectController['proposePlan'];
@@ -30,6 +35,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   retryGenerate: BuilderProjectController['retryGenerate'];
   restoreDraft: BuilderProjectController['restoreDraft'];
   restoreRevisionAsDraft: BuilderProjectController['restoreRevisionAsDraft'];
+  restorePreviousCheckpointAsDraft: BuilderProjectController['restorePreviousCheckpointAsDraft'];
   inspectRevision: BuilderProjectController['inspectRevision'];
   showCurrentRevision: BuilderProjectController['showCurrentRevision'];
   rejectDraft: BuilderProjectController['rejectDraft'];
@@ -57,7 +63,14 @@ const UNAVAILABLE_SNAPSHOT: BuilderProjectControllerSnapshot = Object.freeze({
 export function useBuilderProjectController(
   options: UseBuilderProjectControllerOptions,
 ): UseBuilderProjectControllerResult {
-  const { generator, workspace, createPreview, projectId } = options;
+  const {
+    generator,
+    workspace,
+    createPreview,
+    preserveSelectionWhenProjectIdUndefined = false,
+    projectId,
+    taskAddressId,
+  } = options;
   const controller = useMemo(
     () => createBuilderProjectController({
       generator,
@@ -67,6 +80,16 @@ export function useBuilderProjectController(
     [generator, workspace, createPreview],
   );
   const disposalTokens = useRef(new WeakMap<BuilderProjectController, object>());
+  const requestedProjectSelection = useRef<Readonly<{
+    controller: BuilderProjectController;
+    projectId: string | undefined;
+    taskAddressId: string | null;
+  }> | null>(null);
+  const retainedWorkbenchDraftSelection = useRef<Readonly<{
+    projectId: string;
+    taskAddressId: string | null;
+  }> | null>(null);
+  const hiddenProjectClearRequested = useRef(false);
   const snapshot = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
@@ -74,13 +97,67 @@ export function useBuilderProjectController(
   );
 
   useLayoutEffect(() => {
+    controller.selectTaskAddress(taskAddressId ?? null);
+  }, [controller, taskAddressId]);
+
+  useLayoutEffect(() => {
+    const previousRequest = requestedProjectSelection.current;
+    const selectionChanged = (
+      previousRequest === null
+      || previousRequest.controller !== controller
+      || previousRequest.projectId !== projectId
+    );
+    requestedProjectSelection.current = { controller, projectId, taskAddressId: taskAddressId ?? null };
+    if (!selectionChanged) return;
     const current = controller.getSnapshot();
     const selectedProjectId = current.savedProject?.target.project_id ?? current.workingProjectId;
     const conversationProjectId = current.conversationProjectId ?? current.answer?.project_id;
-    if (projectId === undefined && selectedProjectId === null && conversationProjectId !== null) return;
-    if (projectId !== undefined && selectedProjectId === projectId) return;
+    if (projectId === undefined && preserveSelectionWhenProjectIdUndefined) {
+      hiddenProjectClearRequested.current = false;
+      if (selectedProjectId !== null) {
+        retainedWorkbenchDraftSelection.current = Object.freeze({
+          projectId: selectedProjectId,
+          taskAddressId: previousRequest?.taskAddressId ?? null,
+        });
+      }
+      return;
+    }
+    if (projectId === undefined && current.draft !== null && selectedProjectId !== null) {
+      hiddenProjectClearRequested.current = false;
+      retainedWorkbenchDraftSelection.current = Object.freeze({
+        projectId: selectedProjectId,
+        taskAddressId: previousRequest?.taskAddressId ?? null,
+      });
+      return;
+    }
+    const retainedDraftSelection = retainedWorkbenchDraftSelection.current;
+    if (projectId !== undefined && current.draft?.project_id === projectId) {
+      const returningFromWorkbench = retainedDraftSelection !== null;
+      const returningToRetainedTask = (
+        retainedDraftSelection?.projectId === projectId
+        && retainedDraftSelection.taskAddressId === (taskAddressId ?? null)
+      );
+      if (!returningFromWorkbench || returningToRetainedTask) {
+        hiddenProjectClearRequested.current = false;
+        retainedWorkbenchDraftSelection.current = null;
+        return;
+      }
+    }
+    retainedWorkbenchDraftSelection.current = null;
+    if (projectId === undefined && selectedProjectId === null && conversationProjectId !== null) {
+      hiddenProjectClearRequested.current = false;
+      return;
+    }
+    if (projectId === undefined) {
+      hiddenProjectClearRequested.current = selectedProjectId !== null;
+      void controller.open(projectId).catch(() => undefined);
+      return;
+    }
+    const mustReopenAfterHiddenClear = hiddenProjectClearRequested.current;
+    hiddenProjectClearRequested.current = false;
+    if (!mustReopenAfterHiddenClear && selectedProjectId === projectId) return;
     void controller.open(projectId).catch(() => undefined);
-  }, [controller, projectId]);
+  }, [controller, preserveSelectionWhenProjectIdUndefined, projectId, taskAddressId]);
 
   useLayoutEffect(() => {
     const token = {};
@@ -103,6 +180,10 @@ export function useBuilderProjectController(
     (projectTitle) => controller.createLocalProject(projectTitle).catch(() => controller.getSnapshot()),
     [controller],
   );
+  const createNewLocalProject = useCallback<BuilderProjectController['createNewLocalProject']>(
+    (projectTitle) => controller.createNewLocalProject(projectTitle).catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const retainConversationProject = useCallback<BuilderProjectController['retainConversationProject']>(
     (projectId) => controller.retainConversationProject(projectId),
     [controller],
@@ -116,7 +197,9 @@ export function useBuilderProjectController(
     [controller],
   );
   const answer = useCallback<BuilderProjectController['answer']>(
-    (instruction, queuedFollowup) => controller.answer(instruction, queuedFollowup).catch(() => UNAVAILABLE_SNAPSHOT),
+    (instruction, queuedFollowup, responseMode) => controller
+      .answer(instruction, queuedFollowup, responseMode)
+      .catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
   const proposePlan = useCallback<BuilderProjectController['proposePlan']>(
@@ -143,6 +226,12 @@ export function useBuilderProjectController(
     (projectId, revisionReceiptDigest) => (
       controller.restoreRevisionAsDraft(projectId, revisionReceiptDigest).catch(() => controller.getSnapshot())
     ),
+    [controller],
+  );
+  const restorePreviousCheckpointAsDraft = useCallback<
+    BuilderProjectController['restorePreviousCheckpointAsDraft']
+  >(
+    () => controller.restorePreviousCheckpointAsDraft().catch(() => controller.getSnapshot()),
     [controller],
   );
   const inspectRevision = useCallback<BuilderProjectController['inspectRevision']>(
@@ -177,6 +266,7 @@ export function useBuilderProjectController(
       retainConversationProject,
       clearWorkspaceSelection,
       createLocalProject,
+      createNewLocalProject,
       submit,
       answer,
       proposePlan,
@@ -185,6 +275,7 @@ export function useBuilderProjectController(
       retryGenerate,
       restoreDraft,
       restoreRevisionAsDraft,
+      restorePreviousCheckpointAsDraft,
       inspectRevision,
       showCurrentRevision,
       rejectDraft,
@@ -198,6 +289,7 @@ export function useBuilderProjectController(
       retainConversationProject,
       clearWorkspaceSelection,
       createLocalProject,
+      createNewLocalProject,
       submit,
       answer,
       proposePlan,
@@ -206,6 +298,7 @@ export function useBuilderProjectController(
       retryGenerate,
       restoreDraft,
       restoreRevisionAsDraft,
+      restorePreviousCheckpointAsDraft,
       inspectRevision,
       showCurrentRevision,
       rejectDraft,

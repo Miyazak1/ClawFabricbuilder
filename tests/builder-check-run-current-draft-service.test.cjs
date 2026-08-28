@@ -9,9 +9,16 @@ const {
   createBuilderCheckRunCurrentDraftService,
 } = require('../electron/builder-check-run-current-draft-service.cjs');
 const {
+  BUILDER_CHECK_RUN_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
   BUILDER_CHECK_RUN_MAIN_RESULT_VERSION,
   BUILDER_CHECK_RUN_MAIN_SERVICE_VERSION,
 } = require('../electron/builder-check-run-main-service.cjs');
+const {
+  createBuilderEnvironmentReadinessDiagnosis,
+} = require('../electron/builder-environment-readiness-diagnosis.cjs');
+const {
+  createBuilderRuntimeReadinessSnapshot,
+} = require('../electron/builder-runtime-readiness-snapshot.cjs');
 const {
   projectBuilderCheckRunStatus,
 } = require('../electron/builder-check-run-status-projection.cjs');
@@ -101,6 +108,7 @@ function conversationDraft(receipt, overrides = {}) {
       title: 'Candidate',
       summary: 'Candidate summary.',
       git_candidate_receipt: receipt,
+      current_materialization: { status: 'materialized' },
     },
     verification_admission: 'sqlite_replay_verified',
     ...overrides,
@@ -127,7 +135,7 @@ function checkpoint(receipt) {
 function fixture({ tree = sourceTree(), mutateGitRead, mutateCheckpoint, mainResult } = {}) {
   const receipt = candidate(tree);
   const verification = createBuilderGitCandidateVerificationReceipt(receipt);
-  const calls = { conversation: [], git: [], checkpoint: [], run: [] };
+  const calls = { conversation: [], git: [], checkpoint: [], run: [], diagnose: [] };
   let now = 100;
   const service = createBuilderCheckRunCurrentDraftService({
     conversation_service: {
@@ -198,6 +206,52 @@ function fixture({ tree = sourceTree(), mutateGitRead, mutateCheckpoint, mainRes
           result_version: BUILDER_CHECK_RUN_MAIN_RESULT_VERSION,
           operation: 'approved_check_completed',
           check_run_status_projection: projectBuilderCheckRunStatus({ check_run: checkRun }),
+        };
+      },
+      diagnose_check_environment(request) {
+        calls.diagnose.push(request);
+        const runtime = checkRuntimeIdentity({ expires_at_ms: 300_200 });
+        const approval = createBuilderCheckRunExecutionApproval({
+          draft_id: request.draft_id,
+          draft_checkpoint_ref: request.draft_checkpoint_ref,
+          git_candidate_receipt: request.git_candidate_receipt,
+          git_verification_receipt: request.git_verification_receipt,
+          project_understanding_snapshot: request.project_understanding_snapshot,
+          command_profile_id: request.command_profile_id,
+          runtime_identity: runtime,
+          approved_at_ms: 200,
+          expires_at_ms: 300_200,
+        });
+        const admission = createBuilderCheckRunAdmission({
+          execution_approval: approval,
+          draft_checkpoint_ref: request.draft_checkpoint_ref,
+          git_candidate_receipt: request.git_candidate_receipt,
+          git_verification_receipt: request.git_verification_receipt,
+          project_understanding_snapshot: request.project_understanding_snapshot,
+          runtime_identity: runtime,
+          admitted_at_ms: 201,
+        });
+        const readinessSnapshot = createBuilderRuntimeReadinessSnapshot({
+          project_id: admission.project_id,
+          candidate_id: admission.candidate_id,
+          package_manager: admission.package_manager,
+          check_run_admission: admission,
+          source_tree: request.source_tree,
+          project_root_path: null,
+          check_workspace_path: null,
+          host_toolchain_state: 'visible',
+          toolchain_probe: null,
+          install_permission: 'not_requested',
+          updated_at_ms: 202,
+        });
+        return {
+          result_version: BUILDER_CHECK_RUN_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
+          operation: 'check_environment_diagnosed',
+          environment_diagnosis: createBuilderEnvironmentReadinessDiagnosis({
+            check_run_admission: admission,
+            runtime_readiness_snapshot: readinessSnapshot,
+            diagnosed_at_ms: 203,
+          }),
         };
       },
     },
@@ -281,6 +335,56 @@ test('runs the explicitly selected profile after re-reading all current draft au
   );
 });
 
+test('passes explicit dependency preparation decisions through verified current draft state', async () => {
+  const selected = fixture();
+  const available = await selected.service.read_available_checks({ draft_id: DRAFT_ID });
+  const profile = available.available_checks[0];
+  const result = await selected.service.decide_dependency_preparation_and_run_check({
+    draft_id: DRAFT_ID,
+    command_profile_id: profile.command_profile_id,
+    decision: 'allow_once',
+  });
+
+  assert.equal(result.operation, 'current_draft_approved_check_completed');
+  assert.equal(result.check_run_status_projection.status, 'passed');
+  assert.equal(selected.calls.run.length, 1);
+  assert.equal(selected.calls.run[0].dependency_preparation_decision, 'allow_once');
+  assert.equal(
+    selected.calls.run[0].project_understanding_snapshot.source_tree_digest,
+    selected.receipt.resulting_tree_digest,
+  );
+});
+
+test('diagnoses the selected current draft check without running it', async () => {
+  const selected = fixture();
+  const available = await selected.service.read_available_checks({ draft_id: DRAFT_ID });
+  const profile = available.available_checks[0];
+  const result = await selected.service.diagnose_check_environment({
+    draft_id: DRAFT_ID,
+    command_profile_id: profile.command_profile_id,
+  });
+
+  assert.equal(
+    result.result_version,
+    'builder-check-run-current-draft-environment-diagnosis-result.v1',
+  );
+  assert.equal(result.operation, 'current_draft_check_environment_diagnosed');
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.candidate_id, selected.receipt.candidate_id);
+  assert.equal(result.environment_diagnosis.command_profile_id, profile.command_profile_id);
+  assert.equal(result.environment_diagnosis.readiness_state, 'ready');
+  assert.equal(result.environment_diagnosis.primary_action, 'run_check');
+  assert.equal(result.environment_diagnosis.authority.command_execution, false);
+  assert.equal(result.environment_diagnosis.authority.dependency_preparation, false);
+  assert.equal(selected.calls.run.length, 0);
+  assert.equal(selected.calls.diagnose.length, 1);
+  assert.equal(
+    selected.calls.diagnose[0].project_understanding_snapshot.source_tree_digest,
+    selected.receipt.resulting_tree_digest,
+  );
+  assert.doesNotMatch(JSON.stringify(result), /package\.json|node --test|fixed-script|source_tree":/iu);
+});
+
 test('reports no checks without dispatch when the candidate has no approved manifest scripts', async () => {
   const selected = fixture({
     tree: createBuilderProjectSourceTree({ files: [{ path: 'index.html', content: '<main />\n' }] }),
@@ -306,6 +410,11 @@ test('rejects renderer source, command text, stale profile ids, and hostile requ
   await assert.rejects(selected.service.run_approved_check({
     draft_id: DRAFT_ID,
     command_profile_id: `builder-command-profile:${'0'.repeat(32)}`,
+  }), { code: 'builder_check_run_current_draft_failed' });
+  await assert.rejects(selected.service.decide_dependency_preparation_and_run_check({
+    draft_id: DRAFT_ID,
+    command_profile_id: selected.calls.run[0]?.command_profile_id ?? `builder-command-profile:${'0'.repeat(32)}`,
+    decision: 'always',
   }), { code: 'builder_check_run_current_draft_failed' });
   await assert.rejects(selected.service.read_available_checks(new Proxy({}, {})), {
     code: 'builder_check_run_current_draft_failed',

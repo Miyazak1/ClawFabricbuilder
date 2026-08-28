@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const nodeCrypto = require('node:crypto');
 const path = require('node:path');
 const { types: utilTypes } = require('node:util');
@@ -13,6 +14,7 @@ const { sanitizeBuilderCheckRuntimeIdentity } = require('./builder-check-runtime
 
 const BUILDER_CHECK_RUN_RUNNER_VERSION = 'builder-check-run-runner.v1';
 const TERMINATION_CONFIRMATION_TIMEOUT_MS = 15_000;
+const DIAGNOSTIC_OUTPUT_LIMIT_BYTES = 16 * 1024;
 const CREATE_KEYS = Object.freeze([
   'spawn_process',
   'clock',
@@ -41,16 +43,19 @@ const WORKSPACE_KEYS = Object.freeze([
 ]);
 
 class BuilderCheckRunRunnerError extends Error {
-  constructor() {
+  constructor(phaseCode = 'unknown') {
     super('The project check could not be run.');
     this.name = 'BuilderCheckRunRunnerError';
     this.code = 'builder_check_run_runner_failed';
+    this.phase_code = typeof phaseCode === 'string' && /^[a-z0-9_]{1,96}$/u.test(phaseCode)
+      ? phaseCode
+      : 'unknown';
     this.retryable = false;
     this.stack = `${this.name}: ${this.message}`;
   }
 }
 
-function fail() { throw new BuilderCheckRunRunnerError(); }
+function fail(phaseCode = 'unknown') { throw new BuilderCheckRunRunnerError(phaseCode); }
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) {
@@ -179,6 +184,89 @@ function minimalEnvironment(workspacePath, launcherPath, runtimeIdentity) {
   return Object.freeze(env);
 }
 
+function declaredDependencyNames(workspacePath) {
+  try {
+    const packageJsonPath = path.join(workspacePath, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) return Object.freeze(new Set());
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return Object.freeze(new Set());
+    }
+    const names = new Set();
+    for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+      const dependencies = parsed[field];
+      if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue;
+      for (const name of Object.keys(dependencies)) {
+        if (/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/iu.test(name)) names.add(name);
+      }
+    }
+    return Object.freeze(names);
+  } catch {
+    return Object.freeze(new Set());
+  }
+}
+
+function packageRoot(name) {
+  if (typeof name !== 'string') return null;
+  const normalized = name.trim();
+  if (normalized.length === 0 || normalized.startsWith('.') || path.isAbsolute(normalized)) return null;
+  const parts = normalized.split('/');
+  if (normalized.startsWith('@')) return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+  return parts[0] ?? null;
+}
+
+function dependencyForBinary(binaryName) {
+  const root = packageRoot(binaryName);
+  if (root === null) return null;
+  const aliases = {
+    tsc: 'typescript',
+    ng: '@angular/cli',
+    vue: '@vue/cli-service',
+  };
+  return aliases[root] ?? root;
+}
+
+function extractMissingDependency(outputText) {
+  for (const pattern of [
+    /Cannot find package ['"]([^'"]+)['"]/iu,
+    /Cannot find module ['"]([^'"]+)['"]/iu,
+    /Error \[ERR_MODULE_NOT_FOUND\]: Cannot find package ['"]([^'"]+)['"]/iu,
+  ]) {
+    const match = pattern.exec(outputText);
+    const root = packageRoot(match?.[1]);
+    if (root !== null) return Object.freeze({ kind: 'module', name: root });
+  }
+  for (const pattern of [
+    /['"]([^'"\r\n]+)['"] is not recognized as an internal or external command/iu,
+    /(?:^|\n)sh: \d+: ([^\s:]+): not found/iu,
+    /(?:^|\n)([^\s:]+): command not found/iu,
+  ]) {
+    const match = pattern.exec(outputText);
+    const dependency = dependencyForBinary(match?.[1]);
+    if (dependency !== null) return Object.freeze({ kind: 'binary', name: dependency });
+  }
+  return null;
+}
+
+function hasDependencyInstall(workspacePath) {
+  try {
+    return fs.existsSync(path.join(workspacePath, 'node_modules'));
+  } catch {
+    return false;
+  }
+}
+
+function classifyFailedCheck(workspacePath, diagnosticOutput) {
+  const declared = declaredDependencyNames(workspacePath);
+  if (declared.size === 0) return 'failed';
+  const missing = extractMissingDependency(diagnosticOutput);
+  if (missing !== null && declared.has(missing.name)) return 'environment_unavailable';
+  if (missing?.kind === 'binary' && !hasDependencyInstall(workspacePath)) {
+    return 'environment_unavailable';
+  }
+  return 'failed';
+}
+
 function createOutputDigest(outputHashes, acceptedOutputBytes) {
   const digest = nodeCrypto.createHash('sha256');
   for (const streamName of ['stdout', 'stderr']) {
@@ -202,6 +290,10 @@ function createBuilderCheckRunRunner(rawOptions) {
   const materializer = options.workspace_materializer.value;
   const readWorkspacePath = methodValue(materializer, 'read_workspace_path');
   const cleanupWorkspace = methodValue(materializer, 'cleanup');
+  const readWorkspaceReadinessSnapshot =
+    typeof materializer.read_workspace_readiness_snapshot === 'function'
+      ? materializer.read_workspace_readiness_snapshot.bind(materializer)
+      : null;
   const registry = options.runtime_registry.value;
   const readPrivateRuntime = methodValue(registry, 'read_private_runtime');
   const activityRegistry = options.activity_registry.value;
@@ -227,27 +319,58 @@ function createBuilderCheckRunRunner(rawOptions) {
       || identity.runtime_identity_digest !== admission.runtime_identity_digest
     ) fail();
     const startedAtMs = safeNow(nowMs);
-    const runtimeHandle = readPrivateRuntime({
-      runtime_identity: rawIdentity,
-      read_at_ms: startedAtMs,
-    });
+    let runtimeHandle;
+    try {
+      runtimeHandle = readPrivateRuntime({
+        runtime_identity: rawIdentity,
+        read_at_ms: startedAtMs,
+      });
+    } catch (error) {
+      if (error instanceof BuilderCheckRunRunnerError) throw error;
+      fail('private_runtime_read');
+    }
     const runtime = assertRuntimeBinding(runtimeHandle, identity, admission);
     const workspaceAdmission = input.workspace_admission.value;
     assertWorkspaceBinding(workspaceAdmission, admission);
     let cleanupRequired = false;
     let cleanupSafe = false;
     let activityRegistered = false;
+    let terminalResultProduced = false;
     try {
-      if (beginCheckRun({ check_run_admission: admission }) !== true) fail();
+      if (beginCheckRun({ check_run_admission: admission }) !== true) fail('activity_begin');
       activityRegistered = true;
-      const workspacePath = safeAbsolutePath(readWorkspacePath(workspaceAdmission));
+      let workspacePath;
+      try {
+        workspacePath = safeAbsolutePath(readWorkspacePath(workspaceAdmission));
+      } catch (error) {
+        if (error instanceof BuilderCheckRunRunnerError) throw error;
+        fail('workspace_read');
+      }
       cleanupRequired = true;
+      if (readWorkspaceReadinessSnapshot !== null) {
+        try {
+          readWorkspaceReadinessSnapshot({
+            check_run_admission: admission,
+            workspace_admission: workspaceAdmission,
+            project_root_path: null,
+            host_toolchain_state: 'visible',
+            toolchain_probe: null,
+            install_permission: 'not_requested',
+            updated_at_ms: startedAtMs,
+          });
+        } catch (error) {
+          if (error instanceof BuilderCheckRunRunnerError) throw error;
+          fail('workspace_readiness');
+        }
+      }
       const command = commandFor(admission, runtime);
       const outputHashes = {
         stdout: nodeCrypto.createHash('sha256'),
         stderr: nodeCrypto.createHash('sha256'),
       };
       const acceptedOutputBytes = { stdout: 0, stderr: 0 };
+      const diagnosticOutput = [];
+      let diagnosticOutputBytes = 0;
       let outputBytes = 0;
       let outputClosed = false;
       let child;
@@ -280,6 +403,9 @@ function createBuilderCheckRunRunner(rawOptions) {
               exit_code: exitCode,
               output_digest: digestOutput(),
               failure_class: status === 'passed' ? 'none' : status === 'failed' ? 'command_failed' : status,
+              environment_reason: status === 'environment_unavailable'
+                ? 'dependency_workspace_missing'
+                : undefined,
               started_at_ms: startedAtMs,
               completed_at_ms: completedAtMs,
             }));
@@ -311,6 +437,12 @@ function createBuilderCheckRunRunner(rawOptions) {
         const capture = (streamName) => (chunk) => {
           if (settled || stopStatus !== null) return;
           const bytes = Buffer.from(chunk);
+          if (diagnosticOutputBytes < DIAGNOSTIC_OUTPUT_LIMIT_BYTES) {
+            const remainingDiagnosticBytes = DIAGNOSTIC_OUTPUT_LIMIT_BYTES - diagnosticOutputBytes;
+            const diagnosticBytes = bytes.subarray(0, remainingDiagnosticBytes);
+            diagnosticOutput.push(diagnosticBytes);
+            diagnosticOutputBytes += diagnosticBytes.length;
+          }
           const remaining = Math.max(0, admission.output_budget_bytes - outputBytes);
           const accepted = bytes.subarray(0, remaining);
           outputHashes[streamName].update(accepted);
@@ -334,7 +466,7 @@ function createBuilderCheckRunRunner(rawOptions) {
             || typeof child.stdout.on !== 'function'
             || !child.stderr
             || typeof child.stderr.on !== 'function'
-          ) fail();
+          ) fail('spawn_handle');
         } catch {
           finish('spawn_failed', null, true);
           return;
@@ -350,15 +482,25 @@ function createBuilderCheckRunRunner(rawOptions) {
           }
           if (signal !== null || !Number.isSafeInteger(code)) finish('spawn_failed');
           else if (code === 0) finish('passed', 0);
-          else finish('failed', Math.min(255, Math.max(1, code)));
+          else {
+            const failureStatus = classifyFailedCheck(
+              workspacePath,
+              Buffer.concat(diagnosticOutput).toString('utf8'),
+            );
+            finish(
+              failureStatus,
+              failureStatus === 'failed' ? Math.min(255, Math.max(1, code)) : null,
+            );
+          }
         });
         inFlight.set(admission.admission_id, requestStop);
         timer = setTimer(() => requestStop('timed_out'), admission.timeout_ms);
       });
+      terminalResultProduced = true;
       return result;
     } catch (error) {
       if (error instanceof BuilderCheckRunRunnerError) throw error;
-      fail();
+      fail('unexpected');
     } finally {
       inFlight.delete(admission.admission_id);
       let finalizationFailed = false;
@@ -372,7 +514,7 @@ function createBuilderCheckRunRunner(rawOptions) {
           finalizationFailed = true;
         }
       }
-      if (finalizationFailed) fail();
+      if (finalizationFailed && !terminalResultProduced) fail('finalization');
     }
   }
 

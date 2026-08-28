@@ -242,6 +242,56 @@ function fileIdentity(rawPath, maximumBytes) {
   }
 }
 
+async function fileIdentityAsync(rawPath, maximumBytes) {
+  const filePath = safeAbsolutePath(rawPath);
+  let before;
+  let realPath;
+  let handle = null;
+  try {
+    before = await fs.promises.lstat(filePath);
+    realPath = path.resolve(await fs.promises.realpath(filePath));
+    assertNoPathLinks(filePath);
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.size < 1
+      || before.size > maximumBytes
+    ) fail();
+    handle = await fs.promises.open(realPath, 'r');
+    const hash = nodeCrypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
+    let offset = 0;
+    while (offset < before.size) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, before.size - offset),
+        offset,
+      );
+      if (!Number.isSafeInteger(bytesRead) || bytesRead <= 0) fail();
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const after = await handle.stat();
+    if (
+      after.size !== before.size
+      || after.mtimeMs !== before.mtimeMs
+      || after.ctimeMs !== before.ctimeMs
+    ) fail();
+    return freezeDeep({
+      real_path: realPath,
+      digest: `sha256:${hash.digest('hex')}`,
+    });
+  } catch (error) {
+    if (error instanceof BuilderCheckRuntimeIdentityError) throw error;
+    fail();
+  } finally {
+    if (handle !== null) {
+      try { await handle.close(); } catch { /* fixed failure is handled above */ }
+    }
+  }
+}
+
 function fixedObject(value, keys, expected) {
   exactObject(value, keys);
   for (const key of keys) if (valueAt(value, key) !== expected[key]) fail();
@@ -311,6 +361,46 @@ function sanitizeBuilderCheckRuntimeIdentity(rawValue) {
   }
 }
 
+function registerVerifiedRuntime(input, packageManager, nodeCli, launcher, cliEntry) {
+  const resolvedAtMs = safeTimestamp(valueAt(input, 'resolved_at_ms'));
+  const expiresAtMs = safeTimestamp(valueAt(input, 'expires_at_ms'));
+  if (
+    expiresAtMs <= resolvedAtMs
+    || expiresAtMs - resolvedAtMs > MAX_IDENTITY_LIFETIME_MS
+  ) fail();
+  const unsigned = freezeDeep({
+    runtime_identity_version: BUILDER_CHECK_RUNTIME_IDENTITY_VERSION,
+    package_manager: packageManager,
+    launcher_kind: nodeCli ? 'node_cli' : 'native_binary',
+    launcher_binary_digest: launcher.digest,
+    cli_entry_digest: cliEntry?.digest ?? null,
+    package_manager_version: safePattern(
+      valueAt(input, 'package_manager_version'),
+      VERSION_PATTERN,
+    ),
+    resolution_source: safeEnum(
+      valueAt(input, 'resolution_source'),
+      RESOLUTION_SOURCES,
+    ),
+    resolved_at_ms: resolvedAtMs,
+    expires_at_ms: expiresAtMs,
+    status: 'ready',
+    authority: { ...AUTHORITY },
+  });
+  const digest = sha256Canonical(unsigned);
+  const identity = freezeDeep({
+    ...unsigned,
+    runtime_identity_id: `builder-check-runtime-identity:${digest.slice('sha256:'.length)}`,
+    runtime_identity_digest: digest,
+  });
+  TRUSTED_IDENTITIES.add(identity);
+  PRIVATE_RUNTIME_PATHS.set(identity, freezeDeep({
+    launcher_path: launcher.real_path,
+    cli_entry_path: cliEntry?.real_path ?? null,
+  }));
+  return identity;
+}
+
 function createBuilderCheckRuntimeRegistry() {
   return freezeDeep({
     registry_version: BUILDER_CHECK_RUNTIME_REGISTRY_VERSION,
@@ -325,43 +415,24 @@ function createBuilderCheckRuntimeRegistry() {
           ? fileIdentity(rawCliEntryPath, MAX_CLI_ENTRY_BYTES)
           : null;
         if ((!nodeCli && rawCliEntryPath !== null) || (nodeCli && rawCliEntryPath === null)) fail();
-        const resolvedAtMs = safeTimestamp(valueAt(input, 'resolved_at_ms'));
-        const expiresAtMs = safeTimestamp(valueAt(input, 'expires_at_ms'));
-        if (
-          expiresAtMs <= resolvedAtMs
-          || expiresAtMs - resolvedAtMs > MAX_IDENTITY_LIFETIME_MS
-        ) fail();
-        const unsigned = freezeDeep({
-          runtime_identity_version: BUILDER_CHECK_RUNTIME_IDENTITY_VERSION,
-          package_manager: packageManager,
-          launcher_kind: nodeCli ? 'node_cli' : 'native_binary',
-          launcher_binary_digest: launcher.digest,
-          cli_entry_digest: cliEntry?.digest ?? null,
-          package_manager_version: safePattern(
-            valueAt(input, 'package_manager_version'),
-            VERSION_PATTERN,
-          ),
-          resolution_source: safeEnum(
-            valueAt(input, 'resolution_source'),
-            RESOLUTION_SOURCES,
-          ),
-          resolved_at_ms: resolvedAtMs,
-          expires_at_ms: expiresAtMs,
-          status: 'ready',
-          authority: { ...AUTHORITY },
-        });
-        const digest = sha256Canonical(unsigned);
-        const identity = freezeDeep({
-          ...unsigned,
-          runtime_identity_id: `builder-check-runtime-identity:${digest.slice('sha256:'.length)}`,
-          runtime_identity_digest: digest,
-        });
-        TRUSTED_IDENTITIES.add(identity);
-        PRIVATE_RUNTIME_PATHS.set(identity, freezeDeep({
-          launcher_path: launcher.real_path,
-          cli_entry_path: cliEntry?.real_path ?? null,
-        }));
-        return identity;
+        return registerVerifiedRuntime(input, packageManager, nodeCli, launcher, cliEntry);
+      } catch (error) {
+        if (error instanceof BuilderCheckRuntimeIdentityError) throw error;
+        fail();
+      }
+    },
+    async register_runtime_async(rawInput) {
+      try {
+        const input = exactObject(rawInput, REGISTER_KEYS);
+        const packageManager = safeEnum(valueAt(input, 'package_manager'), PACKAGE_MANAGERS);
+        const nodeCli = NODE_CLI_MANAGERS.has(packageManager);
+        const rawCliEntryPath = valueAt(input, 'cli_entry_path');
+        if ((!nodeCli && rawCliEntryPath !== null) || (nodeCli && rawCliEntryPath === null)) fail();
+        const [launcher, cliEntry] = await Promise.all([
+          fileIdentityAsync(valueAt(input, 'launcher_path'), MAX_LAUNCHER_BYTES),
+          nodeCli ? fileIdentityAsync(rawCliEntryPath, MAX_CLI_ENTRY_BYTES) : null,
+        ]);
+        return registerVerifiedRuntime(input, packageManager, nodeCli, launcher, cliEntry);
       } catch (error) {
         if (error instanceof BuilderCheckRuntimeIdentityError) throw error;
         fail();
@@ -381,6 +452,38 @@ function createBuilderCheckRuntimeRegistry() {
         const cliEntry = privatePaths.cli_entry_path === null
           ? null
           : fileIdentity(privatePaths.cli_entry_path, MAX_CLI_ENTRY_BYTES);
+        if (
+          launcher.digest !== normalized.launcher_binary_digest
+          || (cliEntry?.digest ?? null) !== normalized.cli_entry_digest
+        ) fail();
+        return freezeDeep({
+          runtime_handle_version: BUILDER_CHECK_RUNTIME_HANDLE_VERSION,
+          runtime_identity: normalized,
+          launcher_path: launcher.real_path,
+          cli_entry_path: cliEntry?.real_path ?? null,
+          authority: { ...HANDLE_AUTHORITY },
+        });
+      } catch (error) {
+        if (error instanceof BuilderCheckRuntimeIdentityError) throw error;
+        fail();
+      }
+    },
+    async read_private_runtime_async(rawInput) {
+      try {
+        const input = exactObject(rawInput, READ_KEYS);
+        const identity = valueAt(input, 'runtime_identity');
+        if (!TRUSTED_IDENTITIES.has(identity)) fail();
+        const normalized = sanitizeBuilderCheckRuntimeIdentity(identity);
+        const readAtMs = safeTimestamp(valueAt(input, 'read_at_ms'));
+        if (readAtMs < normalized.resolved_at_ms || readAtMs >= normalized.expires_at_ms) fail();
+        const privatePaths = PRIVATE_RUNTIME_PATHS.get(identity);
+        if (!privatePaths) fail();
+        const [launcher, cliEntry] = await Promise.all([
+          fileIdentityAsync(privatePaths.launcher_path, MAX_LAUNCHER_BYTES),
+          privatePaths.cli_entry_path === null
+            ? null
+            : fileIdentityAsync(privatePaths.cli_entry_path, MAX_CLI_ENTRY_BYTES),
+        ]);
         if (
           launcher.digest !== normalized.launcher_binary_digest
           || (cliEntry?.digest ?? null) !== normalized.cli_entry_digest

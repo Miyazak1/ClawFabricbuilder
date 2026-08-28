@@ -1,11 +1,15 @@
 'use strict';
 
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, net, session, shell } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
-const { createBuilderGenerationIpcRuntime } = require('./builder-generation-ipc-runtime.cjs');
+const {
+  createBuilderGenerationIpcRuntime,
+  packagedCheckWorkerPath,
+} = require('./builder-generation-ipc-runtime.cjs');
 const { createBuilderPermissionIpcRuntime } = require('./builder-permission-ipc-runtime.cjs');
 const {
   createBuilderProviderContextDisclosureApprovalIpcRuntime,
@@ -28,8 +32,30 @@ const {
 const {
   createBuilderLivePreviewWebContentsViewRuntime,
 } = require('./builder-live-preview-webcontents-view-runtime.cjs');
+const {
+  createBuilderAgentTestBrowserRuntime,
+} = require('./builder-agent-test-browser-runtime.cjs');
+const {
+  createBuilderAgentTestBrowserIpcRuntime,
+} = require('./builder-agent-test-browser-ipc-runtime.cjs');
+const {
+  createBuilderBrowserSessionRegistry,
+} = require('./builder-browser-session-registry.cjs');
+const {
+  createBuilderUserWebMainService,
+} = require('./builder-user-web-main-service.cjs');
+const {
+  createBuilderUserWebIpcRuntime,
+} = require('./builder-user-web-ipc-runtime.cjs');
+const {
+  createBuilderCheckRunProcessAdapter,
+} = require('./builder-check-run-process-adapter.cjs');
+const {
+  createBuilderLivePreviewDevServerRuntime,
+} = require('./builder-live-preview-dev-server-runtime.cjs');
 const { createBuilderProviderSettingsIpcRuntime } = require('./builder-provider-settings-ipc-runtime.cjs');
 const { createBuilderWindowControlsIpcRuntime } = require('./builder-window-controls-ipc-runtime.cjs');
+const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
 
 const DEV_SERVER_URL = process.env.BUILDER_RENDERER_URL || '';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
@@ -37,10 +63,39 @@ const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
 const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH';
 const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
+const PERFORMANCE_TRACE_FILE = 'builder-performance-trace.v1.json';
+const PACKAGED_CANARY_STARTUP_DEBUG_FILE = 'builder-canary-startup-debug.json';
 let mainWindow = null;
 let ipcRuntimes = Object.freeze([]);
 let ipcShutdownPromise = null;
 let quitAfterIpcShutdown = false;
+
+function recordPackagedCanaryStartupFailure(error) {
+  if (!app.isPackaged || process.env[PACKAGED_CANARY_SENTINEL] !== '1') return;
+  const rawCode = typeof error?.code === 'string' ? error.code.toLowerCase() : '';
+  const errorCode = /^[a-z0-9_]{1,96}$/u.test(rawCode) ? rawCode : 'startup_failed';
+  const rawName = typeof error?.name === 'string' ? error.name : '';
+  const errorName = /^[A-Za-z]{1,48}Error$/u.test(rawName) ? rawName : 'Error';
+  const stack = typeof error?.stack === 'string' ? error.stack : '';
+  const location = stack.match(/[\\/](builder-[a-z0-9-]+\.cjs):(\d{1,7}):(\d{1,7})/u);
+  const diagnostic = Object.freeze({
+    diagnostic_version: 'builder-packaged-canary-startup-debug.v1',
+    error_code: errorCode,
+    error_name: errorName,
+    phase: 'ready_handler',
+    source_file: location?.[1] ?? null,
+    source_line: location === null ? null : Number(location[2]),
+  });
+  try {
+    fs.writeFileSync(
+      path.join(app.getPath('userData'), PACKAGED_CANARY_STARTUP_DEBUG_FILE),
+      `${JSON.stringify(diagnostic)}\n`,
+      { encoding: 'utf8', flag: 'wx' },
+    );
+  } catch {
+    // Canary diagnostics never change startup or shutdown behavior.
+  }
+}
 
 function invalidPackagedCanaryPath() {
   throw new Error('invalid packaged canary user data path');
@@ -194,9 +249,15 @@ function createMainWindow() {
     rendererUrl: DEV_SERVER_URL,
   });
   if (rendererTarget.kind === 'development_url') {
-    void window.loadURL(rendererTarget.url);
+    const rendererUrl = new URL(rendererTarget.url);
+    if (builderPerformanceTrace.enabled()) rendererUrl.searchParams.set('builder_perf_trace', '1');
+    void window.loadURL(rendererUrl.toString());
   } else {
-    void window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    void window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), {
+      ...(builderPerformanceTrace.enabled()
+        ? { query: { builder_perf_trace: '1' } }
+        : {}),
+    });
   }
   mainWindow = window;
   return window;
@@ -210,17 +271,24 @@ function denyRendererPermissions() {
 }
 
 async function shutdownIpcRuntimes() {
-  for (const runtime of [...ipcRuntimes].reverse()) {
-    try {
-      if (typeof runtime.shutdown === 'function') await runtime.shutdown();
-      else runtime.dispose();
-    } catch {
-      if (typeof runtime.shutdown === 'function') return false;
-      // Non-executing IPC cleanup remains best-effort during application shutdown.
+  const shutdownComplete = await builderPerformanceTrace.measureAsync(
+    'main.lifecycle.shutdown_ipc_runtimes.duration_ms',
+    async () => {
+      for (const runtime of [...ipcRuntimes].reverse()) {
+        try {
+          if (typeof runtime.shutdown === 'function') await runtime.shutdown();
+          else runtime.dispose();
+        } catch {
+          if (typeof runtime.shutdown === 'function') return false;
+          // Non-executing IPC cleanup remains best-effort during application shutdown.
+        }
+      }
+      ipcRuntimes = Object.freeze([]);
+      return true;
     }
-  }
-  ipcRuntimes = Object.freeze([]);
-  return true;
+  );
+  try { builderPerformanceTrace.flush(); } catch { /* local diagnostics never block shutdown */ }
+  return shutdownComplete;
 }
 
 function createProjectFolderDialog(packagedCanaryProjectRootPath) {
@@ -239,6 +307,16 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
     mainWindowRef: () => mainWindow,
     userDataPath,
   });
+  const browserSessionRegistry = createBuilderBrowserSessionRegistry({
+    session,
+    now_ms: () => Date.now(),
+  });
+  const agentTestBrowserRuntime = createBuilderAgentTestBrowserRuntime({
+    WebContentsView,
+    browser_session_registry: browserSessionRegistry,
+    mainWindowRef: () => mainWindow,
+    now_ms: () => Date.now(),
+  });
   const generationRuntime = createBuilderGenerationIpcRuntime({
     fetchImpl: net.fetch,
     grantPermissionForExplicitApproval: permissionRuntime.grantForExplicitApproval,
@@ -247,23 +325,56 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
     openPath: (projectRootPath) => shell.openPath(projectRootPath),
     showOpenDialog: createProjectFolderDialog(packagedCanaryProjectRootPath),
     userDataPath,
+    agentTestBrowserRuntime,
+  });
+  const devServerRuntime = createBuilderLivePreviewDevServerRuntime({
+    process_adapter: createBuilderCheckRunProcessAdapter({
+      spawn_process: spawn,
+      platform: process.platform,
+      windows_root: process.platform === 'win32' ? process.env.SystemRoot : null,
+    }),
+    process_exec_path: process.execPath,
+    worker_path: packagedCheckWorkerPath(),
+    now_ms: () => Date.now(),
+    on_output: () => undefined,
   });
   const livePreviewService = createBuilderLivePreviewMainService({
     current_draft_source_service:
       generationRuntime.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime(),
     webcontents_view_runtime: createBuilderLivePreviewWebContentsViewRuntime({
       WebContentsView,
-      session,
+      browserSessionRegistry,
       nowMs: () => Date.now(),
     }),
     mainWindowRef: () => mainWindow,
     now_ms: () => Date.now(),
+    dev_server_runtime: devServerRuntime,
+    project_workspace_path_service:
+      generationRuntime.readProjectWorkspacePathServiceForMainOnlyRuntime(),
+  });
+  const userWebService = createBuilderUserWebMainService({
+    WebContentsView,
+    browserSessionRegistry,
+    mainWindowRef: () => mainWindow,
+    nowMs: () => Date.now(),
   });
   const sideWorkspaceFileService = createBuilderSideWorkspaceFileMainService({
     current_draft_source_service:
       generationRuntime.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime(),
+    runtime_snapshot_source_service:
+      generationRuntime.readRuntimeWorkspaceSourceServiceForMainOnlyRuntime(),
   });
   return Object.freeze([
+    Object.freeze({
+      register() {},
+      dispose() {
+        void agentTestBrowserRuntime.dispose().finally(() => browserSessionRegistry.dispose());
+      },
+      async shutdown() {
+        try { await agentTestBrowserRuntime.dispose(); }
+        finally { await browserSessionRegistry.dispose(); }
+      },
+    }),
     createBuilderProviderSettingsIpcRuntime({
       ipcMain,
       mainWindowRef: () => mainWindow,
@@ -285,11 +396,23 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
         generationRuntime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
       currentDraftCheckSkipService:
         generationRuntime.readCheckRunSkipCurrentDraftServiceForMainOnlyApprovalRuntime(),
+      projectEnvironmentDiagnosisService:
+        generationRuntime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime(),
     }),
     createBuilderLivePreviewIpcRuntime({
       ipcMain,
       mainWindowRef: () => mainWindow,
       livePreviewService,
+    }),
+    createBuilderAgentTestBrowserIpcRuntime({
+      agentTestBrowserRuntime,
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+    }),
+    createBuilderUserWebIpcRuntime({
+      ipcMain,
+      mainWindowRef: () => mainWindow,
+      userWebService,
     }),
     createBuilderSideWorkspaceFileIpcRuntime({
       ipcMain,
@@ -322,6 +445,19 @@ function registerIpcRuntimes(runtimes) {
   }
 }
 
+function exposePackagedPerformanceTraceControls() {
+  Object.defineProperty(globalThis, '__builderPerformanceTraceEventLoopWindow', {
+    configurable: true,
+    enumerable: false,
+    value(action, name) {
+      if (action === 'begin') return builderPerformanceTrace.beginEventLoopWindow(name);
+      if (action === 'end') return builderPerformanceTrace.endEventLoopWindow(name);
+      return false;
+    },
+    writable: false,
+  });
+}
+
 app.setAppUserModelId('com.clawfabric.builder');
 const packagedCanaryProjectRootPath = configurePackagedCanaryPaths();
 
@@ -335,17 +471,41 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     denyRendererPermissions();
     const userDataPath = app.getPath('userData');
-    const runtimes = createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath);
-    registerIpcRuntimes(runtimes);
-    ipcRuntimes = runtimes;
-    createMainWindow();
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (process.env.BUILDER_PERF_TRACE === '1') {
+      builderPerformanceTrace.configure({
+        enabled: true,
+        output_path: path.join(userDataPath, PERFORMANCE_TRACE_FILE),
+      });
+      exposePackagedPerformanceTraceControls();
+    }
+    await builderPerformanceTrace.measureAsync('main.lifecycle.ready_handler.duration_ms', async () => {
+      const runtimes = builderPerformanceTrace.measureSync(
+        'main.lifecycle.create_ipc_runtimes.duration_ms',
+        () => createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath),
+      );
+      builderPerformanceTrace.measureSync(
+        'main.lifecycle.register_ipc_runtimes.duration_ms',
+        () => registerIpcRuntimes(runtimes),
+      );
+      ipcRuntimes = runtimes;
+      builderPerformanceTrace.measureSync(
+        'main.lifecycle.create_main_window.duration_ms',
+        () => createMainWindow(),
+      );
+      app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          builderPerformanceTrace.measureSync(
+            'main.lifecycle.create_main_window.duration_ms',
+            () => createMainWindow(),
+          );
+        }
+      });
     });
-  }).catch(async () => {
+  }).catch(async (error) => {
+    recordPackagedCanaryStartupFailure(error);
     if (await shutdownIpcRuntimes()) {
       quitAfterIpcShutdown = true;
       app.quit();

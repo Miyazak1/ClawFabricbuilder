@@ -1,7 +1,13 @@
 # General Browser Web Mode Architecture
 
-This document defines the future Codex-style Browser `web` mode inside the
-Side Workspace.
+Date: 2026-08-25
+
+Status: active design authority for Browser Gate G5 in
+`UNIVERSAL_PROGRAMMING_AND_BROWSER_LOOP_ROADMAP.md`.
+
+This document defines the Browser shell, its three isolated session classes,
+and the authority required for user browsing and agent-driven application
+testing inside the Side Workspace.
 
 It is not the current Project Preview / Live Preview runtime. Project Preview
 loads local project artifacts through main-owned preview source authority. Web
@@ -15,18 +21,41 @@ right-side workspace tab.
 
 ## Product Decision
 
-Builder should expose one user-facing `Browser` tool with two internal modes:
+Builder should expose one user-facing `Browser` shell backed by three session
+classes:
 
 - `project_preview`: local project preview, loopback-only, source-bound, used as
   project run evidence;
-- `web`: general browser, user-directed URL navigation, tabs, downloads,
+- `agent_test`: an ephemeral, run-bound browser used by the programming loop to
+  exercise admitted local applications and collect test evidence;
+- `user_web`: general browser, user-directed URL navigation, tabs, downloads,
   history, cookies, and page observation.
 
 The UI can feel unified. The authority model must stay split.
 
-Project Preview must not inherit Web cookies, history, downloads, or arbitrary
-navigation. Web mode must not become project run evidence unless Project
-Preview admission has explicitly produced that evidence.
+Project Preview must not inherit User Web cookies, history, downloads, or
+arbitrary navigation. Agent Test must not inherit User Web login state or
+become a general browsing profile. User Web observations must not become
+project run evidence unless an admitted Agent Test run has deterministically
+reproduced them.
+
+## Current Implementation Baseline
+
+The repository already has an isolated Project Preview runtime:
+
+- main-owned source admission and loopback serving;
+- isolated `WebContentsView` lifecycle;
+- external navigation, windows, downloads, and permissions blocked;
+- packaged preview canary coverage.
+
+The repository does not yet have a product Browser runtime, durable browser
+profiles, agent page actions, DOM/accessibility observations, or a browser
+evidence protocol. Playwright is currently verification infrastructure, not a
+renderer-owned or provider-owned product capability.
+
+The first Browser implementation therefore extends the main-owned authority
+model. It must not expose raw Electron `webContents`, Playwright handles, CDP
+sessions, or session partitions to renderer or provider code.
 
 ## Goals
 
@@ -122,7 +151,7 @@ inside a broader Side Workspace tab:
 ```text
 SideWorkspaceTab(tab_type: browser)
 Browser
-  mode: project_preview | web
+  session_class: project_preview | agent_test | user_web
   selected_tab_id
   tabs[]
   toolbar_state
@@ -139,7 +168,18 @@ Project Preview authority:
 - cookies/history/passwords: absent;
 - agent access: project-preview evidence only.
 
-Web mode authority:
+Agent Test authority:
+
+- source: an admitted local application URL produced by a programming run;
+- navigation: admitted loopback origins by default;
+- session: fresh ephemeral partition per run or test group;
+- evidence: browser test evidence bound to run, revision, and process identity;
+- downloads/uploads: blocked unless the test manifest admits bounded fixtures;
+- cookies/history/passwords: ephemeral and unavailable to User Web;
+- agent access: admitted observation/action primitives only;
+- lifetime: main-owned and force-closed when the run ends or is cancelled.
+
+User Web authority:
 
 - source: user-directed URL navigation;
 - navigation: external origins allowed only by Web policy;
@@ -148,6 +188,41 @@ Web mode authority:
 - downloads: admitted by download policy;
 - cookies/history/passwords: profile-governed and user-controlled;
 - agent access: explicit observation consent per page, tab, or origin.
+
+## Browser Session Classes
+
+Every browser surface must be backed by a main-owned session record:
+
+```text
+builder-browser-session.v1
+  session_id
+  session_class: project_preview | agent_test | user_web
+  profile_id?
+  project_id?
+  owner_run_id?
+  admitted_origins[]
+  persistence: ephemeral | local_persistent
+  created_at_ms
+  expires_at_ms?
+  lifecycle_state
+  authority
+```
+
+The public record never contains an Electron partition string, storage path,
+debugging endpoint, or raw process handle. Those remain private main-process
+implementation details.
+
+Session rules:
+
+| Class | Owner | Default origins | Persistence | Agent control | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Project Preview | project preview run | admitted loopback origin | ephemeral | evidence capture only | preview evidence |
+| Agent Test | programming run | admitted loopback origins | ephemeral | bounded test primitives | browser test evidence |
+| User Web | user profile | user-directed web origins | explicit profile choice | consent-gated | web observation evidence |
+
+No class may attach to another class's partition. Copying a URL between classes
+is a new navigation request, not a transfer of cookies, storage, credentials,
+page handles, or authority.
 
 ## Core Contracts
 
@@ -181,7 +256,8 @@ should prefer `ephemeral` until privacy UI is mature.
 builder-browser-tab.v1
   tab_id
   profile_id
-  mode: web
+  session_id
+  session_class: agent_test | user_web
   title
   visible_url
   origin
@@ -230,6 +306,11 @@ builder-browser-observation-admission.v1
 Agent observation is separate from navigation. A page being open does not mean
 the agent can read it.
 
+For `agent_test`, one visible Run admission may grant observation for admitted
+loopback origins for the lifetime of that run. For `user_web`, observation
+requires explicit tab-, session-, or origin-scoped consent and remains
+revocable at any time.
+
 ### Agent Action Admission
 
 ```text
@@ -247,6 +328,11 @@ builder-browser-action-admission.v1
 Action admission is separate from observation. A page being readable does not
 mean the agent can click buttons, submit forms, enter credentials, upload files,
 or download files.
+
+For `agent_test`, low-risk actions against admitted loopback origins may be
+covered by the programming run admission. Origin changes, file access,
+downloads, credential fields, or external navigation require a new decision.
+For `user_web`, actions are consent-gated independently from observation.
 
 Sensitive actions must pause for user approval:
 
@@ -394,6 +480,79 @@ Required action primitives:
 - upload only from an admitted file ref;
 - download only through Download Admission.
 
+### Agent Test Tool Protocol
+
+The first product protocol is capability-oriented, not a raw Playwright or CDP
+passthrough:
+
+```text
+browser.open_local_app
+browser.observe
+browser.navigate
+browser.go_back
+browser.go_forward
+browser.reload
+browser.click
+browser.type
+browser.press_key
+browser.scroll
+browser.select_option
+browser.wait
+browser.set_viewport
+browser.list_tabs
+browser.select_tab
+browser.close
+```
+
+`browser.observe` may return a bounded screenshot ref, viewport metadata,
+accessibility snapshot, visible-text/DOM summary, console summary, network
+summary, and stable element references. Large or sensitive payloads remain in a
+private evidence store and are represented to the provider by digests and
+redacted summaries.
+
+Every action result binds:
+
+```text
+builder-browser-action-result.v1
+  action_id
+  session_id
+  tab_id
+  owner_run_id
+  origin
+  action_kind
+  target_ref?
+  before_observation_digest
+  after_observation_digest?
+  state: completed | blocked | failed | cancelled
+  error_summary?
+  started_at_ms
+  ended_at_ms
+  authority
+```
+
+Version 1 does not expose arbitrary JavaScript execution, raw CDP commands,
+unbounded DOM serialization, arbitrary filesystem upload paths, or browser
+profile internals. A future expert mode requires its own high-risk admission.
+
+### Local Application Binding
+
+Agent Test must open only a URL emitted by an admitted foreground process or
+managed job. The binding records process/job identity, normalized loopback
+origin, project/revision identity, and readiness evidence. Guessing ports or
+opening a user-supplied localhost URL is not sufficient authority.
+
+### Lifecycle And Recovery
+
+- Creating a run creates a fresh Agent Test session unless reuse is explicitly
+  admitted for the same project revision and process identity.
+- Cancelling or completing the owning run closes page handles, debugging
+  channels, downloads, and the ephemeral partition.
+- Renderer reload may reconnect to projected session state; it may not recreate
+  authority or adopt an orphan browser process.
+- Main-process restart marks active test sessions interrupted. Recovery starts a
+  new session and records the interruption rather than pretending continuity.
+- Cleanup failure is surfaced as evidence and blocks release qualification.
+
 Each action must produce bounded evidence:
 
 - action id;
@@ -438,6 +597,8 @@ Not shared:
 
 Define the unified Browser shell with split modes and privacy boundaries.
 
+Status: defined by this document and the universal loop roadmap.
+
 ### GB1: Pure Main-Side Contracts
 
 Add profile, tab, navigation admission, observation admission, download
@@ -446,28 +607,35 @@ runtime, no preload, no UI.
 
 ### GB2: Isolated WebContents Runtime
 
-Create a Web-mode runtime with a separate session partition, navigation policy,
-window-open policy, permission policy, download interception, and cleanup.
+Create the Agent Test runtime first, with a separate session partition,
+run-bound loopback navigation policy, window-open policy, permission policy,
+download interception, and cleanup.
 
 ### GB3: Read-Only Browser UI
 
-Expose toolbar, address bar, tab strip, back/forward/reload/stop, visible URL,
-and blocked states. Do not expose downloads, cookie import, password import, or
-agent observation yet.
+Expose the shared toolbar and Agent Test observation surface: visible URL,
+loading and blocked states, screenshot, console/network summaries, and explicit
+run/session status. Do not expose downloads, cookie import, or password import.
 
-### GB4: User-Controlled Downloads And Data Controls
+### GB4: Agent Test Actions And Evidence
+
+Add bounded click/type/key/scroll/select/wait actions, stable element refs,
+before/after digests, cancellation, and deterministic cleanup evidence.
+
+### GB5: User Web Shell
+
+Add user-directed address bar, tabs, back/forward/reload/stop, visible origin,
+ephemeral profile, and external navigation policy. User Web ships without agent
+control first.
+
+### GB6: User-Controlled Downloads And Data Controls
 
 Add download admission, history, clear browsing data, and site-data controls.
 
-### GB5: Agent Observation With Consent
+### GB7: User Web Observation And Control
 
-Add screenshot/text/DOM-summary observation only after consent contracts and
-redacted evidence projections are stable.
-
-### GB6: Agent Browser Control Runtime
-
-Add Browser-use-style action primitives only after Web mode and observation
-consent are stable.
+Add observation and action primitives to User Web only after consent,
+revocation, redaction, and sensitive-action pauses are stable.
 
 Evidence:
 
@@ -494,5 +662,12 @@ Do not claim Web mode is Codex-like until:
 - external pages cannot call app IPC;
 - Project Preview and Web mode cannot share cookies, history, source authority,
   or evidence authority;
+- Agent Test cannot inherit User Web cookies, credentials, history, downloads,
+  or external navigation authority;
+- browser actions bind to a live admitted run and before/after observation
+  digests;
+- cancelled and crashed sessions leave no reusable debugging endpoint or
+  orphan partition;
 - packaged canary proves navigation, tab lifecycle, cleanup, blocked protocols,
-  download blocking/admission, and no project authority crossover.
+  download blocking/admission, Agent Test action evidence, and no authority
+  crossover among all three session classes.

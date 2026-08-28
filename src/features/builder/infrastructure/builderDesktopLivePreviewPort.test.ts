@@ -7,7 +7,8 @@ import {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 
 function request() {
   return {
@@ -45,6 +46,7 @@ function status() {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
     preview_kind: 'live_static_web',
+    entry_url: null,
     status: 'unavailable',
     can_start: false,
     can_reload: false,
@@ -56,6 +58,7 @@ function status() {
     download_block_count: 0,
     window_open_block_count: 0,
     message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
+    dev_server_approval: null,
     unavailable_reason: 'preview_source_resolver_not_connected',
     updated_at_ms: 10,
     authority: authority(),
@@ -79,6 +82,14 @@ function bridge(overrides = {}) {
     readCurrentPreviewStatus: vi.fn(async (value: unknown) => {
       void value;
       return status();
+    }),
+    updateCurrentPreviewLayout: vi.fn(async (value: unknown) => {
+      void value;
+      return { ...status(), status: 'ready', unavailable_reason: null };
+    }),
+    decideDevServerApproval: vi.fn(async (value: unknown) => {
+      void value;
+      return { ...status(), status: 'stopped', unavailable_reason: null };
     }),
     ...overrides,
   };
@@ -149,6 +160,42 @@ describe('createBuilderDesktopLivePreviewPort', () => {
     });
   });
 
+  it('forwards bounded Browser panel geometry and supports hiding the native view', async () => {
+    const source = bridge();
+    const port = createBuilderDesktopLivePreviewPort(source);
+    const layout = { ...request(), view_bounds: { x: 820, y: 180, width: 420, height: 520 } };
+
+    await expect(port.updateCurrentPreviewLayout(layout)).resolves.toMatchObject({ status: 'ready' });
+    await expect(port.updateCurrentPreviewLayout({ ...request(), view_bounds: null }))
+      .resolves.toMatchObject({ status: 'ready' });
+    expect(source.updateCurrentPreviewLayout).toHaveBeenNthCalledWith(1, layout);
+    expect(source.updateCurrentPreviewLayout).toHaveBeenNthCalledWith(2, {
+      ...request(),
+      view_bounds: null,
+    });
+  });
+
+  it('forwards only an exact one-time development-server decision', async () => {
+    const source = bridge();
+    const port = createBuilderDesktopLivePreviewPort(source);
+    const decision = {
+      ...request(),
+      approval_request_id:
+        'builder-live-preview-dev-server-approval-request:223e4567-e89b-42d3-a456-426614174000',
+      decision: 'allow_once' as const,
+    };
+
+    await expect(port.decideDevServerApproval(decision)).resolves.toMatchObject({
+      status: 'stopped',
+    });
+    expect(source.decideDevServerApproval).toHaveBeenCalledExactlyOnceWith(decision);
+    await expect(port.decideDevServerApproval({
+      ...decision,
+      decision: 'allow_always' as 'allow_once',
+    })).rejects.toBeInstanceOf(BuilderDesktopLivePreviewPortError);
+    expect(source.decideDevServerApproval).toHaveBeenCalledOnce();
+  });
+
   it.each([
     null,
     {},
@@ -171,10 +218,6 @@ describe('createBuilderDesktopLivePreviewPort', () => {
       null,
       { ...request(), project_id: 'bad' },
       { ...request(), conversation_id: 'bad' },
-      {
-        project_id: PROJECT_ID,
-        conversation_id: 'builder-conversation:00000000-0000-4000-8000-000000000000',
-      },
       { ...request(), source_tree: { files: [] } },
     ]) {
       await expect(port.requestCurrentDraftPreview(value as ReturnType<typeof request>))
@@ -187,7 +230,7 @@ describe('createBuilderDesktopLivePreviewPort', () => {
     for (const value of [
       { ...status(), project_id: 'builder-project:00000000-0000-4000-8000-000000000000' },
       { ...status(), source_tree: { files: [] } },
-      { ...status(), entry_url: 'http://127.0.0.1:3000/index.html' },
+      { ...status(), entry_url: 'https://example.com/index.html' },
       {
         ...status(),
         authority: {

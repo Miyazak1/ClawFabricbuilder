@@ -1,6 +1,8 @@
 import {
   createBuilderGenerationRequest,
+  sanitizeBuilderApprovedPlanGenerationAnswer,
   sanitizeBuilderApprovedPlanGenerationDraft,
+  sanitizeBuilderCheckpointRestoreGenerationDraft,
   sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationPlan,
   sanitizeBuilderRevisionRestoreGenerationDraft,
@@ -109,10 +111,12 @@ type RetryableGeneration =
 export type BuilderProjectController = Readonly<{
   getSnapshot(): BuilderProjectControllerSnapshot;
   subscribe(listener: () => void): () => void;
+  selectTaskAddress(taskAddressId: string | null): void;
   retainConversationProject(projectId: string): BuilderProjectControllerSnapshot;
   clearWorkspaceSelection(): BuilderProjectControllerSnapshot;
   open(projectId?: string): Promise<BuilderProjectControllerSnapshot>;
   createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
+  createNewLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot>;
   submit(
     instruction: string,
     queuedFollowup?: BuilderQueuedFollowupReference | null,
@@ -120,6 +124,7 @@ export type BuilderProjectController = Readonly<{
   answer(
     instruction: string,
     queuedFollowup?: BuilderQueuedFollowupReference | null,
+    responseMode?: 'answer' | 'plan',
   ): Promise<BuilderProjectControllerSnapshot>;
   proposePlan(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
@@ -130,6 +135,7 @@ export type BuilderProjectController = Readonly<{
     projectId: string,
     revisionReceiptDigest: string,
   ): Promise<BuilderProjectControllerSnapshot>;
+  restorePreviousCheckpointAsDraft(): Promise<BuilderProjectControllerSnapshot>;
   inspectRevision(projectId: string, revisionReceiptDigest: string): Promise<BuilderProjectControllerSnapshot>;
   showCurrentRevision(): Promise<BuilderProjectControllerSnapshot>;
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
@@ -142,6 +148,8 @@ export type BuilderProjectController = Readonly<{
 
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ADDRESS_ID_PATTERN =
+  /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
@@ -179,6 +187,14 @@ const REJECT_RESULT_KEYS = Object.freeze([
   'draft_id',
   'project_id',
   'rejected',
+  'pending_draft_released',
+  'conversation_event_admission',
+]);
+const UNDO_BASELINE_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'operation',
+  'draft_id',
+  'project_id',
   'pending_draft_released',
   'conversation_event_admission',
 ]);
@@ -457,6 +473,27 @@ function sanitizeRejectResult(value: unknown, draft: BuilderGenerationDraft): vo
   ) throw new Error();
 }
 
+function sanitizeUndoBaselineResult(value: unknown, draft: BuilderGenerationDraft): void {
+  const source = exactRecord(value, UNDO_BASELINE_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-generation-draft-undo-result.v1'
+    || source.operation !== 'draft_baseline_restored'
+    || source.draft_id !== draft.draft_id
+    || source.project_id !== draft.project_id
+    || source.pending_draft_released !== true
+    || source.conversation_event_admission !== 'sqlite_recorded'
+  ) throw new Error();
+}
+
+function isUndoBaselineResult(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, 'result_version');
+  return descriptor !== undefined
+    && descriptor.enumerable === true
+    && Object.hasOwn(descriptor, 'value')
+    && descriptor.value === 'builder-generation-draft-undo-result.v1';
+}
+
 function isExplanationResult(value: unknown): boolean {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const descriptor = Object.getOwnPropertyDescriptor(value, 'result_kind');
@@ -542,6 +579,7 @@ export function createBuilderProjectController(
     requestId: string | null;
   }> | null = null;
   let retryableGeneration: RetryableGeneration | null = null;
+  let selectedTaskAddressId: string | null = null;
   const listeners = new Set<() => void>();
   const unsubscribeStarted = dependencies.generator.subscribeStarted?.((event) => {
     const target = activeGeneration;
@@ -809,7 +847,19 @@ export function createBuilderProjectController(
       return publish(snapshot('unavailable', null, null, null, 'unavailable'));
     }
     return run(async (operationEpoch) => {
-      publish(snapshot('opening', null, null, null, null));
+      publish(snapshot(
+        'opening',
+        current.savedProject,
+        current.draft,
+        current.preview,
+        null,
+        current.answer,
+        current.inspectedRevision,
+        false,
+        current.workingProjectId,
+        current.workingProject,
+        current.conversationProjectId,
+      ));
       try {
         const opened = await dependencies.workspace.open({ project_id: projectId });
         try {
@@ -844,13 +894,15 @@ export function createBuilderProjectController(
     });
   }
 
-  async function createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot> {
+  async function createLocalProjectWithId(
+    projectTitle: string,
+    logicalProjectId: string | null,
+  ): Promise<BuilderProjectControllerSnapshot> {
     if (disposed || current.busy || current.draft !== null || current.inspectedRevision !== null) return current;
     epoch += 1;
     inFlight = null;
     activeGeneration = null;
     retryableGeneration = null;
-    const logicalProjectId = current.answer?.project_id ?? current.conversationProjectId ?? null;
     return run(async (operationEpoch) => {
       publish(snapshot('opening', null, null, null, null));
       try {
@@ -878,9 +930,21 @@ export function createBuilderProjectController(
     });
   }
 
+  async function createLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot> {
+    return createLocalProjectWithId(
+      projectTitle,
+      current.answer?.project_id ?? current.conversationProjectId ?? null,
+    );
+  }
+
+  async function createNewLocalProject(projectTitle: string): Promise<BuilderProjectControllerSnapshot> {
+    return createLocalProjectWithId(projectTitle, null);
+  }
+
   async function answer(
     instruction: string,
     queuedFollowup: BuilderQueuedFollowupReference | null = null,
+    responseMode: 'answer' | 'plan' = 'answer',
   ): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
@@ -928,6 +992,7 @@ export function createBuilderProjectController(
         const request = await createBuilderGenerationRequest(
           instruction,
           targetProjectId,
+          retainedDraft === null ? selectedTaskAddressId : null,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
@@ -937,7 +1002,9 @@ export function createBuilderProjectController(
         });
         const answered = await sanitizeBuilderGenerationAnswer(
           retainedDraft === null
-            ? await dependencies.generator.answer(queuedFollowup === null
+            ? await (responseMode === 'plan'
+              ? dependencies.generator.answerPlan ?? dependencies.generator.answer
+              : dependencies.generator.answer)(queuedFollowup === null
               ? request
               : { ...request, queued_followup: queuedFollowup })
             : await dependencies.generator.answerDraft({
@@ -1037,6 +1104,7 @@ export function createBuilderProjectController(
         request = await createBuilderGenerationRequest(
           instruction,
           targetProjectId,
+          retainedDraft === null ? selectedTaskAddressId : null,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
@@ -1138,6 +1206,7 @@ export function createBuilderProjectController(
         request = await createBuilderGenerationRequest(
           instruction,
           targetProjectId,
+          selectedTaskAddressId,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
@@ -1145,10 +1214,26 @@ export function createBuilderProjectController(
           projectId: targetProjectId,
           requestId,
         });
-        const draft = await sanitizeBuilderGenerationDraft(
-          await dependencies.generator.generate(request),
-          request,
-        );
+        const result = await dependencies.generator.generate(request);
+        if (isExplanationResult(result)) {
+          const answered = await sanitizeBuilderGenerationAnswer(result, request);
+          clearActiveGeneration(request.request_digest, operationEpoch);
+          if (disposed || operationEpoch !== epoch) return current;
+          return publish(snapshot(
+            settledStatus(retained, current.preview, targetProjectId),
+            retained,
+            null,
+            current.preview,
+            null,
+            answered,
+            null,
+            false,
+            unsavedWorkingProjectId(retained, null, targetProjectId),
+            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+            answered.project_id,
+          ));
+        }
+        const draft = await sanitizeBuilderGenerationDraft(result, request);
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
@@ -1205,7 +1290,7 @@ export function createBuilderProjectController(
       let requestId: string | null = null;
       let request: Awaited<ReturnType<typeof createBuilderGenerationRequest>> | null = null;
       try {
-        request = await createBuilderGenerationRequest(instruction, targetProjectId);
+        request = await createBuilderGenerationRequest(instruction, targetProjectId, selectedTaskAddressId);
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
           before,
@@ -1371,8 +1456,31 @@ export function createBuilderProjectController(
           requestId: null,
         });
         try {
+          const result = await dependencies.generator.generateApprovedPlan(retryable.request);
+          if (isExplanationResult(result)) {
+            const answered = await sanitizeBuilderApprovedPlanGenerationAnswer(
+              result,
+              retryable.request,
+            );
+            clearProjectGeneration(retryable.request.project_id, operationEpoch);
+            if (disposed || operationEpoch !== epoch) return current;
+            retryableGeneration = null;
+            return publish(snapshot(
+              settledStatus(retained, current.preview, targetProjectId),
+              retained,
+              null,
+              current.preview,
+              null,
+              answered,
+              null,
+              false,
+              unsavedWorkingProjectId(retained, null, targetProjectId),
+              unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+              answered.project_id,
+            ));
+          }
           const draft = await sanitizeBuilderApprovedPlanGenerationDraft(
-            await dependencies.generator.generateApprovedPlan(retryable.request),
+            result,
             retryable.request,
           );
           clearProjectGeneration(retryable.request.project_id, operationEpoch);
@@ -1433,10 +1541,27 @@ export function createBuilderProjectController(
         requestId: request.request_digest,
       });
       try {
-        const draft = await sanitizeBuilderGenerationDraft(
-          await dependencies.generator.retry(request),
-          request,
-        );
+        const result = await dependencies.generator.retry(request);
+        if (isExplanationResult(result)) {
+          const answered = await sanitizeBuilderGenerationAnswer(result, request);
+          clearActiveGeneration(request.request_digest, operationEpoch);
+          if (disposed || operationEpoch !== epoch) return current;
+          retryableGeneration = null;
+          return publish(snapshot(
+            settledStatus(retained, current.preview, targetProjectId),
+            retained,
+            null,
+            current.preview,
+            null,
+            answered,
+            null,
+            false,
+            unsavedWorkingProjectId(retained, null, targetProjectId),
+            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+            answered.project_id,
+          ));
+        }
+        const draft = await sanitizeBuilderGenerationDraft(result, request);
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
@@ -1500,10 +1625,27 @@ export function createBuilderProjectController(
         requestId: null,
       });
       try {
-        const draft = await sanitizeBuilderApprovedPlanGenerationDraft(
-          await dependencies.generator.generateApprovedPlan(request),
-          request,
-        );
+        const result = await dependencies.generator.generateApprovedPlan(request);
+        if (isExplanationResult(result)) {
+          const answered = await sanitizeBuilderApprovedPlanGenerationAnswer(result, request);
+          clearProjectGeneration(request.project_id, operationEpoch);
+          if (disposed || operationEpoch !== epoch) return current;
+          retryableGeneration = null;
+          return publish(snapshot(
+            settledStatus(retained, current.preview, targetProjectId),
+            retained,
+            null,
+            current.preview,
+            null,
+            answered,
+            null,
+            false,
+            unsavedWorkingProjectId(retained, null, targetProjectId),
+            unsavedWorkingProject(retained, null, targetProjectId, current.workingProject),
+            answered.project_id,
+          ));
+        }
+        const draft = await sanitizeBuilderApprovedPlanGenerationDraft(result, request);
         clearProjectGeneration(request.project_id, operationEpoch);
         if (!draftMatchesSavedBase(draft, retained)) throw new Error();
         if (disposed || operationEpoch !== epoch) return current;
@@ -1630,6 +1772,68 @@ export function createBuilderProjectController(
     });
   }
 
+  async function restorePreviousCheckpointAsDraft(): Promise<BuilderProjectControllerSnapshot> {
+    const previousDraft = current.draft;
+    const restorePrevious = dependencies.generator.restorePreviousCheckpointAsDraft;
+    if (
+      disposed
+      || current.busy
+      || previousDraft === null
+      || typeof restorePrevious !== 'function'
+      || !['draft_ready', 'preview_unavailable', 'generation_failed'].includes(current.status)
+    ) return current;
+    const retained = current.savedProject;
+    const beforeRestore = current;
+    return run(async (operationEpoch) => {
+      publish(snapshot(
+        'restoring',
+        retained,
+        previousDraft,
+        current.preview,
+        null,
+        null,
+        null,
+        false,
+        current.workingProjectId,
+        current.workingProject,
+      ));
+      try {
+        const result = await restorePrevious({
+          draft_id: previousDraft.draft_id,
+        });
+        if (isUndoBaselineResult(result)) {
+          sanitizeUndoBaselineResult(result, previousDraft);
+          if (disposed || operationEpoch !== epoch) return current;
+          retryableGeneration = null;
+          return withPreview('ready', retained, null, operationEpoch);
+        }
+        const restoredDraft = await sanitizeBuilderCheckpointRestoreGenerationDraft(
+          result,
+          previousDraft.project_id,
+        );
+        if (!draftMatchesSavedBase(restoredDraft, retained)) throw new Error();
+        if (disposed || operationEpoch !== epoch) return current;
+        retryableGeneration = null;
+        return withPreview('draft_ready', retained, restoredDraft, operationEpoch);
+      } catch (error) {
+        if (disposed || operationEpoch !== epoch) return current;
+        return publish(snapshot(
+          'generation_failed',
+          beforeRestore.savedProject,
+          beforeRestore.draft,
+          beforeRestore.preview,
+          sanitizeTrustedBuilderGenerationDiagnostic(error),
+          beforeRestore.answer,
+          beforeRestore.inspectedRevision,
+          false,
+          beforeRestore.workingProjectId,
+          beforeRestore.workingProject,
+          beforeRestore.conversationProjectId,
+        ));
+      }
+    });
+  }
+
   async function inspectRevision(
     projectId: string,
     revisionReceiptDigest: string,
@@ -1691,7 +1895,6 @@ export function createBuilderProjectController(
       disposed
       || target === null
       || target.requestId === null
-      || !['answering', 'generating', 'submitting'].includes(current.status)
     ) return current;
     try {
       const cancelled = sanitizeCancelResult(
@@ -1889,10 +2092,15 @@ export function createBuilderProjectController(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    selectTaskAddress(taskAddressId) {
+      if (taskAddressId !== null && !TASK_ADDRESS_ID_PATTERN.test(taskAddressId)) return;
+      selectedTaskAddressId = taskAddressId;
+    },
     retainConversationProject,
     clearWorkspaceSelection,
     open,
     createLocalProject,
+    createNewLocalProject,
     submit,
     answer,
     proposePlan,
@@ -1901,6 +2109,7 @@ export function createBuilderProjectController(
     retryGenerate,
     restoreDraft,
     restoreRevisionAsDraft,
+    restorePreviousCheckpointAsDraft,
     inspectRevision,
     showCurrentRevision,
     rejectDraft,

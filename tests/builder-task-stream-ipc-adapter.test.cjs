@@ -11,9 +11,16 @@ const {
   BuilderTaskStreamIpcError,
   createBuilderTaskStreamIpcAdapter,
 } = require('../electron/builder-task-stream-ipc-adapter.cjs');
+const {
+  builderPerformanceTrace,
+  resetBuilderPerformanceTraceForTests,
+} = require('../electron/builder-performance-trace.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
 const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
+
+test.afterEach(() => resetBuilderPerformanceTraceForTests());
 
 function windowAuthority() {
   const webContents = Object.freeze({
@@ -88,19 +95,22 @@ test('task stream adapter exposes only read plus project-id change notification'
   assert.equal(value.channels.read.channel, READ_TASK_STREAM_CHANNEL);
   assert.equal(TASK_STREAM_CHANGED_CHANNEL, 'clawfabric-builder:task-stream:changed');
   assert.equal(value.authority.read_only, true);
-  assert.equal(value.authority.change_notification, 'project_id_only');
+  assert.equal(value.authority.change_notification, 'agent_id_or_project_id_only');
   assert.equal(value.authority.active_renderer_required, true);
   assert.equal(value.authority.direct_electron_registration, false);
   assert.equal(value.authority.direct_preload_exposure, false);
   assert.equal(value.authority.provider_dispatch, false);
   assert.equal(value.authority.credential_readback, false);
 
-  const result = await value.channels.read.invoke(authority.event, { project_id: PROJECT_ID });
+  const result = await value.channels.read.invoke(authority.event, {
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+  });
   assert.equal(result.stream_version, 'builder-task-stream-read-result.v1');
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.conversation.conversation_id, CONVERSATION_ID);
   assert.equal(result.conversation.items[0].message.text, 'Make a timer.');
-  assert.deepEqual(calls, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(calls, [{ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }]);
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.conversation.items), true);
   assert.equal(Object.isFrozen(result.authority), true);
@@ -110,7 +120,10 @@ test('task stream adapter preserves legal absent conversations without fabricati
   const { authority, value } = adapter({
     readStream: async () => streamWire({ conversation: null }),
   });
-  const result = await value.channels.read.invoke(authority.event, { project_id: PROJECT_ID });
+  const result = await value.channels.read.invoke(authority.event, {
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+  });
   assert.deepEqual(result, {
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: PROJECT_ID,
@@ -122,6 +135,116 @@ test('task stream adapter preserves legal absent conversations without fabricati
       project_revision: 'not_inferred',
     },
   });
+});
+
+test('task stream adapter returns full, unchanged, and append-only cursor results without forwarding cursor authority', async () => {
+  const authority = windowAuthority();
+  let current = streamWire();
+  const calls = [];
+  const value = createBuilderTaskStreamIpcAdapter({
+    readStream: async (request) => {
+      calls.push(request);
+      return current;
+    },
+    mainWindowRef: authority.mainWindowRef,
+  });
+  const initialRequest = {
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    cursor: {
+      protocol_version: 'builder-task-stream-cursor.v1',
+      snapshot_digest: null,
+    },
+  };
+  const full = await value.channels.read.invoke(authority.event, initialRequest);
+  assert.equal(full.result_version, 'builder-task-stream-cursor-read-result.v1');
+  assert.equal(full.result_kind, 'full');
+  assert.match(full.snapshot_digest, /^[0-9a-f]{64}$/u);
+  assert.deepEqual(full.snapshot, streamWire());
+
+  const cursorRequest = {
+    ...initialRequest,
+    cursor: {
+      ...initialRequest.cursor,
+      snapshot_digest: full.snapshot_digest,
+    },
+  };
+  const unchanged = await value.channels.read.invoke(authority.event, cursorRequest);
+  assert.deepEqual(unchanged, {
+    result_version: 'builder-task-stream-cursor-read-result.v1',
+    result_kind: 'unchanged',
+    base_snapshot_digest: full.snapshot_digest,
+    snapshot_digest: full.snapshot_digest,
+  });
+
+  const secondItem = {
+    ...current.conversation.items[0],
+    sequence: 2,
+    message: {
+      ...current.conversation.items[0].message,
+      text: 'Refine the timer.',
+    },
+  };
+  current = streamWire({
+    conversation: {
+      ...current.conversation,
+      head_sequence: 2,
+      window: { first_sequence: 1, last_sequence: 2, has_earlier: false },
+      items: [...current.conversation.items, secondItem],
+    },
+  });
+  const incremental = await value.channels.read.invoke(authority.event, cursorRequest);
+  assert.equal(incremental.result_kind, 'incremental');
+  assert.equal(incremental.base_snapshot_digest, full.snapshot_digest);
+  assert.notEqual(incremental.snapshot_digest, full.snapshot_digest);
+  assert.deepEqual(incremental.snapshot.conversation.items, [secondItem]);
+  assert.equal(incremental.snapshot.conversation.head_sequence, 2);
+  assert.deepEqual(calls, Array.from({ length: 3 }, () => ({
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+  })));
+});
+
+test('task stream adapter records non-cursor result bytes without stringifying the IPC result', async () => {
+  const outputPath = path.join(__dirname, '..', '.tmp-task-stream-ipc-trace.json');
+  const { authority, value } = adapter();
+  assert.equal(builderPerformanceTrace.configure({ enabled: true, output_path: outputPath }), true);
+  const originalStringify = JSON.stringify;
+  let stringifyCalls = 0;
+  JSON.stringify = function failStringify() {
+    stringifyCalls += 1;
+    throw new Error('task stream result byte accounting must not stringify the IPC result');
+  };
+  try {
+    const result = await value.channels.read.invoke(authority.event, {
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    });
+    assert.equal(result.stream_version, 'builder-task-stream-read-result.v1');
+    assert.equal(stringifyCalls, 0);
+    const trace = builderPerformanceTrace.snapshot();
+    const metric = trace.metrics.find((entry) => entry.name === 'main.task_stream.ipc.result_bytes');
+    assert.ok(metric);
+    assert.ok(metric.total > 0);
+  } finally {
+    JSON.stringify = originalStringify;
+    fs.rmSync(outputPath, { force: true });
+  }
+});
+
+test('task stream adapter falls back to a full cursor result when its base cursor is unknown', async () => {
+  const { authority, value } = adapter();
+  const result = await value.channels.read.invoke(authority.event, {
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    cursor: {
+      protocol_version: 'builder-task-stream-cursor.v1',
+      snapshot_digest: 'a'.repeat(64),
+    },
+  });
+  assert.equal(result.result_kind, 'full');
+  assert.equal(result.base_snapshot_digest, null);
+  assert.deepEqual(result.snapshot, streamWire());
 });
 
 test('task stream adapter rejects inactive senders and malformed payloads before reading authority', async () => {
@@ -158,7 +281,7 @@ test('task stream adapter maps service failures to fixed public errors without p
     readStream: async () => { throw source; },
   });
   await assert.rejects(
-    value.channels.read.invoke(authority.event, { project_id: PROJECT_ID }),
+    value.channels.read.invoke(authority.event, { project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
     (error) => error instanceof BuilderTaskStreamIpcError
       && error.code === 'builder_task_stream_unavailable'
       && error.retryable === true
@@ -169,7 +292,7 @@ test('task stream adapter maps service failures to fixed public errors without p
     readStream: async () => { throw new Error('private unknown marker'); },
   });
   await assert.rejects(
-    unknown.value.channels.read.invoke(unknown.authority.event, { project_id: PROJECT_ID }),
+    unknown.value.channels.read.invoke(unknown.authority.event, { project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
     (error) => error instanceof BuilderTaskStreamIpcError
       && error.code === 'builder_task_stream_unavailable'
       && !`${error.message}:${error.stack}`.includes('private unknown marker'),
@@ -188,7 +311,7 @@ test('task stream adapter fails closed on hostile or oversized output without in
     readStream: async () => hostile,
   });
   await assert.rejects(
-    value.channels.read.invoke(authority.event, { project_id: PROJECT_ID }),
+    value.channels.read.invoke(authority.event, { project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
     (error) => error instanceof BuilderTaskStreamIpcError
       && error.code === 'builder_task_stream_unavailable',
   );
@@ -205,7 +328,7 @@ test('task stream adapter fails closed on hostile or oversized output without in
     },
   });
   await assert.rejects(
-    accessor.value.channels.read.invoke(accessor.authority.event, { project_id: PROJECT_ID }),
+    accessor.value.channels.read.invoke(accessor.authority.event, { project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
     { code: 'builder_task_stream_unavailable' },
   );
 
@@ -216,7 +339,7 @@ test('task stream adapter fails closed on hostile or oversized output without in
     }),
   });
   await assert.rejects(
-    oversized.value.channels.read.invoke(oversized.authority.event, { project_id: PROJECT_ID }),
+    oversized.value.channels.read.invoke(oversized.authority.event, { project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }),
     { code: 'builder_task_stream_unavailable' },
   );
 });

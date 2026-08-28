@@ -1,6 +1,11 @@
 'use strict';
 
 const { types: utilTypes } = require('node:util');
+const { MAX_EVENT_SEQUENCE } = require('./builder-conversation-records.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const SERVICE_VERSION = 'builder-session-task-address-binding-service.v1';
 const RESULT_VERSION = 'builder-session-task-address-binding-result.v1';
@@ -118,7 +123,6 @@ const ADDRESS_RECORD_KEYS = Object.freeze(['session_address']);
 const TASK_RECORD_KEYS = Object.freeze(['task_address']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
@@ -212,7 +216,12 @@ function safeTimestamp(value) {
 }
 
 function denseEvents(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 2 || value.length > 128) fail();
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || value.length < 2
+    || value.length > MAX_EVENT_SEQUENCE
+  ) fail();
   const keys = Reflect.ownKeys(value);
   if (
     keys.length !== value.length + 1
@@ -294,6 +303,11 @@ function baseWorkContext(value) {
   safeTimestamp(valueAt(project, 'created_at_ms'));
   if (safePattern(valueAt(conversation, 'project_id'), PROJECT_ID_PATTERN) !== projectId) fail();
   const conversationId = safePattern(valueAt(conversation, 'conversation_id'), CONVERSATION_ID_PATTERN);
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
   safeTimestamp(valueAt(conversation, 'created_at_ms'));
   const turnId = safePattern(valueAt(ids, 'turn_id'), TURN_ID_PATTERN);
   const taskId = safePattern(valueAt(ids, 'task_id'), TASK_ID_PATTERN);

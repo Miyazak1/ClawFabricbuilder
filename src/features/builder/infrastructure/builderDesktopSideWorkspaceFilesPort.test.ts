@@ -11,7 +11,8 @@ import type {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 const SOURCE_TREE_DIGEST = `sha256:${'a'.repeat(64)}`;
 const CONTENT_DIGEST = `sha256:${'b'.repeat(64)}`;
 
@@ -38,6 +39,7 @@ function authority(): BuilderSideWorkspaceFileAuthority {
 function fileRef() {
   return Object.freeze({
     file_ref_version: 'builder-side-workspace-file-ref.v1' as const,
+    source_kind: 'current_draft' as const,
     source_tree_digest: SOURCE_TREE_DIGEST,
     path: 'src/app.ts',
     content_digest: CONTENT_DIGEST,
@@ -106,6 +108,10 @@ describe('Builder desktop side workspace files port', () => {
         calls.push(request);
         return Promise.resolve(contentProjection());
       },
+      readRuntimeToolFileTree(request: unknown) {
+        calls.push(request);
+        return Promise.resolve(treeProjection());
+      },
     });
 
     const tree = await port.readCurrentDraftFileTree({
@@ -139,6 +145,9 @@ describe('Builder desktop side workspace files port', () => {
       },
       readCurrentDraftFileContent() {
         return Promise.resolve({ ...contentProjection(), path: '../secret.txt' });
+      },
+      readRuntimeToolFileTree() {
+        return Promise.resolve(treeProjection());
       },
     });
     await expect(port.readCurrentDraftFileTree({

@@ -49,7 +49,7 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:00000000-0000-4000-8000-000000000999`;
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 const candidateStartEvents = new WeakMap();
 const candidateActionStart = new WeakMap();
@@ -285,7 +285,7 @@ function pending(candidateValue, {
   };
 }
 
-function conversationServiceFor(draft) {
+function conversationServiceFor(draft, { currentMaterialization = null } = {}) {
   const accepted = [];
   return {
     accepted,
@@ -308,6 +308,9 @@ function conversationServiceFor(draft) {
           title: draft.title,
           summary: draft.summary,
           git_candidate_receipt: pendingProofGitReceipts.get(candidateValue),
+          ...(currentMaterialization === null
+            ? {}
+            : { current_materialization: currentMaterialization }),
         },
         verification_admission: 'sqlite_replay_verified',
       };
@@ -542,14 +545,18 @@ function projectionResult(gitReceipt, mainRef = 'updated') {
   };
 }
 
-function projectionAuthorityFor(gitReceipt, calls = null) {
+function projectionAuthorityFor(
+  gitReceipt,
+  calls = null,
+  expectedWorkspaceSourceTreeDigest = candidateWorkspaceBases
+    .get(gitReceipt.candidate_digest).source_tree_digest,
+) {
   return {
     project_current(request) {
       if (calls) calls.push(request);
       assert.deepEqual(request, {
         candidate_receipt: gitReceipt,
-        expected_workspace_source_tree_digest:
-          candidateWorkspaceBases.get(gitReceipt.candidate_digest).source_tree_digest,
+        expected_workspace_source_tree_digest: expectedWorkspaceSourceTreeDigest,
         projection_mode: 'base_cas',
       });
       return projectionResult(gitReceipt);
@@ -732,7 +739,7 @@ test('saves first and update drafts through real Git, SQLite, and restart read a
   ]);
   assert.equal(generationDrafts.released.length, 1);
   assert.doesNotMatch(JSON.stringify(saved), /operations|credential|conversation_events|api\.deepseek/u);
-  const savedStream = conversationService.read_stream({ project_id: PROJECT_ID });
+  const savedStream = conversationService.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
   assert.deepEqual(savedStream.conversation.items.at(-1), {
     item_kind: 'candidate_reviewed',
     sequence: 5,
@@ -1235,7 +1242,7 @@ test('replays recorded SQLite receipt after projection failure and save authorit
   );
   assert.equal(firstRecords.length, 1);
   assert.equal(
-    firstConversation.read_stream({ project_id: PROJECT_ID }).conversation.items.some(
+    firstConversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.items.some(
       (item) => item.item_kind === 'candidate_reviewed',
     ),
     false,
@@ -1282,7 +1289,7 @@ test('replays recorded SQLite receipt after projection failure and save authorit
   assert.equal(saved.save_evidence.projection_main_ref, 'updated');
   assert.equal(restartedRecords.length, 1);
   assert.equal(restartedDrafts.released.length, 1);
-  assert.equal(restartedConversation.read_stream({ project_id: PROJECT_ID }).conversation.items.at(-1).item_kind, 'candidate_reviewed');
+  assert.equal(restartedConversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.items.at(-1).item_kind, 'candidate_reviewed');
   assert.deepEqual(restartedRecords[0].idempotency, firstRecords[0].idempotency);
   assert.deepEqual(restartedRecords[0].review, firstRecords[0].review);
   assert.equal(restartedRecords[0].task.created_at_ms, firstRecords[0].task.created_at_ms);
@@ -1295,6 +1302,85 @@ test('replays recorded SQLite receipt after projection failure and save authorit
   value.metadata.close();
 });
 
+test('saves an exact runtime-materialized candidate after verified conversation admission', async () => {
+  const value = candidate({
+    index: 19,
+    operations: [{ operation: 'upsert', path: 'index.html', content: '<main>Materialized</main>\n' }],
+  });
+  const draft = pending(value, { draft: '9', request: 19 });
+  const generationDrafts = draftsStore(draft);
+  const gitReceipt = candidateGitReceipts.get(value);
+  const revisionDigest = `sha256:${'d'.repeat(64)}`;
+  const projectionCalls = [];
+  const conversationService = conversationServiceFor(draft, {
+    currentMaterialization: { status: 'materialized' },
+  });
+  const saveAuthority = createSaveAuthority({
+    generationDrafts,
+    conversationService,
+    gitAuthority: {
+      verify_candidate_receipt() {
+        return createBuilderGitCandidateVerificationReceipt(gitReceipt);
+      },
+    },
+    workspaceReadAuthority: {
+      load_fresh_workspace({ project_id: projectId }) {
+        return workspaceReadResult(projectId, {
+          source_tree: value.resulting_source_tree,
+          scan_status: 'complete',
+          incomplete_reasons: [],
+        });
+      },
+    },
+    currentProjection: projectionAuthorityFor(
+      gitReceipt,
+      projectionCalls,
+      value.resulting_tree_digest,
+    ),
+    metadataAuthority: {
+      load_project_identity() { return projectIdentityResult(99_000); },
+      record_project_revision_receipt() {
+        return {
+          operation: 'recorded',
+          receipt: {
+            project_id: PROJECT_ID,
+            revision_receipt_digest: revisionDigest,
+            revision_number: 1,
+            commit_oid: gitReceipt.commit_oid,
+          },
+        };
+      },
+    },
+    projectReadAuthority: {
+      load_current() {
+        return {
+          result_version: 'builder-project-read-result.v1',
+          product_revision_receipt: {
+            project_id: PROJECT_ID,
+            revision_receipt_digest: revisionDigest,
+            revision_number: 1,
+            commit_oid: gitReceipt.commit_oid,
+          },
+          current: {},
+          source_tree: {},
+          git_candidate_receipt: {},
+          git_verification_receipt: {},
+          authority_evidence: {},
+          operation: 'current_loaded',
+        };
+      },
+    },
+    createUuid: uuidFactory(1_900),
+    nowMs: () => 99_000,
+  });
+
+  const saved = await saveAuthority.save({ draft_id: draft.draft_id });
+  assert.equal(saved.operation, 'draft_saved');
+  assert.equal(projectionCalls.length, 1);
+  assert.equal(conversationService.accepted.length, 1);
+  assert.equal(generationDrafts.released.length, 1);
+});
+
 test('rejects changed or incomplete workspaces before recording a revision', async (t) => {
   const scenarios = [
     {
@@ -1303,6 +1389,29 @@ test('rejects changed or incomplete workspaces before recording a revision', asy
         return {
           source_tree: createBuilderProjectSourceTree({
             files: [{ path: 'local-change.txt', content: 'not part of the candidate\n' }],
+          }),
+          scan_status: 'complete',
+          incomplete_reasons: [],
+        };
+      },
+    },
+    {
+      name: 'unverified candidate materialization',
+      inspected(_baseSourceTree, candidateValue) {
+        return {
+          source_tree: candidateValue.resulting_source_tree,
+          scan_status: 'complete',
+          incomplete_reasons: [],
+        };
+      },
+    },
+    {
+      name: 'unrelated drift despite a materialized fact',
+      currentMaterialization: { status: 'materialized' },
+      inspected() {
+        return {
+          source_tree: createBuilderProjectSourceTree({
+            files: [{ path: 'other-change.txt', content: 'not the verified candidate\n' }],
           }),
           scan_status: 'complete',
           incomplete_reasons: [],
@@ -1334,7 +1443,9 @@ test('rejects changed or incomplete workspaces before recording a revision', asy
       const generationDrafts = draftsStore(draft);
       const gitReceipt = candidateGitReceipts.get(candidateValue);
       const verification = createBuilderGitCandidateVerificationReceipt(gitReceipt);
-      const conversationService = conversationServiceFor(draft);
+      const conversationService = conversationServiceFor(draft, {
+        currentMaterialization: scenario.currentMaterialization ?? null,
+      });
       const calls = { metadata: 0, projection: 0, current: 0 };
       const saveAuthority = createSaveAuthority({
         generationDrafts,
@@ -1346,7 +1457,10 @@ test('rejects changed or incomplete workspaces before recording a revision', asy
           load_fresh_workspace({ project_id: projectId }) {
             return workspaceReadResult(
               projectId,
-              scenario.inspected(candidateWorkspaceBases.get(gitReceipt.candidate_digest)),
+              scenario.inspected(
+                candidateWorkspaceBases.get(gitReceipt.candidate_digest),
+                candidateValue,
+              ),
             );
           },
         },

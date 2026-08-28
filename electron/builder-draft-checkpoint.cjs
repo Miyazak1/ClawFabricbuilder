@@ -450,7 +450,7 @@ function sanitizeBuilderDraftCheckpoint(value) {
       task_address_id: safeTaskAddressId(descriptors.task_address_id.value),
       conversation_id: safePattern(
         descriptors.conversation_id.value,
-        new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u'),
+        new RegExp(`^builder-conversation:${UUID_SOURCE}(?::${UUID_SOURCE})?$`, 'u'),
         96,
       ),
       turn_id: safePattern(descriptors.turn_id.value, new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u'), 80),

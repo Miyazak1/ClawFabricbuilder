@@ -93,6 +93,24 @@ test('provides a bounded node launcher for admitted package scripts', (t) => {
   assert.match(result.stdout, /^v\d+\.\d+\.\d+/mu);
 });
 
+test('preserves a verified script non-zero exit code', (t) => {
+  const scripts = { test: 'node -e "process.exit(7)"' };
+  const root = fixture(t, scripts);
+  const result = spawnSync(process.execPath, [
+    WORKER_PATH,
+    'run-script',
+    'test',
+    digest('test', scripts),
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    windowsHide: true,
+  });
+  assert.equal(result.status, 7, result.stderr);
+  assert.equal(result.stderr.trim(), 'The approved project check failed.');
+});
+
 test('fails closed when argv, script content, digest, or package metadata drifts', (t) => {
   const scripts = { test: 'echo original' };
   const root = fixture(t, scripts);

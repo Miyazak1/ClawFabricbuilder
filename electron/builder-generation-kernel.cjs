@@ -8,6 +8,7 @@ const {
   MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES,
   createBuilderCodeChangeCandidate,
 } = require('./builder-code-change-kernel.cjs');
+const { MAX_EVENT_SEQUENCE } = require('./builder-conversation-records.cjs');
 const {
   BuilderProjectSourceTreeError,
   MAX_SOURCE_TREE_UTF8_BYTES,
@@ -33,7 +34,7 @@ const BUILDER_CODE_PROJECT_PROMPT_VERSION = 'builder-code-project.v3';
 const BUILDER_CODE_PROJECT_PROVIDER_CONTEXT_PROMPT_VERSION =
   'builder-code-project.v3.provider-context-bridge';
 const BUILDER_PLAN_PROJECT_PROMPT_VERSION = 'builder-project-plan.v1';
-const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2';
+const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v3';
 const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2';
 const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-descriptor.v2';
 const BUILDER_GENERATED_OPERATIONS_KIND = 'builder_code_change_operations';
@@ -59,6 +60,7 @@ const CONVERSATION_BRIEF_CONTEXT_VERSION = 'builder-conversation-brief.v3';
 const CONVERSATION_BRIEF_SELECTION = 'recent_prior_messages_latest_plan_and_working_brief';
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ADDRESS_ID_PATTERN = /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const UNSAFE_UNICODE_FORMAT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
 const LOCAL_PATH_PATTERN = /(?:file:\/{1,3}|\\\\|(?:^|[\s"'`=(,:])(?:[A-Za-z]:[\\/]|~[\\/]|\/(?!\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*))/iu;
@@ -70,9 +72,15 @@ const COMMON_SECRET_VALUE_PATTERN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-
 const WORKING_BRIEF_USER_CONTEXT_PATTERN =
   /(?:确认|想要|希望|需要|做一个|做个|创建|生成|实现|修改|页面|网页|网站|应用|功能|布局|组件|作品集|仪表盘|\b(?:build|create|implement|make|page|site|app|feature|layout|component|dashboard|portfolio)\b)/iu;
 
-const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'request_digest']);
-const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id']);
+const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'task_address_id', 'request_digest']);
+const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id', 'task_address_id']);
 const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree', 'conversation_events']);
+const APPROVED_PLAN_PROMPT_INPUT_KEYS = Object.freeze([
+  'request',
+  'base_source_tree',
+  'conversation_events',
+  'approved_plan_public_text',
+]);
 const PROVIDER_CONTEXT_PROMPT_INPUT_KEYS = Object.freeze([
   'request',
   'base_source_tree',
@@ -144,6 +152,7 @@ const PLAN_OUTPUT_EXAMPLE = JSON.stringify({
 
 const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Create or revise one small software project.',
+  'Match every user-facing natural-language value to the language of the current instruction field. If the current instruction is written in Chinese or asks for Chinese, use Simplified Chinese for title, summary, and all other user-facing prose. Keep JSON keys, code, identifiers, file paths, commands, and literal technical tokens unchanged.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and operations.',
   `Set kind to ${BUILDER_GENERATED_OPERATIONS_KIND}.`,
@@ -161,6 +170,11 @@ const CODE_CHANGE_SYSTEM_INSTRUCTION = [
   'Use conversation_brief as context. If it contains latest_plan, treat its state as meaningful: approved plans may guide implementation, proposed plans are not approval to change files, and rejected plans must not be implemented.',
   'If the current instruction is a short contextual approval, use conversation_brief.working_brief as the implementation target; working_brief is requirements context, not execution, save, review, or runtime evidence.',
 ].join('\n');
+const APPROVED_PLAN_CODE_CHANGE_SYSTEM_INSTRUCTION = [
+  CODE_CHANGE_SYSTEM_INSTRUCTION,
+  'The approved_plan field is the user-approved implementation direction for this request.',
+  'Implement that plan in the project source now. Do not create or update a plan document unless the approved plan explicitly asks for one.',
+].join('\n');
 const PROVIDER_CONTEXT_CODE_CHANGE_SYSTEM_INSTRUCTION = [
   CODE_CHANGE_SYSTEM_INSTRUCTION,
   'When approved_working_context is present, treat it as the approved current task context for this request.',
@@ -169,6 +183,7 @@ const PROVIDER_CONTEXT_CODE_CHANGE_SYSTEM_INSTRUCTION = [
 
 const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Answer one bounded user question without changing project files.',
+  'Match every user-facing natural-language value to the language of the current instruction field. If the current instruction is written in Chinese or asks for Chinese, use Simplified Chinese for title, summary, explanation, and all other user-facing prose. Keep JSON keys, code, identifiers, file paths, commands, and literal technical tokens unchanged.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and explanation.',
   `Set kind to ${BUILDER_GENERATED_EXPLANATION_KIND}.`,
@@ -178,8 +193,8 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not make explanation a meta-summary such as "I explained...", "I briefly shared...", or "This is a question about...".',
   'For general questions that are not about the local project, answer the question directly instead of only saying it is unrelated to the project.',
   'If the user asks for a plan, scheme, proposal, outline, or steps in this answer route, write that content inside explanation as normal text; do not switch kind to builder_project_plan_proposal.',
+  'When response_mode is plan, produce the complete actionable plan in explanation using Markdown headings and lists. Do not replace it with a summary.',
   'Use summary only as a short internal recap of the answer, not as the user-facing answer.',
-  'Match the user language.',
   'If the user is greeting you or making small talk, answer naturally and briefly, then invite them to ask a question or choose a project when they are ready.',
   'Do not answer greetings by listing missing context, missing files, missing plans, saved state, or prior conversation state.',
   'Use user-facing product language. Do not mention runs, tasks, schemas, receipts, providers, prompts, context digests, or authority internals.',
@@ -191,6 +206,7 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
 ].join('\n');
 const PLAN_SYSTEM_INSTRUCTION = [
   'Propose one bounded implementation plan for the current local software project.',
+  'Match every user-facing natural-language value to the language of the current instruction field. If the current instruction is written in Chinese or asks for Chinese, use Simplified Chinese for title, summary, every plan step, and all other user-facing prose. Keep JSON keys, code, identifiers, file paths, commands, and literal technical tokens unchanged.',
   'Return one JSON object only, with no markdown fence or surrounding text.',
   'Use exactly the keys kind, title, summary, and steps.',
   `Set kind to ${BUILDER_GENERATED_PLAN_KIND}.`,
@@ -358,6 +374,12 @@ function safeProjectId(value, code) {
   return value;
 }
 
+function safeTaskAddressId(value, code) {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !TASK_ADDRESS_ID_PATTERN.test(value)) fail(code);
+  return value;
+}
+
 function safeDigest(value, code) {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) fail(code);
   return value;
@@ -374,20 +396,21 @@ function sanitizeConversationPromptEvents(value) {
   if (
     !Array.isArray(value)
     || utilTypes.isProxy(value)
-    || value.length > MAX_CONVERSATION_EVENTS_FOR_PROMPT
+    || value.length > MAX_EVENT_SEQUENCE
   ) fail('builder_generation_request_invalid');
   const keys = Reflect.ownKeys(value);
   if (keys.some((key) => typeof key === 'symbol') || keys.length !== value.length + 1) {
     fail('builder_generation_request_invalid');
   }
   const events = [];
+  const firstSelectedIndex = Math.max(0, value.length - MAX_CONVERSATION_EVENTS_FOR_PROMPT);
   for (let index = 0; index < value.length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
       fail('builder_generation_request_invalid');
     }
     if (!isPlainObject(descriptor.value)) fail('builder_generation_request_invalid');
-    events.push(descriptor.value);
+    if (index >= firstSelectedIndex) events.push(descriptor.value);
   }
   return events;
 }
@@ -602,6 +625,15 @@ function sanitizeBuilderGenerationRequestInternal(value) {
   assertExactObject(value, REQUEST_KEYS, 'builder_generation_request_invalid');
   const version = valueAt(value, 'version', 'builder_generation_request_invalid');
   if (version !== BUILDER_GENERATION_REQUEST_PROTOCOL) fail('builder_generation_request_invalid');
+  const existingProjectId = safeProjectId(
+    valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
+    'builder_generation_request_invalid',
+  );
+  const taskAddressId = safeTaskAddressId(
+    valueAt(value, 'task_address_id', 'builder_generation_request_invalid'),
+    'builder_generation_request_invalid',
+  );
+  if (existingProjectId === null && taskAddressId !== null) fail('builder_generation_request_invalid');
   const unsigned = {
     version: BUILDER_GENERATION_REQUEST_PROTOCOL,
     instruction: safeText(
@@ -611,10 +643,8 @@ function sanitizeBuilderGenerationRequestInternal(value) {
       true,
       'builder_generation_request_invalid',
     ),
-    existing_project_id: safeProjectId(
-      valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
-      'builder_generation_request_invalid',
-    ),
+    existing_project_id: existingProjectId,
+    task_address_id: taskAddressId,
   };
   const digest = safeDigest(
     valueAt(value, 'request_digest', 'builder_generation_request_invalid'),
@@ -638,6 +668,15 @@ function sanitizeBuilderGenerationRequest(value) {
 function createBuilderGenerationRequest(value) {
   try {
     assertExactObject(value, REQUEST_INPUT_KEYS, 'builder_generation_request_invalid');
+    const existingProjectId = safeProjectId(
+      valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
+      'builder_generation_request_invalid',
+    );
+    const taskAddressId = safeTaskAddressId(
+      valueAt(value, 'task_address_id', 'builder_generation_request_invalid'),
+      'builder_generation_request_invalid',
+    );
+    if (existingProjectId === null && taskAddressId !== null) fail('builder_generation_request_invalid');
     const unsigned = {
       version: BUILDER_GENERATION_REQUEST_PROTOCOL,
       instruction: safeText(
@@ -647,10 +686,8 @@ function createBuilderGenerationRequest(value) {
         true,
         'builder_generation_request_invalid',
       ),
-      existing_project_id: safeProjectId(
-        valueAt(value, 'existing_project_id', 'builder_generation_request_invalid'),
-        'builder_generation_request_invalid',
-      ),
+      existing_project_id: existingProjectId,
+      task_address_id: taskAddressId,
     };
     return freezeDeep({
       ...unsigned,
@@ -682,12 +719,22 @@ function sanitizePromptInput(value, keys = PROMPT_INPUT_KEYS) {
       request,
     )
     : null;
+  const approvedPlanPublicText = keys === APPROVED_PLAN_PROMPT_INPUT_KEYS
+    ? safeText(
+      valueAt(value, 'approved_plan_public_text', 'builder_generation_request_invalid'),
+      4_000,
+      16_000,
+      true,
+      'builder_generation_request_invalid',
+    )
+    : null;
   return {
     request,
     baseSourceTree,
     conversationEvents,
     conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
     providerContextPromptBridgeAdmission,
+    approvedPlanPublicText,
   };
 }
 
@@ -794,6 +841,7 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
       conversationEvents,
       conversationBrief,
       providerContextPromptBridgeAdmission,
+      approvedPlanPublicText,
     } = sanitizePromptInput(value, keys);
     const userContext = {
       instruction: request.instruction,
@@ -806,6 +854,11 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
         })),
       },
     };
+    if (outputContract.kind === BUILDER_GENERATED_EXPLANATION_KIND) {
+      const currentTurnIds = currentPromptTurnIds(conversationEvents, request.request_digest);
+      const routeContext = currentPromptRouteContext(conversationEvents, currentTurnIds);
+      if (routeContext?.route === 'plan') userContext.response_mode = 'plan';
+    }
     if (outputContract.kind === BUILDER_GENERATED_OPERATIONS_KIND) {
       const currentTurnIds = currentPromptTurnIds(conversationEvents, request.request_digest);
       userContext.build_context_snapshot = createBuilderBuildContextSnapshot({
@@ -815,6 +868,12 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
           ? 'new_project_request'
           : 'selected_project_workspace',
       });
+    }
+    if (approvedPlanPublicText !== null) {
+      userContext.approved_plan = {
+        state: 'approved',
+        text: approvedPlanPublicText,
+      };
     }
     if (providerContextPromptBridgeAdmission !== null) {
       userContext.approved_working_context =
@@ -885,6 +944,21 @@ function createBuilderGenerationPromptDescriptor(value) {
       operation_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.operation_keys],
       format: CODE_CHANGE_OUTPUT_CONTRACT.format,
     },
+  );
+}
+
+function createBuilderApprovedPlanGenerationPromptDescriptor(value) {
+  return promptDescriptor(
+    value,
+    `${BUILDER_CODE_PROJECT_PROMPT_VERSION}.approved-plan`,
+    APPROVED_PLAN_CODE_CHANGE_SYSTEM_INSTRUCTION,
+    {
+      kind: CODE_CHANGE_OUTPUT_CONTRACT.kind,
+      exact_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.exact_keys],
+      operation_keys: [...CODE_CHANGE_OUTPUT_CONTRACT.operation_keys],
+      format: CODE_CHANGE_OUTPUT_CONTRACT.format,
+    },
+    APPROVED_PLAN_PROMPT_INPUT_KEYS,
   );
 }
 
@@ -1368,6 +1442,7 @@ module.exports = Object.freeze({
   createBuilderGenerationRequest,
   sanitizeBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
+  createBuilderApprovedPlanGenerationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
   createBuilderGenerationPromptDescriptorWithProviderContext,
   createBuilderPlanPromptDescriptor,

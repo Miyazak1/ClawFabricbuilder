@@ -2,6 +2,9 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const APPROVED_PLAN_READ_RESULT_VERSION = 'builder-conversation-approved-plan-read-result.v1';
 const BUILDER_APPROVED_PLAN_CONTINUATION_ADMISSION_VERSION = 'builder-approved-plan-continuation-admission.v1';
@@ -78,7 +81,6 @@ const AUTHORITY_KEYS = Object.freeze([
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:(${UUID_SOURCE})$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -195,10 +197,11 @@ function safeProjectId(value) {
 }
 
 function safeConversationId(value, projectId) {
-  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
-  if (conversationId.slice('builder-conversation:'.length)
-    !== projectId.slice('builder-project:'.length)) fail();
-  return conversationId;
+  try {
+    return sanitizeBuilderConversationAddress(projectId, value);
+  } catch {
+    fail();
+  }
 }
 
 function safeTurnId(value) {

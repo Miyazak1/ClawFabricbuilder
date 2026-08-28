@@ -324,6 +324,12 @@ such as blocked navigation, network, permission, download, and popup requests.
 It must not expose the raw preview URL, console text, source content, screenshot
 bytes, or renderer-supplied source.
 
+The renderer may report only the visible Browser content rectangle through the
+dedicated `updateCurrentPreviewLayout` method. Main validates and clips this UI
+geometry to the current window before moving the main-owned view. A `null`
+rectangle hides the view when another workspace tab is active. This layout hint
+does not grant source, URL, navigation, tool, command, or save authority.
+
 Allowed `PreviewRun.status`:
 
 - `admitted`;
@@ -583,7 +589,8 @@ Current checkpoint:
 
 - add preview-specific `livePreview` preload namespace with
   `requestCurrentDraftPreview`, `reloadCurrentPreview`,
-  `stopCurrentPreview`, and `readCurrentPreviewStatus`;
+  `stopCurrentPreview`, `readCurrentPreviewStatus`, and the layout-only
+  `updateCurrentPreviewLayout`;
 - register a preview-specific IPC runtime with active-renderer binding and
   exact `{ project_id, conversation_id }` payloads;
 - expose only renderer-safe `builder-live-preview-status-projection.v1`;
@@ -680,6 +687,8 @@ Current checkpoint:
   proving no extra loopback `WebContents` remains active, and emitting only
   digest/bool/count summaries for preview URL, DOM title, JS execution, canvas
   pixels, blocked requests, and stop cleanup;
+- verify the native preview viewport follows side-panel resize, expanded
+  preview entry, expanded exit, and restoration to the prior side-panel bounds;
 - add WebGL-specific packaged evidence by rendering a second local WebGL canvas,
   proving WebGL availability and nonblank pixels, and outputting only a hashed
   renderer summary instead of raw GPU strings;

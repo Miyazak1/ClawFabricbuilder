@@ -1,0 +1,53 @@
+{
+  "fixture_version": "builder-conversation-schema-compatibility-fixture.v1",
+  "measured_at": "2026-08-25",
+  "content_policy": "structural_keys_and_anonymous_counts_only",
+  "scope": "run_completed_candidate_result",
+  "observed_counts": {
+    "run_completed_total": 357,
+    "current_reader_accepted": 302,
+    "migration_required": 55
+  },
+  "cases": [
+    {
+      "case_id": "current_candidate_result_absent",
+      "current_reader_status": "accepted",
+      "anonymous_count": 301,
+      "candidate_result_shape": [
+        "candidate_result:null"
+      ]
+    },
+    {
+      "case_id": "historical_candidate_materialization_absent",
+      "current_reader_status": "migration_required",
+      "anonymous_count": 55,
+      "candidate_result_shape": [
+        "candidate_result:object",
+        "candidate_result.draft_id:string",
+        "candidate_result.git_candidate_receipt:object",
+        "candidate_result.summary:string",
+        "candidate_result.title:string"
+      ],
+      "missing_paths": [
+        "candidate_result.current_materialization"
+      ],
+      "reason_code": "legacy_candidate_materialization_absent",
+      "migration_requirement": "rewrite_event_digest_and_all_following_previous_event_links_on_a_copied_database"
+    },
+    {
+      "case_id": "current_candidate_materialization_recorded",
+      "current_reader_status": "accepted",
+      "anonymous_count": 1,
+      "candidate_result_shape": [
+        "candidate_result:object",
+        "candidate_result.current_materialization:object",
+        "candidate_result.current_materialization.status:string",
+        "candidate_result.draft_id:string",
+        "candidate_result.git_candidate_receipt:object",
+        "candidate_result.summary:string",
+        "candidate_result.title:string"
+      ]
+    }
+  ]
+}
+

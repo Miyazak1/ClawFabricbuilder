@@ -42,7 +42,12 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /createBuilderWindowControlsIpcRuntime/u);
   assert.match(main, /mainWindowRef:\s*\(\)\s*=>\s*mainWindow/u);
   assert.match(main, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);
-  assert.match(main, /const runtimes = createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u);
+  assert.match(
+    main,
+    /const runtimes =[\s\S]{0,240}createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u,
+  );
+  assert.match(main, /main\.lifecycle\.ready_handler\.duration_ms/u);
+  assert.match(main, /main\.lifecycle\.create_ipc_runtimes\.duration_ms/u);
   assert.match(main, /registerIpcRuntimes\(runtimes\)/u);
   assert.match(main, /ipcRuntimes = runtimes/u);
   assert.match(main, /async function shutdownIpcRuntimes/u);
@@ -50,13 +55,23 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /await shutdownIpcRuntimes/u);
   assert.match(main, /quitAfterIpcShutdown/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v27/u);
+  assert.match(preload, /builder-preload\.v38/u);
+  assert.match(main, /createBuilderUserWebMainService/u);
+  assert.match(main, /createBuilderUserWebIpcRuntime/u);
+  assert.match(preload, /\buserWeb\b/u);
+  assert.match(preload, /clawfabric-builder:user-web:navigate/u);
+  assert.match(preload, /clawfabric-builder:user-web:update-layout/u);
+  assert.match(main, /createBuilderAgentTestBrowserIpcRuntime/u);
+  assert.match(preload, /\bagentTestBrowser\b/u);
+  assert.match(preload, /clawfabric-builder:agent-test-browser:update-layout/u);
   assert.match(preload, /\bcheckRun\b/u);
   assert.match(preload, /readCurrentDraftAvailableChecks/u);
   assert.match(preload, /approveAndRunCurrentDraftCheck/u);
+  assert.match(preload, /decideCurrentDraftDependencyPreparation/u);
   assert.match(preload, /skipCurrentDraftCheck/u);
   assert.match(preload, /clawfabric-builder:check-run:read-current-draft-available/u);
   assert.match(preload, /clawfabric-builder:check-run:approve-current-draft-check/u);
+  assert.match(preload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
   assert.match(preload, /clawfabric-builder:check-run:skip-current-draft-check/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
@@ -71,6 +86,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /listWorkspaces/u);
   assert.match(preload, /clawfabric-builder:project-workspace:list-workspaces/u);
   assert.match(preload, /listHistory/u);
+  assert.match(preload, /createTaskProposal/u);
+  assert.match(preload, /decideTaskProposal/u);
+  assert.match(preload, /controlTask/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:control-task/u);
   assert.match(preload, /codeGenerator/u);
   assert.match(preload, /classifyIntent/u);
   assert.match(preload, /clawfabric-builder:code-generator:classify-intent/u);
@@ -100,12 +119,16 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:code-generator:restore-draft/u);
   assert.match(preload, /restoreRevisionAsDraft/u);
   assert.match(preload, /clawfabric-builder:code-generator:restore-revision-as-draft/u);
+  assert.match(preload, /restorePreviousCheckpointAsDraft/u);
+  assert.match(preload, /clawfabric-builder:code-generator:restore-previous-checkpoint-as-draft/u);
   assert.match(preload, /rejectDraft/u);
   assert.match(preload, /clawfabric-builder:code-generator:reject-draft/u);
   assert.match(preload, /\bsteer\b/u);
   assert.match(preload, /clawfabric-builder:code-generator:steer/u);
   assert.match(preload, /queueFollowup/u);
   assert.match(preload, /clawfabric-builder:code-generator:queue-followup/u);
+  assert.match(preload, /decideCommandApproval/u);
+  assert.match(preload, /clawfabric-builder:code-generator:decide-command-approval/u);
   assert.match(preload, /subscribeStarted/u);
   assert.match(preload, /clawfabric-builder:code-generator:started/u);
   assert.match(preload, /ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\)/u);
@@ -114,11 +137,33 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:code-generator:output/u);
   assert.match(preload, /ipcRenderer\.on\(GENERATION_OUTPUT_CHANNEL,\s*handler\)/u);
   assert.match(preload, /ipcRenderer\.removeListener\(GENERATION_OUTPUT_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /subscribeCommandApproval/u);
+  assert.match(preload, /clawfabric-builder:code-generator:command-approval-requested/u);
+  assert.match(preload, /ipcRenderer\.on\(COMMAND_APPROVAL_REQUESTED_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /ipcRenderer\.removeListener\(COMMAND_APPROVAL_REQUESTED_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /subscribeCommandOutput/u);
+  assert.match(preload, /clawfabric-builder:code-generator:command-output/u);
+  assert.match(preload, /ipcRenderer\.on\(COMMAND_OUTPUT_CHANNEL,\s*handler\)/u);
+  assert.match(preload, /ipcRenderer\.removeListener\(COMMAND_OUTPUT_CHANNEL,\s*handler\)/u);
   assert.match(preload, /providerSettings/u);
   assert.match(preload, /taskStream/u);
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
   assert.match(preload, /clawfabric-builder:task-stream:changed/u);
   assert.match(preload, /subscribeChanged/u);
+  assert.match(preload, /agentProjectTree/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:read/u);
+  assert.match(preload, /renameProject/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:rename-project/u);
+  assert.match(preload, /archiveProject/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:archive-project/u);
+  assert.match(preload, /renameTask/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:rename-task/u);
+  assert.match(preload, /archiveTask/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:archive-task/u);
+  assert.match(preload, /agentWorkbench/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:read/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:update-message-state/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:changed/u);
   assert.match(preload, /ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
   assert.match(preload, /ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\)/u);
   assert.match(preload, /planReview/u);
@@ -137,6 +182,10 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:live-preview:stop-current/u);
   assert.match(preload, /readCurrentPreviewStatus/u);
   assert.match(preload, /clawfabric-builder:live-preview:read-current-status/u);
+  assert.match(preload, /updateCurrentPreviewLayout/u);
+  assert.match(preload, /clawfabric-builder:live-preview:update-current-layout/u);
+  assert.match(preload, /decideDevServerApproval/u);
+  assert.match(preload, /clawfabric-builder:live-preview:decide-dev-server-approval/u);
   assert.match(preload, /sideWorkspaceFiles/u);
   assert.match(preload, /readCurrentDraftFileTree/u);
   assert.match(preload, /readCurrentDraftFileContent/u);
@@ -147,15 +196,23 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 49);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 75);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.removeListener\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.on\(GENERATION_OUTPUT_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.removeListener\(GENERATION_OUTPUT_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.on\(COMMAND_APPROVAL_REQUESTED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(COMMAND_APPROVAL_REQUESTED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.on\(COMMAND_OUTPUT_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(COMMAND_OUTPUT_CHANNEL,\s*handler\);/u, '')
     .replace(/ipcRenderer\.on\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '')
-    .replace(/ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '');
+    .replace(/ipcRenderer\.removeListener\(TASK_STREAM_CHANGED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.on\(WORKBENCH_CHANGED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(WORKBENCH_CHANGED_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.on\(AGENT_TEST_BROWSER_LIFECYCLE_CHANNEL,\s*handler\);/u, '')
+    .replace(/ipcRenderer\.removeListener\(AGENT_TEST_BROWSER_LIFECYCLE_CHANNEL,\s*handler\);/u, '');
   assert.doesNotMatch(
     preloadWithoutAllowedListeners,
     /ipcRenderer\.(?:send|on|once|removeListener)|require\(['"]node:|clawfabricDesktop|desktop:builder|closeWindow|safeStorage|Authorization|Bearer/iu,
@@ -173,10 +230,12 @@ test('build and package scripts require production artifact verification', () =>
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-launch/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-canary(?:\s|$)/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-plan-mode/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-ui/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-failure/u);
   assert.doesNotMatch(packageJson.scripts['verify:release'], /verify:packaged-live-preview/u);
   assert.doesNotMatch(packageJson.scripts['verify:release'], /deepseek/u);
   assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:release/u);
-  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:packaged-canary:deepseek/u);
+  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:packaged-harness:deepseek/u);
   const verifier = fs.readFileSync(path.join(root, 'scripts', 'verify-package.cjs'), 'utf8');
   assert.match(verifier, /connect-src 'none'/u);
   assert.match(verifier, /CompanyName:\s*'ClawFabric'/u);

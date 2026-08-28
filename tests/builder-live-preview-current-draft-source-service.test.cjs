@@ -16,11 +16,12 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 const TURN_ID = `builder-turn:${UUID}`;
 const TASK_ID = `builder-task:${UUID}`;
 const RUN_ID = `builder-run:${UUID}`;
 const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
+const REVISION_DIGEST = `sha256:${'e'.repeat(64)}`;
 
 function sourceTree(files = [
   { path: 'index.html', content: '<main>Live preview</main><script src="./app.js"></script>\n' },
@@ -82,6 +83,7 @@ function conversationDraft(receipt, overrides = {}) {
       title: 'Candidate',
       summary: 'Candidate summary.',
       git_candidate_receipt: receipt,
+      current_materialization: { status: 'materialized' },
     },
     verification_admission: 'sqlite_replay_verified',
     ...overrides,
@@ -105,10 +107,43 @@ function checkpoint(receipt) {
   };
 }
 
-function fixture({ tree = sourceTree(), mutateDraft, mutateCheckpoint } = {}) {
+function savedProjectReadResult(tree, receipt, verification, operation) {
+  return {
+    result_version: 'builder-project-read-result.v1',
+    product_revision_receipt: {
+      project_id: PROJECT_ID,
+      revision_receipt_digest: REVISION_DIGEST,
+      revision_number: 1,
+      commit_oid: receipt.commit_oid,
+      tree_oid: receipt.tree_oid,
+      resulting_tree_digest: tree.source_tree_digest,
+    },
+    current: {},
+    source_tree: tree,
+    git_candidate_receipt: receipt,
+    git_verification_receipt: verification,
+    authority_evidence: {
+      product_authority: 'sqlite_product_revision_receipt',
+      code_authority: 'git_commit_tree',
+      source_read_admission: 'verified',
+      current_selection: 'sqlite_current_project_revision',
+    },
+    operation,
+  };
+}
+
+function fixture({ tree = sourceTree(), hasDraft = true, mutateDraft, mutateCheckpoint } = {}) {
   const receipt = candidate(tree);
   const verification = createBuilderGitCandidateVerificationReceipt(receipt);
-  const calls = { conversation: [], stream: [], gitRead: [], gitVerify: [], checkpoint: [] };
+  const calls = {
+    conversation: [],
+    stream: [],
+    gitRead: [],
+    gitVerify: [],
+    checkpoint: [],
+    projectCurrent: [],
+    projectRevision: [],
+  };
   let now = 1_000;
   const service = createBuilderLivePreviewCurrentDraftSourceService({
     conversation_service: {
@@ -123,7 +158,7 @@ function fixture({ tree = sourceTree(), mutateDraft, mutateCheckpoint } = {}) {
             events: [],
           },
           review_state_projection: {
-            draft_id: DRAFT_ID,
+            draft_id: hasDraft ? DRAFT_ID : null,
           },
         };
       },
@@ -158,6 +193,16 @@ function fixture({ tree = sourceTree(), mutateDraft, mutateCheckpoint } = {}) {
         return mutateCheckpoint ? mutateCheckpoint(result) : result;
       },
     },
+    project_read_authority: {
+      load_current(request) {
+        calls.projectCurrent.push(request);
+        return savedProjectReadResult(tree, receipt, verification, 'current_loaded');
+      },
+      load_revision(request) {
+        calls.projectRevision.push(request);
+        return savedProjectReadResult(tree, receipt, verification, 'revision_loaded');
+      },
+    },
     now_ms() {
       return now++;
     },
@@ -178,11 +223,36 @@ test('admits current draft live preview source through conversation, Git, and ch
   assert.equal(result.source_admission.source_tree_digest, selected.tree.source_tree_digest);
   assert.equal(result.source_admission.lifecycle.preview_server, 'not_started');
   assert.equal(result.source_admission.authority.renderer_source_tree, 'not_accepted');
-  assert.deepEqual(selected.calls.stream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(selected.calls.stream, [{
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  }]);
   assert.deepEqual(selected.calls.conversation, [{ draft_id: DRAFT_ID }]);
   assert.equal(selected.calls.gitVerify.length, 1);
   assert.equal(selected.calls.gitRead.length, 1);
   assert.equal(selected.calls.checkpoint.length, 1);
+});
+
+test('falls back to the current saved revision when the conversation has no draft', async () => {
+  const selected = fixture({ hasDraft: false });
+  const result = await selected.service.resolve_current_draft_preview_source({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+
+  assert.equal(result.operation, 'saved_revision_live_preview_source_admitted');
+  assert.equal(result.draft_id, null);
+  assert.equal(result.source_admission.source_ref.source_ref_kind, 'saved_project_revision');
+  assert.equal(result.source_admission.source_ref.revision_receipt_digest, REVISION_DIGEST);
+  assert.deepEqual(selected.calls.projectCurrent, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(selected.calls.projectRevision, [{
+    project_id: PROJECT_ID,
+    revision_receipt_digest: REVISION_DIGEST,
+  }]);
+  assert.equal(selected.calls.conversation.length, 0);
+  assert.equal(selected.calls.gitVerify.length, 0);
+  assert.equal(selected.calls.gitRead.length, 0);
+  assert.equal(selected.calls.checkpoint.length, 0);
 });
 
 test('selects the first HTML entry when index.html is absent', async () => {

@@ -22,6 +22,10 @@ const {
   builderProjectUnderstandingSnapshotDigest,
   sanitizeBuilderProjectUnderstandingSnapshot,
 } = require('./builder-project-understanding.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const SNAPSHOT_VERSION = 'builder-run-context-snapshot.v2';
 const SNAPSHOT_ID_PREFIX = 'builder-run-context-snapshot:';
@@ -126,7 +130,6 @@ const CAPABILITIES_KEYS = Object.freeze([
 ]);
 
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MESSAGE_ID_PATTERN = /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ROUTE_DECISION_ID_PATTERN = /^builder-route-decision:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -722,7 +725,11 @@ function snapshotBodyFrom(value) {
   const source = exactObject(value, SNAPSHOT_BODY_KEYS);
   const projectId = safePattern(valueAt(source, 'project_id'), PROJECT_ID_PATTERN);
   const conversationId = safePattern(valueAt(source, 'conversation_id'), CONVERSATION_ID_PATTERN);
-  if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
   const taskId = nullable(valueAt(source, 'task_id'), (item) => safePattern(item, TASK_ID_PATTERN));
   const includedMessageIds = denseMessageIds(valueAt(source, 'included_message_ids'));
   const briefReference = sanitizeBriefReference(valueAt(source, 'brief_reference'));

@@ -12,6 +12,9 @@ const {
 const {
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_DRAFT_CONTINUATION_BASE_VERSION = 'builder-draft-continuation-base.v1';
 const DRAFT_CONTINUATION_BASE_KIND = 'pending_candidate_git_base';
@@ -78,7 +81,6 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:(${UUID_SOURCE})$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -176,10 +178,11 @@ function safeProjectId(value) {
 }
 
 function safeConversationId(value, projectId) {
-  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
-  if (conversationId.slice('builder-conversation:'.length)
-    !== projectId.slice('builder-project:'.length)) fail();
-  return conversationId;
+  try {
+    return sanitizeBuilderConversationAddress(projectId, value);
+  } catch {
+    fail();
+  }
 }
 
 function safeOid(value, nullable = false) {

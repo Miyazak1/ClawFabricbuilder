@@ -3,6 +3,7 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  createBuilderApprovedPlanGenerationPromptDescriptor,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
   createBuilderPlanPromptDescriptor,
@@ -36,6 +37,10 @@ const GENERATION_CONTEXT_KEYS = Object.freeze([
   'task_id',
   'run_id',
   'git_request_id',
+]);
+const APPROVED_PLAN_GENERATION_CONTEXT_KEYS = Object.freeze([
+  ...GENERATION_CONTEXT_KEYS,
+  'approved_plan_public_text',
 ]);
 const DRAFT_CONTINUATION_CONTEXT_KEYS = Object.freeze([
   'project_id',
@@ -74,6 +79,7 @@ const RUN_PROGRESS_STAGES = Object.freeze([
 ]);
 const PLAN_REPAIR_USER_INSTRUCTION = [
   'The previous plan response could not be verified.',
+  'Preserve the language of the original end-user instruction; this internal repair request must not change the response language.',
   'Return one JSON object only.',
   'Use exactly kind, title, summary, and steps.',
   'Set kind to builder_project_plan_proposal.',
@@ -85,6 +91,7 @@ const PLAN_REPAIR_USER_INSTRUCTION = [
 ].join(' ');
 const EXPLANATION_REPAIR_USER_INSTRUCTION = [
   'The previous answer response could not be verified.',
+  'Preserve the language of the original end-user instruction; this internal repair request must not change the response language.',
   'Return one JSON object only.',
   'Use exactly kind, title, summary, and explanation.',
   'Set kind to builder_conversation_explanation.',
@@ -217,6 +224,97 @@ function sanitizeTransportResult(value) {
   return generatedText;
 }
 
+function jsonStringTokenEnd(value, start) {
+  if (value[start] !== '"') return -1;
+  for (let index = start + 1; index < value.length; index += 1) {
+    if (value[index] === '"') return index + 1;
+    if (value[index] !== '\\') continue;
+    index += 1;
+    if (index >= value.length) return -1;
+    if (value[index] !== 'u') continue;
+    if (index + 4 >= value.length) return -1;
+    for (let offset = 1; offset <= 4; offset += 1) {
+      if (!/[0-9a-f]/iu.test(value[index + offset])) return -2;
+    }
+    index += 4;
+  }
+  return -1;
+}
+
+function topLevelJsonStringFieldStart(value, fieldName) {
+  let index = 0;
+  while (/\s/u.test(value[index] ?? '')) index += 1;
+  if (value[index] !== '{') return -1;
+  index += 1;
+  while (index < value.length) {
+    while (/\s/u.test(value[index] ?? '') || value[index] === ',') index += 1;
+    if (value[index] === '}') return -2;
+    const keyEnd = jsonStringTokenEnd(value, index);
+    if (keyEnd < 0) return keyEnd;
+    let key;
+    try { key = JSON.parse(value.slice(index, keyEnd)); } catch { return -2; }
+    index = keyEnd;
+    while (/\s/u.test(value[index] ?? '')) index += 1;
+    if (value[index] !== ':') return index >= value.length ? -1 : -2;
+    index += 1;
+    while (/\s/u.test(value[index] ?? '')) index += 1;
+    if (key === fieldName) return value[index] === '"' ? index + 1 : -2;
+    if (value[index] !== '"') return -2;
+    const valueEnd = jsonStringTokenEnd(value, index);
+    if (valueEnd < 0) return valueEnd;
+    index = valueEnd;
+  }
+  return -1;
+}
+
+function completeJsonStringPrefix(value, start) {
+  let end = start;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '"') return value.slice(start, index);
+    if (character !== '\\') {
+      end = index + 1;
+      continue;
+    }
+    if (index + 1 >= value.length) break;
+    if (value[index + 1] !== 'u') {
+      index += 1;
+      end = index + 1;
+      continue;
+    }
+    if (index + 5 >= value.length) break;
+    let valid = true;
+    for (let offset = 2; offset <= 5; offset += 1) {
+      if (!/[0-9a-f]/iu.test(value[index + offset])) valid = false;
+    }
+    if (!valid) break;
+    index += 5;
+    end = index + 1;
+  }
+  return value.slice(start, end);
+}
+
+function createJsonStringFieldOutputProjector(fieldName, emit) {
+  let raw = '';
+  let emitted = '';
+  return async function project(deltaText) {
+    raw += deltaText;
+    const start = topLevelJsonStringFieldStart(raw, fieldName);
+    if (start < 0) return;
+    const encodedPrefix = completeJsonStringPrefix(raw, start);
+    let decoded;
+    try { decoded = JSON.parse(`"${encodedPrefix}"`); } catch { return; }
+    if (decoded.length > 0) {
+      const lastCode = decoded.charCodeAt(decoded.length - 1);
+      if (lastCode >= 0xd800 && lastCode <= 0xdbff) decoded = decoded.slice(0, -1);
+    }
+    if (!decoded.startsWith(emitted) || decoded.length === emitted.length) return;
+    const visibleDelta = decoded.slice(emitted.length);
+    emitted = decoded;
+    await emit(visibleDelta);
+  };
+}
+
 function sanitizeCancelRequest(value) {
   const source = exactObject(value, ['request_id'], 'builder_generation_request_invalid');
   const requestId = ownValue(source, 'request_id', 'builder_generation_request_invalid');
@@ -311,6 +409,10 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
+  function resolvedKeys(value, keys) {
+    return typeof keys === 'function' ? keys(value) : keys;
+  }
+
   async function boundedContext(request, signal, buildContext, keys) {
     if (signal.aborted) fail('builder_generation_cancelled');
     let removeAbortListener = () => {};
@@ -321,9 +423,10 @@ function createBuilderGenerationHostAdapter(options = {}) {
         removeAbortListener = () => signal.removeEventListener('abort', onAbort);
         signal.addEventListener('abort', onAbort, { once: true });
       });
+      const context = await Promise.race([resolution, aborted]);
       return exactObject(
-        await Promise.race([resolution, aborted]),
-        keys,
+        context,
+        resolvedKeys(context, keys),
         'builder_generation_base_unavailable',
       );
     } catch {
@@ -339,9 +442,10 @@ function createBuilderGenerationHostAdapter(options = {}) {
     if (onProgress === null) return context;
     if (!RUN_PROGRESS_STAGES.includes(stage)) fail('builder_generation_failed');
     try {
+      const progressed = await Reflect.apply(onProgress, undefined, [{ context, stage }]);
       return exactObject(
-        await Reflect.apply(onProgress, undefined, [{ context, stage }]),
-        keys,
+        progressed,
+        resolvedKeys(progressed, keys),
         'builder_generation_base_unavailable',
       );
     } catch {
@@ -370,7 +474,13 @@ function createBuilderGenerationHostAdapter(options = {}) {
     }
   }
 
-  async function admittedProviderContext(context, providerConfigDigest, signal) {
+  function generationContextKeys(context) {
+    return Object.hasOwn(context, 'approved_plan_public_text')
+      ? APPROVED_PLAN_GENERATION_CONTEXT_KEYS
+      : GENERATION_CONTEXT_KEYS;
+  }
+
+  async function admittedProviderContext(context, providerConfigDigest, signal, keys) {
     if (admitProviderDispatch === null) return context;
     if (signal.aborted) fail('builder_generation_cancelled');
     try {
@@ -379,7 +489,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
           context,
           provider_config_digest: providerConfigDigest,
         }]),
-        GENERATION_CONTEXT_KEYS,
+        resolvedKeys(context, keys),
         'builder_generation_failed',
       );
     } catch {
@@ -393,26 +503,36 @@ function createBuilderGenerationHostAdapter(options = {}) {
       request,
       controller.signal,
       buildGenerationContext,
-      GENERATION_CONTEXT_KEYS,
+      generationContextKeys,
     );
     let descriptor;
     try {
-      descriptor = createBuilderGenerationPromptDescriptor({
+      const promptInput = {
         request,
         base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
         conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
-      });
+      };
+      descriptor = Object.hasOwn(context, 'approved_plan_public_text')
+        ? createBuilderApprovedPlanGenerationPromptDescriptor({
+          ...promptInput,
+          approved_plan_public_text: ownValue(
+            context,
+            'approved_plan_public_text',
+            'builder_generation_base_unavailable',
+          ),
+        })
+        : createBuilderGenerationPromptDescriptor(promptInput);
     } catch (error) {
       mapKernelError(error);
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
-    context = await admittedProviderContext(context, config.config_digest, controller.signal);
-    context = await progressContext(context, 'context_ready', GENERATION_CONTEXT_KEYS, controller.signal);
+    context = await admittedProviderContext(context, config.config_digest, controller.signal, generationContextKeys);
+    context = await progressContext(context, 'context_ready', generationContextKeys, controller.signal);
     context = await progressContext(
       context,
       'provider_request_started',
-      GENERATION_CONTEXT_KEYS,
+      generationContextKeys,
       controller.signal,
     );
     let transportResult;
@@ -430,9 +550,6 @@ function createBuilderGenerationHostAdapter(options = {}) {
         ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
       }, {
         signal: controller.signal,
-        ...(onOutputDelta === null
-          ? {}
-          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
       }]);
     } catch (error) {
       mapTransportError(error, controller.signal);
@@ -441,11 +558,11 @@ function createBuilderGenerationHostAdapter(options = {}) {
     context = await progressContext(
       context,
       'provider_response_received',
-      GENERATION_CONTEXT_KEYS,
+      generationContextKeys,
       controller.signal,
     );
     const generatedText = sanitizeTransportResult(transportResult);
-    context = await progressContext(context, 'result_preparing', GENERATION_CONTEXT_KEYS, controller.signal);
+    context = await progressContext(context, 'result_preparing', generationContextKeys, controller.signal);
     try {
       const draft = projectBuilderGenerationResult({
         request,
@@ -496,6 +613,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
     );
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
+    context = await admittedProviderContext(
+      context,
+      config.config_digest,
+      controller.signal,
+      DRAFT_CONTINUATION_CONTEXT_KEYS,
+    );
     context = await progressContext(
       context,
       'provider_request_started',
@@ -517,9 +640,6 @@ function createBuilderGenerationHostAdapter(options = {}) {
         ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
       }, {
         signal: controller.signal,
-        ...(onOutputDelta === null
-          ? {}
-          : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
       }]);
     } catch (error) {
       mapTransportError(error, controller.signal);
@@ -600,6 +720,12 @@ function createBuilderGenerationHostAdapter(options = {}) {
     );
     async function requestExplanationTransport(repair = false) {
       let transportResult;
+      const projectVisibleOutput = onOutputDelta === null || repair
+        ? null
+        : createJsonStringFieldOutputProjector(
+          'explanation',
+          (deltaText) => notifyOutputDelta(context, { delta_text: deltaText }, controller.signal),
+        );
       try {
         transportResult = await Reflect.apply(transport, undefined, [{
           base_url: config.base_url,
@@ -615,9 +741,33 @@ function createBuilderGenerationHostAdapter(options = {}) {
           ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
         }, {
           signal: controller.signal,
-          ...(onOutputDelta === null
+          ...(projectVisibleOutput === null
             ? {}
-            : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
+            : {
+                on_output_delta: async (rawDelta) => {
+                  try {
+                    const source = exactObject(
+                      rawDelta,
+                      ['delta_text'],
+                      'builder_generation_structured_response_invalid',
+                    );
+                    const deltaText = ownValue(
+                      source,
+                      'delta_text',
+                      'builder_generation_structured_response_invalid',
+                    );
+                    if (
+                      typeof deltaText !== 'string'
+                      || deltaText.length === 0
+                      || hasUnpairedSurrogate(deltaText)
+                      || Buffer.byteLength(deltaText, 'utf8') > 64 * 1024
+                    ) return;
+                    await projectVisibleOutput(deltaText);
+                  } catch {
+                    // Malformed transport observations cannot affect the final response.
+                  }
+                },
+              }),
         }]);
       } catch (error) {
         mapTransportError(error, controller.signal);
@@ -694,9 +844,6 @@ function createBuilderGenerationHostAdapter(options = {}) {
           ...(config.max_tokens === null ? {} : { max_tokens: config.max_tokens }),
         }, {
           signal: controller.signal,
-          ...(onOutputDelta === null
-            ? {}
-            : { on_output_delta: (delta) => notifyOutputDelta(context, delta, controller.signal) }),
         }]);
       } catch (error) {
         mapTransportError(error, controller.signal);

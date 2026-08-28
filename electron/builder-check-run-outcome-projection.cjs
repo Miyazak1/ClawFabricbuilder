@@ -22,6 +22,7 @@ const PROJECTION_KEYS = Object.freeze([
   'status',
   'label',
   'summary',
+  'environment_reason',
   'completed_at_ms',
   'authority',
 ]);
@@ -49,10 +50,28 @@ const COMPLETED_COPY = new Set([
   ['failed', 'Check failed', 'The project check produced too much output to review safely.'],
   ['incomplete', 'Check incomplete', 'The project check reached its time limit.'],
   ['incomplete', 'Check incomplete', 'The project check was cancelled.'],
-  ['incomplete', 'Check unavailable', 'The required local check environment is unavailable.'],
+  ['incomplete', 'Check unavailable', 'The admitted check workspace needs prepared dependencies or local toolchain access before this check can run.'],
+  ['incomplete', 'Check unavailable', 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.'],
+  ['incomplete', 'Check unavailable', 'This check needs explicit dependency preparation approval before it can run.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation was denied, so Builder could not run this check.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation reached the time limit in the isolated check workspace. You can retry preparation for this check.'],
+  ['incomplete', 'Check unavailable', 'Builder could not start the package manager needed to prepare check dependencies.'],
+  ['incomplete', 'Check unavailable', 'Builder cannot see the local Node/package-manager toolchain required for this check.'],
   ['incomplete', 'Check unavailable', 'The project check could not be started.'],
   ['incomplete', 'Check needs attention', 'Builder could not confirm that the project check stopped.'],
 ].map((tuple) => JSON.stringify(tuple)));
+const ENVIRONMENT_REASONS = Object.freeze([
+  'none',
+  'dependency_workspace_missing',
+  'install_approval_required',
+  'install_denied',
+  'dependency_preparation_failed',
+  'dependency_preparation_timed_out',
+  'package_manager_unavailable',
+  'host_toolchain_missing',
+  'environment_unknown',
+]);
 const SPECIAL = Object.freeze({
   not_run: Object.freeze({
     status: 'not_run',
@@ -156,6 +175,7 @@ function projectBuilderCheckRunOutcome(rawInput) {
     if (state === 'completed') {
       const status = sanitizeBuilderCheckRunStatusProjection(rawStatus);
       if (status.project_id !== projectId || status.candidate_id !== candidateId) fail();
+      if (!ENVIRONMENT_REASONS.includes(status.environment_reason)) fail();
       return freezeDeep({
         projection_version: BUILDER_CHECK_RUN_OUTCOME_PROJECTION_VERSION,
         state,
@@ -164,6 +184,7 @@ function projectBuilderCheckRunOutcome(rawInput) {
         status: status.status,
         label: status.label,
         summary: status.summary,
+        environment_reason: status.environment_reason,
         completed_at_ms: status.completed_at_ms,
         authority: authority('verified_current_candidate_check_run'),
       });
@@ -179,6 +200,7 @@ function projectBuilderCheckRunOutcome(rawInput) {
       status: special.status,
       label: special.label,
       summary: special.summary,
+      environment_reason: 'none',
       completed_at_ms: null,
       authority: authority(special.fact_source),
     });
@@ -200,10 +222,14 @@ function sanitizeBuilderCheckRunOutcomeProjection(rawValue) {
     if (valueAt(value, 'projection_version') !== BUILDER_CHECK_RUN_OUTCOME_PROJECTION_VERSION) fail();
     if (state === 'completed') {
       const commandKind = valueAt(value, 'command_kind');
+      const environmentReason = valueAt(value, 'environment_reason');
       if (
         valueAt(authorityValue, 'fact_source') !== 'verified_current_candidate_check_run'
         || !Object.hasOwn(COMMAND_LABELS, commandKind)
         || valueAt(value, 'command_label') !== COMMAND_LABELS[commandKind]
+        || typeof environmentReason !== 'string'
+        || !ENVIRONMENT_REASONS.includes(environmentReason)
+        || (valueAt(value, 'label') !== 'Check unavailable' && environmentReason !== 'none')
         || !COMPLETED_COPY.has(JSON.stringify([
           valueAt(value, 'status'),
           valueAt(value, 'label'),
@@ -223,6 +249,7 @@ function sanitizeBuilderCheckRunOutcomeProjection(rawValue) {
       || valueAt(value, 'status') !== special.status
       || valueAt(value, 'label') !== special.label
       || valueAt(value, 'summary') !== special.summary
+      || valueAt(value, 'environment_reason') !== 'none'
       || valueAt(value, 'completed_at_ms') !== null
     ) fail();
     return freezeDeep(value);

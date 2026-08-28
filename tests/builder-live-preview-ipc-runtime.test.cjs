@@ -7,9 +7,11 @@ const test = require('node:test');
 
 const {
   READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL,
+  DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
   RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL,
   REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL,
   STOP_CURRENT_LIVE_PREVIEW_CHANNEL,
+  UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
 } = require('../electron/builder-live-preview-ipc-adapter.cjs');
 const {
   BUILDER_LIVE_PREVIEW_IPC_RUNTIME_VERSION,
@@ -21,7 +23,7 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 
 function fakeIpcMain({ failHandle = null, failRemove = null } = {}) {
   const handlers = new Map();
@@ -91,6 +93,8 @@ test('registers fixed live preview channels in a preview-specific runtime', () =
     RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL,
     STOP_CURRENT_LIVE_PREVIEW_CHANNEL,
     READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL,
+    UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
+    DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
   ]);
   assert.equal(Object.isFrozen(runtime), true);
   assert.equal(Object.isFrozen(runtime.channels), true);
@@ -129,8 +133,9 @@ test('registered unavailable service returns safe status without source or view 
   assert.equal(projected.authority.preload, false);
   assert.doesNotMatch(
     JSON.stringify(projected),
-    /"source_tree":|content_digest|entry_url|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
+    /"source_tree":|content_digest|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
   );
+  assert.equal(projected.entry_url, null);
   await assert.rejects(
     ipcMain.handlers.get(REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL)(
       Object.freeze({ sender: windowRef.webContents }),

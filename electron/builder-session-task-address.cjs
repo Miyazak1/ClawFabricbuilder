@@ -2,6 +2,9 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_SESSION_ADDRESS_VERSION = 'builder-session-address.v1';
 const BUILDER_TASK_ADDRESS_VERSION = 'builder-task-address.v1';
@@ -9,7 +12,6 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const AGENT_ID_PATTERN = new RegExp(`^builder-agent:${UUID_SOURCE}$`, 'u');
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const DISPLAY_ID_PATTERN = /^S-[A-Z0-9]{6,12}$/u;

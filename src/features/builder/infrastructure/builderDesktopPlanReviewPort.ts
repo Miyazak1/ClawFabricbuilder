@@ -28,7 +28,7 @@ const RESULT_KEYS = Object.freeze([
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
@@ -85,10 +85,6 @@ function sanitizeBridge(value: unknown): BuilderPlanReviewBridge {
   }
 }
 
-function projectUuid(projectId: string): string {
-  return projectId.slice('builder-project:'.length);
-}
-
 function sanitizeRequest(request: BuilderPlanReviewRequest): BuilderPlanReviewRequest {
   const source = exactRecord(request, REQUEST_KEYS);
   if (
@@ -96,7 +92,6 @@ function sanitizeRequest(request: BuilderPlanReviewRequest): BuilderPlanReviewRe
     || !PROJECT_ID_PATTERN.test(source.project_id)
     || typeof source.conversation_id !== 'string'
     || !CONVERSATION_ID_PATTERN.test(source.conversation_id)
-    || source.conversation_id !== `builder-conversation:${projectUuid(source.project_id)}`
     || typeof source.turn_id !== 'string'
     || !TURN_ID_PATTERN.test(source.turn_id)
     || typeof source.run_id !== 'string'

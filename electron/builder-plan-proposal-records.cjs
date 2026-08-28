@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   createBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_PLAN_PROPOSAL_RECORD_VERSION = 'builder-plan-proposal-record.v1';
 const PLAN_PROPOSAL_RECORD_KIND = 'builder_plan_proposal_record';
@@ -22,7 +25,7 @@ const MAX_SUMMARY_UTF8_BYTES = 4 * 1024;
 const MAX_STEP_TEXT_CODE_POINTS = 360;
 const MAX_STEP_TEXT_UTF8_BYTES = 1_536;
 const MAX_EVENT_SEQUENCE = 4_096;
-const MAX_EVENTS_IN_CONTEXT = 64;
+const MAX_EVENTS_IN_CONTEXT = MAX_EVENT_SEQUENCE;
 
 const INPUT_KEYS = Object.freeze([
   'source_context_result',
@@ -152,7 +155,6 @@ const AUTHORITY_KEYS = Object.freeze([
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -389,10 +391,6 @@ function sanitizeAuthority(value, keys, expected) {
   return freezeDeep({ ...expected });
 }
 
-function expectedConversationId(projectId) {
-  return `builder-conversation:${projectId.slice('builder-project:'.length)}`;
-}
-
 function sanitizeHead(value) {
   const descriptors = exactObject(value, HEAD_KEYS);
   return freezeDeep({
@@ -408,7 +406,15 @@ function sanitizeContext(value) {
   const conversation = exactObject(descriptors.conversation.value, CONVERSATION_KEYS);
   const ids = exactObject(descriptors.ids.value, IDS_KEYS);
   const projectId = safePattern(project.project_id.value, PROJECT_ID_PATTERN);
-  const conversationId = safePattern(conversation.conversation_id.value, CONVERSATION_ID_PATTERN);
+  let conversationId;
+  try {
+    conversationId = sanitizeBuilderConversationAddress(
+      projectId,
+      conversation.conversation_id.value,
+    );
+  } catch {
+    fail();
+  }
   const requestDigest = safeDigest(descriptors.request_digest.value);
   safePattern(ids.turn_command_id.value, COMMAND_ID_PATTERN);
   safePattern(ids.run_command_id.value, COMMAND_ID_PATTERN);
@@ -426,7 +432,6 @@ function sanitizeContext(value) {
     || safeTimestamp(project.created_at_ms.value) < 0
     || conversation.project_id.value !== projectId
     || safeTimestamp(conversation.created_at_ms.value) < 0
-    || conversationId !== expectedConversationId(projectId)
     || descriptors.run_terminal_failure_code.value !== null
     || descriptors.cancel_requested.value !== false
   ) fail();
@@ -734,11 +739,21 @@ function sanitizeBuilderPlanProposalRecord(rawRecord) {
       || descriptors.result_kind.value !== 'plan'
       || descriptors.plan_state.value !== 'proposed'
     ) fail();
+    const projectId = safePattern(descriptors.project_id.value, PROJECT_ID_PATTERN);
+    let conversationId;
+    try {
+      conversationId = sanitizeBuilderConversationAddress(
+        projectId,
+        descriptors.conversation_id.value,
+      );
+    } catch {
+      fail();
+    }
     const record = freezeDeep({
       record_version: BUILDER_PLAN_PROPOSAL_RECORD_VERSION,
       record_kind: PLAN_PROPOSAL_RECORD_KIND,
-      project_id: safePattern(descriptors.project_id.value, PROJECT_ID_PATTERN),
-      conversation_id: safePattern(descriptors.conversation_id.value, CONVERSATION_ID_PATTERN),
+      project_id: projectId,
+      conversation_id: conversationId,
       turn_id: safePattern(descriptors.turn_id.value, TURN_ID_PATTERN),
       task_id: safePattern(descriptors.task_id.value, TASK_ID_PATTERN),
       run_id: safePattern(descriptors.run_id.value, RUN_ID_PATTERN),
@@ -763,7 +778,6 @@ function sanitizeBuilderPlanProposalRecord(rawRecord) {
       lifecycle: sanitizeAuthority(descriptors.lifecycle.value, LIFECYCLE_KEYS, LIFECYCLE),
       authority: sanitizeAuthority(descriptors.authority.value, AUTHORITY_KEYS, AUTHORITY),
     });
-    if (record.conversation_id !== expectedConversationId(record.project_id)) fail();
     const digest = safeDigest(descriptors.record_digest.value);
     if (digest !== sha256Canonical(planDigestBody(record))) fail();
     return freezeDeep({

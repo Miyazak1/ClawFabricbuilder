@@ -7,7 +7,8 @@ import {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174002';
 
@@ -74,7 +75,7 @@ describe('createBuilderDesktopPlanReviewPort', () => {
       null,
       { ...request(), decision: 'accepted' },
       { ...request(), project_id: 'bad' },
-      { ...request(), conversation_id: 'builder-conversation:00000000-0000-4000-8000-000000000000' },
+      { ...request(), conversation_id: 'bad' },
       { ...request(), plan_result_digest: `sha256:${'a'.repeat(64)}` },
     ]) {
       await expect(port.review(value as ReturnType<typeof request>)).rejects.toBeInstanceOf(

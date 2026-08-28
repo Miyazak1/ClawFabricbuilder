@@ -10,9 +10,14 @@ const {
   BUILDER_SESSION_ADDRESS_VERSION,
   BUILDER_TASK_ADDRESS_VERSION,
   BuilderSessionTaskAddressError,
+  createBuilderTaskAddress,
   sanitizeBuilderSessionAddress,
   sanitizeBuilderTaskAddress,
 } = require('./builder-session-task-address.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION = 'builder-session-task-address-store.v1';
 const BUILDER_SESSION_TASK_ADDRESS_STORE_RESULT_VERSION = 'builder-session-task-address-store-result.v1';
@@ -24,11 +29,14 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const AGENT_ID_PATTERN = new RegExp(`^builder-agent:${UUID_SOURCE}$`, 'u');
 const RECORD_SESSION_KEYS = Object.freeze(['session_address']);
 const RECORD_TASK_KEYS = Object.freeze(['task_address']);
 const READ_SESSION_KEYS = Object.freeze(['project_id', 'session_id']);
 const READ_TASK_KEYS = Object.freeze(['project_id', 'task_address_id']);
+const LIST_AGENT_TASKS_KEYS = Object.freeze(['agent_id', 'limit']);
+const RENAME_TASK_KEYS = Object.freeze(['project_id', 'task_address_id', 'title', 'updated_at_ms']);
+const ARCHIVE_TASK_KEYS = Object.freeze(['project_id', 'task_address_id', 'archived_at_ms']);
 const READ_CURRENT_SESSION_TASK_KEYS = Object.freeze(['project_id', 'conversation_id']);
 const MAX_RECORD_JSON_BYTES = 96 * 1024;
 const CREATE_SCHEMA_SQL = Object.freeze([
@@ -181,8 +189,40 @@ function safeTaskAddressId(value) {
   return safePattern(value, TASK_ADDRESS_ID_PATTERN);
 }
 
-function safeConversationId(value) {
-  return safePattern(value, CONVERSATION_ID_PATTERN);
+function safeAgentId(value) {
+  return safePattern(value, AGENT_ID_PATTERN);
+}
+
+function safeTitle(value) {
+  if (
+    typeof value !== 'string'
+    || value.length < 1
+    || value.length > 160
+    || value.trim() !== value
+    || hasControlCharacter(value)
+  ) fail('builder_session_task_address_store_invalid');
+  return value;
+}
+
+function safeTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value < 0) fail('builder_session_task_address_store_invalid');
+  return value;
+}
+
+function safeListLimit(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 512) {
+    fail('builder_session_task_address_store_invalid');
+  }
+  return value;
+}
+
+function safeConversationId(value, projectId) {
+  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
+  try {
+    return sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail('builder_session_task_address_store_invalid');
+  }
 }
 
 function safeDatabasePath(value) {
@@ -468,6 +508,55 @@ function insertTask(db, taskAddress) {
   );
 }
 
+function updateTask(db, taskAddress) {
+  const recordJson = canonicalJson(taskAddress);
+  if (recordJson.length > MAX_RECORD_JSON_BYTES) {
+    fail('builder_session_task_address_store_invalid');
+  }
+  const updated = run(
+    db,
+    `UPDATE task_addresses
+      SET address_id = ?,
+        status = ?,
+        updated_at_ms = ?,
+        record_json = ?
+      WHERE project_id = ?
+        AND task_address_id = ?`,
+    [
+      taskAddress.address_id,
+      taskAddress.status,
+      taskAddress.updated_at_ms,
+      recordJson,
+      taskAddress.project_id,
+      taskAddress.task_address_id,
+    ],
+  );
+  if (updated.changes !== 1) fail('builder_session_task_address_store_conflict');
+}
+
+function rewriteTaskAddress(record, patch) {
+  const current = record.task_address;
+  return createBuilderTaskAddress({
+    task_address_id: current.task_address_id,
+    session_id: current.session_id,
+    project_id: current.project_id,
+    agent_id: current.agent_id,
+    parent_task_address_id: current.parent_task_address_id,
+    conversation_id: current.conversation_id,
+    title: patch.title ?? current.title,
+    goal: current.goal,
+    status: patch.status ?? current.status,
+    current_brief_id: current.current_brief_id,
+    current_plan_id: current.current_plan_id,
+    base_revision_receipt_digest: current.base_revision_receipt_digest,
+    produced_revision_receipt_digest: current.produced_revision_receipt_digest,
+    created_by: current.created_by,
+    created_at_ms: current.created_at_ms,
+    updated_at_ms: patch.updated_at_ms,
+    closed_at_ms: patch.closed_at_ms === undefined ? current.closed_at_ms : patch.closed_at_ms,
+  });
+}
+
 function result(db, operation, payload) {
   return freezeDeep({
     result_version: BUILDER_SESSION_TASK_ADDRESS_STORE_RESULT_VERSION,
@@ -585,10 +674,76 @@ function createBuilderSessionTaskAddressStore(databasePath) {
       if (row === null) return readResult(database, 'absent', { task_address: null });
       return readResult(database, 'ready', { task_address: taskRowToRecord(row) });
     },
+    list_task_addresses_for_agent(rawRequest) {
+      exactObject(rawRequest, LIST_AGENT_TASKS_KEYS);
+      const agentId = safeAgentId(valueAt(rawRequest, 'agent_id'));
+      const limit = safeListLimit(valueAt(rawRequest, 'limit'));
+      const database = activeDb();
+      const rows = all(
+        database,
+        `SELECT * FROM task_addresses
+          WHERE agent_id = ?
+            AND status <> 'archived'
+          ORDER BY updated_at_ms DESC, task_address_id DESC
+          LIMIT ?`,
+        [agentId, limit],
+      );
+      return readResult(database, 'ready', {
+        agent_id: agentId,
+        task_addresses: freezeDeep(rows.map(taskRowToRecord)),
+      });
+    },
+    rename_task_address(rawRequest) {
+      exactObject(rawRequest, RENAME_TASK_KEYS);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const taskAddressId = safeTaskAddressId(valueAt(rawRequest, 'task_address_id'));
+      const title = safeTitle(valueAt(rawRequest, 'title'));
+      const updatedAtMs = safeTimestamp(valueAt(rawRequest, 'updated_at_ms'));
+      const database = activeDb();
+      const row = one(
+        database,
+        'SELECT * FROM task_addresses WHERE project_id = ? AND task_address_id = ?',
+        [projectId, taskAddressId],
+      );
+      if (row === null) fail('builder_session_task_address_store_conflict');
+      const next = rewriteTaskAddress(taskRowToRecord(row), { title, updated_at_ms: updatedAtMs });
+      updateTask(database, next);
+      return result(database, 'task_address_renamed', {
+        task_address: taskRowToRecord(one(database, 'SELECT * FROM task_addresses WHERE project_id = ? AND task_address_id = ?', [
+          projectId,
+          taskAddressId,
+        ])),
+      });
+    },
+    archive_task_address(rawRequest) {
+      exactObject(rawRequest, ARCHIVE_TASK_KEYS);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const taskAddressId = safeTaskAddressId(valueAt(rawRequest, 'task_address_id'));
+      const archivedAtMs = safeTimestamp(valueAt(rawRequest, 'archived_at_ms'));
+      const database = activeDb();
+      const row = one(
+        database,
+        'SELECT * FROM task_addresses WHERE project_id = ? AND task_address_id = ?',
+        [projectId, taskAddressId],
+      );
+      if (row === null) fail('builder_session_task_address_store_conflict');
+      const next = rewriteTaskAddress(taskRowToRecord(row), {
+        status: 'archived',
+        updated_at_ms: archivedAtMs,
+        closed_at_ms: archivedAtMs,
+      });
+      updateTask(database, next);
+      return result(database, 'task_address_archived', {
+        task_address: taskRowToRecord(one(database, 'SELECT * FROM task_addresses WHERE project_id = ? AND task_address_id = ?', [
+          projectId,
+          taskAddressId,
+        ])),
+      });
+    },
     read_current_session_task_for_conversation(rawRequest) {
       exactObject(rawRequest, READ_CURRENT_SESSION_TASK_KEYS);
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
-      const conversationId = safeConversationId(valueAt(rawRequest, 'conversation_id'));
+      const conversationId = safeConversationId(valueAt(rawRequest, 'conversation_id'), projectId);
       const database = activeDb();
       const taskRow = one(
         database,

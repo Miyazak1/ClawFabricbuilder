@@ -3,10 +3,19 @@
 const { types: utilTypes } = require('node:util');
 
 const {
+  BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_READ_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
 } = require('./builder-check-run-current-draft-service.cjs');
+const {
+  sanitizeBuilderEnvironmentReadinessDiagnosis,
+} = require('./builder-environment-readiness-diagnosis.cjs');
+const {
+  BUILDER_PROJECT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
+  BUILDER_PROJECT_ENVIRONMENT_DIAGNOSIS_SERVICE_VERSION,
+  sanitizeBuilderProjectEnvironmentDiagnosisResult,
+} = require('./builder-project-environment-diagnosis.cjs');
 const {
   sanitizeBuilderCheckRunStatusProjection,
 } = require('./builder-check-run-status-projection.cjs');
@@ -20,18 +29,34 @@ const {
 
 const READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL =
   'clawfabric-builder:check-run:read-current-draft-available';
+const DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL =
+  'clawfabric-builder:check-run:diagnose-current-draft-check-environment';
+const DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL =
+  'clawfabric-builder:check-run:diagnose-project-environment';
 const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:approve-current-draft-check';
+const DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL =
+  'clawfabric-builder:check-run:decide-current-draft-dependency-preparation';
 const SKIP_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:skip-current-draft-check';
 const OPTION_KEYS = Object.freeze([
   'readCurrentDraftAvailableChecks',
+  'diagnoseCurrentDraftCheckEnvironment',
+  'diagnoseProjectEnvironment',
   'approveAndRunCurrentDraftCheck',
+  'decideCurrentDraftDependencyPreparation',
   'skipCurrentDraftCheck',
   'mainWindowRef',
 ]);
 const READ_REQUEST_KEYS = Object.freeze(['draft_id']);
+const PROJECT_DIAGNOSIS_REQUEST_KEYS = Object.freeze(['project_id']);
 const RUN_REQUEST_KEYS = Object.freeze(['draft_id', 'command_profile_id']);
+const DEPENDENCY_PREPARATION_REQUEST_KEYS = Object.freeze([
+  'draft_id',
+  'command_profile_id',
+  'decision',
+]);
+const DEPENDENCY_PREPARATION_DECISIONS = Object.freeze(['allow_once', 'deny']);
 const READ_RESULT_KEYS = Object.freeze([
   'result_version',
   'service_version',
@@ -50,6 +75,22 @@ const RUN_RESULT_KEYS = Object.freeze([
   'project_id',
   'candidate_id',
   'check_run_status_projection',
+]);
+const DIAGNOSIS_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'service_version',
+  'operation',
+  'draft_id',
+  'project_id',
+  'candidate_id',
+  'environment_diagnosis',
+]);
+const PROJECT_DIAGNOSIS_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'service_version',
+  'operation',
+  'project_id',
+  'environment_diagnosis',
 ]);
 const SKIP_RESULT_KEYS = Object.freeze([
   'result_version',
@@ -88,6 +129,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_check_run_approval_forbidden: 'Project checks are unavailable.',
   builder_check_run_approval_invalid: 'The project check request could not be verified.',
   builder_check_run_approval_busy: 'A project check is already in progress.',
+  builder_check_run_current_draft_failed: 'The draft changed before the project check could start.',
   builder_check_run_approval_unavailable: 'The project check could not be completed.',
 });
 
@@ -150,7 +192,11 @@ function safeOptions(value) {
   exactObject(value, OPTION_KEYS, 'builder_check_run_approval_unavailable');
   return Object.freeze({
     readCurrentDraftAvailableChecks: stableMethod(value, 'readCurrentDraftAvailableChecks'),
+    diagnoseCurrentDraftCheckEnvironment: stableMethod(value, 'diagnoseCurrentDraftCheckEnvironment'),
+    diagnoseProjectEnvironment: stableMethod(value, 'diagnoseProjectEnvironment'),
     approveAndRunCurrentDraftCheck: stableMethod(value, 'approveAndRunCurrentDraftCheck'),
+    decideCurrentDraftDependencyPreparation:
+      stableMethod(value, 'decideCurrentDraftDependencyPreparation'),
     skipCurrentDraftCheck: stableMethod(value, 'skipCurrentDraftCheck'),
     mainWindowRef: stableMethod(value, 'mainWindowRef'),
   });
@@ -170,6 +216,13 @@ function safeReadRequest(value) {
   });
 }
 
+function safeProjectDiagnosisRequest(value) {
+  const descriptors = exactObject(value, PROJECT_DIAGNOSIS_REQUEST_KEYS);
+  return Object.freeze({
+    project_id: safePattern(descriptors.project_id.value, PROJECT_ID_PATTERN),
+  });
+}
+
 function safeRunRequest(value) {
   const descriptors = exactObject(value, RUN_REQUEST_KEYS);
   return Object.freeze({
@@ -178,6 +231,22 @@ function safeRunRequest(value) {
       descriptors.command_profile_id.value,
       COMMAND_PROFILE_ID_PATTERN,
     ),
+  });
+}
+
+function safeDependencyPreparationRequest(value) {
+  const descriptors = exactObject(value, DEPENDENCY_PREPARATION_REQUEST_KEYS);
+  if (
+    typeof descriptors.decision.value !== 'string'
+    || !DEPENDENCY_PREPARATION_DECISIONS.includes(descriptors.decision.value)
+  ) throw ipcError('builder_check_run_approval_invalid');
+  return Object.freeze({
+    draft_id: safePattern(descriptors.draft_id.value, DRAFT_ID_PATTERN),
+    command_profile_id: safePattern(
+      descriptors.command_profile_id.value,
+      COMMAND_PROFILE_ID_PATTERN,
+    ),
+    decision: descriptors.decision.value,
   });
 }
 
@@ -264,6 +333,57 @@ function safeRunResult(value, request) {
     candidate_id: descriptors.candidate_id.value,
     check_run_status_projection: projection,
   });
+}
+
+function safeDiagnosisResult(value, request) {
+  const descriptors = exactObject(value, DIAGNOSIS_RESULT_KEYS, 'builder_check_run_approval_unavailable');
+  if (
+    descriptors.result_version.value !== BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION
+    || descriptors.service_version.value !== BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION
+    || descriptors.operation.value !== 'current_draft_check_environment_diagnosed'
+    || descriptors.draft_id.value !== request.draft_id
+    || !PROJECT_ID_PATTERN.test(descriptors.project_id.value)
+    || !CANDIDATE_ID_PATTERN.test(descriptors.candidate_id.value)
+  ) throw ipcError();
+  let diagnosis;
+  try {
+    diagnosis = sanitizeBuilderEnvironmentReadinessDiagnosis(
+      descriptors.environment_diagnosis.value,
+    );
+  } catch {
+    throw ipcError();
+  }
+  if (
+    diagnosis.project_id !== descriptors.project_id.value
+    || diagnosis.candidate_id !== descriptors.candidate_id.value
+    || diagnosis.command_profile_id !== request.command_profile_id
+  ) throw ipcError();
+  return Object.freeze({
+    result_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
+    service_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
+    operation: 'current_draft_check_environment_diagnosed',
+    draft_id: request.draft_id,
+    project_id: descriptors.project_id.value,
+    candidate_id: descriptors.candidate_id.value,
+    environment_diagnosis: diagnosis,
+  });
+}
+
+function safeProjectDiagnosisResult(value, request) {
+  const descriptors = exactObject(value, PROJECT_DIAGNOSIS_RESULT_KEYS, 'builder_check_run_approval_unavailable');
+  if (
+    descriptors.result_version.value !== BUILDER_PROJECT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION
+    || descriptors.service_version.value !== BUILDER_PROJECT_ENVIRONMENT_DIAGNOSIS_SERVICE_VERSION
+    || descriptors.operation.value !== 'project_environment_diagnosed'
+    || descriptors.project_id.value !== request.project_id
+  ) throw ipcError();
+  let result;
+  try {
+    result = sanitizeBuilderProjectEnvironmentDiagnosisResult(value);
+  } catch {
+    throw ipcError();
+  }
+  return result;
 }
 
 function safeSkipResult(value, request) {
@@ -363,6 +483,9 @@ function normalizeError(error) {
   ) {
     return ipcError('builder_check_run_approval_busy');
   }
+  if (safeErrorCode(error) === 'builder_check_run_current_draft_failed') {
+    return ipcError('builder_check_run_current_draft_failed');
+  }
   return ipcError();
 }
 
@@ -399,6 +522,51 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokeDiagnose(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_check_run_approval_invalid');
+      const request = safeRunRequest(rawArguments[0]);
+      return safeDiagnosisResult(await Reflect.apply(
+        options.diagnoseCurrentDraftCheckEnvironment,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
+  async function invokeProjectDiagnose(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_check_run_approval_invalid');
+      const request = safeProjectDiagnosisRequest(rawArguments[0]);
+      return safeProjectDiagnosisResult(await Reflect.apply(
+        options.diagnoseProjectEnvironment,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
+  async function invokeDecideDependencyPreparation(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_check_run_approval_invalid');
+      const request = safeDependencyPreparationRequest(rawArguments[0]);
+      return safeRunResult(await Reflect.apply(
+        options.decideCurrentDraftDependencyPreparation,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   async function invokeSkip(event, rawArguments) {
     try {
       assertActiveSender(event, options.mainWindowRef);
@@ -422,10 +590,27 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
         method: 'readCurrentDraftAvailableChecks',
         invoke(event, ...rawArguments) { return invokeRead(event, rawArguments); },
       }),
+      diagnoseCurrentDraftCheckEnvironment: Object.freeze({
+        channel: DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
+        method: 'diagnoseCurrentDraftCheckEnvironment',
+        invoke(event, ...rawArguments) { return invokeDiagnose(event, rawArguments); },
+      }),
+      diagnoseProjectEnvironment: Object.freeze({
+        channel: DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+        method: 'diagnoseProjectEnvironment',
+        invoke(event, ...rawArguments) { return invokeProjectDiagnose(event, rawArguments); },
+      }),
       approveAndRunCurrentDraftCheck: Object.freeze({
         channel: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
         method: 'approveAndRunCurrentDraftCheck',
         invoke(event, ...rawArguments) { return invokeApproveAndRun(event, rawArguments); },
+      }),
+      decideCurrentDraftDependencyPreparation: Object.freeze({
+        channel: DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
+        method: 'decideCurrentDraftDependencyPreparation',
+        invoke(event, ...rawArguments) {
+          return invokeDecideDependencyPreparation(event, rawArguments);
+        },
       }),
       skipCurrentDraftCheck: Object.freeze({
         channel: SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
@@ -435,7 +620,10 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
     }),
     exposed_methods: Object.freeze([
       'readCurrentDraftAvailableChecks',
+      'diagnoseCurrentDraftCheckEnvironment',
+      'diagnoseProjectEnvironment',
       'approveAndRunCurrentDraftCheck',
+      'decideCurrentDraftDependencyPreparation',
       'skipCurrentDraftCheck',
     ]),
     authority: Object.freeze({
@@ -458,6 +646,9 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
 
 module.exports = Object.freeze({
   APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
+  DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
+  DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
+  DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   BuilderCheckRunApprovalIpcError,

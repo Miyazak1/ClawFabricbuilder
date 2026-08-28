@@ -7,21 +7,28 @@ import type {
   BuilderSideWorkspaceFileTreeEntry,
   BuilderSideWorkspaceFileTreeProjection,
   BuilderSideWorkspaceFileRequest,
+  BuilderSideWorkspaceRuntimeToolFileRequest,
 } from '../application/builderPorts';
 
 type BuilderSideWorkspaceFilesBridge = Readonly<{
   readCurrentDraftFileTree(request: unknown): Promise<unknown>;
   readCurrentDraftFileContent(request: unknown): Promise<unknown>;
+  readRuntimeToolFileTree(request: unknown): Promise<unknown>;
 }>;
 
 const BRIDGE_KEYS = Object.freeze([
   'readCurrentDraftFileTree',
   'readCurrentDraftFileContent',
+  'readRuntimeToolFileTree',
 ]);
 const REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id']);
 const CONTENT_REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id', 'file_ref']);
+const RUNTIME_TOOL_REQUEST_KEYS = Object.freeze([
+  'project_id', 'conversation_id', 'run_id', 'tool_call_id',
+]);
 const FILE_REF_KEYS = Object.freeze([
   'file_ref_version',
+  'source_kind',
   'source_tree_digest',
   'path',
   'content_digest',
@@ -89,9 +96,15 @@ const AUTHORITY_KEYS = Object.freeze([
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN =
+  /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TOOL_CALL_ID_PATTERN =
+  /^builder-tool-call:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
-const SOURCE_KINDS = Object.freeze(['current_draft', 'saved_revision', 'inspected_revision']);
+const SOURCE_KINDS = Object.freeze([
+  'current_draft', 'saved_revision', 'inspected_revision', 'runtime_snapshot',
+]);
 const LANGUAGES = Object.freeze([
   'javascript',
   'typescript',
@@ -145,15 +158,13 @@ function sanitizeBridge(value: unknown): BuilderSideWorkspaceFilesBridge {
   if (
     typeof source.readCurrentDraftFileTree !== 'function'
     || typeof source.readCurrentDraftFileContent !== 'function'
+    || typeof source.readRuntimeToolFileTree !== 'function'
   ) throw unavailable();
   return Object.freeze({
     readCurrentDraftFileTree: source.readCurrentDraftFileTree as (request: unknown) => Promise<unknown>,
     readCurrentDraftFileContent: source.readCurrentDraftFileContent as (request: unknown) => Promise<unknown>,
+    readRuntimeToolFileTree: source.readRuntimeToolFileTree as (request: unknown) => Promise<unknown>,
   });
-}
-
-function projectUuid(projectId: string): string {
-  return projectId.slice('builder-project:'.length);
 }
 
 function safeProjectConversation(
@@ -165,7 +176,6 @@ function safeProjectConversation(
     || !PROJECT_ID_PATTERN.test(projectId)
     || typeof conversationId !== 'string'
     || !CONVERSATION_ID_PATTERN.test(conversationId)
-    || conversationId !== `builder-conversation:${projectUuid(projectId)}`
   ) throw unavailable();
   return Object.freeze({ project_id: projectId, conversation_id: conversationId });
 }
@@ -178,6 +188,11 @@ function sanitizeRequest(request: BuilderSideWorkspaceFileRequest): BuilderSideW
 function safeDigest(value: unknown): string {
   if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) throw unavailable();
   return value;
+}
+
+function safeSourceKind(value: unknown): BuilderSideWorkspaceFileRef['source_kind'] {
+  if (typeof value !== 'string' || !SOURCE_KINDS.includes(value)) throw unavailable();
+  return value as BuilderSideWorkspaceFileRef['source_kind'];
 }
 
 function safePath(value: unknown): string {
@@ -199,6 +214,7 @@ function sanitizeFileRef(value: unknown, sourceTreeDigest?: string): BuilderSide
   const source = exactRecord(value, FILE_REF_KEYS);
   const safe = Object.freeze({
     file_ref_version: source.file_ref_version,
+    source_kind: safeSourceKind(source.source_kind),
     source_tree_digest: safeDigest(source.source_tree_digest),
     path: safePath(source.path),
     content_digest: safeDigest(source.content_digest),
@@ -218,6 +234,24 @@ function sanitizeContentRequest(
   return Object.freeze({
     ...ids,
     file_ref: sanitizeFileRef(source.file_ref),
+  });
+}
+
+function sanitizeRuntimeToolRequest(
+  request: BuilderSideWorkspaceRuntimeToolFileRequest,
+): BuilderSideWorkspaceRuntimeToolFileRequest {
+  const source = exactRecord(request, RUNTIME_TOOL_REQUEST_KEYS);
+  const ids = safeProjectConversation(source.project_id, source.conversation_id);
+  if (
+    typeof source.run_id !== 'string'
+    || !RUN_ID_PATTERN.test(source.run_id)
+    || typeof source.tool_call_id !== 'string'
+    || !TOOL_CALL_ID_PATTERN.test(source.tool_call_id)
+  ) throw unavailable();
+  return Object.freeze({
+    ...ids,
+    run_id: source.run_id,
+    tool_call_id: source.tool_call_id,
   });
 }
 
@@ -266,7 +300,11 @@ function safeSourceRef(value: unknown): Readonly<Record<string, unknown>> {
   return Object.freeze(result);
 }
 
-function sanitizeEntry(value: unknown, sourceTreeDigest: string): BuilderSideWorkspaceFileTreeEntry {
+function sanitizeEntry(
+  value: unknown,
+  sourceKind: BuilderSideWorkspaceFileRef['source_kind'],
+  sourceTreeDigest: string,
+): BuilderSideWorkspaceFileTreeEntry {
   if (!isPlainObject(value)) throw unavailable();
   const kind = value.entry_kind;
   if (kind === 'directory') {
@@ -298,7 +336,11 @@ function sanitizeEntry(value: unknown, sourceTreeDigest: string): BuilderSideWor
     const fileRef = sanitizeFileRef(source.file_ref, sourceTreeDigest);
     const path = safePath(source.path);
     const contentDigest = safeDigest(source.content_digest);
-    if (fileRef.path !== path || fileRef.content_digest !== contentDigest) throw unavailable();
+    if (
+      fileRef.source_kind !== sourceKind
+      || fileRef.path !== path
+      || fileRef.content_digest !== contentDigest
+    ) throw unavailable();
     return Object.freeze({
       entry_kind: 'text_file',
       path,
@@ -318,12 +360,11 @@ function sanitizeTreeProjection(
 ): BuilderSideWorkspaceFileTreeProjection {
   const source = exactRecord(value, TREE_KEYS);
   const digest = safeDigest(source.source_tree_digest);
+  const sourceKind = safeSourceKind(source.source_kind);
   if (
     source.projection_version !== 'builder-side-workspace-file-tree.v1'
     || source.project_id !== request.project_id
     || source.conversation_id !== request.conversation_id
-    || typeof source.source_kind !== 'string'
-    || !SOURCE_KINDS.includes(source.source_kind)
     || typeof source.root_label !== 'string'
     || source.root_label.length < 1
     || source.root_label.length > 80
@@ -334,11 +375,16 @@ function sanitizeTreeProjection(
     projection_version: 'builder-side-workspace-file-tree.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    source_kind: source.source_kind as BuilderSideWorkspaceFileTreeProjection['source_kind'],
+    source_kind: sourceKind,
     root_label: source.root_label,
     source_tree_digest: digest,
-    entries: Object.freeze(source.entries.map((entry) => sanitizeEntry(entry, digest))),
-    selected_file_ref: source.selected_file_ref === null ? null : sanitizeFileRef(source.selected_file_ref, digest),
+    entries: Object.freeze(source.entries.map((entry) => sanitizeEntry(entry, sourceKind, digest))),
+    selected_file_ref: (() => {
+      if (source.selected_file_ref === null) return null;
+      const fileRef = sanitizeFileRef(source.selected_file_ref, digest);
+      if (fileRef.source_kind !== sourceKind) throw unavailable();
+      return fileRef;
+    })(),
     source_ref: safeSourceRef(source.source_ref),
     authority: sanitizeAuthority(source.authority),
   });
@@ -351,12 +397,12 @@ function sanitizeContentProjection(
   const source = exactRecord(value, CONTENT_KEYS);
   const digest = safeDigest(source.source_tree_digest);
   const fileRef = sanitizeFileRef(source.file_ref, digest);
+  const sourceKind = safeSourceKind(source.source_kind);
   if (
     source.projection_version !== 'builder-side-workspace-file-content.v1'
     || source.project_id !== request.project_id
     || source.conversation_id !== request.conversation_id
-    || typeof source.source_kind !== 'string'
-    || !SOURCE_KINDS.includes(source.source_kind)
+    || fileRef.source_kind !== sourceKind
     || source.path !== fileRef.path
     || typeof source.language_hint !== 'string'
     || !LANGUAGES.includes(source.language_hint)
@@ -370,7 +416,7 @@ function sanitizeContentProjection(
     projection_version: 'builder-side-workspace-file-content.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    source_kind: source.source_kind as BuilderSideWorkspaceFileContentProjection['source_kind'],
+    source_kind: sourceKind,
     source_tree_digest: digest,
     file_ref: fileRef,
     path: fileRef.path,
@@ -414,6 +460,22 @@ async function callContent(
   }
 }
 
+async function callRuntimeToolTree(
+  bridge: BuilderSideWorkspaceFilesBridge,
+  request: BuilderSideWorkspaceRuntimeToolFileRequest,
+): Promise<BuilderSideWorkspaceFileTreeProjection> {
+  try {
+    const safe = sanitizeRuntimeToolRequest(request);
+    return sanitizeTreeProjection(await Reflect.apply(
+      bridge.readRuntimeToolFileTree,
+      bridge,
+      [safe],
+    ), safe);
+  } catch {
+    throw unavailable();
+  }
+}
+
 export function createBuilderDesktopSideWorkspaceFilesPort(value: unknown): BuilderSideWorkspaceFilesPort {
   const bridge = sanitizeBridge(value);
   return Object.freeze({
@@ -422,6 +484,9 @@ export function createBuilderDesktopSideWorkspaceFilesPort(value: unknown): Buil
     },
     readCurrentDraftFileContent(request: BuilderSideWorkspaceFileContentRequest) {
       return callContent(bridge, request);
+    },
+    readRuntimeToolFileTree(request: BuilderSideWorkspaceRuntimeToolFileRequest) {
+      return callRuntimeToolTree(bridge, request);
     },
   });
 }

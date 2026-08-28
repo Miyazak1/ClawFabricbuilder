@@ -22,6 +22,7 @@ const {
 } = require('../electron/builder-product-metadata-database.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
+const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200';
 const OWNER_ID = 'builder-user:123e4567-e89b-42d3-a456-426614174201';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174202';
 const SESSION_UUID = '123e4567-e89b-42d3-a456-426614174301';
@@ -75,6 +76,7 @@ function service(addressStore, overrides = {}) {
 function workContext(conversation, instruction = 'Build a focused management dashboard') {
   return conversation.begin_work({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     instruction,
     request_digest: REQUEST_DIGEST,
     base_revision: null,
@@ -84,6 +86,7 @@ function workContext(conversation, instruction = 'Build a focused management das
 function questionContext(conversation) {
   return conversation.begin_question({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     question: 'What should we build first?',
     request_digest: QUESTION_DIGEST,
     base_revision: null,
@@ -200,13 +203,15 @@ test('records addresses when the conversation context already contains prior his
   assert.equal(recorded.run_id, context.ids.run_id);
 });
 
-test('rejects question, failed, cancelled, stale-time, and forged contexts before recording addresses', (t) => {
+test('records question sessions and rejects failed, cancelled, stale-time, and forged contexts', (t) => {
   const item = fixture(t);
   const recorder = service(item.addressStore);
   const question = questionContext(item.conversation);
   const work = workContext(item.conversation, 'Build the approved layout');
 
-  assertRecordingError(() => recorder.record_addresses_from_conversation_context({ context: question }));
+  const discussion = recorder.record_addresses_from_conversation_context({ context: question });
+  assert.equal(discussion.low_level_task_id, null);
+  assert.equal(discussion.task_address.task_address.status, 'discussing');
   assertRecordingError(() => recorder.record_addresses_from_conversation_context({
     context: {
       ...work,
@@ -232,10 +237,19 @@ test('rejects question, failed, cancelled, stale-time, and forged contexts befor
     },
   }));
 
-  assert.equal(item.addressStore.read_session_address({
+  const persistedDiscussionSession = item.addressStore.read_session_address({
     project_id: PROJECT_ID,
     session_id: `builder-session:${SESSION_UUID}`,
-  }).status, 'absent');
+  });
+  assert.equal(persistedDiscussionSession.status, 'ready');
+  assert.equal(persistedDiscussionSession.session_address.session_address.status, 'active');
+  assert.equal(
+    item.addressStore.read_task_address({
+      project_id: PROJECT_ID,
+      task_address_id: persistedDiscussionSession.session_address.session_address.current_task_id,
+    }).task_address.task_address.status,
+    'discussing',
+  );
 });
 
 test('fails closed on malformed options, extras, accessors, and proxies', (t) => {

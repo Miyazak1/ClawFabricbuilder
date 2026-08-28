@@ -40,6 +40,7 @@ const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const SESSION_ID_PATTERN = new RegExp(`^builder-session:${UUID_SOURCE}$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SERVICE_KEYS = Object.freeze(['task_capsule_store']);
 const SERVICE_WITH_ADDRESS_KEYS = Object.freeze(['task_capsule_store', 'session_task_address_store']);
 const SERVICE_WITH_COMPACTION_KEYS = Object.freeze(['task_capsule_store', 'context_compaction_summary_store']);
@@ -116,7 +117,14 @@ const RESULT_KEYS = Object.freeze([
   'evidence',
 ]);
 const LATEST_TASK_CAPSULE_KEYS = Object.freeze(['status', 'update_id']);
-const LATEST_COMPACTION_SUMMARY_KEYS = Object.freeze(['status', 'summary_id']);
+const LATEST_COMPACTION_SUMMARY_KEYS = Object.freeze([
+  'status',
+  'summary_id',
+  'summary_digest',
+  'source_range_digest',
+  'summary',
+  'compacted_at_ms',
+]);
 const PENDING_HANDOFF_PACKETS_KEYS = Object.freeze(['status', 'count', 'first_handoff_id']);
 const EVIDENCE_KEYS = Object.freeze([
   'service_authority',
@@ -238,6 +246,15 @@ function safeTaskAddressId(value) {
 
 function safeConversationId(value) {
   return safePattern(value, CONVERSATION_ID_PATTERN, 96);
+}
+
+function safeDigest(value) {
+  return safePattern(value, DIGEST_PATTERN, 80);
+}
+
+function safeTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value < 0) fail();
+  return value;
 }
 
 function safeStore(value) {
@@ -491,6 +508,10 @@ function safeLatestCompactionResult(value, conversationId, taskAddressId) {
     return freezeDeep({
       status: 'absent',
       summary_id: null,
+      summary_digest: null,
+      source_range_digest: null,
+      summary: null,
+      compacted_at_ms: null,
       compaction_ref: null,
       operation: 'not_configured',
     });
@@ -513,6 +534,10 @@ function safeLatestCompactionResult(value, conversationId, taskAddressId) {
     return freezeDeep({
       status: 'absent',
       summary_id: null,
+      summary_digest: null,
+      source_range_digest: null,
+      summary: null,
+      compacted_at_ms: null,
       compaction_ref: null,
       operation,
     });
@@ -529,6 +554,10 @@ function safeLatestCompactionResult(value, conversationId, taskAddressId) {
   return freezeDeep({
     status: 'ready',
     summary_id: valueAt(summary, 'summary_id'),
+    summary_digest: valueAt(summary, 'digest'),
+    source_range_digest: valueAt(summary, 'source_range_digest'),
+    summary: valueAt(summary, 'summary'),
+    compacted_at_ms: valueAt(summary, 'created_at_ms'),
     compaction_ref: {
       summary_digest: valueAt(summary, 'digest'),
       source_range_digest: valueAt(summary, 'source_range_digest'),
@@ -663,8 +692,27 @@ function safeServiceResult(value) {
   exactObject(latestCompaction, LATEST_COMPACTION_SUMMARY_KEYS);
   const compactionStatus = valueAt(latestCompaction, 'status');
   if (
-    (compactionStatus === 'absent' && valueAt(latestCompaction, 'summary_id') !== null)
-    || (compactionStatus === 'ready' && typeof valueAt(latestCompaction, 'summary_id') !== 'string')
+    (
+      compactionStatus === 'absent'
+      && (
+        valueAt(latestCompaction, 'summary_id') !== null
+        || valueAt(latestCompaction, 'summary_digest') !== null
+        || valueAt(latestCompaction, 'source_range_digest') !== null
+        || valueAt(latestCompaction, 'summary') !== null
+        || valueAt(latestCompaction, 'compacted_at_ms') !== null
+      )
+    )
+    || (
+      compactionStatus === 'ready'
+      && (
+        typeof valueAt(latestCompaction, 'summary_id') !== 'string'
+        || safeDigest(valueAt(latestCompaction, 'summary_digest')) !== valueAt(latestCompaction, 'summary_digest')
+        || safeDigest(valueAt(latestCompaction, 'source_range_digest')) !== valueAt(latestCompaction, 'source_range_digest')
+        || typeof valueAt(latestCompaction, 'summary') !== 'string'
+        || safeTimestamp(valueAt(latestCompaction, 'compacted_at_ms')) !== valueAt(latestCompaction, 'compacted_at_ms')
+      )
+    )
+    || (compactionStatus !== 'absent' && compactionStatus !== 'ready')
   ) fail();
   const pendingHandoffs = valueAt(value, 'pending_handoff_packets');
   exactObject(pendingHandoffs, PENDING_HANDOFF_PACKETS_KEYS);
@@ -734,6 +782,10 @@ function readCurrentWorkingContextState(services, rawRequest) {
     latest_context_compaction_summary: {
       status: latestCompaction.status,
       summary_id: latestCompaction.summary_id,
+      summary_digest: latestCompaction.summary_digest,
+      source_range_digest: latestCompaction.source_range_digest,
+      summary: latestCompaction.summary,
+      compacted_at_ms: latestCompaction.compacted_at_ms,
     },
     pending_handoff_packets: pendingHandoffProjection,
     context_status_projection: projectBuilderContextStatus({

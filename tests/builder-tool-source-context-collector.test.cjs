@@ -30,6 +30,11 @@ const {
 
 const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
+const TASK_UUID = '123e4567-e89b-42d3-a456-426614174010';
+const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}:${TASK_UUID}`;
+const ROOT_CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const OTHER_PROJECT_CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174099:123e4567-e89b-42d3-a456-426614174098';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 const ACTOR_ID = 'builder-user:123e4567-e89b-42d3-a456-426614174001';
 const PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
@@ -110,14 +115,42 @@ function fixture({ denied = false, deniedResourceIds = [] } = {}) {
   };
 }
 
-function begin(conversation) {
+function begin(conversation, conversationId = CONVERSATION_ID) {
   return conversation.begin_work({
     project_id: PROJECT_ID,
+    conversation_id: conversationId,
     instruction: 'Read the app source before making a plan.',
     request_digest: REQUEST_DIGEST,
     base_revision: null,
   });
 }
+
+test('accepts shared root and task conversation addresses but rejects a cross-project address', async () => {
+  const item = fixture();
+  try {
+    const rootContext = begin(item.conversation, ROOT_CONVERSATION_ID);
+    const rootResult = await item.collector.collect_project_source_context({
+      context: rootContext,
+      resource_ids: [],
+    });
+    assert.equal(rootResult.status, 'succeeded');
+    assert.equal(rootResult.context.conversation.conversation_id, ROOT_CONVERSATION_ID);
+
+    const taskContext = begin(item.conversation);
+    const hostileContext = structuredClone(taskContext);
+    hostileContext.conversation.conversation_id = OTHER_PROJECT_CONVERSATION_ID;
+    await assert.rejects(
+      item.collector.collect_project_source_context({
+        context: hostileContext,
+        resource_ids: [],
+      }),
+      assertCollectorError,
+    );
+    assert.equal(item.permissionCalls.length, 0);
+  } finally {
+    item.close();
+  }
+});
 
 function assertCollectorError(error) {
   assert.equal(error instanceof BuilderToolSourceContextCollectorError, true);
@@ -162,7 +195,7 @@ test('collects bounded project source through permission, tool request, executio
     ]);
     assert.equal(result.context.start_head.sequence, 6);
 
-    const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
+    const stream = item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
     assert.equal(stream.conversation.head_sequence, 6);
     assert.equal(stream.conversation.items.filter((entry) => entry.item_kind === 'tool_call_requested').length, 2);
     assert.equal(
@@ -193,7 +226,7 @@ test('records a fixed failed result for an admitted missing project file without
     assert.deepEqual(result.reads.map((read) => read.status), ['failed']);
     assert.equal(result.context.start_head.sequence, 4);
 
-    const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
+    const stream = item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
     assert.equal(stream.conversation.head_sequence, 4);
     assert.equal(stream.conversation.items[3].item_kind, 'tool_call_result_recorded');
     assert.equal(stream.conversation.items[3].result.status, 'failed');
@@ -219,7 +252,7 @@ test('denies before recording tool facts and rejects hostile collector requests 
       assertCollectorError,
     );
     assert.equal(denied.permissionCalls.length, 1);
-    assert.equal(denied.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(denied.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     denied.close();
   }
@@ -239,7 +272,7 @@ test('denies before recording tool facts and rejects hostile collector requests 
       'project:/src/app.tsx',
       'project:/src/blocked.ts',
     ]);
-    assert.equal(mixed.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(mixed.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     mixed.close();
   }
@@ -282,7 +315,7 @@ test('denies before recording tool facts and rejects hostile collector requests 
     }
     assert.equal(getterCalls, 0);
     assert.equal(item.permissionCalls.length, 0);
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     item.close();
   }
@@ -303,7 +336,7 @@ test('collects an empty project source context without reading files or recordin
     assert.deepEqual(result.private_source_context.files, []);
     assert.deepEqual(result.reads, []);
     assert.equal(item.permissionCalls.length, 0);
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     item.close();
   }

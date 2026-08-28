@@ -13,7 +13,7 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:123e4567-e89b-42d3-a456-426614174010`;
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174002';
 

@@ -65,6 +65,7 @@ const OWNER_ID = 'builder-user:11111111-1111-4111-8111-111111111111';
 const AGENT_ID = 'builder-agent:22222222-2222-4222-8222-222222222222';
 const PROJECT_UUID = '33333333-3333-4333-8333-333333333333';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
+const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
 const SUPERVISOR_ID = 'builder-supervisor:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const MESSAGE_ID = 'builder-message:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const MEMORY_ID = `builder-agent-memory:${'a'.repeat(64)}`;
@@ -300,6 +301,7 @@ function openRuntime(root, uuidStart = 1) {
 function beginWork(conversationService) {
   return conversationService.begin_work({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     instruction: 'Build a focused timer',
     request_digest: REQUEST_DIGEST,
     base_revision: null,
@@ -372,7 +374,7 @@ test('records store-backed Agent step progress into Conversation without runtime
   assert.equal(completed.recorded_state, 'result_recorded');
   assert.equal(completed.context.start_head.sequence, 4);
 
-  const stream = runtime.conversationService.read_stream({ project_id: PROJECT_ID });
+  const stream = runtime.conversationService.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
   assert.deepEqual(stream.conversation.items.slice(2, 4), [
     {
       item_kind: 'agent_step_progress_recorded',
@@ -468,7 +470,7 @@ test('rejects stale or non-current Agent step progress recording without partial
     ),
   );
   assert.equal(
-    resultBeforeStartRuntime.conversationService.read_stream({ project_id: PROJECT_ID })
+    resultBeforeStartRuntime.conversationService.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID })
       .conversation.items.length,
     2,
   );
@@ -502,7 +504,7 @@ test('rejects stale or non-current Agent step progress recording without partial
     (error) => assertServiceError(error, 'builder_agent_step_progress_conversation_recording_service_conflict'),
   );
 
-  const stream = runtime.conversationService.read_stream({ project_id: PROJECT_ID });
+  const stream = runtime.conversationService.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
   assert.equal(stream.conversation.items.length, 3);
   assert.equal(stream.conversation.items[2].recorded_state, 'start_recorded');
 });

@@ -15,7 +15,6 @@ const {
 const {
   BUILDER_EDIT_INTENT_PLAN_VERSION,
   BUILDER_WORKSPACE_GUARD_REPORT_VERSION,
-  LARGE_CHANGE_THRESHOLD,
   BuilderEditIntentWorkspaceGuardError,
   createBuilderEditIntentPlan,
   evaluateBuilderWorkspaceGuard,
@@ -124,6 +123,7 @@ function reportFor(value, observed = value.base_source_tree, evaluatedAt = 200) 
     candidate: value,
     edit_intent_plan: planFor(value),
     observed_workspace_source_tree: observed,
+    expected_workspace_source_tree_digest: value.base_source_tree.source_tree_digest,
     evaluated_at_ms: evaluatedAt,
   });
 }
@@ -208,6 +208,7 @@ test('allows ordinary creates and updates only against a fresh matching workspac
     external_workspace_conflict_check: 'verified_no_workspace_drift',
   });
   assert.equal(report.observed_workspace_source_tree_digest, base.source_tree_digest);
+  assert.equal(report.expected_workspace_source_tree_digest, base.source_tree_digest);
   assert.equal(report.authority.source_read, 'candidate_and_fresh_workspace_snapshots');
   assert.equal(report.authority.source_write, 'not_performed');
   assert.equal(report.authority.permission_grant_authority, false);
@@ -215,7 +216,34 @@ test('allows ordinary creates and updates only against a fresh matching workspac
   assert.deepEqual(sanitizeBuilderWorkspaceGuardReport(structuredClone(report)), report);
 });
 
-test('requires visible approval for deletes, lockfiles, and large multi-file changes', () => {
+test('admits a verified materialized draft baseline while preserving the observed workspace digest', () => {
+  const base = tree([{ path: 'src/app.js', content: 'export const state = "saved";\n' }]);
+  const materialized = tree([
+    { path: 'src/app.js', content: 'export const state = "draft";\n' },
+    { path: 'src/draft.js', content: 'export const ready = true;\n' },
+  ]);
+  const value = candidate({
+    base,
+    operations: [
+      { operation: 'upsert', path: 'src/app.js', content: 'export const state = "revised";\n' },
+      { operation: 'upsert', path: 'src/draft.js', content: 'export const ready = true;\n' },
+    ],
+  });
+  const report = evaluateBuilderWorkspaceGuard({
+    candidate: value,
+    edit_intent_plan: planFor(value),
+    observed_workspace_source_tree: materialized,
+    expected_workspace_source_tree_digest: materialized.source_tree_digest,
+    evaluated_at_ms: 200,
+  });
+
+  assert.equal(report.status, 'allowed');
+  assert.equal(report.expected_workspace_source_tree_digest, materialized.source_tree_digest);
+  assert.equal(report.observed_workspace_source_tree_digest, materialized.source_tree_digest);
+  assert.equal(report.summary.external_workspace_conflict_check, 'verified_no_workspace_drift');
+});
+
+test('requires visible approval for deletes and lockfiles without treating ordinary file count as risk', () => {
   const deleteBase = tree([{ path: 'src/old.js', content: 'old\n' }]);
   const deletion = candidate({
     base: deleteBase,
@@ -233,17 +261,18 @@ test('requires visible approval for deletes, lockfiles, and large multi-file cha
   assert.equal(lockReport.decisions[0].reason, 'lockfile_change_requires_approval');
 
   const many = candidate({
-    operations: Array.from({ length: LARGE_CHANGE_THRESHOLD + 1 }, (_, index) => ({
+    operations: Array.from({ length: 39 }, (_, index) => ({
       operation: 'upsert',
       path: `src/file-${String(index).padStart(2, '0')}.js`,
       content: `export const value${index} = ${index};\n`,
     })),
   });
   const manyReport = reportFor(many);
-  assert.equal(manyReport.status, 'approval_required');
-  assert.equal(manyReport.summary.approval_required_count, LARGE_CHANGE_THRESHOLD + 1);
+  assert.equal(manyReport.status, 'allowed');
+  assert.equal(manyReport.summary.allowed_count, 39);
+  assert.equal(manyReport.summary.approval_required_count, 0);
   assert.ok(manyReport.decisions.every(
-    (decision) => decision.reason === 'large_multi_file_change_requires_approval',
+    (decision) => decision.reason === 'ordinary_project_file',
   ));
 });
 
@@ -332,6 +361,7 @@ test('fails closed on candidate, plan, fresh workspace, digest, authority, and d
     candidate: value,
     edit_intent_plan: changedPlanDigest,
     observed_workspace_source_tree: value.base_source_tree,
+    expected_workspace_source_tree_digest: value.base_source_tree.source_tree_digest,
     evaluated_at_ms: 200,
   }));
 
@@ -341,6 +371,7 @@ test('fails closed on candidate, plan, fresh workspace, digest, authority, and d
     candidate: value,
     edit_intent_plan: plan,
     observed_workspace_source_tree: changedWorkspace,
+    expected_workspace_source_tree_digest: value.base_source_tree.source_tree_digest,
     evaluated_at_ms: 200,
   }), ['workspace marker']);
 

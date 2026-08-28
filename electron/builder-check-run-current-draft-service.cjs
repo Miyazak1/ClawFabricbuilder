@@ -6,9 +6,13 @@ const {
   BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
 } = require('./builder-automatic-draft-checkpoint-service.cjs');
 const {
+  BUILDER_CHECK_RUN_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
   BUILDER_CHECK_RUN_MAIN_RESULT_VERSION,
   BUILDER_CHECK_RUN_MAIN_SERVICE_VERSION,
 } = require('./builder-check-run-main-service.cjs');
+const {
+  sanitizeBuilderEnvironmentReadinessDiagnosis,
+} = require('./builder-environment-readiness-diagnosis.cjs');
 const {
   sanitizeBuilderCheckRunStatusProjection,
 } = require('./builder-check-run-status-projection.cjs');
@@ -36,6 +40,8 @@ const BUILDER_CHECK_RUN_CURRENT_DRAFT_READ_RESULT_VERSION =
   'builder-check-run-current-draft-read-result.v1';
 const BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION =
   'builder-check-run-current-draft-run-result.v1';
+const BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION =
+  'builder-check-run-current-draft-environment-diagnosis-result.v1';
 const BUILDER_CHECK_RUN_CURRENT_DRAFT_MAIN_CANDIDATE_RESULT_VERSION =
   'builder-check-run-current-draft-main-candidate-result.v1';
 const CREATE_KEYS = Object.freeze([
@@ -47,6 +53,8 @@ const CREATE_KEYS = Object.freeze([
 ]);
 const READ_KEYS = Object.freeze(['draft_id']);
 const RUN_KEYS = Object.freeze(['draft_id', 'command_profile_id']);
+const DEPENDENCY_PREPARATION_KEYS = Object.freeze(['draft_id', 'command_profile_id', 'decision']);
+const DEPENDENCY_PREPARATION_DECISIONS = Object.freeze(['allow_once', 'deny']);
 const CONVERSATION_DRAFT_KEYS = Object.freeze([
   'result_version',
   'draft_id',
@@ -66,6 +74,7 @@ const CANDIDATE_RESULT_KEYS = Object.freeze([
   'title',
   'summary',
   'git_candidate_receipt',
+  'current_materialization',
 ]);
 const GIT_READ_KEYS = Object.freeze([
   'result_version',
@@ -94,6 +103,11 @@ const MAIN_RESULT_KEYS = Object.freeze([
   'result_version',
   'operation',
   'check_run_status_projection',
+]);
+const MAIN_DIAGNOSIS_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'operation',
+  'environment_diagnosis',
 ]);
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const COMMAND_PROFILE_ID_PATTERN = /^builder-command-profile:[0-9a-f]{32}$/u;
@@ -143,6 +157,11 @@ function exactObject(value, keys) {
 
 function safePattern(value, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) fail();
+  return value;
+}
+
+function safeDependencyPreparationDecision(value) {
+  if (typeof value !== 'string' || !DEPENDENCY_PREPARATION_DECISIONS.includes(value)) fail();
   return value;
 }
 
@@ -284,6 +303,12 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
     BUILDER_CHECK_RUN_MAIN_SERVICE_VERSION,
     'run_approved_check',
   );
+  const diagnoseCheckEnvironment = serviceMethod(
+    checkRunMainService,
+    'service_version',
+    BUILDER_CHECK_RUN_MAIN_SERVICE_VERSION,
+    'diagnose_check_environment',
+  );
   const clock = options.clock.value;
   const nowMs = serviceMethod(clock, 'clock_version', 'builder-clock.v1', 'now_ms');
 
@@ -320,6 +345,90 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
       checkpoint,
       source_tree: verified.source_tree,
       understanding,
+    });
+  }
+
+  async function runCurrentDraftCheck(draftId, commandProfileId, dependencyPreparationDecision) {
+    const current = await resolveCurrentDraft(draftId);
+    if (!current.understanding.command_profile_ids.includes(commandProfileId)) fail();
+    const result = await runApprovedCheck({
+      draft_id: draftId,
+      draft_checkpoint_ref: current.checkpoint,
+      git_candidate_receipt: current.receipt,
+      git_verification_receipt: current.verification,
+      project_understanding_snapshot: current.understanding,
+      command_profile_id: commandProfileId,
+      source_tree: current.source_tree,
+      ...(dependencyPreparationDecision === 'not_requested'
+        ? {}
+        : { dependency_preparation_decision: dependencyPreparationDecision }),
+    });
+    const mainResult = exactObject(result, MAIN_RESULT_KEYS);
+    if (
+      mainResult.result_version.value !== BUILDER_CHECK_RUN_MAIN_RESULT_VERSION
+      || mainResult.operation.value !== 'approved_check_completed'
+    ) fail();
+    const projection = sanitizeBuilderCheckRunStatusProjection(
+      mainResult.check_run_status_projection.value,
+    );
+    const selectedProfile = current.understanding.command_profiles.find(
+      (profile) => profile.command_profile_id === commandProfileId,
+    );
+    if (
+      selectedProfile === undefined
+      || projection.project_id !== current.receipt.project_id
+      || projection.candidate_id !== current.receipt.candidate_id
+      || projection.command_kind !== selectedProfile.command_kind
+    ) fail();
+    return freezeDeep({
+      result_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION,
+      service_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
+      operation: 'current_draft_approved_check_completed',
+      draft_id: draftId,
+      project_id: current.receipt.project_id,
+      candidate_id: current.receipt.candidate_id,
+      check_run_status_projection: projection,
+    });
+  }
+
+  async function diagnoseCurrentDraftEnvironment(draftId, commandProfileId) {
+    const current = await resolveCurrentDraft(draftId);
+    if (!current.understanding.command_profile_ids.includes(commandProfileId)) fail();
+    const result = await diagnoseCheckEnvironment({
+      draft_id: draftId,
+      draft_checkpoint_ref: current.checkpoint,
+      git_candidate_receipt: current.receipt,
+      git_verification_receipt: current.verification,
+      project_understanding_snapshot: current.understanding,
+      command_profile_id: commandProfileId,
+      source_tree: current.source_tree,
+    });
+    const mainResult = exactObject(result, MAIN_DIAGNOSIS_RESULT_KEYS);
+    if (
+      mainResult.result_version.value !== BUILDER_CHECK_RUN_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION
+      || mainResult.operation.value !== 'check_environment_diagnosed'
+    ) fail();
+    const diagnosis = sanitizeBuilderEnvironmentReadinessDiagnosis(
+      mainResult.environment_diagnosis.value,
+    );
+    const selectedProfile = current.understanding.command_profiles.find(
+      (profile) => profile.command_profile_id === commandProfileId,
+    );
+    if (
+      selectedProfile === undefined
+      || diagnosis.project_id !== current.receipt.project_id
+      || diagnosis.candidate_id !== current.receipt.candidate_id
+      || diagnosis.command_kind !== selectedProfile.command_kind
+      || diagnosis.command_profile_id !== selectedProfile.command_profile_id
+    ) fail();
+    return freezeDeep({
+      result_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
+      service_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
+      operation: 'current_draft_check_environment_diagnosed',
+      draft_id: draftId,
+      project_id: current.receipt.project_id,
+      candidate_id: current.receipt.candidate_id,
+      environment_diagnosis: diagnosis,
     });
   }
 
@@ -391,43 +500,38 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
           request.command_profile_id.value,
           COMMAND_PROFILE_ID_PATTERN,
         );
-        const current = await resolveCurrentDraft(draftId);
-        if (!current.understanding.command_profile_ids.includes(commandProfileId)) fail();
-        const result = await runApprovedCheck({
-          draft_id: draftId,
-          draft_checkpoint_ref: current.checkpoint,
-          git_candidate_receipt: current.receipt,
-          git_verification_receipt: current.verification,
-          project_understanding_snapshot: current.understanding,
-          command_profile_id: commandProfileId,
-          source_tree: current.source_tree,
-        });
-        const mainResult = exactObject(result, MAIN_RESULT_KEYS);
-        if (
-          mainResult.result_version.value !== BUILDER_CHECK_RUN_MAIN_RESULT_VERSION
-          || mainResult.operation.value !== 'approved_check_completed'
-        ) fail();
-        const projection = sanitizeBuilderCheckRunStatusProjection(
-          mainResult.check_run_status_projection.value,
+        return await runCurrentDraftCheck(draftId, commandProfileId, 'not_requested');
+      } catch (error) {
+        if (error instanceof BuilderCheckRunCurrentDraftServiceError) throw error;
+        fail();
+      }
+    },
+
+    async decide_dependency_preparation_and_run_check(rawRequest) {
+      try {
+        const request = exactObject(rawRequest, DEPENDENCY_PREPARATION_KEYS);
+        const draftId = safePattern(request.draft_id.value, DRAFT_ID_PATTERN);
+        const commandProfileId = safePattern(
+          request.command_profile_id.value,
+          COMMAND_PROFILE_ID_PATTERN,
         );
-        const selectedProfile = current.understanding.command_profiles.find(
-          (profile) => profile.command_profile_id === commandProfileId,
+        const decision = safeDependencyPreparationDecision(request.decision.value);
+        return await runCurrentDraftCheck(draftId, commandProfileId, decision);
+      } catch (error) {
+        if (error instanceof BuilderCheckRunCurrentDraftServiceError) throw error;
+        fail();
+      }
+    },
+
+    async diagnose_check_environment(rawRequest) {
+      try {
+        const request = exactObject(rawRequest, RUN_KEYS);
+        const draftId = safePattern(request.draft_id.value, DRAFT_ID_PATTERN);
+        const commandProfileId = safePattern(
+          request.command_profile_id.value,
+          COMMAND_PROFILE_ID_PATTERN,
         );
-        if (
-          selectedProfile === undefined
-          || projection.project_id !== current.receipt.project_id
-          || projection.candidate_id !== current.receipt.candidate_id
-          || projection.command_kind !== selectedProfile.command_kind
-        ) fail();
-        return freezeDeep({
-          result_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION,
-          service_version: BUILDER_CHECK_RUN_CURRENT_DRAFT_SERVICE_VERSION,
-          operation: 'current_draft_approved_check_completed',
-          draft_id: draftId,
-          project_id: current.receipt.project_id,
-          candidate_id: current.receipt.candidate_id,
-          check_run_status_projection: projection,
-        });
+        return await diagnoseCurrentDraftEnvironment(draftId, commandProfileId);
       } catch (error) {
         if (error instanceof BuilderCheckRunCurrentDraftServiceError) throw error;
         fail();
@@ -437,6 +541,7 @@ function createBuilderCheckRunCurrentDraftService(rawOptions) {
 }
 
 module.exports = freezeDeep({
+  BUILDER_CHECK_RUN_CURRENT_DRAFT_ENVIRONMENT_DIAGNOSIS_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_READ_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_RUN_RESULT_VERSION,
   BUILDER_CHECK_RUN_CURRENT_DRAFT_MAIN_CANDIDATE_RESULT_VERSION,

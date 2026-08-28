@@ -202,7 +202,10 @@ test('fails closed for failed, incomplete, stale, malformed, and unavailable res
   const passed = checkRun('passed');
   staleHarness.store.record_check_run({ check_run: passed });
   for (const overrides of [
-    { conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174000' },
+    {
+      conversation_id:
+        'builder-conversation:123e4567-e89b-42d3-a456-426614174000:323e4567-e89b-42d3-a456-426614174000',
+    },
     { turn_id: 'builder-turn:223e4567-e89b-42d3-a456-426614174000' },
     { task_id: 'builder-task:223e4567-e89b-42d3-a456-426614174000' },
     { run_id: 'builder-run:223e4567-e89b-42d3-a456-426614174000' },

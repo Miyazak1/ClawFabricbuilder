@@ -22,6 +22,9 @@ test('guarded Windows release builder packages in ignored work output before cop
   const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
 
   assert.match(gitignore, /^\.release-work\/$/mu);
+  assert.match(gitignore, /^\.release-runtime\/$/mu);
+  assert.match(source, /stageBuilderHarnessRuntime/u);
+  assert.match(source, /await stageBuilderHarnessRuntime\(\)/u);
   assert.match(source, /electron-builder[\s\S]*cli\.js/u);
   assert.match(source, /process\.execPath/u);
   assert.match(source, /--win/u);

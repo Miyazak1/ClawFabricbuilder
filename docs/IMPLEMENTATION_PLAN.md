@@ -10,13 +10,14 @@ The current strategic priority is the trusted coding loop:
 
 ```text
 read project -> explain current state -> propose plan -> user approves ->
-change code -> run approved checks -> repair -> show diff -> save version
+change code -> run approved checks -> repair -> checkpoint -> continue or undo
 ```
 
 The MVP release target is narrower than the full architecture: select project,
 understand project, propose a read-only plan, execute approved bounded edits,
 record an automatic draft checkpoint, show diff/preview/basic check evidence,
-explicitly save a version, then prove packaged restart recovery. Multi-agent
+continue or undo without a mandatory Version action, then prove packaged
+restart recovery. Multi-agent
 work, public sharing, arbitrary extensions, vector memory, autonomous
 experiments, multi-step automatic repair, and live 3D/WebGL preview are not MVP
 blockers.
@@ -28,14 +29,22 @@ The concrete implementation target for that release is
 Its slice-by-slice development order is defined in
 [MVP Programming Loop Slice Specs](MVP_PROGRAMMING_LOOP_SLICE_SPECS.md).
 
+The current adapter, DeepSeek Harness experiment, internal plugin model, and
+automatic checkpoint/undo rollout are defined in
+[Foundational Coding Loop And Plugin Runtime Roadmap](FOUNDATIONAL_CODING_LOOP_PLUGIN_RUNTIME_ROADMAP.md).
+
 The integrated architecture for that loop is defined in
 [Codex-Like Programming Runtime Architecture](CODEX_LIKE_PROGRAMMING_RUNTIME_ARCHITECTURE.md).
+Its current user-visible conversation specialization is defined in
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md):
+real work appears in chat, action details expand in place, and the side
+workspace inspects selected artifacts rather than hosting ordinary Logs.
 That architecture absorbs the mature runtime shape seen in Codex-like agents
 and Pi-style extension events, but keeps v1 execution main-owned: provider
 output becomes proposed actions, local actions pass Tool Action Admission,
 source edits create patch/edit evidence, checks become CheckRun facts, mutating
-runs create Draft Checkpoints, and `Save version` remains explicit Review and
-Revision authority.
+runs create Draft Checkpoints, and formal Versions become optional milestones
+rather than a gate between coding turns.
 The first missing-capability layer is project understanding and verification
 readiness: Project Understanding Snapshot, Command Profile Discovery, Edit
 Intent Plan, Workspace Guard, CheckRun/Failure Triage, automatic Draft
@@ -53,11 +62,11 @@ Artifact, Review, verification, and Session/Task Address facts; it is not a
 social feed item, raw transcript export, source zip, autonomous experiment
 branch, or publish action.
 
-Draft Checkpoint is the bridge between fluid AI editing and formal saved
-versions. Mutating AI turns should be able to create automatic local recovery
-points for undo, compare, restore, and restart recovery, but those checkpoints
-must not become implicit Project Revisions or hidden auto-saves. The decision is
-recorded in [Draft Checkpoint Architecture](DRAFT_CHECKPOINT_ARCHITECTURE.md).
+Draft Checkpoint is the bridge between fluid AI editing, undo, and optional
+milestone history. Mutating AI turns create automatic local recovery points for
+compare, restore, continuation, and restart recovery. These checkpoints do not
+silently publish work or mark formal Versions. The decision is recorded in
+[Draft Checkpoint Architecture](DRAFT_CHECKPOINT_ARCHITECTURE.md).
 
 There is no near-term native rewrite gate. The implementation continues through
 the existing Electron, React, TypeScript, and Node/Electron main-side contract
@@ -290,7 +299,7 @@ renderer/preload IPC, no automatic migration from existing Conversation rows,
 no fork/archive/delete/export materialization, no provider/tool dispatch, no
 source/Git mutation, no run binding, and no permission grant. The current runtime
 composition checkpoint creates and closes this local store under
-`builder-session-task-addresses-v1/session-task-addresses.sqlite` in the desktop
+`builder-session-task-addresses-v2/session-task-addresses.sqlite` in the desktop
 generation runtime, including registration-failure cleanup and dispose cleanup,
 but still does not pass address facts into run admission or expose a renderer
 lookup channel. The current address-recording checkpoint adds a main-only
@@ -627,9 +636,9 @@ Evidence requirements:
   main content bottom. The composer owns a single primary action: idle turns send
   with Enter or the send button, and active AI work replaces that same action
   with Stop instead of adding a second command in the chat flow. Assistant
-  activity, draft review summary, and compact result/artifact summaries remain
-  in the chat flow. Full Preview, Changes, Source, Versions, and Logs render in
-  a separate right artifact panel that can be opened, closed, switched by tab,
+  activity, approvals, natural terminal responses, and expandable work details
+  remain in the chat flow. Full Preview, Changes, Source, and Versions render in
+  a separate contextual right workspace that can be opened, closed, switched by tab,
   and resized by the user while preserving a minimum usable chat width. Plan-first
   work is exposed as a secondary composer tool for saved projects, not as a
   second send button. For an unsaved draft, the Review/Save action strip appears
@@ -1132,10 +1141,12 @@ Evidence requirements:
   Revision authority;
 - the current main-owned Agent Activity projection now converges recorded
   Conversation/Run/Tool progress plus ReviewState into one bounded current-work
-  phase for the chat flow. The renderer displays user language such as
-  `Reading project`, `Planning`, `Changing files`, `Running checks`, or
-  `Preparing review`; it does not infer these phases from provider text and
-  receives no dispatch, mutation, permission, Git/SQLite, or Save authority.
+  phase. The renderer may use that phase for an unobtrusive temporary loading
+  indicator before model text or a real tool fact exists; it does not render
+  fixed lifecycle sentences as chat narration or completed work. Harness public
+  text supplies ordinary-language progress, while real Tool and CheckRun facts
+  prove actions. The projection carries no dispatch, mutation, permission,
+  Git/SQLite, or Save authority.
   Active CheckRun joins through the main-owned candidate activity registry,
   which emits only a bounded refresh hint and exposes no command, output, path,
   or runtime handle. A separate renderer-safe CheckRun Outcome projection now

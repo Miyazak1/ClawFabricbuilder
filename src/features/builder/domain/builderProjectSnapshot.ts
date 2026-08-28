@@ -139,7 +139,7 @@ const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BUILDER_ID_PATTERNS = Object.freeze({
-  conversation_id: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  conversation_id: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   turn_id: /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   task_id: /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   run_id: /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -472,11 +472,12 @@ async function sanitizeSourceTree(value: unknown): Promise<BuilderProjectSourceT
     if (totalBytes > MAX_SOURCE_TREE_UTF8_BYTES) throw invalid();
     files.push(file);
   }
-  for (let index = 1; index < files.length; index += 1) {
-    if (files[index - 1].path >= files[index].path) throw invalid();
-    if (files[index - 1].path.normalize('NFKC').toUpperCase() >= files[index].path.normalize('NFKC').toUpperCase()) {
-      throw invalid();
-    }
+  const comparisonKeys = new Set<string>();
+  for (let index = 0; index < files.length; index += 1) {
+    if (index > 0 && files[index - 1].path >= files[index].path) throw invalid();
+    const comparisonKey = files[index].path.normalize('NFKC').toUpperCase();
+    if (comparisonKeys.has(comparisonKey)) throw invalid();
+    comparisonKeys.add(comparisonKey);
   }
   const unsigned = {
     files,

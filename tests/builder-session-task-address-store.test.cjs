@@ -27,7 +27,7 @@ const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174203';
 const LATER_TASK_ADDRESS_ID = 'builder-task-address:423e4567-e89b-42d3-a456-426614174203';
 const ARCHIVED_TASK_ADDRESS_ID = 'builder-task-address:523e4567-e89b-42d3-a456-426614174203';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174205';
+const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174206';
 
 function temporaryDatabase(t) {
@@ -148,6 +148,31 @@ test('records session and task addresses and restores them after restart', (t) =
   const readTask = store.read_task_address({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
   assert.equal(readTask.status, 'ready');
   assert.deepEqual(readTask.task_address.task_address, task);
+  const listedTasks = store.list_task_addresses_for_agent({ agent_id: AGENT_ID, limit: 10 });
+  assert.equal(listedTasks.status, 'ready');
+  assert.equal(listedTasks.agent_id, AGENT_ID);
+  assert.deepEqual(listedTasks.task_addresses.map((entry) => entry.task_address), [task]);
+  const renamedTask = store.rename_task_address({
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    title: 'Renamed management dashboard',
+    updated_at_ms: 1200,
+  });
+  assert.equal(renamedTask.operation, 'task_address_renamed');
+  assert.equal(renamedTask.task_address.task_address.title, 'Renamed management dashboard');
+  assert.equal(
+    store.list_task_addresses_for_agent({ agent_id: AGENT_ID, limit: 10 })
+      .task_addresses[0].task_address.title,
+    'Renamed management dashboard',
+  );
+  const archivedTask = store.archive_task_address({
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    archived_at_ms: 1300,
+  });
+  assert.equal(archivedTask.operation, 'task_address_archived');
+  assert.equal(archivedTask.task_address.task_address.status, 'archived');
+  assert.deepEqual(store.list_task_addresses_for_agent({ agent_id: AGENT_ID, limit: 10 }).task_addresses, []);
   store.close();
 
   const restarted = createBuilderSessionTaskAddressStore(databasePath);
@@ -157,7 +182,7 @@ test('records session and task addresses and restores them after restart', (t) =
   );
   assert.deepEqual(
     restarted.read_task_address({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID }).task_address.task_address,
-    task,
+    archivedTask.task_address.task_address,
   );
   restarted.close();
 });
@@ -199,17 +224,16 @@ test('reads the current non-archived Session and Task Address for a conversation
   assert.equal(readCurrent.address_evidence.source_write, 'not_present');
   assert.equal(readCurrent.address_evidence.git_mutation, false);
 
-  assert.equal(
-    store.read_current_session_task_for_conversation({
+  assertStoreError(
+    () => store.read_current_session_task_for_conversation({
       project_id: OTHER_PROJECT_ID,
       conversation_id: CONVERSATION_ID,
-    }).status,
-    'absent',
+    }),
   );
   assert.equal(
     store.read_current_session_task_for_conversation({
       project_id: PROJECT_ID,
-      conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174205',
+      conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174200:223e4567-e89b-42d3-a456-426614174205',
     }).status,
     'absent',
   );
@@ -375,6 +399,8 @@ test('source boundary remains a main-only Session/Task Address store without run
   assert.match(source, /record_task_address/u);
   assert.match(source, /read_session_address/u);
   assert.match(source, /read_task_address/u);
+  assert.match(source, /rename_task_address/u);
+  assert.match(source, /archive_task_address/u);
   assert.match(source, /read_current_session_task_for_conversation/u);
   assert.match(source, /node:sqlite/u);
   assert.match(source, /conversation_append: false/u);

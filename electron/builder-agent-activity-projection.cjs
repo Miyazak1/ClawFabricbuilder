@@ -5,6 +5,10 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderReviewStateProjection,
 } = require('./builder-review-state-projection.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_AGENT_ACTIVITY_PROJECTION_VERSION = 'builder-agent-activity-projection.v1';
 const INPUT_KEYS = Object.freeze([
@@ -55,7 +59,6 @@ const AUTHORITY_KEYS = Object.freeze([
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const ROUTES = Object.freeze(['answer', 'clarify', 'update_brief', 'plan', 'build']);
@@ -94,8 +97,8 @@ const COPY = Object.freeze({
   }),
   editing: Object.freeze({
     status: 'active',
-    label: 'Changing files',
-    summary: 'Applying the approved changes to the project.',
+    label: 'Preparing changes',
+    summary: 'Building and validating the project changes.',
   }),
   running_local_step: Object.freeze({
     status: 'active',
@@ -229,10 +232,7 @@ function safeLatestRun(rawValue, activeTurnId) {
   if (
     status === 'completed'
     && activeTurnId !== null
-    && (
-      activeTurnId !== turnId
-      || terminalStatus === 'succeeded'
-    )
+    && activeTurnId !== turnId
   ) fail();
   if (
     (status === 'running' && (terminalStatus !== null || resultKind !== null))
@@ -300,6 +300,7 @@ function completedPhase(run) {
 }
 
 function phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity) {
+  if (run?.status === 'running') return activePhase(run);
   if (candidateActivity === 'check_run') return 'running_checks';
   if (reviewStateProjection !== null) {
     if (reviewStateProjection.status === 'ready') return 'ready_for_review';
@@ -315,7 +316,7 @@ function phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity) {
     return 'blocked';
   }
   if (run === null) return activeTurnId === null ? 'finished' : 'preparing';
-  return run.status === 'running' ? activePhase(run) : completedPhase(run);
+  return completedPhase(run);
 }
 
 function projectionAuthority(reviewStateProjection) {
@@ -334,8 +335,7 @@ function projectBuilderAgentActivity(rawInput) {
     const input = exactObject(rawInput, INPUT_KEYS);
     const projectId = safeId(valueAt(input, 'project_id'), PROJECT_ID_PATTERN);
     const conversationId = safeId(valueAt(input, 'conversation_id'), CONVERSATION_ID_PATTERN);
-    if (conversationId.slice('builder-conversation:'.length)
-      !== projectId.slice('builder-project:'.length)) fail();
+    sanitizeBuilderConversationAddress(projectId, conversationId);
     const headSequence = valueAt(input, 'head_sequence');
     if (!Number.isSafeInteger(headSequence) || headSequence < 1 || headSequence > 1_000_000) fail();
     const activeTurnIdRaw = valueAt(input, 'active_turn_id');
@@ -347,9 +347,8 @@ function projectBuilderAgentActivity(rawInput) {
     const reviewStateProjection = reviewStateRaw === null
       ? null
       : sanitizeBuilderReviewStateProjection(reviewStateRaw);
-    if (reviewStateProjection !== null && run?.result_kind !== 'candidate') fail();
     const candidateActivity = safeNullable(valueAt(input, 'candidate_activity'), ['check_run']);
-    if (candidateActivity !== null && run?.result_kind !== 'candidate') fail();
+    if (candidateActivity !== null && reviewStateProjection === null) fail();
     const phase = phaseFor(run, reviewStateProjection, activeTurnId, candidateActivity);
     const copy = COPY[phase];
     if (!copy) fail();
@@ -387,8 +386,7 @@ function sanitizeBuilderAgentActivityProjection(rawValue) {
     const conversationId = safeId(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN);
     if (
       valueAt(value, 'projection_version') !== BUILDER_AGENT_ACTIVITY_PROJECTION_VERSION
-      || conversationId.slice('builder-conversation:'.length)
-        !== projectId.slice('builder-project:'.length)
+      || sanitizeBuilderConversationAddress(projectId, conversationId) !== conversationId
       || !Number.isSafeInteger(valueAt(value, 'head_sequence'))
       || valueAt(value, 'head_sequence') < 1
       || valueAt(current, 'status') !== copy.status

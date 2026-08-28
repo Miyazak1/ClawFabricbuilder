@@ -12,6 +12,9 @@ const {
 const {
   sanitizeBuilderCheckRunAdmission,
 } = require('./builder-check-run-admission.cjs');
+const {
+  createBuilderRuntimeReadinessSnapshot,
+} = require('./builder-runtime-readiness-snapshot.cjs');
 
 const BUILDER_CHECK_WORKSPACE_MATERIALIZER_VERSION =
   'builder-check-workspace-materializer.v1';
@@ -22,6 +25,15 @@ const CREATE_KEYS = Object.freeze(['checks_root']);
 const MATERIALIZE_KEYS = Object.freeze([
   'check_run_admission',
   'source_tree',
+]);
+const READINESS_KEYS = Object.freeze([
+  'check_run_admission',
+  'workspace_admission',
+  'project_root_path',
+  'host_toolchain_state',
+  'toolchain_probe',
+  'install_permission',
+  'updated_at_ms',
 ]);
 const ADMISSION_KEYS = Object.freeze([
   'admission_version',
@@ -183,6 +195,17 @@ function checkedRealFile(targetPath, workspacePath) {
   return realPath;
 }
 
+function checkedDependencyArtifactLink(targetPath, workspacePath) {
+  let realPath;
+  try {
+    realPath = path.resolve(fs.realpathSync.native(targetPath));
+  } catch {
+    fail();
+  }
+  if (!isContained(workspacePath, realPath)) fail();
+  return realPath;
+}
+
 function protectedPath(sourcePath) {
   return sourcePath.split('/').some(
     (segment) => segment.normalize('NFKC').toLowerCase() === '.git',
@@ -212,6 +235,16 @@ function expectedDirectories(sourceTree) {
 
 function nativeRelativePath(sourcePath) {
   return path.join(...sourcePath.split('/'));
+}
+
+function allowedDependencyArtifact(sourcePath) {
+  return sourcePath === 'package-lock.json'
+    || sourcePath === '.npm-cache'
+    || sourcePath.startsWith('.npm-cache/')
+    || sourcePath === 'node-compile-cache'
+    || sourcePath.startsWith('node-compile-cache/')
+    || sourcePath === 'node_modules'
+    || sourcePath.startsWith('node_modules/');
 }
 
 function createParentDirectories(workspacePath, sourcePath) {
@@ -289,6 +322,10 @@ function scanWorkspace(workspacePath, sourceTree) {
   checkedRealDirectory(workspacePath);
   const foundDirectories = [];
   const foundFiles = [];
+  const expectedDirectoryList = expectedDirectories(sourceTree);
+  const expectedDirectorySet = new Set(expectedDirectoryList);
+  const expectedFileList = sourceTree.files.map((file) => file.path).sort();
+  const expectedFileSet = new Set(expectedFileList);
 
   function visit(currentPath, relativeSegments) {
     let entries;
@@ -308,14 +345,24 @@ function scanWorkspace(workspacePath, sourceTree) {
       } catch {
         fail();
       }
-      if (entry.isSymbolicLink() || stats.isSymbolicLink()) fail();
+      if (entry.isSymbolicLink() || stats.isSymbolicLink()) {
+        if (!allowedDependencyArtifact(sourcePath)) fail();
+        checkedDependencyArtifactLink(targetPath, workspacePath);
+        continue;
+      }
       if (entry.isDirectory() && stats.isDirectory()) {
-        checkedRealDirectory(targetPath, workspacePath);
-        foundDirectories.push(sourcePath);
+        const allowAlias = allowedDependencyArtifact(sourcePath);
+        const realDirectory = checkedRealDirectory(targetPath, workspacePath, allowAlias);
+        if (allowAlias && !samePath(path.resolve(targetPath), realDirectory)) continue;
+        if (!allowedDependencyArtifact(sourcePath) || expectedDirectorySet.has(sourcePath)) {
+          foundDirectories.push(sourcePath);
+        }
         visit(targetPath, [...relativeSegments, entry.name]);
       } else if (entry.isFile() && stats.isFile()) {
         checkedRealFile(targetPath, workspacePath);
-        foundFiles.push(sourcePath);
+        if (!allowedDependencyArtifact(sourcePath) || expectedFileSet.has(sourcePath)) {
+          foundFiles.push(sourcePath);
+        }
       } else {
         fail();
       }
@@ -323,8 +370,6 @@ function scanWorkspace(workspacePath, sourceTree) {
   }
 
   visit(workspacePath, []);
-  const expectedDirectoryList = expectedDirectories(sourceTree);
-  const expectedFileList = sourceTree.files.map((file) => file.path).sort();
   foundDirectories.sort();
   foundFiles.sort();
   if (
@@ -367,14 +412,34 @@ function collectWorkspaceEntries(workspacePath) {
       } catch {
         fail();
       }
-      if (entry.isSymbolicLink() || stats.isSymbolicLink()) fail();
+      if (entry.isSymbolicLink() || stats.isSymbolicLink()) {
+        if (!allowedDependencyArtifact(sourcePath)) fail();
+        checkedDependencyArtifactLink(targetPath, workspacePath);
+        let targetStats;
+        try {
+          targetStats = fs.statSync(targetPath);
+        } catch {
+          fail();
+        }
+        if (targetStats.isDirectory()) {
+          directories.push({ targetPath, sourcePath });
+        } else {
+          files.push({ targetPath, sourcePath });
+        }
+        continue;
+      }
       if (entry.isDirectory() && stats.isDirectory()) {
-        checkedRealDirectory(targetPath, workspacePath);
+        const allowAlias = allowedDependencyArtifact(sourcePath);
+        const realDirectory = checkedRealDirectory(targetPath, workspacePath, allowAlias);
+        if (allowAlias && !samePath(path.resolve(targetPath), realDirectory)) {
+          directories.push({ targetPath, sourcePath });
+          continue;
+        }
         visit(targetPath, [...relativeSegments, entry.name]);
-        directories.push(targetPath);
+        directories.push({ targetPath, sourcePath });
       } else if (entry.isFile() && stats.isFile()) {
         checkedRealFile(targetPath, workspacePath);
-        files.push(targetPath);
+        files.push({ targetPath, sourcePath });
       } else {
         fail();
       }
@@ -389,13 +454,27 @@ function removeWorkspace(workspacePath, checksRootRealPath) {
   if (!isContained(checksRootRealPath, workspacePath)) fail();
   const { files, directories } = collectWorkspaceEntries(workspacePath);
   try {
-    for (const filePath of files) {
-      checkedRealFile(filePath, workspacePath);
-      fs.unlinkSync(filePath);
+    for (const file of files) {
+      if (allowedDependencyArtifact(file.sourcePath)) {
+        const realPath = fs.realpathSync.native(file.targetPath);
+        if (!samePath(path.resolve(file.targetPath), path.resolve(realPath))) {
+          fs.unlinkSync(file.targetPath);
+          continue;
+        }
+      }
+      checkedRealFile(file.targetPath, workspacePath);
+      fs.unlinkSync(file.targetPath);
     }
-    for (const directoryPath of directories) {
-      checkedRealDirectory(directoryPath, workspacePath);
-      fs.rmdirSync(directoryPath);
+    for (const directory of directories) {
+      if (allowedDependencyArtifact(directory.sourcePath)) {
+        const realPath = fs.realpathSync.native(directory.targetPath);
+        if (!samePath(path.resolve(directory.targetPath), path.resolve(realPath))) {
+          fs.rmdirSync(directory.targetPath);
+          continue;
+        }
+      }
+      checkedRealDirectory(directory.targetPath, workspacePath);
+      fs.rmdirSync(directory.targetPath);
     }
     checkedRealDirectory(workspacePath, checksRootRealPath);
     fs.rmdirSync(workspacePath);
@@ -502,6 +581,39 @@ function createBuilderCheckWorkspaceMaterializer(rawInput) {
           checkedRealDirectory(state.checksRootRealPath);
           scanWorkspace(state.workspacePath, state.sourceTree);
           return state.workspacePath;
+        } catch (error) {
+          if (error instanceof BuilderCheckWorkspaceMaterializerError) throw error;
+          fail();
+        }
+      },
+      read_workspace_readiness_snapshot(rawInput) {
+        try {
+          const input = exactObject(rawInput, READINESS_KEYS);
+          const checkRunAdmission = sanitizeBuilderCheckRunAdmission(
+            input.check_run_admission.value,
+          );
+          const workspaceAdmission = input.workspace_admission.value;
+          const state = assertTrustedAdmission(workspaceAdmission);
+          if (
+            state.cleaned
+            || workspaceAdmission.check_run_admission_id !== checkRunAdmission.admission_id
+            || workspaceAdmission.check_run_admission_digest !== checkRunAdmission.admission_digest
+          ) fail();
+          checkedRealDirectory(state.checksRootRealPath);
+          scanWorkspace(state.workspacePath, state.sourceTree);
+          return createBuilderRuntimeReadinessSnapshot({
+            project_id: checkRunAdmission.project_id,
+            candidate_id: checkRunAdmission.candidate_id,
+            package_manager: checkRunAdmission.package_manager,
+            check_run_admission: checkRunAdmission,
+            source_tree: state.sourceTree,
+            project_root_path: input.project_root_path.value,
+            check_workspace_path: state.workspacePath,
+            host_toolchain_state: input.host_toolchain_state.value,
+            toolchain_probe: input.toolchain_probe.value,
+            install_permission: input.install_permission.value,
+            updated_at_ms: input.updated_at_ms.value,
+          });
         } catch (error) {
           if (error instanceof BuilderCheckWorkspaceMaterializerError) throw error;
           fail();

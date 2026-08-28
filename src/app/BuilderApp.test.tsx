@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BuilderApp } from './BuilderApp';
 import {
@@ -34,23 +34,129 @@ import {
   digest,
 } from '../test/builderV2Fixtures';
 import { createBuilderGenerationRequest } from '../features/builder/application/builderGeneration';
+import { decideBuilderComposerIntent } from '../features/builder/application/builderComposerIntent';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 const PENDING_TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174001';
 const PENDING_RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174001';
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174006';
+const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174007';
+const MATERIALIZED_TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174008';
+const MATERIALIZED_SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174009';
+const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
+let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+function isReactActWarning(args: readonly unknown[]): boolean {
+  const message = typeof args[0] === 'string' ? args[0] : '';
+  return message.includes('An update to %s inside a test was not wrapped in act')
+    || message.includes('You seem to have overlapping act() calls');
+}
+
+function asAgentConversationWire(value: unknown, agentId: string) {
+  const wire = value as {
+    conversation?: null | {
+      created_at_ms: number;
+      head_sequence: number;
+      recorded_active_turn_id: string | null;
+      window: { has_earlier: boolean };
+      items: readonly Record<string, unknown>[];
+    };
+  };
+  const authority = {
+    conversation: 'sqlite_canonical_agent_conversation',
+    project_source: 'not_included',
+    candidate_source: 'not_loaded',
+    project_revision: 'not_inferred',
+  } as const;
+  if (wire.conversation == null) {
+    return {
+      stream_version: 'builder-task-stream-read-result.v1',
+      scope_kind: 'agent_conversation',
+      agent_id: agentId,
+      project_id: null,
+      conversation: null,
+      authority,
+    };
+  }
+  const items = wire.conversation.items.flatMap((item) => {
+    if (item.item_kind === 'user_message') {
+      const message = item.message as { text?: string } | undefined;
+      const routeDecision = item.message_kind === 'submitted' && typeof message?.text === 'string'
+        ? decideBuilderComposerIntent(message.text)
+        : null;
+      const contextRoute = routeDecision?.route === 'clarify'
+        && routeDecision.matchedSignals.includes('work_discussion')
+        ? 'update_brief'
+        : routeDecision?.route;
+      return [{
+        item_kind: 'transcript_message',
+        sequence: item.sequence,
+        turn_id: item.turn_id,
+        message: item.message,
+        role: 'user',
+        message_kind: item.message_kind,
+        ...(contextRoute === undefined ? {} : { context_route: contextRoute }),
+        recovery_admission: 'sqlite_derived_public_transcript_only',
+      }];
+    }
+    if (item.item_kind === 'run_completed' && item.assistant_message !== null) {
+      return [{
+        item_kind: 'transcript_message',
+        sequence: item.sequence,
+        turn_id: item.turn_id,
+        message: item.assistant_message,
+        role: 'assistant',
+        message_kind: 'run_result',
+        recovery_admission: 'sqlite_derived_public_transcript_only',
+      }];
+    }
+    return [];
+  });
+  const agentUuid = agentId.slice('builder-agent:'.length);
+  return {
+    stream_version: 'builder-task-stream-read-result.v1',
+    scope_kind: 'agent_conversation',
+    agent_id: agentId,
+    project_id: null,
+    conversation: {
+      conversation_id: `builder-agent-conversation:${agentUuid}`,
+      created_at_ms: wire.conversation.created_at_ms,
+      head_sequence: wire.conversation.head_sequence,
+      recorded_active_turn_id: wire.conversation.recorded_active_turn_id,
+      source: 'sqlite_canonical_agent_conversation',
+      window: {
+        first_sequence: (items[0]?.sequence as number | undefined) ?? 0,
+        last_sequence: wire.conversation.head_sequence,
+        has_earlier: wire.conversation.window.has_earlier,
+      },
+      items,
+    },
+    authority,
+  };
+}
+
+beforeEach(() => {
+  const originalError = console.error.bind(console);
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    if (isReactActWarning(args)) return;
+    originalError(...args);
+  });
+});
 
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
     act(() => entry.root.unmount());
     entry.container.remove();
   }
+  consoleErrorSpy?.mockRestore();
+  consoleErrorSpy = null;
 });
 
-async function waitFor(assertion: () => void): Promise<void> {
+async function waitFor(assertion: () => void, maximumAttempts = 80): Promise<void> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     try {
       assertion();
       return;
@@ -202,6 +308,7 @@ function reviewReadyTaskStreamWire() {
       status: 'skipped',
       label: 'Check skipped',
       summary: 'You chose to save this draft without running a project check.',
+      environment_reason: 'none',
       completed_at_ms: null,
       authority: {
         projection_authority: 'main_owned_check_run_outcome_projection_v1',
@@ -308,6 +415,72 @@ function uncheckedReviewTaskStreamWire() {
   } as const;
 }
 
+function checkedReviewTaskStreamWire() {
+  const wire = reviewReadyTaskStreamWire();
+  return {
+    ...wire,
+    check_run_outcome_projection: {
+      ...wire.check_run_outcome_projection,
+      state: 'completed',
+      command_kind: 'test',
+      command_label: 'Tests',
+      status: 'passed',
+      label: 'Checked',
+      summary: 'The project check completed successfully.',
+      environment_reason: 'none',
+      completed_at_ms: 20,
+      authority: {
+        ...wire.check_run_outcome_projection.authority,
+        fact_source: 'verified_current_candidate_check_run',
+      },
+    },
+    review_state_projection: {
+      ...wire.review_state_projection,
+      summary: 'A recoverable draft is checked and ready to inspect and save.',
+      check_status: 'passed',
+      authority: {
+        ...wire.review_state_projection.authority,
+        check_evidence: 'verified_current_candidate_check_projection',
+      },
+    },
+  } as const;
+}
+
+function dependencyBlockedReviewTaskStreamWire() {
+  const wire = reviewReadyTaskStreamWire();
+  return {
+    ...wire,
+    check_run_outcome_projection: {
+      ...wire.check_run_outcome_projection,
+      state: 'completed',
+      command_kind: 'test',
+      command_label: 'Tests',
+      status: 'incomplete',
+      label: 'Check unavailable',
+      summary: 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+      environment_reason: 'dependency_workspace_missing',
+      completed_at_ms: 20,
+      authority: {
+        ...wire.check_run_outcome_projection.authority,
+        fact_source: 'verified_current_candidate_check_run',
+      },
+    },
+    review_state_projection: {
+      ...wire.review_state_projection,
+      status: 'blocked',
+      label: 'Review not ready',
+      summary: 'The latest project check did not finish. Run it again before saving.',
+      check_status: 'incomplete',
+      can_save: false,
+      blocking_reasons: ['check_incomplete'],
+      authority: {
+        ...wire.review_state_projection.authority,
+        check_evidence: 'verified_current_candidate_check_projection',
+      },
+    },
+  } as const;
+}
+
 function createReadOnlyPageQuestionTaskStreamWire() {
   const wire = createAnswerTaskStreamWire();
   return {
@@ -373,6 +546,7 @@ async function setup(options: Readonly<{
   deferAnswerAfterFirst?: boolean;
   deferredApprovedPlanGenerate?: boolean;
   deferredGenerate?: boolean;
+  deferredPlanProposal?: boolean;
   failFirstAnswer?: boolean;
   failAnswerAfterFirst?: boolean;
   consecutiveAnswerActivity?: boolean;
@@ -392,15 +566,18 @@ async function setup(options: Readonly<{
   currentProjectWriteApprovalRequired?: boolean;
   failCurrentProjectWriteApproval?: boolean;
   failTaskStreamReadAttempts?: number;
+  hangAgentProjectTreeAfterPlan?: boolean;
   planAfterPropose?: boolean;
   pendingBuildConfirmationActivity?: boolean;
   pendingActivity?: boolean;
+  pendingActivityAfterSave?: boolean;
   staleActivityReadAttemptsBeforePendingRestore?: number;
   staleActivityBeforePendingRestore?: boolean;
   pendingPlanActivity?: boolean;
   rejectedPlanActivity?: boolean;
   pendingAfterRevisionView?: boolean;
   acceptedPendingActivity?: boolean;
+  supersededAcceptedPendingActivity?: boolean;
   rejectActivityAfterDiscard?: boolean;
   rejectedPendingActivity?: boolean;
   restoreAvailable?: boolean;
@@ -413,10 +590,21 @@ async function setup(options: Readonly<{
   multipleWorkspaceOnlyCatalog?: boolean;
   workspaceOnlyCatalog?: boolean;
   checkRunAvailable?: boolean;
+  deferredCheckRunRead?: boolean;
   failCheckRunReadAttempts?: number;
+  failSideWorkspaceFileTreeReadAttempts?: number;
   checkRunStatus?: 'passed' | 'failed' | 'incomplete';
+  dependencyBlockedCheck?: boolean;
+  dependencyBlockedUntilPreparation?: boolean;
+  deferredDependencyPreparation?: boolean;
+  sideWorkspaceFilesAvailable?: boolean;
   uncheckedUntilSkip?: boolean;
   semanticIntentRoute?: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
+  agentTaskIncubation?: boolean;
+  agentTaskProposalPending?: boolean;
+  agentTaskProposalMaterializes?: boolean;
+  agentTaskReturn?: boolean;
+  strictMode?: boolean;
 }> = {}) {
   const historicalWire = options.validHistoryPreview === true
     ? await createReadWire(await createSourceTree([
@@ -441,14 +629,24 @@ async function setup(options: Readonly<{
   let restoredDraft = await createRestoredDraftForReadWire(readWire);
   let resolveAnswer: (() => Promise<void>) | null = null;
   let answerAttempts = 0;
+  const taskStreamChangedListeners = new Set<(event: unknown) => void>();
   let resolveGenerate: (() => Promise<void>) | null = null;
+  let resolvePlanProposal: (() => Promise<void>) | null = null;
   let resolvePlanReview: (() => Promise<void>) | null = null;
   let approvedPlanGenerateAttempts = 0;
   let checkRunReadAttempts = 0;
+  let resolveDeferredCheckRunRead: (() => void) | null = null;
+  let resolveDeferredDependencyPreparation: (() => void) | null = null;
+  let sideWorkspaceFileTreeReadAttempts = 0;
   let currentProjectWriteAllowed = options.currentProjectWriteApprovalRequired !== true;
   let planReviewRecorded = false;
   const readCurrentDraftAvailableChecks = vi.fn(async (request: unknown) => {
     checkRunReadAttempts += 1;
+    if (options.deferredCheckRunRead === true && checkRunReadAttempts === 1) {
+      await new Promise<void>((resolve) => {
+        resolveDeferredCheckRunRead = resolve;
+      });
+    }
     if (checkRunReadAttempts <= (options.failCheckRunReadAttempts ?? 0)) {
       throw new Error('check run discovery is temporarily unavailable');
     }
@@ -494,6 +692,7 @@ async function setup(options: Readonly<{
         status,
         label,
         summary,
+        environment_reason: 'none',
         completed_at_ms: 20,
         result_digest: `sha256:${'3'.repeat(64)}`,
         authority: {
@@ -513,6 +712,125 @@ async function setup(options: Readonly<{
       },
     };
   });
+  const diagnoseCurrentDraftCheckEnvironment = vi.fn(async (request: unknown) => {
+    const draftId = (request as { draft_id: string }).draft_id;
+    const commandProfileId = (request as { command_profile_id: string }).command_profile_id;
+    return {
+      result_version: 'builder-check-run-current-draft-environment-diagnosis-result.v1',
+      service_version: 'builder-check-run-current-draft-service.v1',
+      operation: 'current_draft_check_environment_diagnosed',
+      draft_id: draftId,
+      project_id: PROJECT_ID,
+      candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+      environment_diagnosis: {
+        diagnosis_version: 'builder-environment-readiness-diagnosis.v1',
+        diagnosis_id: `builder-environment-readiness-diagnosis:${'4'.repeat(64)}`,
+        project_id: PROJECT_ID,
+        candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
+        source_tree_digest: `sha256:${'5'.repeat(64)}`,
+        command_profile_id: commandProfileId,
+        command_kind: 'test',
+        command_display: 'npm test',
+        package_manager: 'npm',
+        package_manifest: 'present',
+        dependency_manifest: 'present',
+        lockfile: 'package-lock.json',
+        project_dependency_state: 'install_missing',
+        check_workspace_dependency_state: 'install_missing',
+        host_toolchain_state: 'visible',
+        host_node_version: '22.17.0',
+        host_package_manager_version: '10.9.2',
+        install_permission: 'required',
+        dependency_strategy: 'needs_prepared_dependency_workspace',
+        readiness_state: 'dependencies_not_prepared',
+        primary_action: 'prepare_once',
+        safe_summary: 'The isolated check workspace has not prepared this draft\'s dependencies yet.',
+        authority: {
+          diagnosis_authority: 'main_owned_read_only_environment_diagnosis_v1',
+          readiness_authority: 'verified_builder_runtime_readiness_snapshot_v1',
+          renderer_authority: 'redacted_projection_only',
+          browser_preview_authority: 'readiness_context_only_no_install_decision',
+          provider_dispatch: false,
+          harness_dispatch: false,
+          command_execution: false,
+          dependency_preparation: false,
+          project_workspace_write: false,
+          check_workspace_write: false,
+          git_write: false,
+          sqlite_write: false,
+          save_authority: false,
+          path_disclosure: 'not_serialized',
+          environment_variable_disclosure: false,
+          raw_output: 'not_present',
+          secret_access: 'not_present',
+          network_access: false,
+        },
+        diagnosed_at_ms: 1234,
+        diagnosis_digest: `sha256:${'6'.repeat(64)}`,
+      },
+    };
+  });
+  const diagnoseProjectEnvironment = vi.fn(async (request: unknown) => {
+    const projectId = (request as { project_id: string }).project_id;
+    return {
+      result_version: 'builder-project-environment-diagnosis-result.v1',
+      service_version: 'builder-project-environment-diagnosis-service.v1',
+      operation: 'project_environment_diagnosed',
+      project_id: projectId,
+      environment_diagnosis: {
+        diagnosis_version: 'builder-project-environment-diagnosis.v1',
+        diagnosis_id: `builder-project-environment-diagnosis:${'7'.repeat(64)}`,
+        project_id: projectId,
+        source_tree_digest: `sha256:${'8'.repeat(64)}`,
+        package_manager: 'npm',
+        package_manifest: 'present',
+        dependency_manifest: 'present',
+        lockfile: 'package-lock.json',
+        project_dependency_state: 'install_missing',
+        toolchains: {
+          node: { state: 'visible', version: '22.17.0' },
+          npm: { state: 'visible', version: '10.9.2' },
+          pnpm: { state: 'missing', version: null },
+          yarn: { state: 'missing', version: null },
+          git: { state: 'visible', version: '2.50.0' },
+        },
+        readiness_state: 'project_dependencies_missing',
+        primary_action: 'show_project_dependency_setup',
+        safe_summary: 'This project declares dependencies, but the project folder does not have installed dependencies.',
+        authority: {
+          diagnosis_authority: 'main_owned_read_only_project_environment_diagnosis_v1',
+          source_authority: 'main_owned_current_project_source_tree',
+          toolchain_probe_authority: 'main_owned_bounded_toolchain_version_probe_v1',
+          renderer_authority: 'redacted_projection_only',
+          browser_preview_authority: 'readiness_context_only_no_install_decision',
+          provider_dispatch: false,
+          harness_dispatch: false,
+          command_execution: false,
+          dependency_preparation: false,
+          project_workspace_write: false,
+          check_workspace_write: false,
+          git_write: false,
+          sqlite_write: false,
+          save_authority: false,
+          path_disclosure: 'not_serialized',
+          environment_variable_disclosure: false,
+          raw_output: 'not_present',
+          secret_access: 'not_present',
+          network_access: false,
+        },
+        diagnosed_at_ms: 1235,
+        diagnosis_digest: `sha256:${'9'.repeat(64)}`,
+      },
+    };
+  });
+  const decideCurrentDraftDependencyPreparation = vi.fn(async (request: unknown) => {
+    if (options.deferredDependencyPreparation === true) {
+      await new Promise<void>((resolve) => {
+        resolveDeferredDependencyPreparation = resolve;
+      });
+    }
+    return approveAndRunCurrentDraftCheck(request);
+  });
   const skipCurrentDraftCheck = vi.fn(async (request: unknown) => ({
     result_version: 'builder-check-skip-current-draft-public-result.v1',
     operation: 'current_draft_check_skipped',
@@ -521,6 +839,79 @@ async function setup(options: Readonly<{
     candidate_id: `builder-code-change-candidate:${'0'.repeat(64)}`,
     status: 'skipped',
   }));
+  const sideWorkspaceSourceTreeDigest = `sha256:${'8'.repeat(64)}`;
+  const sideWorkspaceFileContentDigest = `sha256:${'9'.repeat(64)}`;
+  const sideWorkspaceFileRef = Object.freeze({
+    file_ref_version: 'builder-side-workspace-file-ref.v1' as const,
+    source_kind: 'current_draft' as const,
+    source_tree_digest: sideWorkspaceSourceTreeDigest,
+    path: 'index.html',
+    content_digest: sideWorkspaceFileContentDigest,
+  });
+  const sideWorkspaceFileAuthority = Object.freeze({
+    file_projection_authority: 'main_owned_side_workspace_file_projection_v1' as const,
+    renderer_source_tree: 'not_accepted' as const,
+    renderer_path_authority: 'main_issued_file_ref_only' as const,
+    source_read: 'main_owned_verified_source_tree_only' as const,
+    source_write: 'not_performed' as const,
+    git_write: 'not_performed' as const,
+    sqlite_write: 'not_performed' as const,
+    provider_dispatch: false as const,
+    tool_dispatch: false as const,
+    command_execution: false as const,
+    electron_view_attachment: false as const,
+    ipc_registration: false as const,
+    revision_admission: false as const,
+    save_admission: false as const,
+    permission_grant: false as const,
+  });
+  const readCurrentDraftFileTree = vi.fn(async (request: unknown) => {
+    sideWorkspaceFileTreeReadAttempts += 1;
+    if (
+      sideWorkspaceFileTreeReadAttempts
+      <= (options.failSideWorkspaceFileTreeReadAttempts ?? 0)
+    ) {
+      throw new Error('current draft file projection is still converging');
+    }
+    const ids = request as { project_id: string; conversation_id: string };
+    return {
+      projection_version: 'builder-side-workspace-file-tree.v1' as const,
+      project_id: ids.project_id,
+      conversation_id: ids.conversation_id,
+      source_kind: 'current_draft' as const,
+      root_label: 'Current draft',
+      source_tree_digest: sideWorkspaceSourceTreeDigest,
+      entries: [{
+        entry_kind: 'text_file' as const,
+        path: 'index.html',
+        name: 'index.html',
+        parent_path: null,
+        depth: 0,
+        content_digest: sideWorkspaceFileContentDigest,
+        file_ref: sideWorkspaceFileRef,
+      }],
+      selected_file_ref: sideWorkspaceFileRef,
+      source_ref: { source_ref_kind: 'current_draft_checkpoint_candidate' },
+      authority: sideWorkspaceFileAuthority,
+    };
+  });
+  const readCurrentDraftFileContent = vi.fn(async (request: unknown) => {
+    const ids = request as { project_id: string; conversation_id: string };
+    return {
+      projection_version: 'builder-side-workspace-file-content.v1' as const,
+      project_id: ids.project_id,
+      conversation_id: ids.conversation_id,
+      source_kind: 'current_draft' as const,
+      source_tree_digest: sideWorkspaceSourceTreeDigest,
+      file_ref: sideWorkspaceFileRef,
+      path: 'index.html',
+      language_hint: 'html' as const,
+      content_status: 'ready' as const,
+      text_preview: '<main>Focus timer</main>\n',
+      binary_summary: null,
+      authority: sideWorkspaceFileAuthority,
+    };
+  });
   async function createDraftForCurrentProject(
     hostRequest: Awaited<ReturnType<typeof createBuilderGenerationRequest>>,
     sourceTree = readWire.source_tree,
@@ -528,9 +919,30 @@ async function setup(options: Readonly<{
     const draft = await createGenerationDraft(hostRequest, sourceTree);
     return saved ? draft : { ...draft, base_revision_evidence: null };
   }
+  const hostRequestFor = (request: unknown, instruction: string, projectId = selectedProjectId) => (
+    createBuilderGenerationRequest(
+      instruction,
+      projectId,
+      (request as { task_address_id?: string | null }).task_address_id ?? null,
+    )
+  );
+  const publishTaskStreamChanged = () => {
+    const event = selectedProjectId === null
+      ? {
+        event_version: 'builder-task-stream-changed.v1',
+        agent_id: AGENT_ID,
+      }
+      : {
+        event_version: 'builder-task-stream-changed.v1',
+        project_id: selectedProjectId,
+      };
+    act(() => {
+      for (const listener of [...taskStreamChangedListeners]) listener(event);
+    });
+  };
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
-    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    const hostRequest = await hostRequestFor(request, instruction);
     if (options.failGenerate === true) {
       return {
         version: 'builder-generation-ipc-result.v1',
@@ -562,7 +974,7 @@ async function setup(options: Readonly<{
   });
   const retry = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
-    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    const hostRequest = await hostRequestFor(request, instruction);
     latestDraft = await createDraftForCurrentProject(hostRequest);
     return {
       version: 'builder-generation-ipc-result.v1',
@@ -589,16 +1001,24 @@ async function setup(options: Readonly<{
     const instruction = (request as { instruction: string }).instruction;
     latestAnswerInstruction = instruction;
     answerInstructions.push(instruction);
-    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    const hostRequest = await hostRequestFor(request, instruction);
     const shouldFailAnswer = (options.failFirstAnswer === true && answerAttempts === 1)
       || (options.failAnswerAfterFirst === true && answerAttempts > 1);
     if (shouldFailAnswer) {
+      const recordedAnswerExists = (
+        options.recordedFirstAnswerAfterFailedPublicResult === true
+        && answerAttempts === 1
+      ) || (
+        options.recordedAnswerAfterFailedPublicResult === true
+        && answerAttempts > 1
+      );
       if (
         (options.deferredFailedFirstAnswer === true && answerAttempts === 1)
         || (options.deferredFailedAnswerAfterFirst === true && answerAttempts > 1)
       ) {
         return new Promise<unknown>((resolve) => {
           resolveAnswer = async () => {
+            if (recordedAnswerExists) publishTaskStreamChanged();
             resolve({
               version: 'builder-generation-ipc-result.v1',
               ok: false,
@@ -610,6 +1030,7 @@ async function setup(options: Readonly<{
           };
         });
       }
+      if (recordedAnswerExists) publishTaskStreamChanged();
       return {
         version: 'builder-generation-ipc-result.v1',
         ok: false,
@@ -622,20 +1043,25 @@ async function setup(options: Readonly<{
     if (options.deferredAnswer === true || (options.deferAnswerAfterFirst === true && answerAttempts > 1)) {
       return new Promise<unknown>((resolve) => {
         resolveAnswer = async () => {
+          const result = await createGenerationAnswer(hostRequest);
+          publishTaskStreamChanged();
           resolve({
             version: 'builder-generation-ipc-result.v1',
             ok: true,
-            result: await createGenerationAnswer(hostRequest),
+            result,
           });
         };
       });
     }
+    const result = await createGenerationAnswer(hostRequest);
+    publishTaskStreamChanged();
     return {
       version: 'builder-generation-ipc-result.v1',
       ok: true,
-      result: await createGenerationAnswer(hostRequest),
+      result,
     };
   });
+  const answerPlan = vi.fn((request: unknown) => answer(request));
   const answerDraft = vi.fn(async (request: unknown) => {
     expect(request).toEqual({
       draft_id: latestDraft.draft_id,
@@ -653,7 +1079,7 @@ async function setup(options: Readonly<{
   const submit = vi.fn(async (request: unknown) => {
     submitAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
-    const hostRequest = await createBuilderGenerationRequest(instruction, selectedProjectId);
+    const hostRequest = await hostRequestFor(request, instruction);
     if (options.briefUpdateActivity === true && /(?:我想|我要|我们要|希望|需要|保存这个方向|would like|want|save this|use this as)/iu.test(instruction)) {
       return {
         version: 'builder-generation-ipc-result.v1',
@@ -762,6 +1188,14 @@ async function setup(options: Readonly<{
       result: latestDraft,
     };
   });
+  const restorePreviousCheckpointAsDraft = vi.fn(async (request: unknown) => {
+    expect(request).toEqual({ draft_id: latestDraft?.draft_id });
+    return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: latestDraft,
+    };
+  });
   const rejectDraft = vi.fn(async (request: unknown) => {
     expect(request).toEqual({ draft_id: latestDraft.draft_id });
     return {
@@ -854,8 +1288,8 @@ async function setup(options: Readonly<{
   });
   const proposePlan = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
-    const hostRequest = await createBuilderGenerationRequest(instruction, PROJECT_ID);
-    return {
+    const hostRequest = await hostRequestFor(request, instruction, PROJECT_ID);
+    const result = {
       version: 'builder-generation-ipc-result.v1',
       ok: true,
       result: {
@@ -890,6 +1324,14 @@ async function setup(options: Readonly<{
         },
       },
     };
+    if (options.deferredPlanProposal === true) {
+      return new Promise<unknown>((resolve) => {
+        resolvePlanProposal = async () => {
+          resolve(result);
+        };
+      });
+    }
+    return result;
   });
   const preparePlanSourceReadApproval = vi.fn(async (request: unknown) => {
     if (options.failPlanSourceReadApprovalPrepare === true) throw new Error('approval prepare unavailable');
@@ -978,14 +1420,29 @@ async function setup(options: Readonly<{
   let taskStreamReadAttempts = 0;
   const generationStartedListeners = new Set<(event: unknown) => void>();
   const generationOutputListeners = new Set<(event: unknown) => void>();
-  const taskStreamChangedListeners = new Set<(event: unknown) => void>();
-  const readTaskStream = vi.fn(async () => {
-    taskStreamReadAttempts += 1;
-    if (taskStreamReadAttempts <= (options.failTaskStreamReadAttempts ?? 0)) {
+  const commandApprovalListeners = new Set<(event: unknown) => void>();
+  const commandOutputListeners = new Set<(event: unknown) => void>();
+  const workbenchChangedListeners = new Set<(event: unknown) => void>();
+  const readTaskStream = vi.fn(async (request: { agent_id: string } | {
+    project_id: string;
+    task_address_id: string;
+  }) => {
+    if ('project_id' in request) taskStreamReadAttempts += 1;
+    if (
+      'project_id' in request
+      && taskStreamReadAttempts <= (options.failTaskStreamReadAttempts ?? 0)
+    ) {
       throw new Error('activity temporarily unavailable');
     }
     if (options.failTaskStreamAfterPlanReview === true && planReviewRecorded) {
       throw new Error('activity unavailable');
+    }
+    if (
+      'agent_id' in request
+      && answerAttempts === 0
+      && options.taskStreamWireOverride === undefined
+    ) {
+      return asAgentConversationWire({ conversation: null }, request.agent_id);
     }
     if (
       options.uncheckedUntilSkip === true
@@ -995,7 +1452,15 @@ async function setup(options: Readonly<{
         ? reviewReadyTaskStreamWire()
         : uncheckedReviewTaskStreamWire();
     }
-    return options.planAfterPropose === true && proposePlan.mock.calls.length > 0
+    if (
+      options.checkRunAvailable === true
+      && (submit.mock.calls.length > 0 || generate.mock.calls.length > 0)
+    ) return options.dependencyBlockedCheck === true
+      && !(options.dependencyBlockedUntilPreparation === true
+        && decideCurrentDraftDependencyPreparation.mock.calls.length > 0)
+      ? dependencyBlockedReviewTaskStreamWire()
+      : checkedReviewTaskStreamWire();
+    const wire = options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
       : options.rejectedPlanActivity === true
         ? createPlanReviewTaskStreamWire('rejected')
@@ -1005,7 +1470,9 @@ async function setup(options: Readonly<{
           ? createPlanTaskStreamWire()
           : options.pendingBuildConfirmationActivity === true
             ? pendingBuildConfirmationTaskStreamWire()
-          : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
+            : options.pendingActivityAfterSave === true && saveDraft.mock.calls.length > 0
+              ? pendingCandidateTaskStreamWire('proposed')
+            : options.rejectActivityAfterDiscard === true && rejectDraft.mock.calls.length > 0
             ? createRejectedTaskStreamWire()
             : options.briefUpdateActivity === true && (
               submit.mock.calls.length > 0
@@ -1057,6 +1524,8 @@ async function setup(options: Readonly<{
                   ? taskStreamReadAttempts <= (options.staleActivityReadAttemptsBeforePendingRestore ?? 1)
                     ? reviewReadyTaskStreamWire()
                     : pendingCandidateTaskStreamWire('proposed')
+                : options.supersededAcceptedPendingActivity === true
+                  ? acceptedCandidateAfterSupersededCandidateTaskStreamWire()
                 : options.acceptedPendingActivity === true
                 ? pendingCandidateTaskStreamWire('accepted')
                 : options.rejectedPendingActivity === true
@@ -1072,6 +1541,167 @@ async function setup(options: Readonly<{
                       : options.pendingActivity === true
                         ? pendingCandidateTaskStreamWire('proposed')
                         : reviewReadyTaskStreamWire();
+    return 'agent_id' in request ? asAgentConversationWire(wire, request.agent_id) : wire;
+  });
+  const readAgentWorkbench = vi.fn(async (request: {
+    agent_id: string;
+    after_cursor: string | null;
+    limit: number;
+  }) => {
+    const stream = await readTaskStream({ agent_id: request.agent_id }) as {
+      conversation: null | {
+        created_at_ms: number;
+        items: Array<{
+          item_kind: string;
+          message: { message_id: string; text: string };
+          role: 'user' | 'assistant';
+          sequence: number;
+        }>;
+      };
+    };
+    const conversation = stream.conversation;
+    const items = conversation === null ? [] : conversation.items
+      .filter((item) => item.item_kind === 'transcript_message')
+      .map((item) => ({
+        message_id: item.message.message_id,
+        thread_id: 'builder-workbench-thread:123e4567-e89b-42d3-a456-426614174000',
+        presentation_family: 'conversation',
+        content_type: item.role === 'user'
+          ? 'builder.chat.user_message.v1'
+          : 'builder.chat.agent_message.v1',
+        source_label: item.role === 'user' ? 'You' : 'Agent',
+        fallback_text: item.message.text,
+        presentation: {
+          presentation_version: 'builder-workbench-declarative-presentation.v1',
+          body_kind: item.role === 'user' ? 'plain_text' : 'markdown',
+          body_text: item.message.text,
+          metadata: [],
+        },
+        attention: 'normal',
+        trust_label: 'local',
+        state: { unread: item.role === 'assistant', acknowledged: false, archived: false },
+        actions: [],
+        task_ref: null,
+        created_at_ms: (conversation?.created_at_ms ?? 0) + item.sequence,
+      }));
+    const proposalMaterialized = decideTaskProposal.mock.calls.length > 0;
+    const pendingProposalItem = {
+      message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174097',
+      thread_id: null,
+      presentation_family: 'proposal',
+      content_type: 'builder.task.proposal.v1',
+      source_label: 'Builder',
+      fallback_text: 'Task proposal',
+      presentation: {
+        presentation_version: 'builder-workbench-declarative-presentation.v1',
+        body_kind: 'markdown',
+        body_text: 'Task proposal',
+        metadata: [],
+      },
+      attention: 'action_required',
+      trust_label: 'local',
+      state: { unread: true, acknowledged: false, archived: false },
+      task_ref: null,
+      actions: [{
+        action_version: 'builder-workbench-task-proposal-action.v1',
+        action_id: 'builder-workbench-action:123e4567e89b42d3a456426614174097123e4567e89b42d3a456426614174097',
+        proposal_id: 'builder-task-proposal:123e4567-e89b-42d3-a456-426614174097',
+        status: proposalMaterialized ? 'materialized' : 'pending',
+        objective: '按这个计划创建一个专注计时器：先写 index.html，再运行检查。',
+        requested_outcome: 'build',
+        execution_mode: 'foreground',
+        project_id: proposalMaterialized ? PROJECT_ID : null,
+        task_address_id: proposalMaterialized ? MATERIALIZED_TASK_ADDRESS_ID : null,
+        conversation_id: proposalMaterialized ? CONVERSATION_ID : null,
+        operations: proposalMaterialized ? ['open_task'] : ['approve_existing_project', 'reject'],
+      }],
+      created_at_ms: (conversation?.created_at_ms ?? 0) + 90,
+    };
+    const workbenchItems = options.agentTaskReturn === true
+      ? [...items, {
+          message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174099',
+          thread_id: null,
+          presentation_family: 'result',
+          content_type: 'builder.task.result.v1',
+          source_label: 'Builder',
+          fallback_text: 'Changes are ready for review.',
+          presentation: {
+            presentation_version: 'builder-workbench-declarative-presentation.v1',
+            body_kind: 'markdown',
+            body_text: 'Changes are ready for review.',
+            metadata: [],
+          },
+          attention: 'normal',
+          trust_label: 'local',
+          state: { unread: true, acknowledged: false, archived: false },
+          actions: [],
+          task_ref: {
+            project_id: PROJECT_ID,
+            task_address_id: TASK_ADDRESS_ID,
+            operation: 'open_task',
+          },
+          created_at_ms: (conversation?.created_at_ms ?? 0) + 100,
+        }]
+      : (options.agentTaskProposalPending === true ? [...items, pendingProposalItem] : items);
+    return {
+      projection_version: 'builder-agent-workbench-projection.v2',
+      agent_id: request.agent_id,
+      stream: {
+        items: workbenchItems,
+        after_cursor: request.after_cursor,
+        next_cursor: workbenchItems.length === 0
+          ? null
+          : `builder-workbench-cursor:${workbenchItems.length}`,
+        has_more: false,
+      },
+      task_monitor: {
+        projection_version: 'builder-workbench-task-monitor.v2',
+        agent_id: request.agent_id,
+        tasks: options.agentTaskReturn === true ? [{
+          task_address_id: TASK_ADDRESS_ID,
+          project_id: PROJECT_ID,
+          conversation_id: CONVERSATION_ID,
+          title: 'Review changes',
+          goal: 'Review the pending draft.',
+          group: 'attention',
+          state: 'waiting_review',
+          status_label: 'Review changes',
+          latest_activity_at_ms: 100,
+          latest_result: null,
+          attention: null,
+          operations: ['open_task'],
+        }] : [],
+        counts: options.agentTaskReturn === true
+          ? { active: 0, attention: 1, recent: 0 }
+          : { active: 0, attention: 0, recent: 0 },
+        authority: {
+          task_identity: 'main_owned_session_task_address_store',
+          task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+          renderer_authority: 'selection_only',
+          provider_dispatch: false,
+          permission_grant: false,
+          source_read: false,
+          source_write: false,
+        },
+      },
+      inbox: {
+        unread_count: items.filter((item: { state: { unread: boolean } }) => item.state.unread).length,
+        action_required_count: 0,
+        mention_count: 0,
+        active_task_count: 0,
+      },
+      authority: {
+        canonical_messages: 'main_owned_workbench_message_store',
+        user_state: 'main_owned_workbench_message_state_store',
+        task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+        renderer_authority: 'selection_and_bounded_state_requests_only',
+        plugin_payload_exposure: 'not_exposed',
+        permission_grant: false,
+        provider_dispatch: false,
+        source_read: false,
+        source_write: false,
+      },
+    };
   });
   const open = vi.fn(async (request: { project_id: string | null }) => {
     selectedProjectId = request.project_id;
@@ -1205,8 +1835,260 @@ async function setup(options: Readonly<{
       },
     },
   }));
+  const projectedTask = (
+    taskAddressId = TASK_ADDRESS_ID,
+    sessionId = SESSION_ID,
+    title = 'Create Builder project',
+  ) => ({
+    task_address_id: taskAddressId,
+    task_id: taskAddressId,
+    session_id: sessionId,
+    conversation_id: CONVERSATION_ID,
+    project_id: PROJECT_ID,
+    agent_id: AGENT_ID,
+    title,
+    goal: 'Create and improve the current project.',
+    status: 'active' as const,
+    current_plan_id: null,
+    has_unreviewed_draft: false,
+    needs_permission: false,
+    latest_activity_at_ms: 30,
+  });
+  const workRequests = () => [
+    ...submit.mock.calls,
+    ...generate.mock.calls,
+    ...proposePlan.mock.calls,
+  ];
+  const hasNewlyMaterializedTask = () => workRequests().some((call) => (
+    (call[0] as { task_address_id?: string | null } | undefined)?.task_address_id === null
+  ));
+  const projectedTasks = () => {
+    const newlyMaterialized = hasNewlyMaterializedTask()
+      ? [projectedTask(
+        MATERIALIZED_TASK_ADDRESS_ID,
+        MATERIALIZED_SESSION_ID,
+        'New Builder task',
+      )]
+      : [];
+    return saved ? [...newlyMaterialized, projectedTask()] : newlyMaterialized;
+  };
+  const readAgentProjectTree = vi.fn(async () => {
+    if (options.hangAgentProjectTreeAfterPlan === true && proposePlan.mock.calls.length > 0) {
+      return await new Promise<never>(() => undefined);
+    }
+    const savedProject = saved ? catalogWire.projects[0] : null;
+    const workspaceHasPersistedTask = options.workspaceOnlyCatalog === true && (
+      options.pendingActivity === true
+      || options.pendingAfterRevisionView === true
+      || options.acceptedPendingActivity === true
+      || options.supersededAcceptedPendingActivity === true
+      || options.rejectedPendingActivity === true
+      || options.runningActivity === true
+      || options.restoreAvailable === true
+      || options.staleActivityBeforePendingRestore === true
+      || options.pendingPlanActivity === true
+      || options.rejectedPlanActivity === true
+    );
+    const workspaceTasks = projectedTasks().length > 0
+      ? projectedTasks()
+      : (workspaceHasPersistedTask ? [projectedTask()] : []);
+    const workspaceProject = !saved && (
+      options.workspaceOnlyCatalog === true
+      || selectedProjectId === PROJECT_ID
+    )
+      ? {
+        project_id: PROJECT_ID,
+        title: 'Unsaved dashboard',
+        summary: 'Local project in site-source',
+        source_boundary_label: 'Source folder: site-source',
+        revision_number: null,
+        status: 'workspace' as const,
+        task_count: workspaceTasks.length,
+        active_task_count: workspaceTasks.length,
+        latest_activity_at_ms: 20,
+        tasks: workspaceTasks,
+      }
+      : null;
+    const projects = savedProject === null
+      ? (workspaceProject === null ? [] : [workspaceProject])
+      : [{
+        project_id: savedProject.project_id,
+        title: savedProject.title,
+        summary: savedProject.summary,
+        source_boundary_label: null,
+        revision_number: savedProject.revision_number,
+        status: 'saved' as const,
+        task_count: projectedTasks().length,
+        active_task_count: projectedTasks().length,
+        latest_activity_at_ms: savedProject.selected_at_ms,
+        tasks: projectedTasks(),
+      }];
+    return {
+      projection_version: 'agent-project-tree-projection.v1',
+      agent_id: AGENT_ID,
+      agent: {
+        display_name: 'Builder',
+        purpose: 'Plan, build, review, and maintain local projects.',
+        lifecycle_status: 'active',
+        agent_version_id: `builder-agent-version:${'a'.repeat(64)}`,
+        version_number: 1,
+      },
+      projects,
+      orphaned_tasks: projects.length === 0 ? projectedTasks() : [],
+      authority: {
+        agent_identity: 'main_owned_agent_definition_store',
+        project_catalog: 'main_owned_project_authorities',
+        project_lifecycle: 'main_owned_project_lifecycle_store',
+        task_identity: 'main_owned_session_task_address_store',
+        renderer_authority: 'selection_only',
+        permission_grant: false,
+        source_read: false,
+        source_write: false,
+        git_mutation: false,
+        provider_dispatch: false,
+      },
+    };
+  });
+  const createTaskProposal = vi.fn(async (request: unknown) => {
+    if (options.agentTaskIncubation !== true) throw new Error('task incubation unavailable');
+    return { operation: 'proposal_created', request };
+  });
+  const decideTaskProposal = vi.fn(async (request: unknown) => {
+    if (options.agentTaskProposalMaterializes === true) {
+      const proposalId = (request as { proposal_id: string }).proposal_id;
+      return {
+        status: 'ready',
+        projection: {
+          projection_version: 'builder-agent-workbench-projection.v2',
+          agent_id: AGENT_ID,
+          stream: {
+            items: [{
+              message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174098',
+              thread_id: null,
+              presentation_family: 'proposal',
+              content_type: 'builder.task.proposal.v1',
+              source_label: 'Builder',
+              fallback_text: 'Task proposal materialized.',
+              presentation: {
+                presentation_version: 'builder-workbench-declarative-presentation.v1',
+                body_kind: 'markdown',
+                body_text: 'Task proposal materialized.',
+                metadata: [],
+              },
+              attention: 'normal',
+              trust_label: 'local',
+              state: { unread: false, acknowledged: true, archived: false },
+              task_ref: null,
+              actions: [{
+                action_version: 'builder-workbench-task-proposal-action.v1',
+                action_id: 'builder-workbench-action:123e4567e89b42d3a456426614174098123e4567e89b42d3a456426614174098',
+                proposal_id: proposalId,
+                status: 'materialized',
+                objective: '按这个计划创建一个专注计时器：先写 index.html，再运行检查。',
+                requested_outcome: 'build',
+                execution_mode: 'foreground',
+                project_id: PROJECT_ID,
+                task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
+                conversation_id: CONVERSATION_ID,
+                operations: ['open_task'],
+              }],
+              created_at_ms: 30,
+            }],
+            after_cursor: null,
+            next_cursor: 'builder-workbench-cursor:1',
+            has_more: false,
+          },
+          task_monitor: {
+            projection_version: 'builder-workbench-task-monitor.v2',
+            agent_id: AGENT_ID,
+            tasks: [],
+            counts: { active: 0, attention: 0, recent: 0 },
+            authority: {
+              task_identity: 'main_owned_session_task_address_store',
+              task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+              renderer_authority: 'selection_only',
+              provider_dispatch: false,
+              permission_grant: false,
+              source_read: false,
+              source_write: false,
+            },
+          },
+          inbox: { unread_count: 0, action_required_count: 0, mention_count: 0, active_task_count: 0 },
+          authority: {
+            canonical_messages: 'main_owned_workbench_message_store',
+            user_state: 'main_owned_workbench_message_state_store',
+            task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+            renderer_authority: 'selection_and_bounded_state_requests_only',
+            plugin_payload_exposure: 'not_exposed',
+            permission_grant: false,
+            provider_dispatch: false,
+            source_read: false,
+            source_write: false,
+          },
+        },
+      };
+    }
+    return {
+      operation: 'proposal_rejected',
+      request,
+    };
+  });
+  const decideCommandApproval = vi.fn(async () => ({
+    version: 'builder-generation-ipc-result.v1',
+    ok: true,
+    result: {
+      result_version: 'builder-controlled-command-approval-decision-result.v1',
+      operation: 'command_approval_decided',
+    },
+  }));
+  const userWebStatus = () => ({
+    status_version: 'builder-user-web-status.v1' as const,
+    status: 'idle' as const,
+    current_url: null,
+    can_go_back: false,
+    can_go_forward: false,
+    can_reload: false,
+    can_stop: false,
+    navigation_block_count: 0,
+    permission_block_count: 0,
+    download_block_count: 0,
+    window_open_block_count: 0,
+    message: 'Enter a URL to browse.',
+    updated_at_ms: 0,
+    authority: {
+      user_web_authority: 'builder_main_user_web_v1' as const,
+      renderer_authority: 'explicit_navigation_and_layout_only' as const,
+      provider_authority: 'none' as const,
+      provider_observation: false as const,
+      command_execution: false as const,
+      dependency_installation: false as const,
+      project_write: false as const,
+      downloads: 'blocked_pending_separate_admission' as const,
+      permissions: 'denied' as const,
+      popup_windows: 'blocked' as const,
+      partition_visibility: 'main_private' as const,
+    },
+  });
   const bridge: BuilderDesktopBridgeRoot = {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
+    agentProjectTree: {
+      read: readAgentProjectTree,
+      renameProject: vi.fn(async (request: unknown) => ({ operation: 'project_renamed', request })),
+      archiveProject: vi.fn(async (request: unknown) => ({ operation: 'project_archived', request })),
+      renameTask: vi.fn(async (request: unknown) => ({ operation: 'task_address_renamed', request })),
+      archiveTask: vi.fn(async (request: unknown) => ({ operation: 'task_address_archived', request })),
+    },
+    agentWorkbench: {
+      read: readAgentWorkbench,
+      updateMessageState: vi.fn(async () => ({ operation: 'message_state_updated' })),
+      createTaskProposal,
+      decideTaskProposal,
+      controlTask: vi.fn(async () => ({ operation: 'task_not_active' })),
+      subscribeChanged(listener: (event: unknown) => void) {
+        workbenchChangedListeners.add(listener);
+        return () => { workbenchChangedListeners.delete(listener); };
+      },
+    },
     codeGenerator: {
       ...(options.semanticIntentRoute === undefined ? {} : { classifyIntent }),
       submit,
@@ -1220,9 +2102,11 @@ async function setup(options: Readonly<{
       approveCurrentProjectWrite,
       retry,
       answer,
+      answerPlan,
       answerDraft,
       restoreDraft,
       restoreRevisionAsDraft,
+      restorePreviousCheckpointAsDraft,
       rejectDraft,
       cancel,
       steer,
@@ -1239,6 +2123,15 @@ async function setup(options: Readonly<{
         return () => {
           generationOutputListeners.delete(listener);
         };
+      },
+      decideCommandApproval,
+      subscribeCommandApproval(listener: (event: unknown) => void) {
+        commandApprovalListeners.add(listener);
+        return () => { commandApprovalListeners.delete(listener); };
+      },
+      subscribeCommandOutput(listener: (event: unknown) => void) {
+        commandOutputListeners.add(listener);
+        return () => { commandOutputListeners.delete(listener); };
       },
     },
     projectWorkspace: {
@@ -1262,7 +2155,10 @@ async function setup(options: Readonly<{
     },
     checkRun: {
       readCurrentDraftAvailableChecks,
+      diagnoseCurrentDraftCheckEnvironment,
+      diagnoseProjectEnvironment,
       approveAndRunCurrentDraftCheck,
+      decideCurrentDraftDependencyPreparation,
       skipCurrentDraftCheck,
     },
     livePreview: {
@@ -1271,6 +2167,7 @@ async function setup(options: Readonly<{
         project_id: (request as { project_id: string }).project_id,
         conversation_id: (request as { conversation_id: string }).conversation_id,
         preview_kind: 'live_static_web',
+        entry_url: null,
         status: 'unavailable',
         can_start: false,
         can_reload: false,
@@ -1283,6 +2180,7 @@ async function setup(options: Readonly<{
         window_open_block_count: 0,
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
+        dev_server_approval: null,
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -1310,6 +2208,7 @@ async function setup(options: Readonly<{
         project_id: (request as { project_id: string }).project_id,
         conversation_id: (request as { conversation_id: string }).conversation_id,
         preview_kind: 'live_static_web',
+        entry_url: null,
         status: 'unavailable',
         can_start: false,
         can_reload: false,
@@ -1322,6 +2221,7 @@ async function setup(options: Readonly<{
         window_open_block_count: 0,
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
+        dev_server_approval: null,
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -1349,6 +2249,7 @@ async function setup(options: Readonly<{
         project_id: (request as { project_id: string }).project_id,
         conversation_id: (request as { conversation_id: string }).conversation_id,
         preview_kind: 'live_static_web',
+        entry_url: null,
         status: 'stopped',
         can_start: false,
         can_reload: false,
@@ -1361,6 +2262,7 @@ async function setup(options: Readonly<{
         window_open_block_count: 0,
         message: 'Live preview is stopped.',
         unavailable_reason: null,
+        dev_server_approval: null,
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -1388,6 +2290,7 @@ async function setup(options: Readonly<{
         project_id: (request as { project_id: string }).project_id,
         conversation_id: (request as { conversation_id: string }).conversation_id,
         preview_kind: 'live_static_web',
+        entry_url: null,
         status: 'unavailable',
         can_start: false,
         can_reload: false,
@@ -1400,6 +2303,89 @@ async function setup(options: Readonly<{
         window_open_block_count: 0,
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
+        dev_server_approval: null,
+        updated_at_ms: 10,
+        authority: {
+          live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+          renderer_authority: 'current_project_conversation_only',
+          active_renderer_required: true,
+          source_tree_from_renderer: 'not_accepted',
+          source_read: 'main_owned_preview_source_resolver_or_not_performed',
+          source_write: 'not_performed',
+          provider_dispatch: false,
+          tool_dispatch: false,
+          command_execution: false,
+          git_mutation: false,
+          sqlite_write: false,
+          permission_grant: false,
+          revision_admission: false,
+          save_admission: false,
+          electron_view_attachment: 'main_only_not_exposed_to_renderer',
+          preview_content_ipc: false,
+          node_integration: false,
+          preload: false,
+        },
+      }),
+      updateCurrentPreviewLayout: async (request: unknown) => ({
+        status_version: 'builder-live-preview-status-projection.v1',
+        project_id: (request as { project_id: string }).project_id,
+        conversation_id: (request as { conversation_id: string }).conversation_id,
+        preview_kind: 'live_static_web',
+        entry_url: null,
+        status: 'unavailable',
+        can_start: false,
+        can_reload: false,
+        can_stop: false,
+        blocked_request_count: 0,
+        navigation_block_count: 0,
+        network_block_count: 0,
+        permission_block_count: 0,
+        download_block_count: 0,
+        window_open_block_count: 0,
+        message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
+        unavailable_reason: 'preview_source_resolver_not_connected',
+        dev_server_approval: null,
+        updated_at_ms: 10,
+        authority: {
+          live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+          renderer_authority: 'current_project_conversation_only',
+          active_renderer_required: true,
+          source_tree_from_renderer: 'not_accepted',
+          source_read: 'main_owned_preview_source_resolver_or_not_performed',
+          source_write: 'not_performed',
+          provider_dispatch: false,
+          tool_dispatch: false,
+          command_execution: false,
+          git_mutation: false,
+          sqlite_write: false,
+          permission_grant: false,
+          revision_admission: false,
+          save_admission: false,
+          electron_view_attachment: 'main_only_not_exposed_to_renderer',
+          preview_content_ipc: false,
+          node_integration: false,
+          preload: false,
+        },
+      }),
+      decideDevServerApproval: async (request: unknown) => ({
+        status_version: 'builder-live-preview-status-projection.v1',
+        project_id: (request as { project_id: string }).project_id,
+        conversation_id: (request as { conversation_id: string }).conversation_id,
+        preview_kind: 'live_static_web',
+        entry_url: null,
+        status: 'stopped',
+        can_start: false,
+        can_reload: false,
+        can_stop: false,
+        blocked_request_count: 0,
+        navigation_block_count: 0,
+        network_block_count: 0,
+        permission_block_count: 0,
+        download_block_count: 0,
+        window_open_block_count: 0,
+        message: 'Live preview is stopped.',
+        unavailable_reason: null,
+        dev_server_approval: null,
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -1423,7 +2409,32 @@ async function setup(options: Readonly<{
         },
       }),
     },
-    sideWorkspaceFiles: {},
+    agentTestBrowser: {
+      updateLayout: vi.fn(async (request: {
+        owner_run_id: string;
+        view_bounds: { x: number; y: number; width: number; height: number } | null;
+      }) => ({
+        result_version: 'builder-agent-test-browser-layout-result.v1',
+        owner_run_id: request.owner_run_id,
+        operation: 'not_active',
+        visible: false,
+        applied_bounds: null,
+      })),
+    },
+    userWeb: {
+      navigate: vi.fn(async () => userWebStatus()),
+      goBack: vi.fn(async () => userWebStatus()),
+      goForward: vi.fn(async () => userWebStatus()),
+      reload: vi.fn(async () => userWebStatus()),
+      stop: vi.fn(async () => userWebStatus()),
+      readStatus: vi.fn(async () => userWebStatus()),
+      updateLayout: vi.fn(async () => userWebStatus()),
+    },
+    sideWorkspaceFiles: options.sideWorkspaceFilesAvailable === true ? {
+      readCurrentDraftFileTree,
+      readCurrentDraftFileContent,
+      readRuntimeToolFileTree: readCurrentDraftFileTree,
+    } : {},
     taskStream: {
       read: readTaskStream,
       subscribeChanged(listener: (event: unknown) => void) {
@@ -1448,20 +2459,41 @@ async function setup(options: Readonly<{
   const root = createRoot(container);
   mounted.push({ root, container });
   await act(async () => {
-    root.render(<BuilderApp bridgeRoot={bridge} />);
+    root.render(options.strictMode === true
+      ? <StrictMode><BuilderApp bridgeRoot={bridge} /></StrictMode>
+      : <BuilderApp bridgeRoot={bridge} />);
   });
   return {
     approveAndRunCurrentDraftCheck,
     classifyIntent,
+    createTaskProposal,
+    decideCurrentDraftDependencyPreparation,
+    diagnoseCurrentDraftCheckEnvironment,
+    diagnoseProjectEnvironment,
+    decideTaskProposal,
     skipCurrentDraftCheck,
     container,
     answer,
+    answerPlan,
     answerDraft,
     cancel,
     continueDraft,
     createLocalProject,
     openLocation,
     readCurrentDraftAvailableChecks,
+    readCurrentDraftFileTree,
+    resolveDeferredCheckRunRead: async () => {
+      if (resolveDeferredCheckRunRead !== null) resolveDeferredCheckRunRead();
+      await act(async () => {
+        await Promise.resolve();
+      });
+    },
+    resolveDeferredDependencyPreparation: async () => {
+      if (resolveDeferredDependencyPreparation !== null) resolveDeferredDependencyPreparation();
+      await act(async () => {
+        await Promise.resolve();
+      });
+    },
     generate,
     generateApprovedPlan,
     resolveAnswer: async () => {
@@ -1474,6 +2506,16 @@ async function setup(options: Readonly<{
     resolvePlanReview: async () => {
       if (resolvePlanReview === null) throw new Error('plan review was not deferred');
       await resolvePlanReview();
+    },
+    resolvePlanProposal: async () => {
+      for (let attempt = 0; resolvePlanProposal === null && attempt < 20; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
+      if (resolvePlanProposal === null) throw new Error('plan proposal was not deferred');
+      await resolvePlanProposal();
+      await act(async () => {
+        await Promise.resolve();
+      });
     },
     proposePlan,
     preparePlanSourceReadApproval,
@@ -1491,7 +2533,9 @@ async function setup(options: Readonly<{
     listWorkspaces,
     loadCurrent,
     open,
+    readAgentProjectTree,
     readTaskStream,
+    decideCommandApproval,
     emitTaskStreamChanged(projectId = PROJECT_ID) {
       const listenerCount = taskStreamChangedListeners.size;
       act(() => {
@@ -1504,7 +2548,7 @@ async function setup(options: Readonly<{
       });
       return listenerCount;
     },
-    emitGenerationStarted(requestId: string, projectId = PROJECT_ID) {
+    emitGenerationStarted(requestId: string, projectId: string | null = PROJECT_ID) {
       const listenerCount = generationStartedListeners.size;
       act(() => {
         for (const listener of [...generationStartedListeners]) {
@@ -1517,7 +2561,7 @@ async function setup(options: Readonly<{
       });
       return listenerCount;
     },
-    emitGenerationStartedWithoutAct(requestId: string, projectId = PROJECT_ID) {
+    emitGenerationStartedWithoutAct(requestId: string, projectId: string | null = PROJECT_ID) {
       const listenerCount = generationStartedListeners.size;
       for (const listener of [...generationStartedListeners]) {
         listener({
@@ -1528,7 +2572,7 @@ async function setup(options: Readonly<{
       }
       return listenerCount;
     },
-    emitGenerationOutput(requestId: string, text: string, projectId = PROJECT_ID) {
+    emitGenerationOutput(requestId: string, text: string, projectId: string | null = PROJECT_ID) {
       const listenerCount = generationOutputListeners.size;
       act(() => {
         for (const listener of [...generationOutputListeners]) {
@@ -1536,11 +2580,62 @@ async function setup(options: Readonly<{
             event_version: 'builder-generation-output.v1',
             request_id: requestId,
             project_id: projectId,
-            conversation_id: `builder-conversation:${projectId.slice('builder-project:'.length)}`,
+            conversation_id: projectId === null
+              ? `builder-agent-conversation:${AGENT_ID.slice('builder-agent:'.length)}`
+              : projectId === PROJECT_ID
+                ? CONVERSATION_ID
+                : `builder-conversation:${projectId.slice('builder-project:'.length)}:223e4567-e89b-42d3-a456-426614174000`,
             turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
-            task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174001',
+            task_id: projectId === null
+              ? null
+              : 'builder-task:123e4567-e89b-42d3-a456-426614174001',
             run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
             display_delta_text: text,
+          });
+        }
+      });
+      return listenerCount;
+    },
+    emitCommandApproval() {
+      const listenerCount = commandApprovalListeners.size;
+      act(() => {
+        for (const listener of [...commandApprovalListeners]) {
+          listener({
+            request_version: 'builder-controlled-command-approval-request.v1',
+            approval_request_id:
+              'builder-controlled-command-approval-request:123e4567-e89b-42d3-a456-426614174000',
+            project_id: PROJECT_ID,
+            conversation_id: CONVERSATION_ID,
+            turn_id: PENDING_TURN_ID,
+            task_id: PENDING_TASK_ID,
+            run_id: PENDING_RUN_ID,
+            command_profile_id: `builder-command-profile:${'a'.repeat(32)}`,
+            command_kind: 'test',
+            command_display: 'npm test',
+            description: 'Verify the current project before finishing.',
+            source_tree_digest: `sha256:${'b'.repeat(64)}`,
+            requested_at_ms: 1_000,
+            expires_at_ms: 301_000,
+            risk_notice: 'This project script may modify files or use the network.',
+            decisions: ['allow_once', 'deny'],
+          });
+        }
+      });
+      return listenerCount;
+    },
+    emitCommandOutput(chunks: readonly Readonly<{ stream: 'stdout' | 'stderr'; text: string }>[]) {
+      const listenerCount = commandOutputListeners.size;
+      act(() => {
+        for (const listener of [...commandOutputListeners]) {
+          listener({
+            event_version: 'builder-controlled-command-output.v1',
+            project_id: PROJECT_ID,
+            conversation_id: CONVERSATION_ID,
+            turn_id: PENDING_TURN_ID,
+            task_id: PENDING_TASK_ID,
+            run_id: PENDING_RUN_ID,
+            command_profile_id: `builder-command-profile:${'a'.repeat(32)}`,
+            chunks,
           });
         }
       });
@@ -1550,6 +2645,7 @@ async function setup(options: Readonly<{
     rejectDraft,
     restoreDraft,
     restoreRevisionAsDraft,
+    restorePreviousCheckpointAsDraft,
     async resolveGenerate() {
       await resolveGenerate?.();
     },
@@ -1654,20 +2750,57 @@ async function waitForComposerSubmitReady(container: HTMLElement): Promise<void>
   });
 }
 
+function expectDraftDecisionCard(container: HTMLElement): HTMLElement {
+  expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+  const card = container.querySelector<HTMLElement>('[data-builder-composer-version-decision="true"]');
+  expect(card).not.toBeNull();
+  expect(card?.textContent).toContain('Save this draft?');
+  expect(card?.textContent).toContain('Save version');
+  expect(card?.textContent).toContain('Discard draft');
+  return card!;
+}
+
+function expectDraftWaitingForReviewEvidence(container: HTMLElement): void {
+  expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+  expect(container.querySelector('[data-builder-composer-version-decision="true"]')).toBeNull();
+  expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+}
+
 function artifactPreviewSrcdoc(container: HTMLElement): string | null {
   return container
     .querySelector('[data-builder-artifact-sidebar="true"] [data-builder-result-flow="true"] iframe')
     ?.getAttribute('srcdoc') ?? null;
 }
 
-async function openSavedProject(container: HTMLElement): Promise<void> {
+async function openSavedProject(
+  container: HTMLElement,
+  acceptedStatuses: readonly string[] = ['ready'],
+): Promise<void> {
   await waitFor(() => {
     expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
   });
   click(container, 'Hello project');
   await waitFor(() => {
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
+    expect(acceptedStatuses).toContain(
+      container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'),
+    );
+    expect(container.querySelector('h1')?.textContent).toBe('Hello project');
+  });
+}
+
+async function openVersionsPanel(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')).not.toBeNull();
+  });
+  click(container, '[data-builder-workspace-menu-button="true"]');
+  await waitFor(() => {
+    expect(container.querySelector('[data-builder-workspace-menu="true"]')).not.toBeNull();
+  });
+  click(container, '[data-builder-workspace-control-tab="versions"]');
+  await waitFor(() => {
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')
+      ?.getAttribute('data-builder-artifact-tab-active')).toBe('versions');
   });
 }
 
@@ -1745,6 +2878,80 @@ function pendingCandidateTaskStreamWire(state: 'accepted' | 'proposed' | 'reject
   };
 }
 
+function acceptedCandidateAfterSupersededCandidateTaskStreamWire() {
+  const wire = pendingCandidateTaskStreamWire('accepted');
+  const [userMessage, runStarted, runCompleted, turnCompleted, candidateReviewed] =
+    wire.conversation.items;
+  const completed = runCompleted as typeof runCompleted & {
+    assistant_message: { message_id: string; text: string };
+    candidate: {
+      draft_id: string;
+      title: string;
+      summary: string;
+      candidate_state: string;
+      source_availability: string;
+    };
+  };
+  const latestDraftId = `builder-generation-draft:${'f'.repeat(64)}`;
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 7,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 7,
+      },
+      items: [
+        userMessage,
+        {
+          ...runStarted,
+          sequence: 2,
+          run_id: RUN_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+        },
+        {
+          ...completed,
+          sequence: 3,
+          run_id: RUN_ID,
+        },
+        {
+          ...runStarted,
+          sequence: 4,
+          run_id: PENDING_RUN_ID,
+          attempt_number: 2,
+          retry_of_run_id: RUN_ID,
+        },
+        {
+          ...completed,
+          sequence: 5,
+          run_id: PENDING_RUN_ID,
+          assistant_message: {
+            ...completed.assistant_message,
+            message_id: 'builder-message:323e4567-e89b-42d3-a456-426614174001',
+          },
+          candidate: {
+            ...completed.candidate,
+            draft_id: latestDraftId,
+          },
+        },
+        {
+          ...turnCompleted,
+          sequence: 6,
+          run_id: PENDING_RUN_ID,
+        },
+        {
+          ...candidateReviewed,
+          sequence: 7,
+          run_id: PENDING_RUN_ID,
+          draft_id: latestDraftId,
+        },
+      ],
+    },
+  };
+}
+
 function runningTaskStreamWire(queuedFollowupText?: string) {
   const wire = createTaskStreamWire();
   const items: unknown[] = wire.conversation.items.slice(0, 2);
@@ -1773,6 +2980,36 @@ function runningTaskStreamWire(queuedFollowupText?: string) {
         last_sequence: queuedFollowupText === undefined ? 2 : 3,
       },
       items,
+    },
+  };
+}
+
+function waitingForUserAnswerTaskStreamWire() {
+  const wire = runningTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 3,
+      window: {
+        ...wire.conversation.window,
+        last_sequence: 3,
+      },
+      items: [
+        ...wire.conversation.items,
+        {
+          item_kind: 'programming_runtime_status',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          step_id: null,
+          status_kind: 'attention',
+          activity_kind: null,
+          attention_class: 'user_input_required',
+          failure_class: null,
+          status: '你希望使用 React 还是原生 JavaScript？',
+        },
+      ],
     },
   };
 }
@@ -1839,19 +3076,241 @@ function pendingBuildConfirmationTaskStreamWire() {
 }
 
 describe('BuilderApp v2', () => {
-  it('renders one integrated desktop workbench with Projects and Settings only', async () => {
+  it('renders the Agent conversation without a Projects column when no projects exist', async () => {
     const { container } = await setup();
     expect(container.querySelectorAll('main')).toHaveLength(1);
     expect(container.querySelector('[data-builder-workbench="true"]')).not.toBeNull();
-    expect(container.textContent).toContain('Projects');
+    expect(container.textContent).toContain('Agents');
     expect(container.textContent).toContain('Settings');
     const railLabels = Array.from(container.querySelectorAll('.cf-builder-rail-button'))
       .map((button) => button.textContent);
-    expect(railLabels).toEqual(['Projects', 'Settings']);
+    expect(railLabels).toEqual(['Agents', 'Settings']);
     expect(container.querySelector('[data-builder-workbench-rail="true"] .cf-builder-rail-brand')).toBeNull();
     expect(container.querySelector('[data-builder-rail-item="settings"]')?.textContent).toBe('Settings');
+    expect(container.querySelector('[data-builder-workbench-agent-roster="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-agent-id]')?.textContent).toContain('Builder');
+    expect(container.querySelector('.cf-builder-shell')?.getAttribute('data-builder-projects')).toBe('absent');
+    expect(container.querySelector('[data-builder-workbench-context="true"]')).toBeNull();
+    expect(container.querySelector('.cf-builder-agent-projects-toggle')).toBeNull();
     expect(railLabels).not.toContain('Canvas');
     expect(railLabels).not.toContain('Chat');
+  });
+
+  it('shows existing projects by default and lets the user collapse and restore the column', async () => {
+    const { container } = await setup({ initiallySaved: true });
+
+    await waitFor(() => {
+      expect(container.querySelector('.cf-builder-shell')?.getAttribute('data-builder-projects'))
+        .toBe('expanded');
+      expect(container.querySelector('[data-builder-workbench-context="true"]')?.textContent)
+        .toContain('Projects');
+    });
+
+    click(container, '[aria-label="Hide projects"]');
+    expect(container.querySelector('.cf-builder-shell')?.getAttribute('data-builder-projects'))
+      .toBe('collapsed');
+    expect(container.querySelector('[data-builder-workbench-context="true"]')).toBeNull();
+
+    click(container, '[aria-label="Show projects"]');
+    expect(container.querySelector('.cf-builder-shell')?.getAttribute('data-builder-projects'))
+      .toBe('expanded');
+    expect(container.querySelector('[data-builder-workbench-context="true"]')).not.toBeNull();
+  });
+
+  it('keeps the Agent conversation reachable after opening a project task', async () => {
+    const { container, readTaskStream } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+
+    const agent = container.querySelector<HTMLButtonElement>('[data-builder-agent-id]');
+    expect(agent?.getAttribute('aria-current')).toBeNull();
+    expect(agent?.getAttribute('data-selected')).toBe('false');
+    expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+      ?.getAttribute('data-selected')).toBe('true');
+    readTaskStream.mockClear();
+
+    click(container, '[data-builder-agent-id]');
+
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
+      expect(agent?.getAttribute('aria-current')).toBe('page');
+      expect(agent?.getAttribute('data-selected')).toBe('true');
+    });
+    expect(container.querySelector('.cf-builder-shell')?.getAttribute('data-builder-projects')).
+      toBe('expanded');
+    expect(container.querySelector('[data-builder-workbench-context="true"]')).not.toBeNull();
+    expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+      ?.getAttribute('data-selected')).toBe('false');
+  });
+
+  it('shows the main-owned task objective when an opened task has no conversation events yet', async () => {
+    const { container, readTaskStream } = await setup({
+      agentTaskReturn: true,
+      initiallySaved: true,
+      taskStreamWireOverride: {
+        stream_version: 'builder-task-stream-read-result.v1',
+        project_id: PROJECT_ID,
+        conversation: null,
+        authority: {
+          conversation: 'sqlite_canonical_event_replay_or_absent',
+          project_source: 'not_included',
+          candidate_source: 'not_loaded',
+          project_revision: 'not_inferred',
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(
+        `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+      )).not.toBeNull();
+    });
+    click(
+      container,
+      `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+    );
+
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      expect(container.querySelector(
+        `[data-builder-task-conversation-seed="${TASK_ADDRESS_ID}"]`,
+      )).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-task-seed-message="true"]')?.textContent)
+      .toContain('Create and improve the current project.');
+    expect(container.querySelector('[data-builder-task-seed-status="active"]')?.textContent)
+      .toContain('no recorded conversation activity yet.');
+  });
+
+  it('keeps the main-owned task objective visible when its conversation read is temporarily unavailable', async () => {
+    const { container, readTaskStream } = await setup({
+      agentTaskReturn: true,
+      failTaskStreamReadAttempts: 10_000,
+      initiallySaved: true,
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(
+        `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+      )).not.toBeNull();
+    });
+    click(
+      container,
+      `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+    );
+
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      expect(container.querySelector(
+        `[data-builder-task-conversation-seed="${TASK_ADDRESS_ID}"]`,
+      )).not.toBeNull();
+    }, 240);
+    expect(container.querySelector('[data-builder-task-seed-message="true"]')?.textContent)
+      .toContain('Create and improve the current project.');
+  }, 15_000);
+
+  it('does not duplicate the task objective after canonical conversation events are available', async () => {
+    const { container } = await setup({ initiallySaved: true });
+
+    await openSavedProject(container);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-activity-card]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-task-conversation-seed]')).toBeNull();
+  });
+
+  it('returns an unsaved draft from Agent Workbench to the exact originating Task', async () => {
+    const { container, restoreDraft } = await setup({
+      agentTaskReturn: true,
+      initiallySaved: true,
+      pendingActivity: true,
+      restoreAvailable: true,
+    });
+    await openSavedProject(container, ['ready', 'draft_ready']);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    restoreDraft.mockClear();
+
+    click(container, '[data-builder-agent-id]');
+    await waitFor(() => {
+      expect(container.querySelector(
+        `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+      )).not.toBeNull();
+    });
+    click(
+      container,
+      `[data-builder-agent-result-open-task="true"][data-builder-task-address-id="${TASK_ADDRESS_ID}"]`,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    });
+    expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).toBeNull();
+    expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+      ?.getAttribute('data-selected')).toBe('true');
+    expect(restoreDraft.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it('keeps a project new-task draft unsent, then selects its main-materialized Task Address', async () => {
+    const {
+      container,
+      generate,
+      readAgentProjectTree,
+      readTaskStream,
+    } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    readAgentProjectTree.mockClear();
+    readTaskStream.mockClear();
+
+    click(container, '[aria-label="New task in Hello project"]');
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(readAgentProjectTree).not.toHaveBeenCalled();
+    expect(readTaskStream).not.toHaveBeenCalled();
+    expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+      ?.getAttribute('data-selected')).toBe('false');
+
+    setComposerInstruction(container, 'Make a fresh focus timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-build-mode="true"]');
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(generate).toHaveBeenCalledExactlyOnceWith({
+        instruction: 'Make a fresh focus timer.',
+        task_address_id: null,
+      });
+      expect(container.querySelector(
+        `[data-builder-task-address-id="${MATERIALIZED_TASK_ADDRESS_ID}"]`,
+      )?.getAttribute('data-selected')).toBe('true');
+      expect(readTaskStream).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+        task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
+      });
+    });
+  });
+
+  it('opens a historical task through its exact Task Address', async () => {
+    const { container, readTaskStream } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+    readTaskStream.mockClear();
+
+    click(container, `[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`);
+
+    await waitFor(() => {
+      expect(readTaskStream).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+    });
   });
 
   it('opens the selected project location through the main-owned workspace port', async () => {
@@ -1872,8 +3331,8 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-clear-workspace-selection="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Choose project');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
     });
     expect(open).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Create a notes page.');
@@ -1945,10 +3404,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
       expect(container.textContent).toContain('This answer does not change files.');
     });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
 
     setComposerInstruction(container, '你是什么大模型');
     await waitForComposerSubmitReady(container);
@@ -1959,7 +3418,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-conversation-notice="answering"]')?.textContent)
         .toContain('Answering');
     });
-    expect(container.querySelector('[data-builder-conversation-workspace="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
     expect(container.textContent).toContain('This answer does not change files.');
     expect(container.textContent).not.toContain('Activity is unavailable');
 
@@ -1976,7 +3435,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
       expect(container.textContent).toContain('hi');
       expect(container.textContent).toContain('This answer does not change files.');
     });
@@ -1993,7 +3452,7 @@ describe('BuilderApp v2', () => {
       expect(container.textContent).toContain('This is the second read-only answer.');
     });
 
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -2015,9 +3474,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({
-        instruction: 'What should I consider before changing this project?',
-      });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'What should I consider before changing this project?' }));
       expect(container.textContent).toContain('What should I consider before changing this project?');
       expect(container.textContent).toContain('This answer does not change files.');
     });
@@ -2034,7 +3491,7 @@ describe('BuilderApp v2', () => {
       expect(container.textContent).toContain('This is the second read-only answer.');
     });
 
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -2053,10 +3510,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
       expect(container.textContent).toContain('This answer does not change files.');
     });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
 
     setComposerInstruction(container, '你是什么大模型');
     await waitForComposerSubmitReady(container);
@@ -2064,12 +3521,12 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(answer).toHaveBeenCalledTimes(2);
-      expect(container.textContent).toContain('The answer could not be prepared. Try again.');
+      expect(container.textContent).toContain('暂时无法完成回答，请重试。');
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-conversation-workspace="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
     expect(container.textContent).toContain('This answer does not change files.');
     expect(container.textContent).not.toContain('Activity is unavailable');
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
@@ -2088,7 +3545,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
       expect(container.textContent).toContain('This answer does not change files.');
     });
 
@@ -2100,10 +3557,12 @@ describe('BuilderApp v2', () => {
       expect(answer).toHaveBeenCalledTimes(2);
       expect(container.textContent).toContain('我是由深度求索（DeepSeek）公司创造的 DeepSeek 模型。');
     });
-    expect(container.textContent).toContain('This answer does not change files.');
-    expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
-    expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    await waitFor(() => {
+      expect(container.textContent).toContain('This answer does not change files.');
+      expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
+      expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -2111,7 +3570,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('uses the started run project id when a first read-only answer was recorded before public failure', async () => {
+  it('uses the started Agent scope when a first read-only answer was recorded before public failure', async () => {
     const {
       answer,
       container,
@@ -2133,10 +3592,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: question }));
     });
     const request = await createBuilderGenerationRequest(question, null);
-    expect(emitGenerationStarted(request.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    expect(emitGenerationStarted(request.request_digest, null)).toBeGreaterThan(0);
 
     await act(async () => {
       await resolveAnswer();
@@ -2144,7 +3603,7 @@ describe('BuilderApp v2', () => {
     });
 
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
       expect(container.textContent).toContain('我是DeepSeek最新版本模型，由深度求索公司创造。');
     });
     expect(container.textContent).not.toContain('The answer could not be prepared. Try again.');
@@ -2157,7 +3616,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('uses the started project id before live output state commits for a first recorded answer failure', async () => {
+  it('uses the started Agent scope before live output state commits for a first recorded answer failure', async () => {
     const {
       answer,
       container,
@@ -2179,18 +3638,18 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: question }));
     });
     const request = await createBuilderGenerationRequest(question, null);
 
     await act(async () => {
-      expect(emitGenerationStartedWithoutAct(request.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+      expect(emitGenerationStartedWithoutAct(request.request_digest, null)).toBeGreaterThan(0);
       await resolveAnswer();
       await Promise.resolve();
     });
 
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
       expect(container.textContent).toContain('我是DeepSeek最新版本模型，由深度求索公司创造。');
     });
     expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
@@ -2225,7 +3684,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
       expect(container.textContent).toContain('This answer does not change files.');
     });
 
@@ -2237,9 +3696,9 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(answer).toHaveBeenCalledTimes(2);
     });
-    const request = await createBuilderGenerationRequest(question, PROJECT_ID);
-    expect(emitGenerationStarted(request.request_digest, PROJECT_ID)).toBeGreaterThan(0);
-    expect(emitGenerationOutput(request.request_digest, '我是 DeepSeek 模型。', PROJECT_ID)).toBeGreaterThan(0);
+    const request = await createBuilderGenerationRequest(question, null);
+    expect(emitGenerationStarted(request.request_digest, null)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(request.request_digest, '我是 DeepSeek 模型。', null)).toBeGreaterThan(0);
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
@@ -2253,7 +3712,7 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')?.textContent)
-        .toContain('The answer could not be prepared. Try again.');
+        .toContain('暂时无法完成回答，请重试。');
       expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     });
     expect(container.textContent).toContain('This answer does not change files.');
@@ -2263,6 +3722,184 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+  });
+
+  it('incubates a projectless Agent build request as a task proposal', async () => {
+    const { container, createTaskProposal, generate, submit } = await setup({
+      agentTaskIncubation: true,
+    });
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(createTaskProposal).toHaveBeenCalledOnce();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+    });
+    expect(createTaskProposal).toHaveBeenCalledWith(expect.objectContaining({
+      agent_id: AGENT_ID,
+      objective: 'Make a timer.',
+      requested_outcome: 'build',
+      execution_mode: 'foreground',
+    }));
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('streams a projectless Agent plan as full conversation Markdown without creating a task proposal', async () => {
+    const {
+      answerPlan,
+      container,
+      createTaskProposal,
+      emitGenerationOutput,
+      emitGenerationStarted,
+      resolveAnswer,
+    } = await setup({
+      agentTaskIncubation: true,
+      deferredAnswer: true,
+    });
+    const instruction = '为摄影博客制定完整实施计划。';
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
+    });
+    setComposerInstruction(container, instruction);
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector<HTMLButtonElement>(
+      '[data-builder-composer-add-plan-mode="true"]',
+    )?.disabled).toBe(false);
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')?.textContent)
+      .toContain('Plan mode');
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answerPlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction }));
+    });
+    const request = await createBuilderGenerationRequest(instruction, null);
+    expect(emitGenerationStarted(request.request_digest, null)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(
+      request.request_digest,
+      '## 实施计划\n\n1. 建立内容结构\n2. 完成响应式页面',
+      null,
+    )).toBeGreaterThan(0);
+    await waitFor(() => {
+      const livePlan = container.querySelector('[data-builder-live-output="true"]');
+      expect(livePlan?.textContent).toContain('实施计划');
+      expect(livePlan?.textContent).toContain('建立内容结构');
+      expect(livePlan?.querySelector('h2')?.textContent).toBe('实施计划');
+    });
+    expect(createTaskProposal).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await resolveAnswer();
+      await Promise.resolve();
+    });
+    expect(createTaskProposal).not.toHaveBeenCalled();
+  });
+
+  it('auto-starts a foreground Agent task proposal after creating a new project', async () => {
+    const {
+      container,
+      approveCurrentProjectWrite,
+      createLocalProject,
+      decideTaskProposal,
+      generate,
+      open,
+      prepareCurrentProjectWriteApproval,
+      saveDraft,
+      submit,
+    } = await setup({
+      agentTaskProposalMaterializes: true,
+      agentTaskProposalPending: true,
+      currentProjectWriteApprovalRequired: true,
+      initiallySaved: true,
+    });
+
+    click(container, `[data-builder-project-id="${PROJECT_ID}"]`);
+    await waitFor(() => {
+      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(container.querySelector('[data-builder-page="true"]')?.getAttribute(
+        'data-builder-project-status',
+      )).toBe('ready');
+    });
+    click(container, '[data-builder-agent-id]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-agent-task-proposal-new-project="true"]')).not.toBeNull();
+    });
+    const newProjectButton = container.querySelector<HTMLButtonElement>(
+      '[data-builder-agent-task-proposal-new-project="true"]',
+    );
+    expect(newProjectButton?.disabled).toBe(false);
+    await act(async () => {
+      newProjectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+        project_id: null,
+        project_title: '按这个计划创建一个专注计时器：先写 index.html，再运行检查。',
+      });
+      expect(decideTaskProposal).toHaveBeenCalledExactlyOnceWith({
+        agent_id: AGENT_ID,
+        proposal_id: 'builder-task-proposal:123e4567-e89b-42d3-a456-426614174097',
+        operation: 'approve_existing_project',
+        project_id: PROJECT_ID,
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        instruction: '按这个计划创建一个专注计时器：先写 index.html，再运行检查。',
+        task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
+      }));
+    });
+    expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
+    });
+    expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
+    });
+    expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-submit-in-flight="true"]')).toBeNull();
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('keeps Agent task proposal project creation single-shot while materialization is pending', async () => {
+    const {
+      container,
+      createLocalProject,
+      decideTaskProposal,
+      submit,
+    } = await setup({
+      agentTaskProposalMaterializes: true,
+      agentTaskProposalPending: true,
+      initiallySaved: true,
+    });
+
+    click(container, '[data-builder-agent-id]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-agent-task-proposal-new-project="true"]')).not.toBeNull();
+    });
+    const newProjectButton = container.querySelector<HTMLButtonElement>(
+      '[data-builder-agent-task-proposal-new-project="true"]',
+    );
+    expect(newProjectButton?.disabled).toBe(false);
+    await act(async () => {
+      newProjectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      newProjectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledOnce();
+    });
+    expect(createLocalProject).toHaveBeenCalledOnce();
+    expect(decideTaskProposal).toHaveBeenCalledOnce();
   });
 
   it('continues a gated build turn after the user binds a source folder', async () => {
@@ -2322,7 +3959,7 @@ describe('BuilderApp v2', () => {
       project_title: 'New project',
     });
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
@@ -2336,7 +3973,7 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
@@ -2380,9 +4017,9 @@ describe('BuilderApp v2', () => {
         project_id: null,
         project_title: 'New project',
       });
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     expect(emitGenerationOutput(expected.request_digest, 'Building the first project draft.', PROJECT_ID))
       .toBeGreaterThan(0);
@@ -2401,7 +4038,7 @@ describe('BuilderApp v2', () => {
     });
     await waitFor(() => {
       expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
@@ -2420,9 +4057,9 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
-    expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     expect(generate).not.toHaveBeenCalled();
     expect(continueDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
@@ -2450,7 +4087,7 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
@@ -2473,9 +4110,9 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-composer-add-build-mode="true"]');
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
-    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     expect(submit).not.toHaveBeenCalled();
     expect(classifyIntent).not.toHaveBeenCalled();
 
@@ -2483,14 +4120,14 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).toBeNull();
     });
-    setComposerInstruction(container, '继续优化标题和说明，不要保存版本');
+    setComposerInstruction(container, 'Continue improving the focus timer heading and subtitle.');
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
       expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
-        instruction: '继续优化标题和说明，不要保存版本',
+        instruction: 'Continue improving the focus timer heading and subtitle.',
       });
     });
     expect(classifyIntent).not.toHaveBeenCalled();
@@ -2499,11 +4136,11 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
-  it('keeps current-draft plan/proposal wording on the semantic route instead of direct draft edits', async () => {
+  it('keeps current-draft plan/proposal wording on the plan route instead of direct draft edits', async () => {
     const {
       answer,
       answerDraft,
@@ -2524,9 +4161,9 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-composer-add-build-mode="true"]');
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
-    expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+    expect(generate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     expect(submit).not.toHaveBeenCalled();
     expect(classifyIntent).not.toHaveBeenCalled();
 
@@ -2539,14 +4176,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
-        instruction: '给当前文件夹做一个优化方案',
-      });
       expect(answerDraft).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
         instruction: '给当前文件夹做一个优化方案',
       });
     });
+    expect(classifyIntent).not.toHaveBeenCalled();
     expect(answer).not.toHaveBeenCalled();
     expect(continueDraft).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -2554,7 +4189,7 @@ describe('BuilderApp v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('plan');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_plan_deliverable');
   });
 
   it('does not keep a gated build pending after the workspace picker is closed', async () => {
@@ -2580,11 +4215,9 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     });
 
-    click(container, '[data-builder-workspace-chip="true"]');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
-    });
-    click(container, '[data-builder-workspace-new-project="true"]');
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-files="true"]')).toBeNull();
+    click(container, '[data-builder-catalog-new-project="true"]');
     await waitFor(() => {
       expect(container.querySelector('[data-builder-new-project-panel="true"]')).not.toBeNull();
     });
@@ -2600,7 +4233,7 @@ describe('BuilderApp v2', () => {
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
@@ -2695,7 +4328,7 @@ describe('BuilderApp v2', () => {
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     });
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
       expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
       });
@@ -2704,7 +4337,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
       .toContain('Unsaved dashboard');
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftDecisionCard(container);
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
@@ -2748,7 +4381,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('keeps chat-first project identity when a later build turn binds source folders', async () => {
+  it('creates the first project only when a later build turn binds source folders', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       answerActivity: true,
     });
@@ -2765,7 +4398,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -2816,17 +4449,17 @@ describe('BuilderApp v2', () => {
     });
 
     expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: PROJECT_ID,
+      project_id: null,
       project_title: 'New project',
     });
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
@@ -2879,7 +4512,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '帮我做一个网页3D' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我做一个网页3D' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -2888,7 +4521,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
   });
 
@@ -2903,7 +4536,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '新建一个 README.md，写项目说明' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '新建一个 README.md，写项目说明' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -2938,6 +4571,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
         .toContain('Allow current project changes?');
@@ -2954,10 +4588,13 @@ describe('BuilderApp v2', () => {
     click(container, 'Allow and continue');
 
     await waitFor(() => {
-      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
     expect(JSON.stringify(approveCurrentProjectWrite.mock.calls)).not.toMatch(
       /resource_id|permission_id|source_tree|credential|provider/iu,
@@ -2992,11 +4629,14 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
 
     await waitFor(() => {
-      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
     expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledTimes(2);
     expect(generate).not.toHaveBeenCalled();
@@ -3035,6 +4675,7 @@ describe('BuilderApp v2', () => {
     });
     expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
     expect(approveCurrentProjectWrite).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -3067,7 +4708,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -3101,7 +4742,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-composer-approval-mode-option="allow_current_project"]');
 
     await waitFor(() => {
-      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
       expect(container.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
     });
 
@@ -3112,8 +4756,9 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -3164,7 +4809,10 @@ describe('BuilderApp v2', () => {
       click(container, '[data-builder-submit-turn="true"]');
 
       await waitFor(() => {
-        expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction });
+        expect(answer).toHaveBeenCalledExactlyOnceWith({
+          instruction,
+          task_address_id: TASK_ADDRESS_ID,
+        });
       });
       expect(submit).not.toHaveBeenCalled();
       expect(createLocalProject).not.toHaveBeenCalled();
@@ -3190,7 +4838,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '我想做一个登录页' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3206,7 +4854,9 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-task-id')).toBeNull();
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
     expect(container.textContent).not.toContain('Current brief');
-    expect(container.textContent).not.toContain('星空背景');
+    await waitFor(() => {
+      expect(container.textContent).toContain('星空背景');
+    });
   });
 
   it('does not treat future Goal mode requests as current build or brief authority', async () => {
@@ -3221,9 +4871,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({
-        instruction: '进入目标模式，一直帮我改到完成为止',
-      });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '进入目标模式，一直帮我改到完成为止' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3258,7 +4906,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction });
+      expect(answer).toHaveBeenCalledExactlyOnceWith({
+        instruction,
+        task_address_id: TASK_ADDRESS_ID,
+      });
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3286,7 +4937,7 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
     });
     let composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('answer');
@@ -3307,7 +4958,7 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '我想做一个登录页' }));
     });
     expect(submit).not.toHaveBeenCalled();
     composer = container.querySelector('[data-builder-composer="true"]');
@@ -3328,7 +4979,7 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '把按钮颜色改红' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '把按钮颜色改红' }));
     });
     composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
@@ -3351,8 +5002,7 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.textContent).not.toMatch(/working_brief|recent_chat_proposal|builder-conversation/iu);
 
@@ -3372,7 +5022,7 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想先聊一下这个页面怎么做' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '我想先聊一下这个页面怎么做' }));
     });
     expect(submit).not.toHaveBeenCalled();
 
@@ -3393,7 +5043,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '按刚才方案做' }));
     });
     expect(answer).toHaveBeenCalledOnce();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3410,8 +5060,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
@@ -3420,7 +5069,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '那就写' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '那就写' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3448,7 +5097,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '改下颜色' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '改下颜色' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3476,7 +5125,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '要' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '要' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3504,7 +5153,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '要' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '要' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3646,8 +5295,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
@@ -3671,7 +5319,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '按刚才方案做' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '按刚才方案做' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3696,7 +5344,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '这个方案是什么' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '这个方案是什么' }));
       expect(container.textContent).toContain('作品集首页');
     });
 
@@ -3750,7 +5398,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '开始吧' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '开始吧' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3785,7 +5433,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '好，开始吧' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '好，开始吧' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3794,7 +5442,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
   });
 
@@ -3806,8 +5454,7 @@ describe('BuilderApp v2', () => {
     await openSavedProject(container);
     await waitFor(() => {
       expect(container.textContent).toContain('作品集首页');
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3823,7 +5470,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: '这里字都重叠了' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '这里字都重叠了' }));
     });
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -3868,14 +5515,14 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
-        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        conversation_id: CONVERSATION_ID,
         turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
         run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
         decision: 'approved',
       });
       expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
-        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        conversation_id: CONVERSATION_ID,
         turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
         run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       });
@@ -3889,7 +5536,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     await waitFor(() => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftWaitingForReviewEvidence(container);
     });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
   });
@@ -3901,8 +5548,8 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Plan rejected"]')?.textContent)
-        .toContain('The plan was rejected. The project has not changed.');
+      expect(container.querySelector('[data-builder-plan-review-decision="rejected"]')?.textContent)
+        .toContain('No project files were changed.');
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toContain('Direction changed');
     });
@@ -3920,7 +5567,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '按这个做' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '按这个做' }));
     });
     expect(reviewPlan).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -3939,7 +5586,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -3953,7 +5600,7 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-conversation-notice="submit_failed"]')?.textContent)
-        .toContain('The AI service rejected the request. Check the API key, model, or account.');
+        .toContain('AI 服务拒绝了请求，请检查 API Key、模型或账户状态。');
     });
     expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
@@ -3966,12 +5613,12 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(submit).toHaveBeenCalledTimes(2);
-    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.' });
-    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a timer.' });
+    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.', task_address_id: TASK_ADDRESS_ID });
+    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a timer.', task_address_id: TASK_ADDRESS_ID });
     expect(generate).not.toHaveBeenCalled();
     expect(retry).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
   });
 
   it('starts a different composer turn after submit failure without using retry', async () => {
@@ -3981,7 +5628,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -4008,12 +5655,12 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
     expect(submit).toHaveBeenCalledTimes(2);
-    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.' });
-    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a different timer.' });
+    expect(submit.mock.calls[0][0]).toEqual({ instruction: 'Make a timer.', task_address_id: TASK_ADDRESS_ID });
+    expect(submit.mock.calls[1][0]).toEqual({ instruction: 'Make a different timer.', task_address_id: TASK_ADDRESS_ID });
     expect(generate).not.toHaveBeenCalled();
     expect(retry).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toMatch(/request_digest|existing_project_id|provider|credential/iu);
   });
@@ -4038,7 +5685,7 @@ describe('BuilderApp v2', () => {
     });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(generate).not.toHaveBeenCalled();
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     click(container, '[data-builder-cancel-work="true"]');
 
     await waitFor(() => {
@@ -4094,7 +5741,7 @@ describe('BuilderApp v2', () => {
     const { container, readTaskStream } = await setup({ initiallySaved: true });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -4111,7 +5758,7 @@ describe('BuilderApp v2', () => {
         .toContain('I prepared a draft for review.');
     });
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     expect(container.textContent).not.toContain('builder-generation-draft:');
     expect(container.textContent).not.toContain('sqlite');
@@ -4128,7 +5775,7 @@ describe('BuilderApp v2', () => {
     } = await setup({ deferredGenerate: true, initiallySaved: true, runningActivity: true });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -4140,31 +5787,27 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-work-status="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     });
     expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-conversation-notice="submitting"]')).toBeNull();
     expect(container.querySelector('[data-builder-conversation-notice="generating"]')).toBeNull();
     const startedWorkStatus = container.querySelector('[data-builder-work-status="true"]');
-    expect(startedWorkStatus).not.toBeNull();
-    expect(startedWorkStatus?.getAttribute('data-builder-work-status-stage')).toBe('started');
-    expect(startedWorkStatus?.textContent).toContain('Preparing this request.');
+    expect(startedWorkStatus).toBeNull();
     readTaskStream.mockClear();
     expect(emitTaskStreamChanged(PROJECT_ID)).toBe(1);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
-    expect(workStatus).not.toBeNull();
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('started');
-    expect(workStatus?.textContent).toContain('Preparing this request.');
+    expect(workStatus).toBeNull();
     expect(container.textContent).not.toMatch(/request_id|provider|credential|commit_oid|tree_oid/iu);
 
     await act(async () => {
@@ -4177,6 +5820,74 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
   });
 
+  it('shows a current-run command approval from the desktop bridge and records one-shot consent', async () => {
+    const {
+      container,
+      decideCommandApproval,
+      emitCommandApproval,
+      emitCommandOutput,
+      resolveGenerate,
+      submit,
+    } = await setup({ deferredGenerate: true, initiallySaved: true, runningActivity: true });
+    await openSavedProject(container);
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+    const stablePreview = container.querySelector('[data-builder-static-preview="true"]');
+    expect(stablePreview).not.toBeNull();
+    stablePreview?.setAttribute('data-test-stable-preview', 'true');
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    });
+
+    expect(emitCommandApproval()).toBe(1);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-command-approval="true"]')?.textContent)
+        .toContain('npm test');
+    });
+    click(container, '[data-builder-allow-command-once="true"]');
+    await waitFor(() => {
+      expect(decideCommandApproval).toHaveBeenCalledExactlyOnceWith({
+        run_id: PENDING_RUN_ID,
+        approval_request_id:
+          'builder-controlled-command-approval-request:123e4567-e89b-42d3-a456-426614174000',
+        decision: 'allow_once',
+      });
+      expect(container.querySelector('[data-builder-command-approval="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-command-terminal="running"]')).not.toBeNull();
+    });
+
+    expect(emitCommandOutput([
+      { stream: 'stdout', text: 'PASS focus timer\n' },
+      { stream: 'stderr', text: 'experimental warning\n' },
+    ])).toBe(1);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-command-stdout="true"]')?.textContent)
+        .toContain('PASS focus timer');
+      expect(container.querySelector('[data-builder-command-stderr="true"]')?.textContent)
+        .toContain('experimental warning');
+      expect(container.querySelector('[data-builder-artifact-tab-active="terminal_placeholder"]'))
+        .not.toBeNull();
+    });
+    click(container, '[data-builder-side-workspace-tool="preview"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-artifact-tab-active="preview"]')).not.toBeNull();
+      expect(container.querySelector('[data-test-stable-preview="true"]')).toBe(stablePreview);
+    });
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+  });
+
   it('renders display-safe live AI output as an assistant message while work is active', async () => {
     const {
       container,
@@ -4184,7 +5895,7 @@ describe('BuilderApp v2', () => {
       emitGenerationStarted,
       resolveGenerate,
       submit,
-    } = await setup({ deferredGenerate: true, initiallySaved: true });
+    } = await setup({ deferredGenerate: true, initiallySaved: true, strictMode: true });
     await openSavedProject(container);
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
     act(() => {
@@ -4195,11 +5906,15 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
-    expect(emitGenerationOutput(expected.request_digest, 'Planning a quiet timer UI.', PROJECT_ID)).toBeGreaterThan(0);
+    expect(emitGenerationOutput(
+      expected.request_digest,
+      'Planning a quiet timer UI.\n\n- Create the markup\n- Run the check',
+      PROJECT_ID,
+    )).toBeGreaterThan(0);
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
 
     await waitFor(() => {
@@ -4207,6 +5922,8 @@ describe('BuilderApp v2', () => {
         .toContain('Planning a quiet timer UI.');
     });
     const liveOutput = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveOutput?.querySelector('[data-builder-conversation-markdown="true"]')).not.toBeNull();
+    expect(liveOutput?.querySelectorAll('li').length).toBe(2);
     expect(liveOutput?.getAttribute('data-builder-activity-role')).toBe('assistant');
     expect(liveOutput?.querySelector('[data-builder-message-surface]')?.getAttribute('data-builder-message-surface'))
       .toBe('plain');
@@ -4235,7 +5952,7 @@ describe('BuilderApp v2', () => {
     } = await setup({ deferredGenerate: true, initiallySaved: true, runningActivity: true });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -4248,12 +5965,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-work-status="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
       expect(container.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('aria-label'))
         .toBe('Stop');
@@ -4282,7 +5999,7 @@ describe('BuilderApp v2', () => {
         .toContain('will run after the current step finishes');
     });
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
       expect(container.querySelector('[data-builder-activity-card="You queued a follow-up"]')?.textContent)
         .toContain('Make it responsive.');
     });
@@ -4321,6 +6038,52 @@ describe('BuilderApp v2', () => {
     expect(steer).not.toHaveBeenCalled();
   });
 
+  it('answers a native Harness user question in the active run instead of queueing new work', async () => {
+    const {
+      container,
+      emitGenerationStarted,
+      queueFollowup,
+      resolveGenerate,
+      steer,
+      submit,
+    } = await setup({
+      deferredGenerate: true,
+      initiallySaved: true,
+      taskStreamWireOverride: waitingForUserAnswerTaskStreamWire(),
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
+    });
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
+    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(container.textContent).toContain('你希望使用 React 还是原生 JavaScript？');
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
+    });
+
+    setComposerInstruction(container, '使用 React。');
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(steer).toHaveBeenCalledExactlyOnceWith({
+        request_id: expected.request_digest,
+        message: '使用 React。',
+      });
+    });
+    expect(queueFollowup).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
+
+    await act(async () => {
+      await resolveGenerate();
+      await Promise.resolve();
+    });
+  });
+
   it('keeps active-run follow-up input when the durable queue record is not accepted', async () => {
     const {
       container,
@@ -4342,9 +6105,9 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({ instruction: 'Make a timer.' });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID);
+    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
       expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
@@ -4403,12 +6166,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: question }));
     });
-    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-cancel-work="true"]')?.getAttribute('aria-label'))
         .toBe('Stop');
       expect(container.querySelector('[data-builder-submit-turn="true"]')).toBeNull();
@@ -4455,6 +6218,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({
         instruction: change,
+        task_address_id: TASK_ADDRESS_ID,
         queued_followup: {
           turn_id: TURN_ID,
           run_id: RUN_ID,
@@ -4481,8 +6245,7 @@ describe('BuilderApp v2', () => {
     });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     expect(container.querySelector('[data-builder-composer-brief="true"]')).toBeNull();
 
@@ -4491,12 +6254,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: question }));
     });
-    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     });
 
     const contextualExecution = '那就写';
@@ -4530,6 +6294,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledExactlyOnceWith({
         instruction: contextualExecution,
+        task_address_id: TASK_ADDRESS_ID,
         queued_followup: {
           turn_id: TURN_ID,
           run_id: RUN_ID,
@@ -4567,12 +6332,13 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: question });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: question }));
     });
-    const expected = await createBuilderGenerationRequest(question, PROJECT_ID);
+    const expected = await createBuilderGenerationRequest(question, PROJECT_ID, TASK_ADDRESS_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
     });
 
     const change = 'Change the main heading to My Notes.';
@@ -4601,6 +6367,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).not.toBeNull();
     });
@@ -4655,15 +6422,87 @@ describe('BuilderApp v2', () => {
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
-    expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-      instruction: 'Plan the next project update.',
-    });
+    expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Plan the next project update.' }));
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(textarea.value).toBe('');
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
+  });
+
+  it('shows a pending user message immediately while a plan proposal is still running', async () => {
+    const {
+      container,
+      proposePlan,
+      resolvePlanProposal,
+    } = await setup({
+      deferredPlanProposal: true,
+      initiallySaved: true,
+      planAfterPropose: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-menu-button="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        ?.call(textarea, 'Plan the first usable screen.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-activity-pending="true"]')?.textContent)
+        .toContain('Plan the first usable screen.');
+    });
+    expect(container.querySelector('[data-builder-plan-review-actions="true"]')).toBeNull();
+
+    await resolvePlanProposal();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+  });
+
+  it('settles a completed plan without refreshing the project tree when the task address is already known', async () => {
+    const { container, proposePlan, readAgentProjectTree } = await setup({
+      hangAgentProjectTreeAfterPlan: true,
+      initiallySaved: true,
+      planAfterPropose: true,
+    });
+    await openSavedProject(container);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    readAgentProjectTree.mockClear();
+    setComposerInstruction(container, 'Plan the next project update.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(proposePlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
+    });
+    expect(readAgentProjectTree).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.disabled).toBe(false);
+
+    setComposerInstruction(container, 'What should happen next?');
+    await waitForComposerSubmitReady(container);
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
+      .toBe(false);
   });
 
   it('routes natural-language plan requests to plan proposal without submitting a draft', async () => {
@@ -4684,15 +6523,14 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我先做下方案',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我先做下方案' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toContain('Needs confirmation');
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -4707,7 +6545,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('uses whole-sentence semantic routing for an implementation plan deliverable', async () => {
+  it('routes an implementation plan deliverable directly to plan', async () => {
     const {
       classifyIntent,
       container,
@@ -4726,34 +6564,33 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(classifyIntent).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我做一个静态技术博客实施计划',
-      });
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我做一个静态技术博客实施计划',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我做一个静态技术博客实施计划' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
+    expect(classifyIntent).not.toHaveBeenCalled();
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('plan');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('semantic_route');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_plan_deliverable');
   });
 
-  it('fails plan-build wording conflicts closed when semantic routing is unavailable', async () => {
+  it('routes clear plan deliverables to plan when semantic routing is unavailable', async () => {
     const {
       answer,
       classifyIntent,
       container,
       generate,
+      preparePlanSourceReadApproval,
       proposePlan,
       submit,
     } = await setup({
       initiallySaved: true,
+      planAfterPropose: true,
       currentProjectWriteApprovalRequired: true,
     });
     await openSavedProject(container);
@@ -4762,18 +6599,21 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我做一个静态技术博客实施计划',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我做一个静态技术博客实施计划' }));
+      expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
+    expect(answer).not.toHaveBeenCalled();
     expect(classifyIntent).not.toHaveBeenCalled();
-    expect(proposePlan).not.toHaveBeenCalled();
+    expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).toBeNull();
     const composer = container.querySelector('[data-builder-composer="true"]');
-    expect(composer?.getAttribute('data-builder-route')).toBe('clarify');
-    expect(composer?.getAttribute('data-builder-route-signals')).toBe('plan_build_conflict');
+    expect(composer?.getAttribute('data-builder-route')).toBe('plan');
+    expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_plan_deliverable');
   });
 
   it('keeps a plan management page as a build artifact without spending semantic routing', async () => {
@@ -4787,9 +6627,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith({
-        instruction: '做一个计划管理页面',
-      });
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '做一个计划管理页面' }));
     });
     expect(classifyIntent).not.toHaveBeenCalled();
     expect(proposePlan).not.toHaveBeenCalled();
@@ -4809,9 +6647,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({
-        instruction: '这个项目是什么',
-      });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '这个项目是什么' }));
     });
     expect(classifyIntent).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -4845,13 +6681,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我先做下方案',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我先做下方案' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: null,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -4893,11 +6728,8 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({
-        instruction: '我打算做一个博客，给我一些建议',
-      });
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '我打算做一个博客，给我一些建议' }));
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
 
     setComposerInstruction(container, '帮我做成计划');
@@ -4907,13 +6739,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我做成计划',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我做成计划' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: null,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -4957,9 +6788,8 @@ describe('BuilderApp v2', () => {
     await waitForComposerSubmitReady(container);
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: firstInstruction });
-      expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-        .toContain('Ready to execute current direction');
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: firstInstruction }));
+      expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
     });
     await waitFor(() => {
       const submitButton = container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]');
@@ -4972,13 +6802,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: '帮我做成计划',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我做成计划' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: null,
     });
     expect(answer).toHaveBeenCalledOnce();
     expect(submit).not.toHaveBeenCalled();
@@ -5015,12 +6844,11 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: 'Make a timer.',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -5095,6 +6923,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')).not.toBeNull();
     });
@@ -5108,7 +6937,7 @@ describe('BuilderApp v2', () => {
 
     click(container, '[data-builder-approve-current-project-write="true"]');
     await waitFor(() => {
-      expect(generate).toHaveBeenCalledExactlyOnceWith({ instruction: '这个文件夹是什么结构？' });
+      expect(generate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '这个文件夹是什么结构？' }));
     });
     expect(submit).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-composer-mode-chip="build"]')).not.toBeNull();
@@ -5150,13 +6979,12 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: 'Make a timer.',
-      });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: null,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -5211,6 +7039,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
       expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')?.textContent).
         toContain('Allow project reading?');
@@ -5221,10 +7050,11 @@ describe('BuilderApp v2', () => {
     click(container, 'Allow and continue');
 
     await waitFor(() => {
-      expect(approvePlanSourceRead).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
-      expect(proposePlan).toHaveBeenCalledExactlyOnceWith({
-        instruction: 'Plan the next project update.',
+      expect(approvePlanSourceRead).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
+      expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Plan the next project update.' }));
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
     expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')).toBeNull();
@@ -5254,6 +7084,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
       expect(container.querySelector('[data-builder-plan-source-read-approval="true"]')?.textContent)
         .toContain('I could not prepare project reading for this plan.');
@@ -5318,6 +7149,7 @@ describe('BuilderApp v2', () => {
     });
     expect(preparePlanSourceReadApproval).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
     });
     expect(approvePlanSourceRead).not.toHaveBeenCalled();
     expect(proposePlan).not.toHaveBeenCalled();
@@ -5356,34 +7188,29 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(reviewPlan).toHaveBeenCalledOnce();
-      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
-        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-plan-review-decision="approved"]')?.textContent)
+        .toContain('Continuing with the approved plan.');
       expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
         .toContain('Using approved plan');
       expect(generateApprovedPlan).toHaveBeenCalledOnce();
     });
     expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
-      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      conversation_id: CONVERSATION_ID,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       decision: 'approved',
     });
     expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
-      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      conversation_id: CONVERSATION_ID,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     const expected = await createBuilderGenerationRequest('Review the approved plan.', PROJECT_ID);
     expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
-        .toContain('Applying the approved plan...');
-    });
-    expect(container.querySelector('[data-builder-live-output="true"]')?.getAttribute('data-builder-live-output-state'))
-      .toBe('waiting');
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     expect(emitGenerationOutput(expected.request_digest, 'Applying the approved plan.', PROJECT_ID))
       .toBeGreaterThan(0);
     await waitFor(() => {
@@ -5398,10 +7225,10 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftWaitingForReviewEvidence(container);
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential/iu,
     );
@@ -5434,18 +7261,18 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(generateApprovedPlan).toHaveBeenCalledOnce();
-      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
-        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-plan-review-decision="approved"]')?.textContent)
+        .toContain('Continuing with the approved plan.');
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
     expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
-      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      conversation_id: CONVERSATION_ID,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
     });
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftWaitingForReviewEvidence(container);
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(
@@ -5481,9 +7308,10 @@ describe('BuilderApp v2', () => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(prepareCurrentProjectWriteApproval).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
       });
-      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
-        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-plan-review-decision="approved"]')?.textContent)
+        .toContain('Continuing with the approved plan.');
       expect(container.querySelector('[data-builder-current-project-write-approval="true"]')?.textContent)
         .toContain('Allow current project changes?');
     });
@@ -5495,10 +7323,13 @@ describe('BuilderApp v2', () => {
     click(container, 'Allow and continue');
 
     await waitFor(() => {
-      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(approveCurrentProjectWrite).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
       expect(generateApprovedPlan).toHaveBeenCalledExactlyOnceWith({
         project_id: PROJECT_ID,
-        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        conversation_id: CONVERSATION_ID,
         turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
         run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       });
@@ -5508,7 +7339,7 @@ describe('BuilderApp v2', () => {
     expect(reviewPlan).toHaveBeenCalledOnce();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftWaitingForReviewEvidence(container);
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );
@@ -5541,14 +7372,14 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(reviewPlan).toHaveBeenCalledOnce();
       expect(generateApprovedPlan).toHaveBeenCalledOnce();
-      expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
-        .toContain('The plan was approved. The project has not changed yet.');
+      expect(container.querySelector('[data-builder-plan-review-decision="approved"]')?.textContent)
+        .toContain('Continuing with the approved plan.');
       expect(container.querySelector('[data-builder-conversation-notice="generation_failed"]')?.textContent)
-        .toContain('The plan was approved, but the draft could not be created. Retry to continue from that plan.');
+        .toContain('计划已批准，但草稿未能生成；重试后会从该计划继续。');
       expect(container.querySelector('[data-builder-retry-draft="true"]')).not.toBeNull();
     });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(retry).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
 
@@ -5616,7 +7447,7 @@ describe('BuilderApp v2', () => {
     });
     expect(reviewPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
-      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      conversation_id: CONVERSATION_ID,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       decision: 'approved',
@@ -5658,7 +7489,7 @@ describe('BuilderApp v2', () => {
     });
     expect(generateApprovedPlan).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-activity-card="Plan approved"]')).toBeNull();
+    expect(container.querySelector('[data-builder-plan-review-decision="approved"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );
@@ -5688,7 +7519,7 @@ describe('BuilderApp v2', () => {
     click(container, 'Reject');
     await waitFor(() => {
       expect(reviewPlan).toHaveBeenCalledOnce();
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
       const actions = container.querySelector('[data-builder-plan-review-actions="true"]');
       expect(actions?.getAttribute('data-builder-plan-review-state')).toBe('recorded');
       expect(actions?.textContent).toContain('Decision recorded. Updating the conversation...');
@@ -5701,7 +7532,7 @@ describe('BuilderApp v2', () => {
     expect(reviewPlan).toHaveBeenCalledOnce();
     expect(generateApprovedPlan).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-activity-card="Plan rejected"]')).toBeNull();
+    expect(container.querySelector('[data-builder-plan-review-decision="rejected"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /plan_result_digest|review_id|reviewer_id|reviewed_at_ms|source_tree|commit_oid|tree_oid|provider|credential|ipc|schema|receipt/iu,
     );
@@ -5726,11 +7557,10 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
     readTaskStream.mockClear();
-    click(container, '[data-builder-review-more="true"]');
-    click(container, 'Discard draft');
+    click(container, '[data-builder-discard-draft="true"]');
 
     await waitFor(() => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
@@ -5747,7 +7577,7 @@ describe('BuilderApp v2', () => {
     expect(restoreDraft).not.toHaveBeenCalled();
     expect(cancel).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     expect(container.textContent).not.toMatch(/builder-generation-draft:|sha256:|provider|credential/iu);
   });
@@ -5765,15 +7595,15 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')?.textContent)
         .toContain('This answer does not change files.');
     });
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'What does this project do?' });
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'What does this project do?' }));
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ agent_id: AGENT_ID });
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
@@ -5795,11 +7625,11 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')?.textContent)
         .toContain('This answer does not change files.');
     });
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: 'hi' });
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'hi' }));
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -5818,7 +7648,7 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '我想做一个登录页' });
+      expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '我想做一个登录页' }));
     });
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -5847,11 +7677,11 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')?.textContent)
         .toContain('This answer does not change files.');
     });
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '怎么把按钮改红？' });
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '怎么把按钮改红？' }));
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -5876,11 +7706,11 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-activity-card="Assistant"]')?.textContent)
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')?.textContent)
         .toContain('This answer does not change files.');
     });
 
-    expect(answer).toHaveBeenCalledExactlyOnceWith({ instruction: '帮我优化一下' });
+    expect(answer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: '帮我优化一下' }));
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -5907,14 +7737,13 @@ describe('BuilderApp v2', () => {
     });
 
     expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
       draft_id: expect.stringMatching(/^builder-generation-draft:/u),
     });
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expectDraftDecisionCard(container);
   });
 
   it('retries pending draft restore when the first automatic restore is transiently unavailable', async () => {
@@ -5935,7 +7764,7 @@ describe('BuilderApp v2', () => {
 
     expect(restoreDraft).toHaveBeenCalledTimes(4);
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftDecisionCard(container);
   });
 
   it('retries project activity loading before restoring a pending draft after restart', async () => {
@@ -5962,7 +7791,7 @@ describe('BuilderApp v2', () => {
     });
 
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftDecisionCard(container);
   });
 
   it('reloads stale project activity before restoring a pending draft after restart', async () => {
@@ -5989,7 +7818,7 @@ describe('BuilderApp v2', () => {
     });
 
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expectDraftDecisionCard(container);
   });
 
   it('does not restore a pending draft after project activity records rejection', async () => {
@@ -6009,13 +7838,12 @@ describe('BuilderApp v2', () => {
     });
 
     expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(restoreDraft).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
   });
 
   it('does not restore a pending draft after project activity records acceptance', async () => {
@@ -6035,13 +7863,34 @@ describe('BuilderApp v2', () => {
     });
 
     expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(restoreDraft).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+  });
+
+  it('does not restore an older superseded candidate after the latest candidate was accepted', async () => {
+    const { container, open, readTaskStream, restoreDraft, saveDraft } = await setup({
+      initiallySaved: true,
+      supersededAcceptedPendingActivity: true,
+      restoreAvailable: true,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
+    });
+    click(container, 'Hello project');
+
+    await waitFor(() => {
+      expect(container.querySelector('h1')?.textContent).toBe('Hello project');
+    });
+
+    expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
+    expect(restoreDraft).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 
   it('does not consume pending draft restore while viewing saved history', async () => {
@@ -6055,6 +7904,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
     });
     click(container, 'Hello project');
+    await openVersionsPanel(container);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-view-version="Version 1"]')).not.toBeNull();
     });
@@ -6073,7 +7923,7 @@ describe('BuilderApp v2', () => {
 
     click(container, 'Back to current');
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     await waitFor(() => {
       expect(restoreDraft).toHaveBeenCalledExactlyOnceWith({
@@ -6092,6 +7942,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
     });
     click(container, 'Hello project');
+    await openVersionsPanel(container);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-view-version="Version 1"]')).not.toBeNull();
       expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
@@ -6135,6 +7986,7 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector(`[data-builder-project-id="${PROJECT_ID}"]`)).not.toBeNull();
     });
     click(container, 'Hello project');
+    await openVersionsPanel(container);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-restore-version="Version 1"]')).not.toBeNull();
     });
@@ -6150,9 +8002,9 @@ describe('BuilderApp v2', () => {
         revision_receipt_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       });
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
-    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+    expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(saveDraft).not.toHaveBeenCalled();
     expect(restoreDraft).not.toHaveBeenCalled();
   });
@@ -6165,10 +8017,10 @@ describe('BuilderApp v2', () => {
       readTaskStream,
       restoreDraft,
       saveDraft,
-    } = await setup({ initiallySaved: true });
+    } = await setup({ initiallySaved: true, pendingActivityAfterSave: true });
     await openSavedProject(container);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
@@ -6179,23 +8031,22 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+      expectDraftDecisionCard(container);
     });
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
+      .toBe(false);
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     readTaskStream.mockClear();
-    click(container, 'Save version');
+    click(container, '[data-builder-save-version="true"]');
     await waitFor(() => {
       expect(saveDraft).toHaveBeenCalledOnce();
     });
     await waitFor(() => {
       expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     });
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-        .toContain('Version 1');
-    });
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
 
     expect(saveDraft).toHaveBeenCalledOnce();
     expect(saveDraft.mock.calls[0][0]).toEqual({
@@ -6203,7 +8054,7 @@ describe('BuilderApp v2', () => {
     });
     expect(loadCurrent).toHaveBeenCalledWith({ project_id: PROJECT_ID });
     await waitFor(() => {
-      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+      expect(readTaskStream).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     });
     expect(listHistory).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
@@ -6213,6 +8064,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     });
+    await openVersionsPanel(container);
     await waitFor(() => {
       expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
         .toContain('Current');
@@ -6220,7 +8072,7 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|parent_oid|credential|provider/iu);
   });
 
-  it('automatically runs the discovered draft check before enabling Save', async () => {
+  it('reads the main-owned automatic check result without executing a command from renderer', async () => {
     const {
       approveAndRunCurrentDraftCheck,
       container,
@@ -6247,18 +8099,16 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-run-check]')).toBeNull();
 
     await waitFor(() => {
-      expect(approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
-        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
-        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
-      });
-      expect(container.querySelector('[data-builder-check-run-status="passed"]')?.textContent)
-        .toContain('completed successfully');
+      const checkStatus = container.querySelector('[data-builder-command-status="passed"]');
+      expect(checkStatus?.textContent).toContain('Ran npm test');
+      expect(checkStatus?.textContent).toContain('completed successfully');
     });
+    expect(approveAndRunCurrentDraftCheck).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
       .toBe(false);
   });
 
-  it('retries automatic check discovery when the draft workspace is briefly unavailable', async () => {
+  it('retries read-only check discovery without moving command execution into renderer', async () => {
     const {
       approveAndRunCurrentDraftCheck,
       container,
@@ -6280,15 +8130,85 @@ describe('BuilderApp v2', () => {
 
     await waitFor(() => {
       expect(readCurrentDraftAvailableChecks).toHaveBeenCalledTimes(3);
-      expect(approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
+    });
+    expect(approveAndRunCurrentDraftCheck).not.toHaveBeenCalled();
+    expect(container.querySelector(
+      '[data-builder-command-status="passed"]',
+    )).not.toBeNull();
+    expectDraftDecisionCard(container);
+  });
+
+  it('diagnoses dependency-blocked checks without preparing dependencies from the renderer', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      readCurrentDraftAvailableChecks,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      dependencyBlockedCheck: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+      expect(container.querySelector('[data-builder-dependency-preparation="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-diagnose-check-environment="true"]');
+
+    await waitFor(() => {
+      expect(diagnoseCurrentDraftCheckEnvironment).toHaveBeenCalledExactlyOnceWith({
         draft_id: expect.stringMatching(/^builder-generation-draft:/u),
         command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
       });
+      const diagnosis = container.querySelector('[data-builder-check-environment-diagnosis="ready"]');
+      expect(diagnosis?.textContent).toContain('Readiness: The isolated check workspace has not prepared this draft\'s dependencies yet.');
+      expect(diagnosis?.textContent).toContain('Toolchain: visible');
+      expect(diagnosis?.textContent).toContain('Check workspace: install_missing');
+      expect(diagnosis?.textContent).toContain('Package manager: npm');
     });
-    expect(container.querySelector(
-      '[data-builder-check-run-status="passed"]',
-    )).not.toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('retries current draft file discovery while its durable projection is converging', async () => {
+    const {
+      container,
+      readCurrentDraftFileTree,
+    } = await setup({
+      initiallySaved: true,
+      sideWorkspaceFilesAvailable: true,
+      failSideWorkspaceFileTreeReadAttempts: 2,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expectDraftDecisionCard(container);
+    });
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-menu="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-workspace-control-tab="source"]');
+
+    await waitFor(() => {
+      expect(readCurrentDraftFileTree).toHaveBeenCalledTimes(3);
+      expect(container.querySelector(
+        '[data-builder-side-workspace-files-status="ready"]',
+      )).not.toBeNull();
+      expect(container.querySelector(
+        '[data-builder-side-workspace-file-content="index.html"]',
+      )?.textContent).toContain('Focus timer');
+    });
+    expect(container.textContent).not.toContain('Current draft files are not available yet.');
   });
 
   it('keeps unchecked drafts blocked without exposing manual check controls', async () => {
@@ -6310,12 +8230,16 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
-      expect(container.textContent).toContain('Builder has not finished checking this draft yet.');
+      const card = container.querySelector<HTMLElement>('[data-builder-composer-version-decision="true"]');
+      expect(card).toBeNull();
+      expect(container.textContent).not.toContain('Checking draft');
+      expect(container.textContent).not.toContain('Finishing checks');
+      expect(container.textContent).not.toContain('Save this draft?');
+      expect(container.textContent).not.toContain('Builder has not finished checking this draft yet.');
       expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
     });
     expect(saveDraft).not.toHaveBeenCalled();
-    click(container, '[data-builder-review-more="true"]');
     expect(container.textContent).not.toContain('Skip check');
     expect(skipCurrentDraftCheck).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -6334,5 +8258,283 @@ describe('BuilderApp v2', () => {
     click(container, 'Back to project');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value)
       .toBe('Keep this instruction.');
+  });
+
+  it('explains Settings environment diagnosis before a current draft exists without side effects', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      diagnoseProjectEnvironment,
+    } = await setup();
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('No current draft is available.');
+      expect(card?.textContent).toContain('without preparing dependencies or running checks');
+      expect(container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-diagnose-environment="true"]',
+      )?.disabled).toBe(true);
+    });
+    expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
+    expect(diagnoseProjectEnvironment).not.toHaveBeenCalled();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('diagnoses the selected project environment from Settings before a current draft exists', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      diagnoseProjectEnvironment,
+    } = await setup({ initiallySaved: true });
+    await openSavedProject(container);
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('Project environment');
+      expect(container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-diagnose-environment="true"]',
+      )?.disabled).toBe(false);
+    });
+    click(container, '[data-builder-settings-diagnose-environment="true"]');
+
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('This project declares dependencies');
+      expect(card?.textContent).toContain('Project dependencies');
+      expect(card?.textContent).toContain('Project dependency setup is diagnostic-only in this phase');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-section="toolchain"]',
+      )?.textContent).toContain('Node');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-section="toolchain"]',
+      )?.textContent).toContain('Git');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-row="project_dependency_state"]',
+      )?.textContent).toContain('Install Missing');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-diagnosis="ready"]',
+      )?.getAttribute('data-builder-settings-environment-primary-action'))
+        .toBe('show_project_dependency_setup');
+      expect(container.querySelector('[data-builder-settings-prepare-dependencies="true"]')).toBeNull();
+    });
+    expect(diagnoseProjectEnvironment).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('shows check discovery loading in Settings without starting diagnosis or preparation', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      readCurrentDraftAvailableChecks,
+      resolveDeferredCheckRunRead,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      deferredCheckRunRead: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledOnce();
+    });
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('Builder is discovering approved check commands for this draft.');
+      expect(container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-diagnose-environment="true"]',
+      )?.disabled).toBe(true);
+    });
+    expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+    await resolveDeferredCheckRunRead();
+  });
+
+  it('explains Settings environment diagnosis when a current draft has no approved checks', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      readCurrentDraftAvailableChecks,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: false,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+      });
+    });
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('No approved check command is available for the current draft.');
+      expect(container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-diagnose-environment="true"]',
+      )?.disabled).toBe(true);
+    });
+    expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('explains Settings environment diagnosis when check discovery fails', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      readCurrentDraftAvailableChecks,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      failCheckRunReadAttempts: 12,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1300));
+    });
+    await waitFor(() => {
+      expect(readCurrentDraftAvailableChecks).toHaveBeenCalledTimes(12);
+    }, 160);
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
+      expect(card?.textContent).toContain('Builder could not discover approved check commands for this draft.');
+      expect(container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-diagnose-environment="true"]',
+      )?.disabled).toBe(true);
+    });
+    expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('shows a read-only environment diagnosis entry in Settings for the current draft check', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      dependencyBlockedCheck: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-dependency-preparation="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-environment-diagnosis-settings="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-settings-diagnose-environment="true"]');
+
+    await waitFor(() => {
+      expect(diagnoseCurrentDraftCheckEnvironment).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      });
+      const diagnosis = container.querySelector('[data-builder-settings-environment-diagnosis="ready"]');
+      expect(diagnosis?.textContent).toContain('The isolated check workspace has not prepared this draft\'s dependencies yet.');
+      expect(diagnosis?.getAttribute('data-builder-settings-environment-primary-action')).toBe('prepare_once');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-section="toolchain"]',
+      )?.textContent).toContain('Host toolchain');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-row="host_toolchain_state"]',
+      )?.textContent).toContain('Visible');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-row="package_manager"]',
+      )?.textContent).toContain('npm 10.9.2');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-row="lockfile"]',
+      )?.textContent).toContain('package-lock.json');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-section="check_workspace"]',
+      )?.textContent).toContain('Check workspace');
+      expect(container.querySelector(
+        '[data-builder-settings-environment-row="check_workspace_dependency_state"]',
+      )?.textContent).toContain('Install Missing');
+    });
+    expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
+  });
+
+  it('prepares current-draft check dependencies from Settings only after one-shot approval', async () => {
+    const {
+      container,
+      decideCurrentDraftDependencyPreparation,
+      diagnoseCurrentDraftCheckEnvironment,
+      resolveDeferredDependencyPreparation,
+    } = await setup({
+      initiallySaved: true,
+      checkRunAvailable: true,
+      dependencyBlockedCheck: true,
+      dependencyBlockedUntilPreparation: true,
+      deferredDependencyPreparation: true,
+    });
+    await openSavedProject(container);
+    setComposerInstruction(container, 'Make a timer.');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-dependency-preparation="true"]')).not.toBeNull();
+    });
+
+    click(container, 'Settings');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-environment-diagnosis-settings="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-settings-diagnose-environment="true"]');
+    await waitFor(() => {
+      expect(diagnoseCurrentDraftCheckEnvironment).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      });
+      expect(container.querySelector('[data-builder-settings-prepare-dependencies="true"]')).not.toBeNull();
+    });
+
+    click(container, '[data-builder-settings-prepare-dependencies="true"]');
+    await waitFor(() => {
+      const button = container.querySelector<HTMLButtonElement>(
+        '[data-builder-settings-prepare-dependencies="true"]',
+      );
+      expect(button?.textContent).toContain('Preparing...');
+      expect(button?.disabled).toBe(true);
+      expect(decideCurrentDraftDependencyPreparation).toHaveBeenCalledExactlyOnceWith({
+        draft_id: expect.stringMatching(/^builder-generation-draft:/u),
+        command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+        decision: 'allow_once',
+      });
+    });
+    click(container, '[data-builder-settings-prepare-dependencies="true"]');
+    expect(decideCurrentDraftDependencyPreparation).toHaveBeenCalledOnce();
+
+    await resolveDeferredDependencyPreparation();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-settings-prepare-dependencies="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-settings-environment-diagnosis="ready"]')).toBeNull();
+    });
   });
 });

@@ -19,7 +19,8 @@ const {
 } = require('../electron/builder-live-preview-static-server.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
-const CONVERSATION_ID = 'builder-conversation:22222222-2222-4222-8222-222222222222';
+const CONVERSATION_ID =
+  'builder-conversation:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222';
 const TASK_ID = 'builder-task:33333333-3333-4333-8333-333333333333';
 const RUN_ID = 'builder-run:44444444-4444-4444-8444-444444444444';
 const DRAFT_CHECKPOINT_ID = `builder-draft-checkpoint:${'a'.repeat(64)}`;
@@ -42,6 +43,7 @@ function admissionFor(tree, overrides = {}) {
     task_id: TASK_ID,
     run_id: RUN_ID,
     draft_checkpoint_id: DRAFT_CHECKPOINT_ID,
+    revision_receipt_digest: null,
     source_tree_digest: tree.source_tree_digest,
     selected_entry_path: 'index.html',
     preview_kind: 'live_static_web',
@@ -114,6 +116,10 @@ test('serves admitted static web source from loopback only', async (t) => {
   assert.equal(html.status, 200);
   assert.match(html.headers.get('content-type') ?? '', /^text\/html; charset=utf-8$/u);
   assert.match(html.headers.get('content-security-policy') ?? '', /connect-src 'none'/u);
+  assert.match(
+    html.headers.get('content-security-policy') ?? '',
+    /script-src 'self' 'unsafe-inline'/u,
+  );
   assert.match(html.headers.get('x-content-type-options') ?? '', /nosniff/u);
   assert.match(await responseText(html), /<canvas id="scene">/u);
 

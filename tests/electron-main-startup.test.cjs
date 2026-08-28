@@ -24,11 +24,16 @@ async function executeMain({
 }) {
   const calls = {
     createApprovalRuntime: 0,
+    createAgentTestBrowserIpcRuntime: 0,
+    createAgentTestBrowserRuntime: 0,
+    createBrowserSessionRegistry: 0,
     createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
     createLivePreviewWebContentsViewRuntime: 0,
+    createUserWebMainService: 0,
+    createUserWebRuntime: 0,
     createSideWorkspaceFileMainService: 0,
     createSideWorkspaceFileRuntime: 0,
     createPermissionRuntime: 0,
@@ -45,14 +50,22 @@ async function executeMain({
   const applicationMenuCalls = [];
   const browserWindowOptions = [];
   const dialogCalls = [];
+  const fileWrites = [];
   let sessionCreated = sessionDataExists;
   let permissionGrantForExplicitApproval = null;
   let providerContextDisclosureStatusService = null;
   let currentDraftCheckRunService = null;
   let currentDraftCheckSkipService = null;
   let currentDraftLivePreviewSourceService = null;
+  let runtimeWorkspaceSourceService = null;
+  let projectWorkspacePathService = null;
   let livePreviewMainService = null;
+  let userWebMainService = null;
   let sideWorkspaceFileMainService = null;
+  let browserSessionRegistry = null;
+  const spawn = () => {
+    throw new Error('unexpected process spawn');
+  };
   const events = new Map();
   const generationRuntimeOptions = [];
   function runtime(index) {
@@ -67,14 +80,15 @@ async function executeMain({
       },
     };
   }
+  const appPaths = new Map([['userData', path.join(process.cwd(), 'test-user-data')]]);
   const app = {
-    getPath() { return path.join(process.cwd(), 'test-user-data'); },
+    getPath(name) { return appPaths.get(name) ?? path.join(process.cwd(), `test-${name}`); },
     isPackaged,
     on(name, handler) { events.set(name, handler); },
     quit() { calls.quit += 1; },
     requestSingleInstanceLock() { return singleInstanceLock; },
     setAppUserModelId() {},
-    setPath(name, value) { calls.setPath.push([name, value]); },
+    setPath(name, value) { calls.setPath.push([name, value]); appPaths.set(name, value); },
     whenReady() {
       calls.whenReady += 1;
       return Promise.resolve();
@@ -128,9 +142,11 @@ async function executeMain({
     module: { exports: {} },
     process: Object.freeze({
       env,
+      execPath: path.join(process.cwd(), 'node.exe'),
       platform: process.platform,
     }),
     require(specifier) {
+      if (specifier === 'node:child_process') return { spawn };
       if (specifier === 'node:fs') {
         return {
           lstatSync(target) {
@@ -155,6 +171,9 @@ async function executeMain({
             native(target) {
               return realpathMap[target] ?? target;
             },
+          },
+          writeFileSync(target, source, options) {
+            fileWrites.push([target, source, options]);
           },
         };
       }
@@ -188,6 +207,9 @@ async function executeMain({
       }
       if (specifier === './builder-generation-ipc-runtime.cjs') {
         return {
+          packagedCheckWorkerPath() {
+            return path.join(path.dirname(mainPath), 'builder-packaged-check-script-worker.cjs');
+          },
           createBuilderGenerationIpcRuntime(options) {
             calls.createGenerationRuntime += 1;
             assert.equal(options.fetchImpl, electron.net.fetch);
@@ -210,12 +232,58 @@ async function executeMain({
             });
             value.readCheckRunSkipCurrentDraftServiceForMainOnlyApprovalRuntime =
               () => currentDraftCheckSkipService;
+            const projectEnvironmentDiagnosisService = Object.freeze({
+              service_version: 'builder-project-environment-diagnosis-service.v1',
+            });
+            value.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime =
+              () => projectEnvironmentDiagnosisService;
             currentDraftLivePreviewSourceService = Object.freeze({
               service_version: 'builder-live-preview-current-draft-source-service.v1',
             });
             value.readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime =
               () => currentDraftLivePreviewSourceService;
+            runtimeWorkspaceSourceService = Object.freeze({
+              service_version: 'builder-runtime-workspace-source-service.v1',
+            });
+            value.readRuntimeWorkspaceSourceServiceForMainOnlyRuntime =
+              () => runtimeWorkspaceSourceService;
+            projectWorkspacePathService = Object.freeze({
+              service_version: 'builder-project-workspace-path-service.v1',
+            });
+            value.readProjectWorkspacePathServiceForMainOnlyRuntime =
+              () => projectWorkspacePathService;
             return value;
+          },
+        };
+      }
+      if (specifier === './builder-check-run-process-adapter.cjs') {
+        return {
+          createBuilderCheckRunProcessAdapter(options) {
+            assert.equal(options.spawn_process, spawn);
+            assert.equal(options.platform, process.platform);
+            return Object.freeze({
+              process_adapter_version: 'builder-check-run-process-adapter.v1',
+            });
+          },
+        };
+      }
+      if (specifier === './builder-live-preview-dev-server-runtime.cjs') {
+        return {
+          createBuilderLivePreviewDevServerRuntime(options) {
+            assert.equal(
+              options.process_adapter.process_adapter_version,
+              'builder-check-run-process-adapter.v1',
+            );
+            assert.equal(options.process_exec_path, path.join(process.cwd(), 'node.exe'));
+            assert.equal(
+              options.worker_path,
+              path.join(path.dirname(mainPath), 'builder-packaged-check-script-worker.cjs'),
+            );
+            assert.equal(typeof options.now_ms, 'function');
+            assert.equal(typeof options.on_output, 'function');
+            return Object.freeze({
+              runtime_version: 'builder-live-preview-dev-server-runtime.v1',
+            });
           },
         };
       }
@@ -239,6 +307,10 @@ async function executeMain({
             assert.equal(typeof options.mainWindowRef, 'function');
             assert.equal(options.currentDraftCheckRunService, currentDraftCheckRunService);
             assert.equal(options.currentDraftCheckSkipService, currentDraftCheckSkipService);
+            assert.equal(
+              options.projectEnvironmentDiagnosisService.service_version,
+              'builder-project-environment-diagnosis-service.v1',
+            );
             const value = runtime(4);
             value.shutdown = async () => {
               calls.shutdown += 1;
@@ -260,6 +332,28 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-user-web-ipc-runtime.cjs') {
+        return {
+          createBuilderUserWebIpcRuntime(options) {
+            calls.createUserWebRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.userWebService, userWebMainService);
+            return runtime(8);
+          },
+        };
+      }
+      if (specifier === './builder-agent-test-browser-ipc-runtime.cjs') {
+        return {
+          createBuilderAgentTestBrowserIpcRuntime(options) {
+            calls.createAgentTestBrowserIpcRuntime += 1;
+            assert.equal(options.ipcMain, electron.ipcMain);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(options.agentTestBrowserRuntime.runtime_version, 'builder-agent-test-browser-runtime.v1');
+            return runtime(9);
+          },
+        };
+      }
       if (specifier === './builder-side-workspace-file-ipc-runtime.cjs') {
         return {
           createBuilderSideWorkspaceFileIpcRuntime(options) {
@@ -277,6 +371,11 @@ async function executeMain({
             calls.createLivePreviewMainService += 1;
             assert.equal(options.current_draft_source_service, currentDraftLivePreviewSourceService);
             assert.equal(options.webcontents_view_runtime.runtime_version, 'builder-live-preview-webcontents-view-runtime.v1');
+            assert.equal(
+              options.dev_server_runtime.runtime_version,
+              'builder-live-preview-dev-server-runtime.v1',
+            );
+            assert.equal(options.project_workspace_path_service, projectWorkspacePathService);
             assert.equal(typeof options.mainWindowRef, 'function');
             assert.equal(typeof options.now_ms, 'function');
             livePreviewMainService = Object.freeze({
@@ -286,11 +385,27 @@ async function executeMain({
           },
         };
       }
+      if (specifier === './builder-user-web-main-service.cjs') {
+        return {
+          createBuilderUserWebMainService(options) {
+            calls.createUserWebMainService += 1;
+            assert.equal(options.WebContentsView, WebContentsView);
+            assert.equal(options.browserSessionRegistry, browserSessionRegistry);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(typeof options.nowMs, 'function');
+            userWebMainService = Object.freeze({
+              service_version: 'builder-user-web-main-service.v1',
+            });
+            return userWebMainService;
+          },
+        };
+      }
       if (specifier === './builder-side-workspace-file-main-service.cjs') {
         return {
           createBuilderSideWorkspaceFileMainService(options) {
             calls.createSideWorkspaceFileMainService += 1;
             assert.equal(options.current_draft_source_service, currentDraftLivePreviewSourceService);
+            assert.equal(options.runtime_snapshot_source_service, runtimeWorkspaceSourceService);
             sideWorkspaceFileMainService = Object.freeze({
               service_version: 'builder-side-workspace-file-main-service.v1',
             });
@@ -303,10 +418,39 @@ async function executeMain({
           createBuilderLivePreviewWebContentsViewRuntime(options) {
             calls.createLivePreviewWebContentsViewRuntime += 1;
             assert.equal(options.WebContentsView, WebContentsView);
-            assert.equal(options.session, electron.session);
+            assert.equal(options.browserSessionRegistry, browserSessionRegistry);
             assert.equal(typeof options.nowMs, 'function');
             return Object.freeze({
               runtime_version: 'builder-live-preview-webcontents-view-runtime.v1',
+            });
+          },
+        };
+      }
+      if (specifier === './builder-browser-session-registry.cjs') {
+        return {
+          createBuilderBrowserSessionRegistry(options) {
+            calls.createBrowserSessionRegistry += 1;
+            assert.equal(options.session, electron.session);
+            assert.equal(typeof options.now_ms, 'function');
+            browserSessionRegistry = Object.freeze({
+              registry_version: 'builder-browser-session-registry.v1',
+              dispose: async () => Object.freeze({ disposed: true }),
+            });
+            return browserSessionRegistry;
+          },
+        };
+      }
+      if (specifier === './builder-agent-test-browser-runtime.cjs') {
+        return {
+          createBuilderAgentTestBrowserRuntime(options) {
+            calls.createAgentTestBrowserRuntime += 1;
+            assert.equal(options.WebContentsView, WebContentsView);
+            assert.equal(options.browser_session_registry, browserSessionRegistry);
+            assert.equal(typeof options.mainWindowRef, 'function');
+            assert.equal(typeof options.now_ms, 'function');
+            return Object.freeze({
+              runtime_version: 'builder-agent-test-browser-runtime.v1',
+              dispose: async () => Object.freeze({ disposed: true }),
             });
           },
         };
@@ -319,6 +463,19 @@ async function executeMain({
             assert.equal(typeof options.mainWindowRef, 'function');
             return runtime(7);
           },
+        };
+      }
+      if (specifier === './builder-performance-trace.cjs') {
+        return {
+          builderPerformanceTrace: Object.freeze({
+            beginEventLoopWindow: () => false,
+            configure: () => false,
+            endEventLoopWindow: () => false,
+            enabled: () => false,
+            flush: () => false,
+            measureAsync: (_name, callback) => callback(),
+            measureSync: (_name, callback) => callback(),
+          }),
         };
       }
       throw new Error(`unexpected require: ${specifier}`);
@@ -341,7 +498,7 @@ async function executeMain({
     throw error;
   }
   await new Promise((resolve) => setImmediate(resolve));
-  return { applicationMenuCalls, browserWindowOptions, calls, dialogCalls, events, generationRuntimeOptions };
+  return { applicationMenuCalls, browserWindowOptions, calls, dialogCalls, events, fileWrites, generationRuntimeOptions };
 }
 
 test('a second application instance exits before registering Builder authorities', async () => {
@@ -350,12 +507,17 @@ test('a second application instance exits before registering Builder authorities
     windowConstructionFails: false,
   });
   assert.deepEqual(calls, {
+    createAgentTestBrowserIpcRuntime: 0,
+    createAgentTestBrowserRuntime: 0,
     createApprovalRuntime: 0,
+    createBrowserSessionRegistry: 0,
     createCheckRunApprovalRuntime: 0,
     createGenerationRuntime: 0,
     createLivePreviewMainService: 0,
     createLivePreviewRuntime: 0,
     createLivePreviewWebContentsViewRuntime: 0,
+    createUserWebMainService: 0,
+    createUserWebRuntime: 0,
     createSideWorkspaceFileMainService: 0,
     createSideWorkspaceFileRuntime: 0,
     createPermissionRuntime: 0,
@@ -378,21 +540,26 @@ test('window startup failure disposes registered handlers and quits', async () =
     windowConstructionFails: true,
   });
   assert.deepEqual(calls, {
+    createAgentTestBrowserIpcRuntime: 1,
+    createAgentTestBrowserRuntime: 1,
     createApprovalRuntime: 1,
+    createBrowserSessionRegistry: 1,
     createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
     createLivePreviewWebContentsViewRuntime: 1,
+    createUserWebMainService: 1,
+    createUserWebRuntime: 1,
     createSideWorkspaceFileMainService: 1,
     createSideWorkspaceFileRuntime: 1,
     createPermissionRuntime: 1,
     createSettingsRuntime: 1,
     createWindowControlsRuntime: 1,
-    dispose: 7,
+    dispose: 9,
     mkdir: 0,
     quit: 1,
-    register: 8,
+    register: 10,
     setPath: [],
     shutdown: 1,
     whenReady: 1,
@@ -412,6 +579,32 @@ test('window startup failure disposes registered handlers and quits', async () =
   assert.equal(browserWindowOptions[0].webPreferences.sandbox, true);
 });
 
+test('packaged canary startup failure records only bounded fixed diagnostics', async () => {
+  const userData = path.join(process.cwd(), 'tmp', 'clawfabric-builder-packaged-canary-debug');
+  const { fileWrites } = await executeMain({
+    env: {
+      BUILDER_PACKAGED_CANARY: '1',
+      BUILDER_PACKAGED_CANARY_USER_DATA_PATH: userData,
+    },
+    singleInstanceLock: true,
+    windowConstructionFails: true,
+  });
+  assert.equal(fileWrites.length, 1);
+  assert.equal(fileWrites[0][0], path.join(userData, 'builder-canary-startup-debug.json'));
+  assert.deepEqual(JSON.parse(fileWrites[0][1]), {
+    diagnostic_version: 'builder-packaged-canary-startup-debug.v1',
+    error_code: 'startup_failed',
+    error_name: 'Error',
+    phase: 'ready_handler',
+    source_file: null,
+    source_line: null,
+  });
+  assert.equal(fileWrites[0][2].encoding, 'utf8');
+  assert.equal(fileWrites[0][2].flag, 'wx');
+  assert.deepEqual(Object.keys(fileWrites[0][2]).sort(), ['encoding', 'flag']);
+  assert.doesNotMatch(fileWrites[0][1], /message|stack|path|secret|credential/iu);
+});
+
 test('does not close generation authority or quit when CheckRun drain is unconfirmed', async () => {
   const { calls } = await executeMain({
     failCheckRunShutdown: true,
@@ -420,9 +613,9 @@ test('does not close generation authority or quit when CheckRun drain is unconfi
   });
   assert.equal(calls.createGenerationRuntime, 1);
   assert.equal(calls.createCheckRunApprovalRuntime, 1);
-  assert.equal(calls.register, 8);
+  assert.equal(calls.register, 10);
   assert.equal(calls.shutdown, 1);
-  assert.equal(calls.dispose, 3);
+  assert.equal(calls.dispose, 5);
   assert.equal(calls.quit, 0);
 });
 
@@ -460,12 +653,17 @@ test('runtime registration failure rolls back previously registered handlers and
     failRegisterIndex: 2,
   });
   assert.deepEqual(calls, {
+    createAgentTestBrowserIpcRuntime: 1,
+    createAgentTestBrowserRuntime: 1,
     createApprovalRuntime: 1,
+    createBrowserSessionRegistry: 1,
     createCheckRunApprovalRuntime: 1,
     createGenerationRuntime: 1,
     createLivePreviewMainService: 1,
     createLivePreviewRuntime: 1,
     createLivePreviewWebContentsViewRuntime: 1,
+    createUserWebMainService: 1,
+    createUserWebRuntime: 1,
     createSideWorkspaceFileMainService: 1,
     createSideWorkspaceFileRuntime: 1,
     createPermissionRuntime: 1,

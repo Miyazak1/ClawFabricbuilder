@@ -78,7 +78,7 @@ const FAILURE_CLASS_BY_STATUS = Object.freeze({
 const SUMMARY_BY_FAILURE_CLASS = Object.freeze({
   command_failed: 'Check failed. Review the project command before saving.',
   timed_out: 'Check stopped after reaching the time limit.',
-  environment_unavailable: 'Check could not start in the current environment.',
+  environment_unavailable: 'The admitted check workspace needs prepared dependencies or local toolchain access before this check can run.',
   cancelled: 'Check was cancelled.',
   spawn_failed: 'Check could not be started.',
   output_exceeded: 'Check output exceeded the review limit.',

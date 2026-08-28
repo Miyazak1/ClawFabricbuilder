@@ -4,6 +4,9 @@ const { types: utilTypes } = require('node:util');
 
 const {
   APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
+  DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
+  DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
+  DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   createBuilderCheckRunApprovalIpcAdapter,
@@ -22,14 +25,21 @@ const OPTION_KEYS = Object.freeze([
   'mainWindowRef',
   'currentDraftCheckRunService',
   'currentDraftCheckSkipService',
+  'projectEnvironmentDiagnosisService',
 ]);
 const SERVICE_KEYS = Object.freeze([
   'service_version',
   'read_available_checks',
   'read_current_candidate_for_main_only',
+  'diagnose_check_environment',
   'run_approved_check',
+  'decide_dependency_preparation_and_run_check',
 ]);
 const SKIP_SERVICE_KEYS = Object.freeze(['service_version', 'skip_current_draft_check']);
+const PROJECT_DIAGNOSIS_SERVICE_KEYS = Object.freeze([
+  'service_version',
+  'diagnose_project_environment',
+]);
 
 class BuilderCheckRunApprovalIpcRuntimeError extends Error {
   constructor(code = 'builder_check_run_approval_ipc_runtime_unavailable') {
@@ -110,6 +120,16 @@ function safeSkipService(value) {
   return value;
 }
 
+function safeProjectDiagnosisService(value) {
+  const descriptors = exactObject(value, PROJECT_DIAGNOSIS_SERVICE_KEYS);
+  if (
+    descriptors.service_version.value !== 'builder-project-environment-diagnosis-service.v1'
+    || typeof descriptors.diagnose_project_environment.value !== 'function'
+    || utilTypes.isProxy(descriptors.diagnose_project_environment.value)
+  ) fail();
+  return value;
+}
+
 function safeOptions(value) {
   const descriptors = exactObject(value, OPTION_KEYS);
   const ipcMain = descriptors.ipcMain.value;
@@ -128,12 +148,16 @@ function safeOptions(value) {
     mainWindowRef,
     currentDraftCheckRunService: safeService(descriptors.currentDraftCheckRunService.value),
     currentDraftCheckSkipService: safeSkipService(descriptors.currentDraftCheckSkipService.value),
+    projectEnvironmentDiagnosisService:
+      safeProjectDiagnosisService(descriptors.projectEnvironmentDiagnosisService.value),
   });
 }
 
 function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
   const options = safeOptions(rawOptions);
   const activeReads = new Map();
+  const activeDiagnoses = new Map();
+  const activeProjectDiagnoses = new Map();
   const activeRuns = new Set();
   const activeSkips = new Set();
   const activeOperations = new Set();
@@ -160,6 +184,43 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     return trackOperation(operation);
   }
 
+  function diagnosisKey(request) {
+    return `${request.draft_id}:${request.command_profile_id}`;
+  }
+
+  function diagnoseCheckEnvironment(request) {
+    const key = diagnosisKey(request);
+    const existing = activeDiagnoses.get(key);
+    if (existing !== undefined) return existing;
+    const operation = Promise.resolve().then(() => Reflect.apply(
+      options.currentDraftCheckRunService.diagnose_check_environment,
+      options.currentDraftCheckRunService,
+      [request],
+    ));
+    activeDiagnoses.set(key, operation);
+    operation.finally(() => {
+      if (activeDiagnoses.get(key) === operation) activeDiagnoses.delete(key);
+    }).catch(() => undefined);
+    return trackOperation(operation);
+  }
+
+  function diagnoseProjectEnvironment(request) {
+    const existing = activeProjectDiagnoses.get(request.project_id);
+    if (existing !== undefined) return existing;
+    const operation = Promise.resolve().then(() => Reflect.apply(
+      options.projectEnvironmentDiagnosisService.diagnose_project_environment,
+      options.projectEnvironmentDiagnosisService,
+      [request],
+    ));
+    activeProjectDiagnoses.set(request.project_id, operation);
+    operation.finally(() => {
+      if (activeProjectDiagnoses.get(request.project_id) === operation) {
+        activeProjectDiagnoses.delete(request.project_id);
+      }
+    }).catch(() => undefined);
+    return trackOperation(operation);
+  }
+
   function approveAndRunCheck(request) {
     if (activeRuns.has(request.draft_id)) {
       const error = new Error('A project check is already in progress.');
@@ -169,6 +230,23 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     activeRuns.add(request.draft_id);
     const operation = Promise.resolve().then(() => Reflect.apply(
         options.currentDraftCheckRunService.run_approved_check,
+        options.currentDraftCheckRunService,
+        [request],
+      )).finally(() => {
+      activeRuns.delete(request.draft_id);
+    });
+    return trackOperation(operation);
+  }
+
+  function decideDependencyPreparation(request) {
+    if (activeRuns.has(request.draft_id)) {
+      const error = new Error('A project check is already in progress.');
+      error.code = 'builder_check_run_approval_busy';
+      return Promise.reject(error);
+    }
+    activeRuns.add(request.draft_id);
+    const operation = Promise.resolve().then(() => Reflect.apply(
+        options.currentDraftCheckRunService.decide_dependency_preparation_and_run_check,
         options.currentDraftCheckRunService,
         [request],
       )).finally(() => {
@@ -198,7 +276,10 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
   try {
     adapter = createBuilderCheckRunApprovalIpcAdapter({
       readCurrentDraftAvailableChecks: readAvailableChecks,
+      diagnoseCurrentDraftCheckEnvironment: diagnoseCheckEnvironment,
+      diagnoseProjectEnvironment,
       approveAndRunCurrentDraftCheck: approveAndRunCheck,
+      decideCurrentDraftDependencyPreparation: decideDependencyPreparation,
       skipCurrentDraftCheck,
       mainWindowRef: options.mainWindowRef,
     });
@@ -211,8 +292,20 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
       invoke: adapter.channels.readCurrentDraftAvailableChecks.invoke,
     }),
     Object.freeze({
+      channel: DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
+      invoke: adapter.channels.diagnoseCurrentDraftCheckEnvironment.invoke,
+    }),
+    Object.freeze({
+      channel: DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+      invoke: adapter.channels.diagnoseProjectEnvironment.invoke,
+    }),
+    Object.freeze({
       channel: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
       invoke: adapter.channels.approveAndRunCurrentDraftCheck.invoke,
+    }),
+    Object.freeze({
+      channel: DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
+      invoke: adapter.channels.decideCurrentDraftDependencyPreparation.invoke,
     }),
     Object.freeze({
       channel: SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
@@ -285,7 +378,12 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
         return false;
       }
       if (state === 'draining') {
-        if (activeReads.size > 0 || activeRuns.size > 0) {
+        if (
+          activeReads.size > 0
+          || activeDiagnoses.size > 0
+          || activeProjectDiagnoses.size > 0
+          || activeRuns.size > 0
+        ) {
           fail('builder_check_run_approval_ipc_runtime_cleanup_required');
         }
         state = 'disposed';
@@ -295,7 +393,12 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
         state = 'cleanup_required';
         fail('builder_check_run_approval_ipc_runtime_cleanup_required');
       }
-      if (activeReads.size > 0 || activeRuns.size > 0) {
+      if (
+        activeReads.size > 0
+        || activeDiagnoses.size > 0
+        || activeProjectDiagnoses.size > 0
+        || activeRuns.size > 0
+      ) {
         state = 'draining';
         fail('builder_check_run_approval_ipc_runtime_cleanup_required');
       }

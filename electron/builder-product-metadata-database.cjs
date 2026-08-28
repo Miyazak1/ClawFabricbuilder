@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
 const { types: utilTypes } = require('node:util');
 
 const {
@@ -24,7 +25,7 @@ const {
 } = require('./builder-conversation-records.cjs');
 const {
   BuilderConversationReplayError,
-  replayBuilderConversation,
+  createBuilderConversationReplayAccumulator,
 } = require('./builder-conversation-replay.cjs');
 const {
   BuilderStorageLifecycleReportError,
@@ -51,6 +52,7 @@ const {
 } = require('./builder-product-metadata-schema.cjs');
 
 const DATABASE_ID = 'builder-product-metadata-database.v3';
+const TRUSTED_CONVERSATION_AUTHORITY_RESULTS = new WeakSet();
 const MAX_REVISION_CHAIN_DEPTH = 1024;
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -82,6 +84,7 @@ const STORAGE_RETENTION_KEYS = Object.freeze([
   'delete_failed_unsaved_draft_after_days',
   'saved_versions',
 ]);
+const conversationStateCaches = new WeakMap();
 
 class BuilderProductMetadataDatabaseError extends Error {
   constructor(code = 'builder_product_metadata_invalid') {
@@ -521,23 +524,35 @@ function indexConversationCandidate(db, event) {
   ]);
 }
 
-function loadConversationState(db, projectId, conversationId, missingCode) {
-  const conversation = loadConversationRow(db, projectId, conversationId, missingCode);
-  const rows = all(
+function conversationCache(db) {
+  let cache = conversationStateCaches.get(db);
+  if (cache === undefined) {
+    cache = new Map();
+    conversationStateCaches.set(db, cache);
+  }
+  return cache;
+}
+
+function conversationCacheKey(projectId, conversationId) {
+  return `${projectId}\u0000${conversationId}`;
+}
+
+function loadConversationEventRows(db, projectId, conversationId, afterSequence = 0) {
+  return all(
     db,
     `SELECT project_id, conversation_id, sequence, event_id, event_digest, command_id,
       command_digest, event_type, previous_event_sequence, previous_event_id,
       previous_event_digest, record_json, created_at_ms
       FROM conversation_events
-      WHERE project_id = ? AND conversation_id = ?
+      WHERE project_id = ? AND conversation_id = ? AND sequence > ?
       ORDER BY sequence ASC
       LIMIT ?`,
-    [projectId, conversationId, MAX_CONVERSATION_EVENTS + 1],
+    [projectId, conversationId, afterSequence, MAX_CONVERSATION_EVENTS + 1],
   );
-  if (rows.length > MAX_CONVERSATION_EVENTS) {
-    fail('builder_product_metadata_resource_exceeded');
-  }
-  let bytes = 0;
+}
+
+function eventsFromRows(rows, projectId, conversationId, initialBytes = 0) {
+  let bytes = initialBytes;
   const events = rows.map((row) => {
     bytes += Buffer.byteLength(row.record_json ?? '', 'utf8');
     if (bytes > MAX_CONVERSATION_BYTES) {
@@ -545,35 +560,133 @@ function loadConversationState(db, projectId, conversationId, missingCode) {
     }
     return eventFromRow(row, projectId, conversationId);
   });
-  const actualHead = events.length === 0 ? null : eventHead(events.at(-1));
-  if (!sameHead(actualHead, conversation.head)) {
-    fail('builder_product_metadata_integrity_failed');
-  }
-  let snapshot = null;
-  if (events.length > 0) {
-    try {
-      snapshot = replayBuilderConversation(events);
-    } catch {
-      fail('builder_product_metadata_integrity_failed');
-    }
-    if (!sameHead(snapshot.head, conversation.head)) {
-      fail('builder_product_metadata_integrity_failed');
-    }
-  }
+  return { events, bytes };
+}
+
+function cachedConversationState(conversation, head, events, snapshot) {
   return frozen({
     conversation: {
-      project_id: projectId,
-      conversation_id: conversationId,
+      project_id: conversation.row.project_id,
+      conversation_id: conversation.row.conversation_id,
       created_at_ms: conversation.row.created_at_ms,
     },
-    head: conversation.head,
+    head,
     events,
     snapshot,
   });
 }
 
+function appendFrozenConversationEvents(prefix, suffix) {
+  const events = prefix.concat(suffix);
+  Object.freeze(events);
+  return events;
+}
+
+function loadConversationState(db, projectId, conversationId, missingCode) {
+  return builderPerformanceTrace.measureSync('main.conversation.load.duration_ms', () => {
+    const conversation = loadConversationRow(db, projectId, conversationId, missingCode);
+    const cache = conversationCache(db);
+    const cacheKey = conversationCacheKey(projectId, conversationId);
+    const cached = cache.get(cacheKey) ?? null;
+    if (cached !== null && sameHead(cached.state.head, conversation.head)) {
+      builderPerformanceTrace.increment('main.conversation.load.cache_hit_count');
+      builderPerformanceTrace.observe('main.conversation.load.event_count', 0);
+      builderPerformanceTrace.observe('main.conversation.load.event_bytes', 0);
+      return cached.state;
+    }
+
+    if (
+      cached !== null
+      && cached.state.head !== null
+      && conversation.head !== null
+      && cached.state.head.sequence < conversation.head.sequence
+    ) {
+      try {
+        const rows = loadConversationEventRows(
+          db,
+          projectId,
+          conversationId,
+          cached.state.head.sequence,
+        );
+        if (rows.length !== conversation.head.sequence - cached.state.head.sequence) {
+          fail('builder_product_metadata_integrity_failed');
+        }
+        const suffix = eventsFromRows(
+          rows,
+          projectId,
+          conversationId,
+          cached.eventBytes,
+        );
+        const snapshot = cached.accumulator.append(suffix.events);
+        if (!sameHead(snapshot.head, conversation.head)) {
+          fail('builder_product_metadata_integrity_failed');
+        }
+        const state = cachedConversationState(
+          conversation,
+          conversation.head,
+          [...cached.state.events, ...suffix.events],
+          snapshot,
+        );
+        cache.set(cacheKey, {
+          state,
+          eventBytes: suffix.bytes,
+          accumulator: cached.accumulator,
+        });
+        builderPerformanceTrace.increment('main.conversation.load.suffix_hit_count');
+        builderPerformanceTrace.observe('main.conversation.load.event_count', suffix.events.length);
+        builderPerformanceTrace.observe(
+          'main.conversation.load.event_bytes',
+          suffix.bytes - cached.eventBytes,
+        );
+        return state;
+      } catch {
+        cache.delete(cacheKey);
+      }
+    }
+
+    const rows = loadConversationEventRows(db, projectId, conversationId);
+    if (rows.length > MAX_CONVERSATION_EVENTS) {
+      fail('builder_product_metadata_resource_exceeded');
+    }
+    const loaded = eventsFromRows(rows, projectId, conversationId);
+    const { events, bytes } = loaded;
+    const actualHead = events.length === 0 ? null : eventHead(events.at(-1));
+    if (!sameHead(actualHead, conversation.head)) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    let snapshot = null;
+    let accumulator = null;
+    if (events.length > 0) {
+      try {
+        accumulator = createBuilderConversationReplayAccumulator(events);
+        snapshot = accumulator.snapshot();
+      } catch {
+        fail('builder_product_metadata_integrity_failed');
+      }
+      if (!sameHead(snapshot.head, conversation.head)) {
+        fail('builder_product_metadata_integrity_failed');
+      }
+    }
+    builderPerformanceTrace.observe('main.conversation.load.event_count', events.length);
+    builderPerformanceTrace.observe('main.conversation.load.event_bytes', bytes);
+    const state = cachedConversationState(
+      conversation,
+      conversation.head,
+      events,
+      snapshot,
+    );
+    cache.set(cacheKey, {
+      state,
+      eventBytes: bytes,
+      accumulator,
+    });
+    builderPerformanceTrace.increment('main.conversation.load.full_read_count');
+    return state;
+  });
+}
+
 function conversationResult(db, operation, state, actionEvents) {
-  return frozen({
+  const result = frozen({
     result_version: BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
     operation,
     conversation: state.conversation,
@@ -598,6 +711,15 @@ function conversationResult(db, operation, state, actionEvents) {
       provider_payload_storage: 'not_present',
     },
   });
+  TRUSTED_CONVERSATION_AUTHORITY_RESULTS.add(result);
+  return result;
+}
+
+function isTrustedConversationAuthorityResult(value) {
+  return (
+    ((value !== null && typeof value === 'object') || typeof value === 'function')
+    && TRUSTED_CONVERSATION_AUTHORITY_RESULTS.has(value)
+  );
 }
 
 function exactStoredBatch(state, request) {
@@ -633,6 +755,10 @@ function exactStoredBatch(state, request) {
 
 function appendConversationEvents(db, rawRequest) {
   const request = sanitizeAppendConversationEventsRequest(rawRequest);
+  const cacheKey = conversationCacheKey(
+    request.project.project_id,
+    request.conversation.conversation_id,
+  );
   db.exec('BEGIN IMMEDIATE');
   try {
     const existingProject = projectRow(db, request.project.project_id);
@@ -654,14 +780,8 @@ function appendConversationEvents(db, rawRequest) {
     if (!sameHead(before.head, request.expected_head)) {
       fail('builder_product_metadata_conflict');
     }
-    const combined = [...before.events, ...request.events];
-    if (combined.length > MAX_CONVERSATION_EVENTS) {
+    if (before.events.length + request.events.length > MAX_CONVERSATION_EVENTS) {
       fail('builder_product_metadata_resource_exceeded');
-    }
-    try {
-      replayBuilderConversation(combined);
-    } catch {
-      fail('builder_product_metadata_invalid');
     }
     for (const event of request.events) {
       const previous = event.previous_event;
@@ -708,21 +828,67 @@ function appendConversationEvents(db, rawRequest) {
       ],
     );
     if (updated.changes !== 1) fail('builder_product_metadata_conflict');
-    const after = loadConversationState(
+    const cache = conversationCache(db);
+    const cached = cache.get(cacheKey) ?? null;
+    if (cached === null || cached.state !== before) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    const storedRows = loadConversationEventRows(
       db,
       request.project.project_id,
       request.conversation.conversation_id,
-      'builder_product_metadata_integrity_failed',
+      before.head?.sequence ?? 0,
     );
+    if (storedRows.length !== request.events.length) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    const storedSuffix = eventsFromRows(
+      storedRows,
+      request.project.project_id,
+      request.conversation.conversation_id,
+      cached.eventBytes,
+    );
+    let snapshot;
+    let accumulator = cached.accumulator;
+    try {
+      if (accumulator === null) {
+        accumulator = createBuilderConversationReplayAccumulator(storedSuffix.events);
+        snapshot = accumulator.snapshot();
+      } else {
+        snapshot = accumulator.append(storedSuffix.events);
+      }
+    } catch {
+      fail('builder_product_metadata_invalid');
+    }
+    if (!sameHead(snapshot.head, nextHead)) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    const after = frozen({
+      conversation: before.conversation,
+      head: nextHead,
+      events: appendFrozenConversationEvents(before.events, storedSuffix.events),
+      snapshot,
+    });
     const actionEvents = exactStoredBatch(after, request);
     if (actionEvents === null || !sameHead(after.head, nextHead)) {
       fail('builder_product_metadata_integrity_failed');
     }
+    cache.set(cacheKey, {
+      state: after,
+      eventBytes: storedSuffix.bytes,
+      accumulator,
+    });
+    builderPerformanceTrace.increment('main.conversation.append.suffix_validation_count');
+    builderPerformanceTrace.observe(
+      'main.conversation.append.suffix_event_count',
+      storedSuffix.events.length,
+    );
     const appendResult = conversationResult(db, 'events_appended', after, actionEvents);
     db.exec('COMMIT');
     return appendResult;
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    conversationCache(db).delete(cacheKey);
     throw error;
   }
 }
@@ -1816,4 +1982,5 @@ module.exports = Object.freeze({
   BUILDER_PRODUCT_METADATA_RESULT_VERSION,
   BuilderProductMetadataDatabaseError,
   createBuilderProductMetadataDatabase,
+  isTrustedConversationAuthorityResult,
 });

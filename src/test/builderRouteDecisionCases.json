@@ -256,84 +256,72 @@
       }
     },
     {
-      "name": "plan-build wording conflict fails closed without semantic classifier",
+      "name": "implementation plan deliverable routes to plan without semantic classifier",
       "instruction": "帮我做一个静态技术博客实施计划",
       "context": {
         "hasWorkspace": true,
         "hasWritePermission": true
       },
       "renderer": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
-        "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent"
+        "permissionResult": "not_required"
       },
       "mainSubmit": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
         "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent",
-        "resultKind": "explanation"
+        "resultKind": "plan"
       }
     },
     {
-      "name": "scheme wording conflict fails closed without semantic classifier",
+      "name": "redesign scheme deliverable routes to plan without semantic classifier",
       "instruction": "做一个摄影作品集网站改版方案",
       "context": {
         "hasWorkspace": true,
         "hasWritePermission": true
       },
       "renderer": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
-        "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent"
+        "permissionResult": "not_required"
       },
       "mainSubmit": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
         "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent",
-        "resultKind": "explanation"
+        "resultKind": "plan"
       }
     },
     {
-      "name": "README scheme wording conflict fails closed without semantic classifier",
+      "name": "README scheme deliverable routes to plan without semantic classifier",
       "instruction": "帮我出一个 README 重构方案",
       "context": {
         "hasWorkspace": true,
         "hasWritePermission": true
       },
       "renderer": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
-        "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent"
+        "permissionResult": "not_required"
       },
       "mainSubmit": {
-        "route": "clarify",
-        "dispatch": "reply",
-        "matchedSignals": ["plan_build_conflict"],
+        "route": "plan",
+        "dispatch": "plan",
+        "matchedSignals": ["clear_plan_deliverable"],
         "requiredPermissions": [],
         "permissionResult": "not_required",
-        "downgradedFrom": "build",
-        "downgradeReason": "ambiguous_build_intent",
-        "resultKind": "explanation"
+        "resultKind": "plan"
       }
     },
     {

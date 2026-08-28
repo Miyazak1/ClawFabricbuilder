@@ -23,6 +23,7 @@ const {
 const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174500';
 const OTHER_CONVERSATION_ID = 'builder-conversation:223e4567-e89b-42d3-a456-426614174500';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174501';
+const OTHER_TASK_ADDRESS_ID = 'builder-task-address:223e4567-e89b-42d3-a456-426614174501';
 
 function temporaryDatabase(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-context-compaction-'));
@@ -80,7 +81,10 @@ test('records context compaction summaries and restores latest after restart', (
   const databasePath = temporaryDatabase(t);
   const store = createBuilderContextCompactionSummaryStore(databasePath);
   const first = summary(1);
-  const second = summary(2, { created_at_ms: 1_500 });
+  const second = summary(2, {
+    source_event_count: 32,
+    created_at_ms: 1_500,
+  });
 
   const recorded = store.record_context_compaction_summary({ context_compaction_summary: first });
   assert.equal(store.store_version, BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_VERSION);
@@ -114,6 +118,18 @@ test('records context compaction summaries and restores latest after restart', (
   assert.deepEqual(replayed.context_compaction_summary.context_compaction_summary, first);
 
   store.record_context_compaction_summary({ context_compaction_summary: second });
+  const delayedOlderWindow = summary(4, {
+    source_event_count: 12,
+    created_at_ms: 2_500,
+    summary: 'Delayed older context window 4. This must not supersede a broader summary.',
+  });
+  store.record_context_compaction_summary({ context_compaction_summary: delayedOlderWindow });
+  const siblingTask = summary(3, {
+    task_address_id: OTHER_TASK_ADDRESS_ID,
+    created_at_ms: 2_000,
+    summary: 'Compacted sibling task context 3. This must not replace the current task latest summary.',
+  });
+  store.record_context_compaction_summary({ context_compaction_summary: siblingTask });
   const read = store.read_context_compaction_summary({
     conversation_id: CONVERSATION_ID,
     summary_id: first.summary_id,
@@ -128,6 +144,16 @@ test('records context compaction summaries and restores latest after restart', (
   });
   assert.equal(latest.status, 'ready');
   assert.equal(latest.context_compaction_summary.context_compaction_summary.summary_id, second.summary_id);
+  assert.notEqual(
+    latest.context_compaction_summary.context_compaction_summary.summary_id,
+    delayedOlderWindow.summary_id,
+  );
+  const siblingLatest = store.read_latest_context_compaction_summary({
+    conversation_id: CONVERSATION_ID,
+    task_address_id: OTHER_TASK_ADDRESS_ID,
+  });
+  assert.equal(siblingLatest.status, 'ready');
+  assert.equal(siblingLatest.context_compaction_summary.context_compaction_summary.summary_id, siblingTask.summary_id);
   store.close();
 
   const restarted = createBuilderContextCompactionSummaryStore(databasePath);
@@ -137,10 +163,11 @@ test('records context compaction summaries and restores latest after restart', (
   });
   assert.equal(restored.status, 'ready');
   assert.equal(restored.context_compaction_summary.context_compaction_summary.summary_id, second.summary_id);
+  assert.notEqual(restored.context_compaction_summary.context_compaction_summary.summary_id, siblingTask.summary_id);
   restarted.close();
 });
 
-test('returns absent for other conversations and empty latest reads', (t) => {
+test('returns absent for other conversations, other tasks, and empty latest reads', (t) => {
   const databasePath = temporaryDatabase(t);
   const store = createBuilderContextCompactionSummaryStore(databasePath);
   const record = summary(1);
@@ -157,6 +184,13 @@ test('returns absent for other conversations and empty latest reads', (t) => {
     store.read_latest_context_compaction_summary({
       conversation_id: OTHER_CONVERSATION_ID,
       task_address_id: TASK_ADDRESS_ID,
+    }).status,
+    'absent',
+  );
+  assert.equal(
+    store.read_latest_context_compaction_summary({
+      conversation_id: CONVERSATION_ID,
+      task_address_id: OTHER_TASK_ADDRESS_ID,
     }).status,
     'absent',
   );

@@ -707,6 +707,59 @@ test('supports fixed run progress payloads without provider or source authority'
   }, started, 4), assertRecordError());
 });
 
+test('supports bounded recovery action lifecycle payloads without target identity', () => {
+  const submitted = create('turn_submitted', {
+    message: { message_id: typedId('message', 1), text: 'Undo the latest AI change.' },
+    turn_id: typedId('turn', 1),
+    mode: 'work',
+    task: { task_id: typedId('task', 1), title: 'Restore project work' },
+    base_revision: BASE_REVISION,
+  }, null, 1);
+  const started = create('run_started', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    task_id: typedId('task', 1),
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST_A,
+  }, submitted, 2);
+  const requested = create('recovery_action_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    action: 'restore_checkpoint',
+    phase: 'requested',
+  }, started, 3);
+  const checkpoint = create('checkpoint_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    status: 'created',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  }, requested, 4);
+
+  assert.deepEqual(Object.keys(requested.payload).sort(), ['action', 'phase', 'run_id', 'turn_id']);
+  assert.deepEqual(Object.keys(checkpoint.payload).sort(), [
+    'changed_file_count', 'run_id', 'status', 'turn_id', 'verification_status',
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(requested.payload),
+    /checkpoint_id|revision_receipt|digest|path|source_tree|git_|provider|credential|secret/iu,
+  );
+  assert.throws(() => create('recovery_action_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    action: 'restore_checkpoint',
+    phase: 'running',
+  }, started, 4), assertRecordError());
+  assert.throws(() => create('checkpoint_recorded', {
+    turn_id: typedId('turn', 1),
+    run_id: typedId('run', 1),
+    status: 'saved',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  }, checkpoint, 5), assertRecordError());
+});
+
 test('supports admitted Agent step progress payloads without runtime authority', () => {
   const submitted = create('turn_submitted', {
     message: { message_id: typedId('message', 1), text: 'Build a quiet timer.' },

@@ -15,6 +15,9 @@ const {
   PROJECT_REPOSITORY_DIRECTORY,
   createBuilderProjectMainAuthority,
 } = require('../electron/builder-project-main-authority.cjs');
+const {
+  BUILDER_PROJECT_READ_AUTHORITY_VERSION,
+} = require('../electron/builder-project-read-authority.cjs');
 
 function temporaryUserData(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-main-authority-'));
@@ -37,6 +40,7 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
     'persist_candidate_commit',
     'read_candidate_workspace_base',
     'read_verified_candidate',
+    'read_verified_candidate_base',
     'verify_candidate_receipt',
   ]);
   assert.deepEqual(Object.keys(authority.git_current_projection).sort(), [
@@ -54,11 +58,16 @@ test('owns Builder project Git, SQLite metadata, and read authority facades', (t
     'record_project_revision_receipt',
   ].sort());
   assert.deepEqual(Object.keys(authority.project_read_authority).sort(), [
+    'authority_version',
     'list_current',
     'list_history',
     'load_current',
     'load_revision',
   ]);
+  assert.equal(
+    authority.project_read_authority.authority_version,
+    BUILDER_PROJECT_READ_AUTHORITY_VERSION,
+  );
   assert.deepEqual(Object.keys(authority.project_workspace_authority).sort(), [
     'admit_project_workspace',
   ]);

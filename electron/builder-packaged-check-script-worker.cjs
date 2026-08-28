@@ -10,10 +10,10 @@ const {
 } = require('./builder-packaged-check-runtime-contract.cjs');
 
 const BUILDER_PACKAGED_CHECK_SCRIPT_WORKER_VERSION = 'builder-packaged-check-script-worker.v1';
-const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build']);
+const COMMAND_KINDS = Object.freeze(['lint', 'typecheck', 'test', 'build', 'dev']);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
-const CHECK_RUNTIME_DIRECTORY = '.clawfabric-check-runtime-v1';
+const CHECK_RUNTIME_DIRECTORY = path.join('.clawfabric', 'check-runtime-v1');
 
 class BuilderPackagedCheckScriptWorkerError extends Error {
   constructor() {
@@ -118,6 +118,18 @@ function verifyBoundScript(rawInput) {
 function createNodeLauncher(workspacePath) {
   const runtimeDirectory = path.join(workspacePath, CHECK_RUNTIME_DIRECTORY);
   try {
+    const controlDirectory = path.dirname(runtimeDirectory);
+    fs.mkdirSync(controlDirectory, { recursive: true, mode: 0o700 });
+    const controlStats = fs.lstatSync(controlDirectory);
+    if (!controlStats.isDirectory() || controlStats.isSymbolicLink()) fail();
+    try {
+      const existing = fs.lstatSync(runtimeDirectory);
+      if (!existing.isDirectory() || existing.isSymbolicLink()) fail();
+      fs.rmSync(runtimeDirectory, { recursive: true, force: true });
+    } catch (error) {
+      if (error instanceof BuilderPackagedCheckScriptWorkerError) throw error;
+      if (error?.code !== 'ENOENT') fail();
+    }
     fs.mkdirSync(runtimeDirectory, { mode: 0o700 });
     const stats = fs.lstatSync(runtimeDirectory);
     if (!stats.isDirectory() || stats.isSymbolicLink()) fail();
@@ -146,7 +158,7 @@ function createNodeLauncher(workspacePath) {
   }
 }
 
-function scriptEnvironment(workspacePath, verified, nodeLauncherDirectory) {
+function scriptEnvironment(workspacePath, verified, nodeLauncherDirectory, runtimeEnvironment = null) {
   const env = {};
   for (const key of [
     'CI',
@@ -175,31 +187,66 @@ function scriptEnvironment(workspacePath, verified, nodeLauncherDirectory) {
   env.npm_lifecycle_event = verified.event;
   env.npm_lifecycle_script = verified.script;
   env.npm_package_json = verified.package_json_path;
+  if (runtimeEnvironment !== null) Object.assign(env, runtimeEnvironment);
   return env;
 }
 
 async function executeBoundScript(rawInput) {
-  const verified = verifyBoundScript(rawInput);
+  const verified = verifyBoundScript({
+    workspace_path: rawInput.workspace_path,
+    command_kind: rawInput.command_kind,
+    script_digest: rawInput.script_digest,
+  });
   const nodeLauncherDirectory = createNodeLauncher(rawInput.workspace_path);
+  const isDevServer = rawInput.command_kind === 'dev';
+  const host = isDevServer ? rawInput.host : null;
+  const port = isDevServer ? rawInput.port : null;
+  if (
+    isDevServer
+    && (
+      host !== '127.0.0.1'
+      || !Number.isSafeInteger(port)
+      || port < 1
+      || port > 65_535
+    )
+  ) fail();
   const shell = process.platform === 'win32'
     ? process.env.ComSpec
     : '/bin/sh';
   if (typeof shell !== 'string' || shell.length === 0) fail();
-  return promiseSpawn(verified.script, [], {
-    cwd: rawInput.workspace_path,
-    env: scriptEnvironment(rawInput.workspace_path, verified, nodeLauncherDirectory),
-    shell,
-    stdio: ['ignore', 'inherit', 'inherit'],
-    stdioString: false,
-    windowsHide: true,
-  });
+  try {
+    return await promiseSpawn(verified.script, isDevServer
+      ? ['--host', host, '--port', String(port), '--strictPort']
+      : [], {
+      cwd: rawInput.workspace_path,
+      env: scriptEnvironment(
+        rawInput.workspace_path,
+        verified,
+        nodeLauncherDirectory,
+        isDevServer ? {
+          HOST: host,
+          PORT: String(port),
+          VITE_HOST: host,
+          VITE_PORT: String(port),
+        } : null,
+      ),
+      shell,
+      stdio: ['ignore', 'inherit', 'inherit'],
+      stdioString: false,
+      windowsHide: true,
+    });
+  } finally {
+    try { fs.rmSync(nodeLauncherDirectory, { recursive: true, force: true }); } catch { /* bounded residue */ }
+  }
 }
 
 async function main(argv = process.argv.slice(2)) {
   if (
     !Array.isArray(argv)
-    || argv.length !== 3
-    || argv[0] !== 'run-script'
+    || !(
+      (argv.length === 3 && argv[0] === 'run-script')
+      || (argv.length === 5 && argv[0] === 'run-dev-script' && argv[1] === 'dev')
+    )
   ) fail();
   const runtimePackage = require('@npmcli/promise-spawn/package.json');
   if (runtimePackage.version !== PACKAGED_NPM_SCRIPT_RUNTIME_VERSION) fail();
@@ -207,6 +254,10 @@ async function main(argv = process.argv.slice(2)) {
     workspace_path: path.resolve(process.cwd()),
     command_kind: argv[1],
     script_digest: argv[2],
+    ...(argv[0] === 'run-dev-script' ? {
+      host: argv[3],
+      port: Number(argv[4]),
+    } : {}),
   });
 }
 
@@ -215,7 +266,9 @@ if (require.main === module) {
     process.stderr.write(`${error instanceof BuilderPackagedCheckScriptWorkerError
       ? error.message
       : 'The approved project check failed.'}\n`);
-    process.exitCode = 1;
+    process.exitCode = Number.isSafeInteger(error?.code) && error.code >= 1 && error.code <= 255
+      ? error.code
+      : 1;
   });
 }
 

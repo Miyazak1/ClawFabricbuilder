@@ -4,12 +4,15 @@ import {
   BUILDER_GENERATION_REQUEST_PROTOCOL,
   BuilderGenerationError,
   createBuilderGenerationRequest,
+  sanitizeBuilderApprovedPlanGenerationAnswer,
   sanitizeBuilderApprovedPlanGenerationDraft,
   sanitizeBuilderApprovedPlanGenerationRequest,
+  sanitizeBuilderCheckpointRestoreGenerationDraft,
   sanitizeBuilderGenerationAnswer,
   sanitizeBuilderGenerationDraft,
   sanitizeBuilderGenerationPlan,
   sanitizeBuilderGenerationRequest,
+  sanitizeBuilderRevisionRestoreGenerationDraft,
   sanitizeRestoredBuilderGenerationDraft,
 } from './builderGeneration';
 import {
@@ -24,7 +27,22 @@ import {
   createSourceTree,
 } from '../../../test/builderV2Fixtures';
 
+const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174000';
+
 describe('Builder generation v2', () => {
+  it('accepts an unversioned project base only for checkpoint restore', async () => {
+    const request = await createBuilderGenerationRequest('Undo the latest AI change.', PROJECT_ID);
+    const wire = {
+      ...await createGenerationDraft(request),
+      base_revision_evidence: null,
+    };
+
+    await expect(sanitizeBuilderCheckpointRestoreGenerationDraft(wire, PROJECT_ID))
+      .resolves.toMatchObject({ project_id: PROJECT_ID, base_revision_evidence: null });
+    await expect(sanitizeBuilderRevisionRestoreGenerationDraft(wire, PROJECT_ID))
+      .rejects.toBeInstanceOf(BuilderGenerationError);
+  });
+
   it('creates a deterministic request for a new project without renderer-owned revision facts', async () => {
     const first = await createBuilderGenerationRequest('Make a timer.');
     const second = await createBuilderGenerationRequest('Make a timer.');
@@ -34,6 +52,7 @@ describe('Builder generation v2', () => {
       version: BUILDER_GENERATION_REQUEST_PROTOCOL,
       instruction: 'Make a timer.',
       existing_project_id: null,
+      task_address_id: null,
       request_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     });
     expect(Object.isFrozen(first)).toBe(true);
@@ -76,12 +95,6 @@ describe('Builder generation v2', () => {
         turn_id: TURN_ID,
         run_id: RUN_ID,
         instruction: 'renderer text',
-      },
-      {
-        project_id: PROJECT_ID,
-        conversation_id: 'builder-conversation:223e4567-e89b-42d3-a456-426614174000',
-        turn_id: TURN_ID,
-        run_id: RUN_ID,
       },
       {
         project_id: PROJECT_ID,
@@ -237,7 +250,7 @@ describe('Builder generation v2', () => {
   it('accepts an explanation answer without draft, source, or save authority', async () => {
     const request = await createBuilderGenerationRequest('What does this project do?');
     const result = await sanitizeBuilderGenerationAnswer(
-      structuredClone(await createGenerationAnswer(request)),
+      { ...structuredClone(await createGenerationAnswer(request)), project_id: null },
       request,
     );
 
@@ -247,7 +260,7 @@ describe('Builder generation v2', () => {
       title: 'Current project',
       summary: 'Explains the current project.',
       explanation: 'This answer does not change files.',
-      project_id: PROJECT_ID,
+      project_id: null,
       existing_project_id: null,
       admissions: {
         conversation: 'sqlite_recorded',
@@ -262,6 +275,51 @@ describe('Builder generation v2', () => {
     expect(result).not.toHaveProperty('source_tree');
     expect(result).not.toHaveProperty('candidate');
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('accepts an approved-plan work response without creating a draft', async () => {
+    const request = sanitizeBuilderApprovedPlanGenerationRequest({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+    const answer = {
+      version: 'builder-generation-result.v2',
+      result_kind: 'explanation',
+      request_id: `sha256:${'a'.repeat(64)}`,
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      title: 'Request completed',
+      summary: 'The project was inspected without changing files.',
+      explanation: 'I inspected the project, but I need the target file before changing anything.',
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    };
+
+    await expect(sanitizeBuilderApprovedPlanGenerationAnswer(answer, request)).resolves.toMatchObject({
+      result_kind: 'explanation',
+      project_id: PROJECT_ID,
+      existing_project_id: PROJECT_ID,
+      explanation: answer.explanation,
+      admissions: {
+        draft: 'not_created',
+        save: 'not_performed',
+      },
+    });
+    await expect(sanitizeBuilderApprovedPlanGenerationAnswer({
+      ...answer,
+      existing_project_id: OTHER_PROJECT_ID,
+    }, request)).rejects.toMatchObject({ code: 'invalid_generated_answer' });
+    await expect(sanitizeBuilderApprovedPlanGenerationAnswer({
+      ...answer,
+      source_tree: await createSourceTree(),
+    }, request)).rejects.toMatchObject({ code: 'invalid_generated_answer' });
   });
 
   it('rejects explanation route drift, source fields, and saved admissions', async () => {

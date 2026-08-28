@@ -2,6 +2,13 @@
 
 ## Purpose
 
+Conversation-flow correction (2026-08-13): Logs is not an ordinary side
+workspace destination. User-visible routing evidence, current direction, work
+progress, and action details belong in the primary conversation; selecting an
+action may open its contextual inspector. Older Logs/Task wording in this
+document is superseded by
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md).
+
 This document defines ClawFabric Builder's own chat/build routing architecture.
 It uses mature agent products as references, but it does not merge their
 interaction models mechanically. ClawFabric's product target is a chat-first
@@ -81,7 +88,7 @@ The user can:
 - ask the assistant to summarize or refine the current plan;
 - explicitly create a plan;
 - say `按刚才方案做` after a confirmed brief or approved plan;
-- review preview, files, changes, and logs before saving;
+- review preview, files, changes, and expandable work details before saving;
 - continue chatting after a build without every follow-up becoming a build.
 
 The user should not need to choose Chat or Build for every message. Explicit
@@ -579,7 +586,7 @@ type TaskCapsule = {
 The brief is agent working memory, not ordinary composer chrome. It should not
 render as a default `Current brief` block or make users manage internal memory
 while they are chatting. The system must still be able to explain, inspect, and
-correct brief state through a future Task/Logs or memory disclosure surface.
+correct brief state through an on-demand conversation/context disclosure surface.
 Any correction removes contextual-build readiness for that task without deleting
 the underlying conversation.
 
@@ -732,8 +739,8 @@ read-only route classification and the conversation main service records
 `task_brief_updated` / `builder-task-capsule.v1` without draft, Save, command,
 or source-write authority. Later build route evidence can then bind to the
 visible task id derived from the sanitized task stream. The desktop can inspect
-the latest sanitized brief on demand through Artifact Logs as `Current
-direction`, but this surface exposes no task id, route decision id, provider,
+the latest sanitized direction on demand from the conversation/composer context
+surface, but this projection exposes no task id, route decision id, provider,
 credential, source, Git, receipt, or correction authority.
 
 ## Test Matrix
@@ -871,9 +878,10 @@ progress, tool facts, interruption, cancellation, or terminal outcome. The
 renderer sees only the compact Task Stream projection; snapshot ids, context
 digests, provider/credential material, source tree details, Git receipts, Save
 facts, raw prompts, and Project Revision evidence remain hidden. The desktop
-Work logs now show a user-facing "Why this ran" explanation derived only from
-that public projection, including route purpose, brief availability, project
-base, write permission result, and the absence of terminal/network access.
+The conversation's expandable Work details now show a user-facing "Why this
+ran" explanation derived only from that public projection, including route
+purpose, brief availability, project base, write permission result, and the
+absence of terminal/network access.
 When a build uses the current task capsule, the snapshot binds the current user
 message plus the task capsule source message id, while still excluding the brief
 text and all source/provider/private route material from renderer projections.

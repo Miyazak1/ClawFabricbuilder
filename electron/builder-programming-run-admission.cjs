@@ -2,6 +2,10 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const {
   sanitizeBuilderExecutionApproval,
@@ -72,7 +76,6 @@ const AUTHORITY = Object.freeze({
   save_version_authority: 'not_present',
 });
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -262,8 +265,10 @@ function sanitizeBuilderProgrammingRunAdmission(rawValue) {
       normalized.admission_version !== BUILDER_PROGRAMMING_RUN_ADMISSION_VERSION
       || normalized.admission_kind !== BUILDER_PROGRAMMING_RUN_ADMISSION_KIND
       || normalized.status !== 'admitted'
-      || normalized.conversation_id.slice('builder-conversation:'.length)
-        !== normalized.project_id.slice('builder-project:'.length)
+      || sanitizeBuilderConversationAddress(
+        normalized.project_id,
+        normalized.conversation_id,
+      ) !== normalized.conversation_id
       || normalized.admission_id !== `builder-programming-run-admission:${digestHex(admissionBody(normalized))}`
       || normalized.admission_digest !== sha256Canonical(admissionBody(normalized))
     ) fail();

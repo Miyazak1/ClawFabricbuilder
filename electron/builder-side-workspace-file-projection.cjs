@@ -31,6 +31,7 @@ const SOURCE_KINDS = Object.freeze([
   'current_draft',
   'saved_revision',
   'inspected_revision',
+  'runtime_snapshot',
 ]);
 const TREE_PROJECTION_KEYS = Object.freeze([
   'projection_version',
@@ -46,6 +47,7 @@ const TREE_PROJECTION_KEYS = Object.freeze([
 ]);
 const FILE_REF_KEYS = Object.freeze([
   'file_ref_version',
+  'source_kind',
   'source_tree_digest',
   'path',
   'content_digest',
@@ -53,7 +55,7 @@ const FILE_REF_KEYS = Object.freeze([
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const TEXT_PREVIEW_MAX_CHARS = 96 * 1_024;
 
@@ -210,25 +212,28 @@ function directoryEntries(files) {
   return [...directories.values()].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function fileRef(sourceTreeDigest, file) {
+function fileRef(sourceKind, sourceTreeDigest, file) {
   return freezeDeep({
     file_ref_version: BUILDER_SIDE_WORKSPACE_FILE_REF_VERSION,
+    source_kind: sourceKind,
     source_tree_digest: sourceTreeDigest,
     path: file.path,
     content_digest: file.content_digest,
   });
 }
 
-function sanitizeFileRef(value, sourceTreeDigest) {
+function sanitizeFileRef(value, sourceKind, sourceTreeDigest) {
   const descriptors = exactObject(value, FILE_REF_KEYS);
   const safe = freezeDeep({
     file_ref_version: valueAt(value, 'file_ref_version'),
+    source_kind: safeSourceKind(valueAt(value, 'source_kind')),
     source_tree_digest: safeDigest(valueAt(value, 'source_tree_digest')),
     path: valueAt(value, 'path'),
     content_digest: safeDigest(valueAt(value, 'content_digest')),
   });
   if (
     safe.file_ref_version !== BUILDER_SIDE_WORKSPACE_FILE_REF_VERSION
+    || safe.source_kind !== sourceKind
     || safe.source_tree_digest !== sourceTreeDigest
     || descriptors.path.value !== safe.path
   ) fail();
@@ -243,7 +248,9 @@ function createBuilderSideWorkspaceFileTreeProjection(rawInput) {
   const input = exactObject(rawInput, TREE_INPUT_KEYS);
   const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
   const conversationId = safeConversationId(valueAt(rawInput, 'conversation_id'));
-  if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) {
+  if (!conversationId.startsWith(
+    `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+  )) {
     fail();
   }
   const sourceKind = safeSourceKind(valueAt(rawInput, 'source_kind'));
@@ -259,7 +266,7 @@ function createBuilderSideWorkspaceFileTreeProjection(rawInput) {
     parent_path: file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : null,
     depth: file.path.split('/').length - 1,
     content_digest: file.content_digest,
-    file_ref: fileRef(sourceTree.source_tree_digest, file),
+    file_ref: fileRef(sourceKind, sourceTree.source_tree_digest, file),
   }));
   const entries = [
     ...directoryEntries(sourceTree.files),
@@ -267,7 +274,7 @@ function createBuilderSideWorkspaceFileTreeProjection(rawInput) {
   ].sort((left, right) => left.path.localeCompare(right.path));
   const selectedFileRef = selectedPath === null
     ? null
-    : fileRef(sourceTree.source_tree_digest, filesByPath.get(selectedPath));
+    : fileRef(sourceKind, sourceTree.source_tree_digest, filesByPath.get(selectedPath));
   return freezeDeep({
     projection_version: BUILDER_SIDE_WORKSPACE_FILE_TREE_PROJECTION_VERSION,
     project_id: projectId,
@@ -326,7 +333,11 @@ function createBuilderSideWorkspaceFileContentProjection(rawInput) {
   const treeProjection = sanitizeTreeProjection(valueAt(rawInput, 'file_tree_projection'));
   const sourceTree = sanitizeBuilderProjectSourceTree(valueAt(rawInput, 'source_tree'));
   if (sourceTree.source_tree_digest !== treeProjection.source_tree_digest) fail();
-  const ref = sanitizeFileRef(valueAt(rawInput, 'file_ref'), sourceTree.source_tree_digest);
+  const ref = sanitizeFileRef(
+    valueAt(rawInput, 'file_ref'),
+    treeProjection.source_kind,
+    sourceTree.source_tree_digest,
+  );
   const file = sourceTree.files.find((entry) => (
     entry.path === ref.path
     && entry.content_digest === ref.content_digest

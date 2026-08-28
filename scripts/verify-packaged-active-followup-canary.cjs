@@ -5,18 +5,19 @@ const os = require('node:os');
 const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { _electron: electron } = require('playwright-core');
+const {
+  DEFAULT_BUILDER_AGENT_ID,
+} = require('../electron/builder-default-agent-bootstrap.cjs');
 
 const {
   CANARY_INPUT_VERSION,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
-  approveCurrentProjectWriteIfRequested,
-  bindNewProjectWorkspaceViaUi,
   captureGuardedUserDataRoot,
-  clickSaveVersionViaUi,
   createArtifactGate,
   createCanaryProjectRoot,
   fillProviderSettingsViaUi,
+  generateProjectViaUi,
   sanitizeLaunchEnvironment,
 } = require('./verify-packaged-canary.cjs');
 const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-default.cjs');
@@ -50,10 +51,6 @@ async function waitUntil(check, code, diagnostic) {
   fail(code, typeof diagnostic === 'function' ? await diagnostic() : diagnostic);
 }
 
-async function clickByRole(page, role, name) {
-  await page.getByRole(role, { exact: true, name }).click();
-}
-
 async function selectBuildMode(page) {
   await page.locator(SELECTORS.composerAddMenuButton).click();
   await page.locator(SELECTORS.composerAddBuildMode).click();
@@ -61,10 +58,31 @@ async function selectBuildMode(page) {
     waitFor({ state: 'visible', timeout: 10_000 });
 }
 
+function harnessRequestCount(providerServer) {
+  return providerServer.snapshot().filter((request) => (
+    typeof request.response_kind === 'string'
+    && request.response_kind.startsWith('harness_')
+  )).length;
+}
+
 async function readTaskStream(page, projectId) {
-  return page.evaluate(async (id) => {
-    return globalThis.clawfabricBuilder.taskStream.read({ project_id: id });
-  }, projectId);
+  return page.evaluate(async ({ agentId, targetProjectId }) => {
+    const tree = await globalThis.clawfabricBuilder.agentProjectTree.read({ agent_id: agentId });
+    const project = tree?.projects?.find((candidate) => (
+      candidate?.project_id === targetProjectId
+    ));
+    const taskAddressId = project?.tasks
+      ?.filter((task) => typeof task?.task_address_id === 'string')
+      .sort((left, right) => (
+        (Number.isSafeInteger(right?.latest_activity_at_ms) ? right.latest_activity_at_ms : 0)
+        - (Number.isSafeInteger(left?.latest_activity_at_ms) ? left.latest_activity_at_ms : 0)
+      ))[0]?.task_address_id;
+    if (typeof taskAddressId !== 'string') throw new Error('task address unavailable');
+    return globalThis.clawfabricBuilder.taskStream.read({
+      project_id: targetProjectId,
+      task_address_id: taskAddressId,
+    });
+  }, { agentId: DEFAULT_BUILDER_AGENT_ID, targetProjectId: projectId });
 }
 
 function conversationItems(stream) {
@@ -122,8 +140,8 @@ function cleanupUserDataRoot(userDataPath) {
 async function run() {
   const executablePath = process.argv[2] ?? DEFAULT_EXECUTABLE;
   const providerServer = await createLocalCanaryProviderServer({
-    deferCodeChangeResponses: 1,
-    deferCodeChangeResponsesAfter: 1,
+    deferHarnessResponses: 1,
+    deferHarnessResponsesAfter: 6,
   });
   const userDataPath = makeUserDataRoot();
   const userDataRoot = captureGuardedUserDataRoot(userDataPath, fs, os);
@@ -146,18 +164,8 @@ async function run() {
       temperature: 0.2,
       timeout_ms: 30000,
     }), gate);
-    await clickByRole(page, 'button', 'New project');
-    await bindNewProjectWorkspaceViaUi(page);
+    await generateProjectViaUi(page, SETUP_INSTRUCTION, userDataRoot);
     await selectBuildMode(page);
-    await page.locator(SELECTORS.idea).fill(SETUP_INSTRUCTION);
-    await page.locator(SELECTORS.submitTurn).click();
-    const writeApproved = await approveCurrentProjectWriteIfRequested(page);
-    if (!writeApproved) fail('active_followup_write_approval_missing');
-    await page.locator(SELECTORS.unsavedDraft).
-      getByText('Unsaved draft', { exact: true }).
-      waitFor({ state: 'visible', timeout: 120_000 });
-    await clickSaveVersionViaUi(page);
-    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden', timeout: 30_000 });
 
     await page.locator(SELECTORS.idea).fill(INITIAL_INSTRUCTION);
     await page.locator(SELECTORS.submitTurn).click();
@@ -204,13 +212,9 @@ async function run() {
       fail('active_followup_first_run_release_failed', await diagnostic(page, providerServer, projectId));
     }
 
-    const releasedCodeChangeRequestCount = providerServer.snapshot().filter((request) => (
-      request.response_kind === 'builder_code_change_operations'
-    )).length;
+    const releasedHarnessRequestCount = harnessRequestCount(providerServer);
     await waitUntil(
-      () => providerServer.snapshot().filter((request) => (
-        request.response_kind === 'builder_code_change_operations'
-      )).length > releasedCodeChangeRequestCount,
+      () => harnessRequestCount(providerServer) > releasedHarnessRequestCount,
       'active_followup_continuation_request_missing',
       () => diagnostic(page, providerServer, projectId),
     );
@@ -248,10 +252,10 @@ async function run() {
     if (consumingTurn === undefined) {
       fail('active_followup_continuation_turn_missing', await diagnostic(page, providerServer, projectId));
     }
-    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
-    const saveVersionRemainedExplicit = await page.locator(SELECTORS.saveVersion).isVisible();
-    if (!saveVersionRemainedExplicit) {
-      fail('active_followup_save_version_missing', await diagnostic(page, providerServer, projectId));
+    await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden', timeout: 30_000 });
+    const saveVersionDirectlyVisible = await page.locator(SELECTORS.saveVersion).isVisible();
+    if (saveVersionDirectlyVisible) {
+      fail('active_followup_save_version_not_secondary', await diagnostic(page, providerServer, projectId));
     }
 
     const result = Object.freeze({
@@ -271,7 +275,8 @@ async function run() {
       queued_followup_consumed: true,
       continuation_turn_recorded: true,
       unsaved_draft_visible: true,
-      save_version_remained_explicit: saveVersionRemainedExplicit,
+      formal_version_save_is_secondary: true,
+      save_version_directly_visible: saveVersionDirectlyVisible,
       release_gate_integration: 'not_in_verify_release',
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

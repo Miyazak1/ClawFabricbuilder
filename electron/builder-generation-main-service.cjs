@@ -12,6 +12,11 @@ const {
   sanitizeBuilderPlanProposalSourceContextResult,
 } = require('./builder-plan-proposal-records.cjs');
 const {
+  BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
+  BUILDER_GIT_PROJECT_REPOSITORY_VERSION,
+  BUILDER_GIT_RECEIPT_OBJECT_FORMAT,
+  CODE_AUTHORITY,
+  PRODUCT_REVISION_ADMISSION,
   sanitizeBuilderGitCandidateReceipt,
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
@@ -57,6 +62,9 @@ const {
   sanitizeBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
 const {
+  APPROVED_PLAN_EXECUTION_INSTRUCTION,
+} = require('./builder-approved-plan-execution.cjs');
+const {
   createBuilderDraftContinuationAdmission,
   sanitizeBuilderDraftContinuationAdmission,
 } = require('./builder-draft-continuation-admission.cjs');
@@ -79,6 +87,36 @@ const {
 const {
   createBuilderSemanticRouteRequest,
 } = require('./builder-semantic-route-classifier.cjs');
+const {
+  createBuilderProgrammingRuntimeRunContract,
+} = require('./builder-programming-runtime-contract.cjs');
+const {
+  createBuilderProgrammingRuntimeEventJournal,
+} = require('./builder-programming-runtime-events.cjs');
+const {
+  createBuilderStructuredProgrammingRuntimeBridge,
+} = require('./builder-structured-programming-runtime-bridge.cjs');
+const {
+  createBuilderHarnessGenerationRunner,
+} = require('./builder-harness-generation-runner.cjs');
+const {
+  selectBuilderProgrammingRuntime,
+} = require('./builder-programming-runtime-selection.cjs');
+const {
+  createBuilderProgrammingRuntimeMainFactRecorder,
+} = require('./builder-programming-runtime-main-fact-recorder.cjs');
+const {
+  BUILDER_PROGRAMMING_RUNTIME_SUPERVISION_DEFAULTS,
+} = require('./builder-programming-runtime-supervision-policy.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  createBuilderConversationAddress,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
+const {
+  MAX_APPEND_EVENTS,
+} = require('./builder-conversation-authority-contract.cjs');
+const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
 
 const BUILDER_GENERATION_MAIN_SERVICE_VERSION = 'builder-generation-main-service.v2';
 const PACKAGED_CANARY_SENTINEL = 'BUILDER_PACKAGED_CANARY';
@@ -86,15 +124,22 @@ const MAX_PENDING_SEMANTIC_ROUTE_CLASSIFICATIONS = 64;
 const PACKAGED_CANARY_USER_DATA_PATH = 'BUILDER_PACKAGED_CANARY_USER_DATA_PATH';
 const PACKAGED_CANARY_USER_DATA_PREFIX = 'clawfabric-builder-packaged-canary-';
 const PACKAGED_CANARY_GENERATION_DEBUG_FILE = 'builder-canary-generation-debug.jsonl';
+const PACKAGED_CANARY_MAX_TOOL_OUTPUT_BYTES = 'BUILDER_PACKAGED_CANARY_MAX_TOOL_OUTPUT_BYTES';
+const DEFAULT_RUNTIME_MAX_TOOL_OUTPUT_BYTES = 256 * 1_024;
 const BUILDER_GENERATION_PENDING_DRAFT_VERSION = 'builder-generation-pending-draft.v2';
+const MAX_RUNTIME_EVENT_BATCH_SIZE = MAX_APPEND_EVENTS;
 const GENERATE_OPERATION_PREFIX = 'generate:';
 const ANSWER_OPERATION_PREFIX = 'answer:';
 const PLAN_OPERATION_PREFIX = 'plan:';
 const RESTORE_REVISION_OPERATION_PREFIX = 'restore-revision:';
+const RESTORE_CHECKPOINT_OPERATION_PREFIX = 'restore-checkpoint:';
 const DRAFT_CONTINUATION_OPERATION_PREFIX = 'draft-continuation:';
 const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
+const PROVIDER_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v1';
+const PROVIDER_OUTPUT_RESET_EVENT_VERSION = 'builder-generation-output-reset.v1';
 const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
 const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
+const MAX_HARNESS_CHECK_REPAIR_ATTEMPTS = 3;
 const RESTORE_REVISION_REQUEST_KEYS = Object.freeze([
   'project_id',
   'revision_receipt_digest',
@@ -120,7 +165,9 @@ const OPTION_KEYS = Object.freeze([
   'projectUnderstandingService',
   'projectIdentityAuthority',
   'conversationService',
+  'agentConversationService',
   'gitAuthority',
+  'currentProjection',
   'transport',
   'onGenerationStarted',
   'onProviderOutputDelta',
@@ -128,17 +175,22 @@ const OPTION_KEYS = Object.freeze([
   'sourceContextCollector',
   'taskCapsuleStore',
   'taskCapsuleRecordingService',
+  'sessionTaskTargetService',
   'sessionTaskAddressRecordingService',
   'sessionTaskAddressBindingService',
   'automaticDraftCheckpointService',
+  'codingLoopCheckCoordinator',
   'workingContextStateService',
   'providerContextDisclosureDecisionService',
   'providerContextDisclosureStatusService',
+  'runtimeWorkspaceSnapshotService',
+  'harnessRuntimeComposition',
+  'programmingRuntimeFeatureFlag',
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -189,6 +241,11 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
   builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
   builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
+  builder_generation_checkpoint_undo_unavailable: 'The previous AI change could not be restored.',
+  builder_generation_cancelled: 'This AI coding run was cancelled.',
+  builder_generation_timeout: 'AI project generation timed out.',
+  builder_generation_runtime_stalled: 'The coding runtime stopped making progress.',
+  builder_generation_run_limit_reached: 'This coding run reached its safety limit.',
   builder_generation_service_unavailable: 'AI project generation is unavailable.',
 });
 
@@ -225,6 +282,24 @@ function safeCanaryGenerationDebugCode(error) {
   }
 }
 
+function safeCanaryGenerationDebugProperty(error, key) {
+  try {
+    if (
+      error === null
+      || (typeof error !== 'object' && typeof error !== 'function')
+      || utilTypes.isProxy(error)
+    ) return 'unknown';
+    const descriptor = Object.getOwnPropertyDescriptor(error, key);
+    return descriptor && Object.hasOwn(descriptor, 'value')
+      && typeof descriptor.value === 'string'
+      && /^[a-z0-9_]{1,96}$/u.test(descriptor.value)
+      ? descriptor.value
+      : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 function recordCanaryGenerationDebug(phase, error = null) {
   try {
     if (process.env[PACKAGED_CANARY_SENTINEL] !== '1') return;
@@ -240,12 +315,29 @@ function recordCanaryGenerationDebug(phase, error = null) {
         result_version: 'builder-canary-generation-debug.v1',
         phase,
         code: safeCanaryGenerationDebugCode(error),
+        runtime_code: safeCanaryGenerationDebugProperty(error, 'runtime_code'),
+        runtime_cause_code: safeCanaryGenerationDebugProperty(error, 'runtime_cause_code'),
       })}\n`,
       { encoding: 'utf8' },
     );
   } catch {
     // Canary diagnostics must never alter generation behavior.
   }
+}
+
+function runtimeMaxToolOutputBytes() {
+  if (process.env[PACKAGED_CANARY_SENTINEL] !== '1' || process.env.BUILDER_PERF_TRACE !== '1') {
+    return DEFAULT_RUNTIME_MAX_TOOL_OUTPUT_BYTES;
+  }
+  const raw = process.env[PACKAGED_CANARY_MAX_TOOL_OUTPUT_BYTES];
+  if (typeof raw !== 'string' || !/^\d{4,8}$/u.test(raw)) {
+    return DEFAULT_RUNTIME_MAX_TOOL_OUTPUT_BYTES;
+  }
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= DEFAULT_RUNTIME_MAX_TOOL_OUTPUT_BYTES
+    && value <= 16 * 1_024 * 1_024
+    ? value
+    : DEFAULT_RUNTIME_MAX_TOOL_OUTPUT_BYTES;
 }
 
 const ENGLISH_WORK_INTENT_PATTERN =
@@ -305,6 +397,11 @@ const CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS = Object.freeze([
   /^(?:(?:帮我|请|麻烦)?\s*)?(?:改|修改|调整|换|更换|优化|统一|更新)(?:一下|下)?(?:这个|当前|页面|界面|结果|稿子|版本)?(?:的)?(?:颜色|配色|主题色|色彩|背景|字体|字号|标题|按钮|卡片|间距|圆角|布局|样式)[。.!！]*$/u,
   /^(?:change|update|adjust|tweak|switch|improve)\s+(?:the\s+)?(?:color|colors|palette|theme|background|font|heading|button|card|spacing|radius|layout|style)s?[.?!]*$/u,
 ]);
+const CURRENT_DRAFT_CONTINUATION_INTENT_PATTERNS = Object.freeze([
+  /^(?:继续|接着|再)(?:帮我)?(?:优化|完善|改进|修改|调整|更新|编辑|修复|完成|实现|写|做).*/u,
+  /^(?:continue|keep)\s+(?:on\s+)?(?:improving|refining|polishing|updating|editing|changing|fixing|finishing|implementing|building)\b.*$/u,
+  /^(?:continue|resume)\s+from\s+(?:this|the)\s+(?:restored\s+)?checkpoint\b.{0,120}\b(?:complete|finish|improve|refine|update|edit|change|fix|implement|build)\b.*$/u,
+]);
 const PENDING_BUILD_CONFIRMATION_INTENT_PATTERN =
   /(?:需要我|要我|要不要我|是否(?:需要|要)我|我可以|可以帮你|如果你想).{0,64}(?:直接|现在|马上)?(?:修改|调整|更改|改|应用|生成|创建|实现|写|做|开始)|(?:would you like|do you want me to|should i|i can).{0,96}(?:change|modify|apply|build|create|implement|update|make|write)/iu;
 const WORK_DISCUSSION_INTENT_PATTERNS = Object.freeze([
@@ -358,7 +455,8 @@ function isContextualSubmitContextIntent(instruction) {
   if (text.length === 0) return false;
   return matchesAny(CONTEXTUAL_WORK_INTENT_PATTERNS, text)
     || matchesAny(CURRENT_ARTIFACT_DEFECT_INTENT_PATTERNS, text)
-    || matchesAny(CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS, text);
+    || matchesAny(CURRENT_ARTIFACT_DIRECT_CHANGE_INTENT_PATTERNS, text)
+    || matchesAny(CURRENT_DRAFT_CONTINUATION_INTENT_PATTERNS, text);
 }
 
 function routeDecisionHint({
@@ -428,6 +526,17 @@ function planRouteDecisionHint() {
     matchedSignals: ['explicit_plan'],
     requiredPermissions: ['project_read'],
     permissionResult: 'allowed',
+    dispatch: 'plan',
+  });
+}
+
+function clearPlanDeliverableRouteDecisionHint() {
+  return routeDecisionHint({
+    route: 'plan',
+    confidence: 'high',
+    matchedSignals: ['clear_plan_deliverable'],
+    requiredPermissions: [],
+    permissionResult: 'not_required',
     dispatch: 'plan',
   });
 }
@@ -536,13 +645,7 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
   }
   if (hasQuestionMark && hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
   if (matchesAny(SEMANTIC_PLAN_BUILD_CONFLICT_INTENT_PATTERNS, text)) {
-    return routeDecisionHint({
-      route: 'clarify',
-      confidence: 'medium',
-      matchedSignals: ['plan_build_conflict'],
-      downgradedFrom: 'build',
-      downgradeReason: 'ambiguous_build_intent',
-    });
+    return clearPlanDeliverableRouteDecisionHint();
   }
   if (matchesAny(LOCAL_FILE_ARTIFACT_PATTERNS, text)) return buildRouteDecisionHint(['local_file_artifact']);
   if (hasExplanationIntent) return answerRouteDecisionHint(['read_only']);
@@ -590,6 +693,19 @@ function classifySubmitRouteDecision(instruction, routeContext = false) {
         route: 'clarify',
         confidence: 'medium',
         matchedSignals: ['current_artifact_direct_change'],
+        downgradedFrom: 'build',
+        downgradeReason: 'missing_prior_build_context',
+      });
+  }
+  if (matchesAny(CURRENT_DRAFT_CONTINUATION_INTENT_PATTERNS, text)) {
+    return hasContextualBuildContext
+      ? buildRouteDecisionHint(hasWorkingContextStateEvidence
+        ? ['working_context_state', 'current_draft_continuation']
+        : ['current_draft_continuation'])
+      : routeDecisionHint({
+        route: 'clarify',
+        confidence: 'medium',
+        matchedSignals: ['current_draft_continuation'],
         downgradedFrom: 'build',
         downgradeReason: 'missing_prior_build_context',
       });
@@ -662,6 +778,98 @@ function localNoProjectQuestionReply(request) {
     summary: 'We can keep talking; choose a project folder when you want preview or file changes.',
     explanation: 'There is no selected project or draft yet, so there is no project content or preview to inspect. We can keep talking through the idea first; when you want to build, preview, or change files, I will ask you to choose a project folder.',
   });
+}
+
+function failedCheckClosure(summary) {
+  const localized = /\p{Script=Han}/u.test(summary);
+  const note = localized
+    ? '自动检查仍未通过，这份草稿已保留供继续修复，当前不能视为已完成。'
+    : 'The automatic check still fails. This draft is preserved for another repair and must not be treated as complete.';
+  const notePoints = Array.from(note);
+  const summaryBudget = Math.max(0, 397 - notePoints.length);
+  const summaryPoints = Array.from(summary.trim());
+  const lead = summaryPoints.length <= summaryBudget
+    ? summaryPoints.join('')
+    : `${summaryPoints.slice(0, Math.max(0, summaryBudget - 3)).join('')}...`;
+  return Object.freeze({
+    title: localized ? '项目更新仍需修复' : 'Project update needs repair',
+    summary: lead.length === 0 ? note : `${lead} ${note}`,
+  });
+}
+
+function unavailableCheckClosure(summary) {
+  const localized = /\p{Script=Han}/u.test(summary);
+  const note = localized
+    ? '自动检查环境尚未准备好，这份草稿已保留；这不是源码修复问题，也不代表你的电脑一定缺少依赖。'
+    : 'The automatic check environment is not ready. This draft is preserved; this is not a source repair problem and does not prove your machine lacks dependencies.';
+  const notePoints = Array.from(note);
+  const summaryBudget = Math.max(0, 397 - notePoints.length);
+  const summaryPoints = Array.from(summary.trim());
+  const lead = summaryPoints.length <= summaryBudget
+    ? summaryPoints.join('')
+    : `${summaryPoints.slice(0, Math.max(0, summaryBudget - 3)).join('')}...`;
+  return Object.freeze({
+    title: localized ? '项目更新需准备检查环境' : 'Project update needs check environment',
+    summary: lead.length === 0 ? note : `${lead} ${note}`,
+  });
+}
+
+function chineseHarnessBuildClosure({
+  modelSummary,
+  candidate,
+  automaticCheck,
+  currentMaterialization,
+}) {
+  const changedPaths = [...new Set(candidate.operations.map((operation) => operation.path))];
+  const visiblePaths = changedPaths.slice(0, 8).map((filePath) => `\`${filePath}\``).join('、');
+  const remainingPathCount = Math.max(0, changedPaths.length - 8);
+  const pathSummary = changedPaths.length === 0
+    ? '没有检测到文件变更'
+    : `已更新 ${visiblePaths}${remainingPathCount > 0 ? ` 等 ${changedPaths.length} 个文件` : ''}`;
+  const projection = automaticCheck?.status === 'completed'
+    ? automaticCheck.check_run_status_projection
+    : null;
+  const commandDisplay = automaticCheck?.status === 'completed'
+    ? automaticCheck.profile?.command_display ?? null
+    : null;
+  let headline = '本轮编码已结束。';
+  let checkLine = '自动检查：当前项目没有可执行的检查，或检查服务不可用。';
+  if (projection?.status === 'passed') {
+    headline = '编码任务已完成，并通过自动检查。';
+    checkLine = `自动检查：${commandDisplay === null ? '' : `\`${commandDisplay}\` `}已通过。`;
+  } else if (projection?.status === 'failed') {
+    headline = '本轮修改已保留，但自动检查仍未通过，任务尚未闭环。';
+    checkLine = `自动检查：${commandDisplay === null ? '' : `\`${commandDisplay}\` `}未通过，请继续修复后重试。`;
+  } else if (projection?.status === 'incomplete') {
+    headline = '本轮修改已保留，但自动检查环境未就绪。';
+    checkLine = `自动检查：${commandDisplay === null ? '' : `\`${commandDisplay}\` `}未能运行；${projection.summary}`;
+  }
+  const materializationLine = currentMaterialization.status === 'materialized'
+    ? '项目文件：最新草稿已写入当前项目文件夹。'
+    : currentMaterialization.status === 'not_materialized'
+      ? '项目文件：草稿已保留，但未能写入当前项目文件夹，请先检查工作区状态。'
+      : '项目文件：草稿已保留；当前没有可写入的项目文件夹。';
+  const normalizedSummary = modelSummary.trim();
+  const detail = /\p{Script=Han}/u.test(normalizedSummary)
+    ? Array.from(normalizedSummary).slice(0, 520).join('')
+    : '已按本轮要求完成项目修改。';
+  const nextLine = projection?.status === 'failed'
+    ? '下一步：继续说明要修复的问题，Builder 会基于当前草稿接着处理。'
+    : projection?.status === 'incomplete'
+      ? '下一步：先准备依赖或授权 Builder 准备隔离检查环境，然后再运行检查。'
+    : currentMaterialization.status === 'materialized'
+      ? '使用方式：点击顶部「Run」运行项目；需要开发服务器时，确认本次命令后会打开本地地址。也可以点击「Open location」查看项目文件。'
+      : '下一步：选择或恢复项目文件夹后，再运行和打开项目。';
+  return [
+    headline,
+    '',
+    `- 完成内容：${detail}`,
+    `- 文件：${pathSummary}。`,
+    `- ${checkLine}`,
+    `- ${materializationLine}`,
+    '',
+    nextLine,
+  ].join('\n');
 }
 
 function localReadOnlyReply(request) {
@@ -962,6 +1170,13 @@ function safeText(value, maximumCodePoints, maximumBytes) {
   return value;
 }
 
+function hasControlCharacters(value) {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+  });
+}
+
 function canonicalJson(value) {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' && Number.isSafeInteger(value)) return JSON.stringify(value);
@@ -988,9 +1203,8 @@ function safeProjectId(value) {
   return value;
 }
 
-function safeConversationId(value, projectId) {
+function safeConversationId(value) {
   if (typeof value !== 'string' || !CONVERSATION_ID_PATTERN.test(value)) fail();
-  if (value.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
   return value;
 }
 
@@ -1077,49 +1291,45 @@ function appendProviderOutputBuffer(state, deltaText) {
   return state.buffer_text;
 }
 
-function decodeJsonEscape(sequence) {
-  if (sequence.length < 2) return null;
-  const marker = sequence[1];
-  if (marker === '"') return '"';
-  if (marker === '\\') return '\\';
-  if (marker === '/') return '/';
-  if (marker === 'b') return '\b';
-  if (marker === 'f') return '\f';
-  if (marker === 'n') return '\n';
-  if (marker === 'r') return '\r';
-  if (marker === 't') return '\t';
-  if (marker !== 'u') return null;
-  if (sequence.length < 6 || !/^[0-9a-f]{4}$/iu.test(sequence.slice(2, 6))) return null;
-  return String.fromCharCode(Number.parseInt(sequence.slice(2, 6), 16));
+function structuredProviderOutputLiveDisplayText(value) {
+  const text = value.trim();
+  if (!text.startsWith('{')) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (
+    !isPlainObject(parsed)
+    || typeof parsed.kind !== 'string'
+    || !parsed.kind.startsWith('builder_')
+  ) return undefined;
+  if (
+    parsed.kind === BUILDER_GENERATED_EXPLANATION_KIND
+    && typeof parsed.explanation === 'string'
+  ) return safeLiveDisplayText(parsed.explanation);
+  return null;
 }
 
-function extractPartialJsonStringField(source, fieldName) {
-  const marker = `"${fieldName}"`;
-  const markerIndex = source.indexOf(marker);
-  if (markerIndex === -1) return '';
-  let index = markerIndex + marker.length;
-  while (/\s/u.test(source[index] ?? '')) index += 1;
-  if (source[index] !== ':') return '';
-  index += 1;
-  while (/\s/u.test(source[index] ?? '')) index += 1;
-  if (source[index] !== '"') return '';
-  index += 1;
-  let output = '';
-  for (; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === '"') return output;
-    if (character === '\\') {
-      const remaining = source.slice(index, index + 6);
-      const decoded = decodeJsonEscape(remaining);
-      if (decoded === null) return output;
-      output += decoded;
-      index += remaining[1] === 'u' ? 5 : 1;
-      continue;
-    }
-    if (character < ' ') return '';
-    output += character;
-  }
-  return output;
+function discardProviderOutputBuffer(state, textDigest, textBytes) {
+  if (
+    typeof textDigest !== 'string'
+    || !DIGEST_PATTERN.test(textDigest)
+    || !Number.isSafeInteger(textBytes)
+    || textBytes <= 0
+    || textBytes > state.buffer_bytes
+  ) return null;
+  const buffer = Buffer.from(state.buffer_text, 'utf8');
+  const retainBytes = buffer.byteLength - textBytes;
+  const discarded = buffer.subarray(retainBytes);
+  const discardedDigest = `sha256:${nodeCrypto.createHash('sha256').update(discarded).digest('hex')}`;
+  if (discardedDigest !== textDigest) return null;
+  const retained = buffer.subarray(0, retainBytes).toString('utf8');
+  if (Buffer.byteLength(retained, 'utf8') !== retainBytes) return null;
+  state.buffer_text = retained;
+  state.buffer_bytes = retainBytes;
+  return retainBytes;
 }
 
 function safeOid(value, nullable = false) {
@@ -1138,7 +1348,7 @@ function sanitizeApprovedPlanEditRequest(value) {
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   return freezeDeep({
     project_id: projectId,
-    conversation_id: safeConversationId(valueAt(value, 'conversation_id'), projectId),
+    conversation_id: safeConversationId(valueAt(value, 'conversation_id')),
     turn_id: safePattern(valueAt(value, 'turn_id'), TURN_ID_PATTERN, 80),
     run_id: safePattern(valueAt(value, 'run_id'), RUN_ID_PATTERN, 80),
   });
@@ -1256,7 +1466,12 @@ function sanitizeOptions(value) {
   if (keys.includes('onProviderOutputDelta') && typeof descriptors.onProviderOutputDelta.value !== 'function') fail();
   if (keys.includes('createUuid') && typeof descriptors.createUuid.value !== 'function') fail();
   if (keys.includes('sourceContextCollector') && !isPlainObject(descriptors.sourceContextCollector.value)) fail();
+  if (
+    keys.includes('agentConversationService')
+    && !isPlainObject(descriptors.agentConversationService.value)
+  ) fail();
   if (keys.includes('workspaceReadAuthority') && !isPlainObject(descriptors.workspaceReadAuthority.value)) fail();
+  if (keys.includes('currentProjection') && !isPlainObject(descriptors.currentProjection.value)) fail();
   if (keys.includes('projectUnderstandingService') && !isPlainObject(descriptors.projectUnderstandingService.value)) {
     fail();
   }
@@ -1264,6 +1479,12 @@ function sanitizeOptions(value) {
     fail();
   }
   if (keys.includes('taskCapsuleRecordingService') && !isPlainObject(descriptors.taskCapsuleRecordingService.value)) {
+    fail();
+  }
+  if (
+    keys.includes('sessionTaskTargetService')
+    && !isPlainObject(descriptors.sessionTaskTargetService.value)
+  ) {
     fail();
   }
   if (
@@ -1285,6 +1506,12 @@ function sanitizeOptions(value) {
     fail();
   }
   if (
+    keys.includes('codingLoopCheckCoordinator')
+    && !isPlainObject(descriptors.codingLoopCheckCoordinator.value)
+  ) {
+    fail();
+  }
+  if (
     keys.includes('workingContextStateService')
     && !isPlainObject(descriptors.workingContextStateService.value)
   ) {
@@ -1302,6 +1529,20 @@ function sanitizeOptions(value) {
   ) {
     fail();
   }
+  if (
+    keys.includes('runtimeWorkspaceSnapshotService')
+    && descriptors.runtimeWorkspaceSnapshotService.value !== null
+    && !isPlainObject(descriptors.runtimeWorkspaceSnapshotService.value)
+  ) fail();
+  if (
+    keys.includes('harnessRuntimeComposition')
+    && descriptors.harnessRuntimeComposition.value !== null
+    && !isPlainObject(descriptors.harnessRuntimeComposition.value)
+  ) fail();
+  if (
+    keys.includes('programmingRuntimeFeatureFlag')
+    && !['disabled', 'shadow', 'enabled'].includes(descriptors.programmingRuntimeFeatureFlag.value)
+  ) fail();
   return Object.freeze({
     providerConfigRepository: descriptors.providerConfigRepository.value,
     projectReadAuthority: descriptors.projectReadAuthority.value,
@@ -1315,7 +1556,13 @@ function sanitizeOptions(value) {
       ? descriptors.projectIdentityAuthority.value
       : null,
     conversationService: descriptors.conversationService.value,
+    ...(keys.includes('agentConversationService')
+      ? { agentConversationService: descriptors.agentConversationService.value }
+      : {}),
     gitAuthority: descriptors.gitAuthority.value,
+    ...(keys.includes('currentProjection')
+      ? { currentProjection: descriptors.currentProjection.value }
+      : {}),
     ...(keys.includes('transport') ? { transport: descriptors.transport.value } : {}),
     ...(keys.includes('onGenerationStarted') ? { onGenerationStarted: descriptors.onGenerationStarted.value } : {}),
     ...(keys.includes('onProviderOutputDelta') ? { onProviderOutputDelta: descriptors.onProviderOutputDelta.value } : {}),
@@ -1323,6 +1570,9 @@ function sanitizeOptions(value) {
     ...(keys.includes('taskCapsuleStore') ? { taskCapsuleStore: descriptors.taskCapsuleStore.value } : {}),
     ...(keys.includes('taskCapsuleRecordingService')
       ? { taskCapsuleRecordingService: descriptors.taskCapsuleRecordingService.value }
+      : {}),
+    ...(keys.includes('sessionTaskTargetService')
+      ? { sessionTaskTargetService: descriptors.sessionTaskTargetService.value }
       : {}),
     ...(keys.includes('sessionTaskAddressRecordingService')
       ? { sessionTaskAddressRecordingService: descriptors.sessionTaskAddressRecordingService.value }
@@ -1333,6 +1583,9 @@ function sanitizeOptions(value) {
     ...(keys.includes('automaticDraftCheckpointService')
       ? { automaticDraftCheckpointService: descriptors.automaticDraftCheckpointService.value }
       : {}),
+    ...(keys.includes('codingLoopCheckCoordinator')
+      ? { codingLoopCheckCoordinator: descriptors.codingLoopCheckCoordinator.value }
+      : {}),
     ...(keys.includes('workingContextStateService')
       ? { workingContextStateService: descriptors.workingContextStateService.value }
       : {}),
@@ -1342,6 +1595,15 @@ function sanitizeOptions(value) {
     ...(keys.includes('providerContextDisclosureStatusService')
       ? { providerContextDisclosureStatusService: descriptors.providerContextDisclosureStatusService.value }
       : {}),
+    runtimeWorkspaceSnapshotService: keys.includes('runtimeWorkspaceSnapshotService')
+      ? descriptors.runtimeWorkspaceSnapshotService.value
+      : null,
+    harnessRuntimeComposition: keys.includes('harnessRuntimeComposition')
+      ? descriptors.harnessRuntimeComposition.value
+      : null,
+    programmingRuntimeFeatureFlag: keys.includes('programmingRuntimeFeatureFlag')
+      ? descriptors.programmingRuntimeFeatureFlag.value
+      : 'disabled',
     createUuid: keys.includes('createUuid') ? descriptors.createUuid.value : nodeCrypto.randomUUID,
   });
 }
@@ -1555,13 +1817,31 @@ function emptyBaseForBoundProject(value, expectedProjectId) {
   });
 }
 
-async function loadBaseForExistingProject(projectId, loadCurrentProject, loadProjectIdentity, projectReadAuthority, projectIdentityAuthority) {
+async function loadBaseForExistingProject(
+  projectId,
+  loadCurrentProject,
+  loadProjectIdentity,
+  loadFreshWorkspace,
+  projectReadAuthority,
+  projectIdentityAuthority,
+  workspaceReadAuthority,
+) {
   try {
     return sanitizeCurrentOrLocalWorkspaceReadResult(
       await Reflect.apply(loadCurrentProject, projectReadAuthority, [{ project_id: projectId }]),
       projectId,
     );
   } catch {
+    if (workspaceReadAuthority !== undefined && loadFreshWorkspace !== null) {
+      try {
+        return sanitizeLocalWorkspaceReadResult(
+          await Reflect.apply(loadFreshWorkspace, workspaceReadAuthority, [{ project_id: projectId }]),
+          projectId,
+        );
+      } catch {
+        // Fall through to the bound empty-project identity path below.
+      }
+    }
     if (projectIdentityAuthority === null || loadProjectIdentity === null) fail();
     return emptyBaseForBoundProject(
       await Reflect.apply(loadProjectIdentity, projectIdentityAuthority, [{ project_id: projectId }]),
@@ -1629,12 +1909,18 @@ function sanitizeConversationDraft(value, expectedDraftId) {
     'candidate_result',
     'verification_admission',
   ]);
-  const candidateResult = exactObject(valueAt(value, 'candidate_result'), [
+  const candidateResult = exactObjectWithOptional(valueAt(value, 'candidate_result'), [
     'draft_id', 'title', 'summary', 'git_candidate_receipt',
-  ]);
+  ], ['current_materialization']);
   const receipt = sanitizeBuilderGitCandidateReceipt(
     valueAt(candidateResult, 'git_candidate_receipt'),
   );
+  const currentMaterialization = Object.hasOwn(candidateResult, 'current_materialization')
+    ? sanitizeDraftCurrentMaterialization(valueAt(candidateResult, 'current_materialization'))
+    : freezeDeep({
+      status: 'not_attempted',
+      reason: 'legacy_pending_draft',
+    });
   const conversationHead = valueAt(value, 'conversation_head');
   exactObject(conversationHead, ['sequence', 'event_id', 'event_digest']);
   const sequence = valueAt(conversationHead, 'sequence');
@@ -1667,6 +1953,7 @@ function sanitizeConversationDraft(value, expectedDraftId) {
       event_digest: safeDigest(valueAt(conversationHead, 'event_digest')),
     },
     git_candidate_receipt: receipt,
+    current_materialization: currentMaterialization,
     candidate_proof: {
       proof_version: 'builder-generation-pending-candidate-proof.v1',
       project_id: receipt.project_id,
@@ -1713,6 +2000,73 @@ function sanitizeVerifiedCandidateRead(value, expectedReceipt) {
   const sourceTree = sanitizeBuilderProjectSourceTree(valueAt(value, 'source_tree'));
   if (sourceTree.source_tree_digest !== receipt.resulting_tree_digest) fail();
   return freezeDeep({ receipt, source_tree: sourceTree });
+}
+
+function sanitizeVerifiedCandidateBaseRead(value, expectedReceipt) {
+  exactObject(value, [
+    'result_version',
+    'candidate_receipt',
+    'verification_receipt',
+    'source_tree',
+    'base_source_tree_digest',
+    'code_authority',
+    'read_admission',
+  ]);
+  const pair = sanitizeBuilderGitCandidateReceiptPair(
+    valueAt(value, 'candidate_receipt'),
+    valueAt(value, 'verification_receipt'),
+  );
+  const receipt = pair.candidate_receipt;
+  const sourceTree = sanitizeBuilderProjectSourceTree(valueAt(value, 'source_tree'));
+  if (
+    valueAt(value, 'result_version')
+      !== 'builder-git-verified-candidate-base-read-result.v1'
+    || valueAt(value, 'code_authority') !== 'git_candidate_base_tree'
+    || valueAt(value, 'read_admission') !== 'verified'
+    || canonicalJson(receipt) !== canonicalJson(expectedReceipt)
+    || safeDigest(valueAt(value, 'base_source_tree_digest'))
+      !== sourceTree.source_tree_digest
+  ) fail();
+  return freezeDeep({ receipt, source_tree: sourceTree });
+}
+
+function sanitizeCandidateWorkspaceBaseRead(value, expectedReceipt) {
+  exactObject(value, [
+    'result_version',
+    'project_id',
+    'candidate_id',
+    'candidate_digest',
+    'base_source_tree_digest',
+    'read_admission',
+  ]);
+  const baseSourceTreeDigest = safeDigest(valueAt(value, 'base_source_tree_digest'));
+  if (
+    valueAt(value, 'result_version') !== 'builder-git-candidate-workspace-base.v1'
+    || valueAt(value, 'project_id') !== expectedReceipt.project_id
+    || valueAt(value, 'candidate_id') !== expectedReceipt.candidate_id
+    || valueAt(value, 'candidate_digest') !== expectedReceipt.candidate_digest
+    || valueAt(value, 'read_admission') !== 'verified_git_candidate_commit_trailer'
+  ) fail();
+  return freezeDeep({ base_source_tree_digest: baseSourceTreeDigest });
+}
+
+function sanitizeDraftCurrentMaterialization(value) {
+  if (!isPlainObject(value)) fail();
+  const status = valueAt(value, 'status');
+  if (status === 'materialized') {
+    exactObject(value, ['status']);
+    return freezeDeep({ status });
+  }
+  if (status === 'not_materialized' || status === 'not_attempted') {
+    exactObject(value, ['status', 'reason']);
+    const reason = valueAt(value, 'reason');
+    if (
+      (status === 'not_materialized' && reason !== 'current_projection_unavailable')
+      || (status === 'not_attempted' && reason !== 'current_projection_not_configured')
+    ) fail();
+    return freezeDeep({ status, reason });
+  }
+  fail();
 }
 
 function publicDraftResult(draft) {
@@ -1848,7 +2202,12 @@ function createBuilderGenerationMainService(rawOptions) {
   const beginQueuedFollowupWork = ownMethod(options.conversationService, 'begin_queued_followup_work');
   const completeConversationCandidate = ownMethod(options.conversationService, 'complete_candidate');
   const completeConversationExplanation = ownMethod(options.conversationService, 'complete_explanation');
+  const completeConversationWorkResponse = ownMethod(
+    options.conversationService,
+    'complete_work_response',
+  );
   const completeConversationPlan = ownMethod(options.conversationService, 'complete_plan');
+  const completeConversationFailure = ownMethod(options.conversationService, 'complete_failure');
   const recordConversationRetryableFailure = ownMethod(options.conversationService, 'record_retryable_failure');
   const recordConversationRunContextSnapshot = ownMethod(
     options.conversationService,
@@ -1859,6 +2218,28 @@ function createBuilderGenerationMainService(rawOptions) {
     'record_programming_run_admission',
   );
   const recordConversationRunProgress = ownMethod(options.conversationService, 'record_run_progress');
+  const recordConversationCheckpoint = ownMethod(
+    options.conversationService,
+    'record_checkpoint',
+  );
+  const recordConversationRecoveryAction = ownMethod(
+    options.conversationService,
+    'record_recovery_action',
+  );
+  const recordConversationProgrammingRuntimeEvent = ownMethod(
+    options.conversationService,
+    'record_programming_runtime_event',
+  );
+  const recordConversationProgrammingRuntimeEventsValue = optionalValueAt(
+    options.conversationService,
+    'record_programming_runtime_events',
+  );
+  if (
+    recordConversationProgrammingRuntimeEventsValue !== undefined
+    && typeof recordConversationProgrammingRuntimeEventsValue !== 'function'
+  ) fail();
+  const recordConversationProgrammingRuntimeEvents =
+    recordConversationProgrammingRuntimeEventsValue ?? null;
   const retryConversationFailure = ownMethod(options.conversationService, 'retry_after_failure');
   const beginApprovedPlanWork = ownMethod(options.conversationService, 'begin_approved_plan_work');
   const requestConversationCancel = ownMethod(options.conversationService, 'request_cancel');
@@ -1876,9 +2257,40 @@ function createBuilderGenerationMainService(rawOptions) {
     options.conversationService,
     'begin_draft_continuation_work',
   );
+  const beginAgentConversationQuestion = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'begin_question');
+  const completeAgentConversationExplanation = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'complete_explanation');
+  const recordAgentConversationRetryableFailure = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'record_retryable_failure');
+  const recordAgentConversationRunProgress = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'record_run_progress');
+  const requestAgentConversationCancel = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'request_cancel');
+  const recordAgentConversationSteering = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'record_steering');
+  const recordAgentConversationQueuedFollowup = options.agentConversationService === undefined
+    ? null
+    : ownMethod(options.agentConversationService, 'record_queued_followup');
   const persistCandidateCommit = ownMethod(options.gitAuthority, 'persist_candidate_commit');
   const verifyCandidateReceipt = ownMethod(options.gitAuthority, 'verify_candidate_receipt');
   const readVerifiedCandidate = ownMethod(options.gitAuthority, 'read_verified_candidate');
+  const readVerifiedCandidateBase = ownMethod(
+    options.gitAuthority,
+    'read_verified_candidate_base',
+  );
+  const readCandidateWorkspaceBase = options.currentProjection === undefined
+    ? null
+    : ownMethod(options.gitAuthority, 'read_candidate_workspace_base');
+  const projectCurrent = options.currentProjection === undefined
+    ? null
+    : ownMethod(options.currentProjection, 'project_current');
   const collectProjectSourceContext = options.sourceContextCollector === undefined
     ? null
     : ownMethod(options.sourceContextCollector, 'collect_project_source_context');
@@ -1891,6 +2303,9 @@ function createBuilderGenerationMainService(rawOptions) {
   const recordTaskCapsuleFromConversation = options.taskCapsuleRecordingService === undefined
     ? null
     : ownMethod(options.taskCapsuleRecordingService, 'record_task_capsule_from_conversation');
+  const resolveSessionTaskTarget = options.sessionTaskTargetService === undefined
+    ? null
+    : ownMethod(options.sessionTaskTargetService, 'resolve_target');
   const recordSessionTaskAddressesFromConversation = options.sessionTaskAddressRecordingService === undefined
     ? null
     : ownMethod(options.sessionTaskAddressRecordingService, 'record_addresses_from_conversation_context');
@@ -1914,6 +2329,19 @@ function createBuilderGenerationMainService(rawOptions) {
     : ownMethod(
       options.automaticDraftCheckpointService,
       'record_verified_candidate_checkpoint',
+    );
+  const preparePreviousCheckpointRestore = options.automaticDraftCheckpointService !== undefined
+    && typeof options.automaticDraftCheckpointService.prepare_previous_checkpoint_restore === 'function'
+    ? ownMethod(
+      options.automaticDraftCheckpointService,
+      'prepare_previous_checkpoint_restore',
+    )
+    : null;
+  const runAutomaticCandidateCheck = options.codingLoopCheckCoordinator === undefined
+    ? null
+    : ownMethod(
+      options.codingLoopCheckCoordinator,
+      'run_automatic_candidate_check',
     );
   const readCurrentWorkingContextStateForConversation = options.workingContextStateService === undefined
     ? null
@@ -1947,11 +2375,19 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingGenerateRouteDecisionHints = new Map();
   const pendingGenerateQueuedFollowups = new Map();
 
-  function recordAutomaticDraftCheckpoint(candidate, receiptPair, summary, editAttempt) {
-    if (recordVerifiedCandidateCheckpoint === null) return null;
+  function recordAutomaticDraftCheckpoint(
+    operationKey,
+    conversationContext,
+    candidate,
+    receiptPair,
+    summary,
+    editAttempt,
+  ) {
+    if (recordVerifiedCandidateCheckpoint === null) return conversationContext;
     const changedPaths = new Set(candidate.operations.map((operation) => operation.path));
+    let checkpoint;
     try {
-      return Reflect.apply(
+      checkpoint = Reflect.apply(
         recordVerifiedCandidateCheckpoint,
         options.automaticDraftCheckpointService,
         [{
@@ -1964,9 +2400,187 @@ function createBuilderGenerationMainService(rawOptions) {
         }],
       );
     } catch {
+      try {
+        const failedContext = Reflect.apply(
+          recordConversationCheckpoint,
+          options.conversationService,
+          [{
+            context: conversationContext,
+            status: 'failed',
+            changed_file_count: changedPaths.size,
+            verification_status: 'candidate_verified',
+          }],
+        );
+        activeContexts.set(operationKey, failedContext);
+      } catch {
+        // The checkpoint store remains authoritative when the derived chat fact cannot be appended.
+      }
       fail('builder_generation_service_unavailable');
     }
+    const checkpointSequence = valueAt(
+      valueAt(valueAt(checkpoint, 'draft_checkpoint'), 'draft_checkpoint'),
+      'checkpoint_sequence',
+    );
+    if (!Number.isSafeInteger(checkpointSequence) || checkpointSequence < 1) {
+      fail('builder_generation_service_unavailable');
+    }
+    const recordedContext = Reflect.apply(
+      recordConversationCheckpoint,
+      options.conversationService,
+      [{
+        context: conversationContext,
+        status: checkpointSequence === 1 ? 'created' : 'updated',
+        changed_file_count: changedPaths.size,
+        verification_status: 'candidate_verified',
+      }],
+    );
+    activeContexts.set(operationKey, recordedContext);
+    return recordedContext;
   }
+
+  function candidateReceiptFromCheckpoint(checkpoint) {
+    const candidateRef = valueAt(checkpoint, 'candidate_ref');
+    return sanitizeBuilderGitCandidateReceipt({
+      receipt_version: BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
+      repository_version: BUILDER_GIT_PROJECT_REPOSITORY_VERSION,
+      project_id: valueAt(checkpoint, 'project_id'),
+      conversation_id: valueAt(checkpoint, 'conversation_id'),
+      turn_id: valueAt(checkpoint, 'turn_id'),
+      task_id: valueAt(checkpoint, 'task_id'),
+      run_id: valueAt(checkpoint, 'run_id'),
+      request_id: valueAt(checkpoint, 'request_id'),
+      candidate_id: valueAt(candidateRef, 'candidate_id'),
+      candidate_digest: valueAt(candidateRef, 'candidate_digest'),
+      resulting_tree_digest: valueAt(candidateRef, 'resulting_tree_digest'),
+      semantic_identity_digest: valueAt(candidateRef, 'semantic_identity_digest'),
+      verification_receipt_digest: valueAt(candidateRef, 'verification_receipt_digest'),
+      object_format: BUILDER_GIT_RECEIPT_OBJECT_FORMAT,
+      commit_oid: valueAt(candidateRef, 'commit_oid'),
+      tree_oid: valueAt(candidateRef, 'tree_oid'),
+      parent_oid: valueAt(candidateRef, 'parent_oid'),
+      expected_base_oid: valueAt(candidateRef, 'parent_oid'),
+      code_authority: CODE_AUTHORITY,
+      product_revision_admission: PRODUCT_REVISION_ADMISSION,
+      replay: false,
+    });
+  }
+
+  async function coordinateAutomaticCandidateCheck(draftId, candidate, receiptPair) {
+    if (runAutomaticCandidateCheck === null) return null;
+    try {
+      return await Reflect.apply(
+        runAutomaticCandidateCheck,
+        options.codingLoopCheckCoordinator,
+        [{
+          draft_id: draftId,
+          candidate_receipt: receiptPair.candidate_receipt,
+          candidate_verification: receiptPair.verification_receipt,
+          source_tree: candidate.resulting_source_tree,
+        }],
+      );
+    } catch (error) {
+      recordCanaryGenerationDebug('automatic_candidate_check_unavailable', error);
+      return null;
+    }
+  }
+
+  async function materializeCandidateToCurrentWorkspace(receiptPair, workspaceExpectation = null) {
+    if (projectCurrent === null || readCandidateWorkspaceBase === null) {
+      return freezeDeep({
+        status: 'not_attempted',
+        reason: 'current_projection_not_configured',
+      });
+    }
+    try {
+      const base = sanitizeCandidateWorkspaceBaseRead(
+        await Reflect.apply(
+          readCandidateWorkspaceBase,
+          options.gitAuthority,
+          [receiptPair.candidate_receipt],
+        ),
+        receiptPair.candidate_receipt,
+      );
+      const expectedWorkspaceSourceTreeDigest = workspaceExpectation === null
+        ? base.base_source_tree_digest
+        : safeDigest(workspaceExpectation.expected_workspace_source_tree_digest);
+      const projectionMode = workspaceExpectation === null
+        ? 'base_cas'
+        : workspaceExpectation.projection_mode;
+      if (
+        !['base_cas', 'sqlite_current_repair'].includes(projectionMode)
+        || (
+          projectionMode === 'base_cas'
+          && expectedWorkspaceSourceTreeDigest !== base.base_source_tree_digest
+        )
+      ) fail();
+      const projection = await Reflect.apply(
+        projectCurrent,
+        options.currentProjection,
+        [{
+          candidate_receipt: receiptPair.candidate_receipt,
+          expected_workspace_source_tree_digest: expectedWorkspaceSourceTreeDigest,
+          projection_mode: projectionMode,
+        }],
+      );
+      return freezeDeep({
+        status: 'materialized',
+        result_version: valueAt(projection, 'result_version'),
+        main_ref: valueAt(projection, 'main_ref'),
+        worktree: valueAt(projection, 'worktree'),
+        worktree_file_count: valueAt(projection, 'worktree_file_count'),
+      });
+    } catch (error) {
+      recordCanaryGenerationDebug('candidate_current_projection_unavailable', error);
+      return freezeDeep({
+        status: 'not_materialized',
+        reason: 'current_projection_unavailable',
+      });
+    }
+  }
+
+  function conversationCurrentMaterialization(value) {
+    if (value.status === 'materialized') return freezeDeep({ status: 'materialized' });
+    if (value.status === 'not_materialized') {
+      return freezeDeep({
+        status: 'not_materialized',
+        reason: 'current_projection_unavailable',
+      });
+    }
+    return freezeDeep({
+      status: 'not_attempted',
+      reason: 'current_projection_not_configured',
+    });
+  }
+
+  function continuationWorkspaceExpectation(continuationContext, candidate) {
+    if (
+      continuationContext === null
+      || continuationContext.conversation_draft.current_materialization.status !== 'materialized'
+    ) {
+      return freezeDeep({
+        expected_workspace_source_tree_digest: candidate.base_source_tree.source_tree_digest,
+        projection_mode: 'base_cas',
+      });
+    }
+    return freezeDeep({
+      expected_workspace_source_tree_digest: continuationContext.base.base_source_tree_digest,
+      projection_mode: 'sqlite_current_repair',
+    });
+  }
+
+  function pendingDraftWorkspaceExpectation(draft, candidate) {
+    if (draft.current_materialization.status !== 'materialized') {
+      return freezeDeep({
+        expected_workspace_source_tree_digest: candidate.base_source_tree.source_tree_digest,
+        projection_mode: 'base_cas',
+      });
+    }
+    return freezeDeep({
+      expected_workspace_source_tree_digest: draft.candidate_proof.resulting_tree_digest,
+      projection_mode: 'sqlite_current_repair',
+    });
+  }
+
   const generationContexts = new WeakMap();
   const providerContextProjections = new WeakMap();
   const draftContinuationContexts = new WeakMap();
@@ -1982,8 +2596,260 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingPlanRequests = new Map();
   const planContexts = new WeakMap();
   const pendingSemanticRouteClassifications = new Map();
+  const providerConfigDigestsByRunId = new Map();
+  const harnessRunnersByOperationKey = new Map();
+  const cancellationTerminalOperationKeys = new Set();
   let pendingAuthority = null;
   let bindingAuthority = false;
+
+  function sourceLines(content) {
+    if (content === '') return [];
+    const lines = content.split(/\r\n|\r|\n/u);
+    if (lines.at(-1) === '') lines.pop();
+    return lines;
+  }
+
+  function lineEditCounts(beforeContent, afterContent) {
+    const before = sourceLines(beforeContent);
+    const after = sourceLines(afterContent);
+    const maximum = before.length + after.length;
+    if (maximum > 20_000) {
+      let prefix = 0;
+      while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
+        prefix += 1;
+      }
+      let suffix = 0;
+      while (
+        suffix < before.length - prefix
+        && suffix < after.length - prefix
+        && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+      ) suffix += 1;
+      return {
+        added_lines: after.length - prefix - suffix,
+        deleted_lines: before.length - prefix - suffix,
+      };
+    }
+    const frontier = new Map([[1, 0]]);
+    for (let distance = 0; distance <= maximum; distance += 1) {
+      for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+        const left = frontier.get(diagonal - 1) ?? -1;
+        const right = frontier.get(diagonal + 1) ?? -1;
+        let x = diagonal === -distance || (diagonal !== distance && left < right)
+          ? Math.max(0, right)
+          : left + 1;
+        let y = x - diagonal;
+        while (x < before.length && y < after.length && before[x] === after[y]) {
+          x += 1;
+          y += 1;
+        }
+        frontier.set(diagonal, x);
+        if (x >= before.length && y >= after.length) {
+          return {
+            added_lines: (distance + after.length - before.length) / 2,
+            deleted_lines: (distance - after.length + before.length) / 2,
+          };
+        }
+      }
+    }
+    fail();
+  }
+
+  function runtimeTimestamp(context) {
+    const latest = context.events.at(-1) ?? null;
+    const value = latest === null ? 0 : latest.recorded_at_ms;
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  }
+
+  async function measureTraceWindow(windowName, metricName, callback) {
+    const windowStarted = builderPerformanceTrace.beginEventLoopWindow(windowName);
+    try {
+      return await builderPerformanceTrace.measureAsync(metricName, callback);
+    } finally {
+      if (windowStarted) builderPerformanceTrace.endEventLoopWindow(windowName);
+    }
+  }
+
+  async function beginStructuredRuntimeTrace({
+    context,
+    operation_key: operationKeyValue,
+    provider_context: providerContext,
+    source_tree: sourceTree,
+    instruction,
+  }) {
+    const providerConfigDigest = providerConfigDigestsByRunId.get(context.ids.run_id);
+    if (providerConfigDigest === undefined) return null;
+    const state = { context };
+    const bridge = createBuilderStructuredProgrammingRuntimeBridge({
+      clock: () => runtimeTimestamp(state.context),
+    });
+    const runContract = createBuilderProgrammingRuntimeRunContract({
+      runtime_descriptor: bridge.descriptor,
+      admission: {
+        project_id: context.project.project_id,
+        conversation_id: context.conversation.conversation_id,
+        turn_id: context.ids.turn_id,
+        task_id: context.ids.task_id,
+        run_id: context.ids.run_id,
+        mode: 'build',
+        workspace_ref: {
+          ref_version: 'builder-programming-workspace-ref.v1',
+          workspace_id: `builder-programming-workspace:${sourceTree.source_tree_digest.slice('sha256:'.length)}`,
+          source_tree_digest: sourceTree.source_tree_digest,
+          writable: true,
+        },
+        provider_config_digest: providerConfigDigest,
+        allowed_tools: [],
+        limits: {
+          max_steps: 128,
+          max_duration_ms: 300_000,
+          max_model_tokens: 32_768,
+          max_tool_output_bytes: 256 * 1_024,
+        },
+        admitted_at_ms: runtimeTimestamp(context),
+      },
+      input: {
+        message_id: context.ids.message_id,
+        text: instruction,
+      },
+    });
+    const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract });
+    if (typeof options.runtimeWorkspaceSnapshotService?.recordRuntimeSourceTree === 'function') {
+      await options.runtimeWorkspaceSnapshotService.recordRuntimeSourceTree({
+        project_id: runContract.admission.project_id,
+        conversation_id: runContract.admission.conversation_id,
+        run_id: runContract.admission.run_id,
+        source_tree: sourceTree,
+      });
+    }
+    async function persistRuntimeEvent(candidate, mainFact) {
+      const normalizedAtMs = runtimeTimestamp(state.context);
+      const runtimeEvent = mainFact
+        ? journal.appendMainFact(candidate, normalizedAtMs)
+        : journal.append(candidate, normalizedAtMs);
+      state.context = Reflect.apply(
+        recordConversationProgrammingRuntimeEvent,
+        options.conversationService,
+        [{ context: state.context, runtime_event: runtimeEvent }],
+      );
+      activeContexts.set(operationKeyValue, state.context);
+      if (draftContinuationContexts.has(providerContext)) {
+        draftContinuationContexts.set(providerContext, state.context);
+      } else {
+        generationContexts.set(providerContext, state.context);
+      }
+      if (
+        runtimeEvent.event_type === 'tool_call_started'
+        && ['edit', 'write'].includes(runtimeEvent.payload.tool_kind)
+        && runtimeEvent.payload.target_label !== null
+        && typeof options.runtimeWorkspaceSnapshotService?.bindToolFile === 'function'
+      ) {
+        try {
+          await options.runtimeWorkspaceSnapshotService.bindToolFile({
+            project_id: runContract.admission.project_id,
+            conversation_id: runContract.admission.conversation_id,
+            run_id: runtimeEvent.run_id,
+            tool_call_id: runtimeEvent.tool_call_id,
+            path: runtimeEvent.payload.target_label,
+          });
+        } catch (error) {
+          recordCanaryGenerationDebug('structured_runtime_file_binding', error);
+        }
+      }
+      return runtimeEvent;
+    }
+    const handle = await bridge.startRun({
+      run_contract: runContract,
+      event_sink: {
+        emit(candidate) {
+          return persistRuntimeEvent(candidate, false);
+        },
+        emit_main_fact(candidate) {
+          return persistRuntimeEvent(candidate, true);
+        },
+      },
+    });
+    return {
+      bridge,
+      handle,
+      context() {
+        return state.context;
+      },
+    };
+  }
+
+  async function recordStructuredCandidateFacts(session, candidate, assistantText) {
+    const context = session.context();
+    if (typeof options.runtimeWorkspaceSnapshotService?.recordRuntimeSourceTree === 'function') {
+      await options.runtimeWorkspaceSnapshotService.recordRuntimeSourceTree({
+        project_id: context.project.project_id,
+        conversation_id: context.conversation.conversation_id,
+        run_id: context.ids.run_id,
+        source_tree: candidate.resulting_source_tree,
+      });
+    }
+    await session.bridge.recordAssistantResult(session.handle, {
+      assistant_text: assistantText,
+    });
+    const beforeByPath = new Map(candidate.base_source_tree.files.map(
+      (file) => [file.path, file.content],
+    ));
+    const afterByPath = new Map(candidate.resulting_source_tree.files.map(
+      (file) => [file.path, file.content],
+    ));
+    for (const operation of candidate.operations) {
+      const beforeContent = beforeByPath.get(operation.path) ?? '';
+      const afterContent = afterByPath.get(operation.path) ?? '';
+      const counts = lineEditCounts(beforeContent, afterContent);
+      await session.bridge.recordFileChange(session.handle, {
+        resource_id: `project:/${operation.path}`,
+        change_kind: operation.operation === 'delete'
+          ? 'deleted'
+          : beforeByPath.has(operation.path) ? 'edited' : 'added',
+        added_lines: counts.added_lines,
+        deleted_lines: counts.deleted_lines,
+        duration_ms: 0,
+      });
+    }
+  }
+
+  async function recordStructuredCheckFact(session, automaticCheck) {
+    if (
+      automaticCheck?.status !== 'completed'
+      || automaticCheck.profile == null
+      || automaticCheck.check_run_status_projection == null
+    ) return;
+    const projection = automaticCheck.check_run_status_projection;
+    await session.bridge.recordCheckResult(session.handle, {
+      command_display: automaticCheck.profile.command_display,
+      status: projection.status === 'passed' ? 'passed' : 'failed',
+      duration_ms: automaticCheck.duration_ms,
+      summary: projection.summary,
+    });
+  }
+
+  async function finishStructuredRuntimeTrace(session, checkpointStatus) {
+    await session.bridge.completeRun(session.handle, {
+      checkpoint_status: checkpointStatus,
+    });
+    await session.bridge.dispose();
+    providerConfigDigestsByRunId.delete(session.context().ids.run_id);
+    return session.context();
+  }
+
+  async function cancelStructuredRuntimeTrace(session) {
+    try {
+      await session.bridge.cancelRun(session.handle);
+    } finally {
+      await session.bridge.dispose();
+      providerConfigDigestsByRunId.delete(session.context().ids.run_id);
+    }
+    return session.context();
+  }
+
+  function clearStructuredRuntimeDigestForOperation(operationKeyValue) {
+    const context = activeContexts.get(operationKeyValue);
+    if (context !== undefined) providerConfigDigestsByRunId.delete(context.ids.run_id);
+  }
 
   function readProviderConfig() {
     if (bindingAuthority) fail();
@@ -2011,6 +2877,7 @@ function createBuilderGenerationMainService(rawOptions) {
     const requested = routeContextForSubmitInstruction(request.instruction);
     if (
       request.existing_project_id === null
+      || request.task_address_id === null
       || (
         requested.has_contextual_build_context !== true
         && requested.has_pending_build_confirmation !== true
@@ -2023,8 +2890,10 @@ function createBuilderGenerationMainService(rawOptions) {
       });
     }
     try {
+      const target = taskTargetForRequest(request, request.existing_project_id);
       const stream = Reflect.apply(readConversationStream, options.conversationService, [{
         project_id: request.existing_project_id,
+        conversation_id: target.conversation_id,
       }]);
       const streamContextState = requested.has_contextual_build_context === true
         ? contextualBuildContextStateInTaskStream(stream, request.existing_project_id)
@@ -2063,16 +2932,18 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function semanticRouteRequestFor(instruction, projectId) {
+  function semanticRouteRequestFor(instruction, projectId, taskAddressId) {
     let routeContext = Object.freeze({
       hasContextualBuildContext: false,
       hasPendingBuildConfirmation: false,
       workingContextStatus: projectId === null ? 'unknown' : 'discussing',
     });
-    if (projectId !== null) {
+    if (projectId !== null && taskAddressId !== null) {
       try {
+        const target = taskTargetForRequest({ task_address_id: taskAddressId }, projectId);
         const stream = Reflect.apply(readConversationStream, options.conversationService, [{
           project_id: projectId,
+          conversation_id: target.conversation_id,
         }]);
         const streamContextState = contextualBuildContextStateInTaskStream(stream, projectId);
         const conversationId = conversationIdInTaskStream(stream, projectId);
@@ -2145,7 +3016,11 @@ function createBuilderGenerationMainService(rawOptions) {
     const pending = pendingSemanticRouteClassifications.get(key);
     if (pending === undefined) return null;
     pendingSemanticRouteClassifications.delete(key);
-    const semanticRequest = semanticRouteRequestFor(request.instruction, request.existing_project_id);
+    const semanticRequest = semanticRouteRequestFor(
+      request.instruction,
+      request.existing_project_id,
+      request.task_address_id,
+    );
     if (semanticRequest.request_digest !== pending.semantic_request_digest) fail();
     return pending.classification;
   }
@@ -2222,6 +3097,39 @@ function createBuilderGenerationMainService(rawOptions) {
     return Reflect.apply(authority.resolveSecret, authority.receiver, [secretRef]);
   }
 
+  function harnessCredentialFromResolution(rawResolution, providerConfig) {
+    exactObject(rawResolution, ['resolution_version', 'secret_ref', 'credential']);
+    const secretRef = valueAt(rawResolution, 'secret_ref');
+    exactObject(secretRef, ['ref_version', 'provider_id', 'secret_id']);
+    if (
+      valueAt(rawResolution, 'resolution_version') !== 'builder-provider-secret-resolution.v1'
+      || valueAt(secretRef, 'ref_version') !== providerConfig.secret_ref.ref_version
+      || valueAt(secretRef, 'provider_id') !== providerConfig.secret_ref.provider_id
+      || valueAt(secretRef, 'secret_id') !== providerConfig.secret_ref.secret_id
+    ) fail();
+    const credential = valueAt(rawResolution, 'credential');
+    if (
+      typeof credential !== 'string'
+      || credential.length === 0
+      || credential.trim() !== credential
+      || credential.length > 16 * 1_024
+      || Buffer.byteLength(credential, 'utf8') > 16 * 1_024
+      || hasControlCharacters(credential)
+    ) fail();
+    return credential;
+  }
+
+  function harnessProviderCompatible(providerConfig) {
+    try {
+      const endpoint = new URL(providerConfig.base_url);
+      const hostname = endpoint.hostname.toLowerCase();
+      return (endpoint.protocol === 'https:' && hostname === 'api.deepseek.com')
+        || ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
+    } catch {
+      return false;
+    }
+  }
+
   function operationKey(prefix, requestDigest) {
     return `${prefix}${requestDigest}`;
   }
@@ -2246,6 +3154,27 @@ function createBuilderGenerationMainService(rawOptions) {
     if (latest !== undefined) return latest;
     const runId = typeof context.run_id === 'string' ? context.run_id : null;
     return runId === null ? undefined : liveOutputContextsByRunId.get(runId);
+  }
+
+  function isAgentConversationContext(context) {
+    if (context === null || typeof context !== 'object' || utilTypes.isProxy(context)) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(context, 'scope_kind');
+    return descriptor !== undefined
+      && Object.hasOwn(descriptor, 'value')
+      && descriptor.value === 'agent_conversation';
+  }
+
+  function applyConversationContextMethod(
+    context,
+    projectMethod,
+    agentMethod,
+    request,
+  ) {
+    if (!isAgentConversationContext(context)) {
+      return Reflect.apply(projectMethod, options.conversationService, [request]);
+    }
+    if (options.agentConversationService === undefined || agentMethod === null) fail();
+    return Reflect.apply(agentMethod, options.agentConversationService, [request]);
   }
 
   function rejectIfOtherRouteInFlight(prefix, requestDigest) {
@@ -2282,7 +3211,6 @@ function createBuilderGenerationMainService(rawOptions) {
     const created = {
       buffer_text: '',
       buffer_bytes: 0,
-      emitted_text: '',
     };
     providerOutputStates.set(context, created);
     return created;
@@ -2293,26 +3221,24 @@ function createBuilderGenerationMainService(rawOptions) {
     if (existing !== undefined) providerOutputStates.set(nextContext, existing);
   }
 
-  function displayDeltaFromProviderOutput(context, deltaText, fieldName) {
+  function displayDeltaFromProjectedOutput(context, deltaText) {
     const state = liveOutputState(context);
-    const buffer = appendProviderOutputBuffer(state, deltaText);
-    if (buffer === null) return null;
-    const displayText = safeLiveDisplayText(extractPartialJsonStringField(buffer, fieldName));
-    if (displayText === null || displayText.length <= state.emitted_text.length) return null;
-    const delta = displayText.slice(state.emitted_text.length);
-    const safeDelta = safeLiveDisplayText(delta);
-    if (safeDelta === null) return null;
-    state.emitted_text = displayText;
-    return safeDelta;
+    if (appendProviderOutputBuffer(state, deltaText) === null) return null;
+    const structuredDisplayText = structuredProviderOutputLiveDisplayText(deltaText);
+    if (structuredDisplayText !== undefined) return structuredDisplayText;
+    return safeLiveDisplayText(deltaText);
   }
 
   function notifyProviderOutputDelta(context, rawDeltaText) {
     if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
     const conversationContext = observedConversationContext(context);
     if (conversationContext === undefined) return;
-    const fieldName = conversationContext.ids.task_id === null ? 'explanation' : 'summary';
-    const displayDeltaText = displayDeltaFromProviderOutput(context, rawDeltaText, fieldName);
-    if (displayDeltaText === null) return;
+    builderPerformanceTrace.increment('main.provider_output.display_attempt_count');
+    const displayDeltaText = displayDeltaFromProjectedOutput(context, rawDeltaText);
+    if (displayDeltaText === null) {
+      builderPerformanceTrace.increment('main.provider_output.suppressed_count');
+      return;
+    }
     try {
       Reflect.apply(options.onProviderOutputDelta, undefined, [freezeDeep({
         event_version: PROVIDER_OUTPUT_EVENT_VERSION,
@@ -2323,6 +3249,54 @@ function createBuilderGenerationMainService(rawOptions) {
         task_id: conversationContext.ids.task_id,
         run_id: conversationContext.ids.run_id,
         display_delta_text: displayDeltaText,
+      })]);
+      builderPerformanceTrace.increment('main.provider_output.sent_count');
+    } catch {
+      // Live output observation cannot alter durable Conversation, Git, or SQLite facts.
+    }
+  }
+
+  function notifyProviderActivity(context, activityText) {
+    if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
+    const conversationContext = observedConversationContext(context);
+    if (conversationContext === undefined) return;
+    try {
+      Reflect.apply(options.onProviderOutputDelta, undefined, [freezeDeep({
+        event_version: PROVIDER_ACTIVITY_EVENT_VERSION,
+        request_id: conversationContext.request_digest,
+        project_id: conversationContext.project.project_id,
+        conversation_id: conversationContext.conversation.conversation_id,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
+        activity_text: activityText,
+      })]);
+    } catch {
+      // Activity observation cannot alter durable Conversation, Git, or SQLite facts.
+    }
+  }
+
+  function notifyProviderOutputReset(context, runtimeEvent) {
+    if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
+    const conversationContext = observedConversationContext(context);
+    if (conversationContext === undefined) return;
+    const state = liveOutputState(context);
+    const retainTextBytes = discardProviderOutputBuffer(
+      state,
+      runtimeEvent.payload.text_digest,
+      runtimeEvent.payload.text_bytes,
+    );
+    if (retainTextBytes === null) return;
+    try {
+      Reflect.apply(options.onProviderOutputDelta, undefined, [freezeDeep({
+        event_version: PROVIDER_OUTPUT_RESET_EVENT_VERSION,
+        request_id: conversationContext.request_digest,
+        project_id: conversationContext.project.project_id,
+        conversation_id: conversationContext.conversation.conversation_id,
+        turn_id: conversationContext.ids.turn_id,
+        task_id: conversationContext.ids.task_id,
+        run_id: conversationContext.ids.run_id,
+        retain_text_bytes: retainTextBytes,
       })]);
     } catch {
       // Live output observation cannot alter durable Conversation, Git, or SQLite facts.
@@ -2373,7 +3347,12 @@ function createBuilderGenerationMainService(rawOptions) {
     return base;
   }
 
-  function generationContextFromConversation(request, base, conversationContext) {
+  function generationContextFromConversation(
+    request,
+    base,
+    conversationContext,
+    approvedPlanPublicText = null,
+  ) {
     const generationContext = freezeDeep({
       project_id: conversationContext.project.project_id,
       base_revision_evidence: base.base_revision_evidence,
@@ -2383,6 +3362,9 @@ function createBuilderGenerationMainService(rawOptions) {
       task_id: conversationContext.ids.task_id,
       run_id: conversationContext.ids.run_id,
       git_request_id: newId(options.createUuid, 'builder-git-request'),
+      ...(approvedPlanPublicText === null
+        ? {}
+        : { approved_plan_public_text: approvedPlanPublicText }),
     });
     generationContexts.set(generationContext, conversationContext);
     const providerContextProjection = providerContextProjections.get(conversationContext);
@@ -2403,6 +3385,21 @@ function createBuilderGenerationMainService(rawOptions) {
     return typeof message === 'string' ? message : null;
   }
 
+  function harnessRuntimeInputText(request, context) {
+    if (!Object.hasOwn(context, 'approved_plan_public_text')) return request.instruction;
+    const approvedPlanPublicText = valueAt(context, 'approved_plan_public_text');
+    return [
+      'Implement the approved plan below.',
+      '',
+      'This plan was approved in the current Builder conversation and is the implementation specification.',
+      'If the current source tree is empty or lacks the files normally needed for the plan, treat that as a valid new-project starting point. Use write to create the required project files instead of ending the run because README, package.json, src, or other common files are absent.',
+      'Do not use shell or list commands to discover the project tree. Use Builder read, grep, write, and edit tools; Builder runs checks after the turn.',
+      '<approved_plan>',
+      approvedPlanPublicText,
+      '</approved_plan>',
+    ].join('\n');
+  }
+
   function workingContextSnapshotUpdatedAtMs(conversationContext) {
     const submitted = conversationContext.events.find((event) => (
       valueAt(event, 'event_type') === 'turn_submitted'
@@ -2418,7 +3415,19 @@ function createBuilderGenerationMainService(rawOptions) {
     return safeTimestamp(conversationContext.conversation.created_at_ms);
   }
 
-  function workingContextStateForSnapshot(conversationContext) {
+  function compactionSummariesFromWorkingContextResult(result) {
+    const latest = valueAt(result, 'latest_context_compaction_summary');
+    if (!isPlainObject(latest) || utilTypes.isProxy(latest)) return [];
+    if (valueAt(latest, 'status') !== 'ready') return [];
+    return freezeDeep([{
+      summary_digest: valueAt(latest, 'summary_digest'),
+      source_range_digest: valueAt(latest, 'source_range_digest'),
+      summary: valueAt(latest, 'summary'),
+      compacted_at_ms: valueAt(latest, 'compacted_at_ms'),
+    }]);
+  }
+
+  function workingContextForSnapshot(conversationContext) {
     if (readCurrentWorkingContextStateForConversation === null) return null;
     try {
       const baseRevision = baseRevisionFromConversationContext(conversationContext);
@@ -2448,7 +3457,10 @@ function createBuilderGenerationMainService(rawOptions) {
         !isPlainObject(result)
         || valueAt(result, 'result_version') !== 'builder-working-context-state-service-result.v1'
       ) return null;
-      return valueAt(result, 'working_context_state');
+      return freezeDeep({
+        working_context_state: valueAt(result, 'working_context_state'),
+        compaction_summaries: compactionSummariesFromWorkingContextResult(result),
+      });
     } catch {
       return null;
     }
@@ -2475,8 +3487,9 @@ function createBuilderGenerationMainService(rawOptions) {
     return ['ready', 'approved_plan_ready'].includes(state) ? 'contextual_build' : null;
   }
 
-  function contextAssemblyForSnapshot(conversationContext, workingContextState) {
-    if (workingContextState === null) return null;
+  function contextAssemblyForSnapshot(conversationContext, workingContext) {
+    if (workingContext === null) return null;
+    const workingContextState = valueAt(workingContext, 'working_context_state');
     const routeDecision = submittedRouteDecisionFromConversationContext(conversationContext);
     if (routeDecision === null) return null;
     const assemblyPurpose = contextAssemblyPurposeFromRoute(routeDecision, workingContextState);
@@ -2494,7 +3507,7 @@ function createBuilderGenerationMainService(rawOptions) {
         approved_plan_ref: valueAt(workingContextState, 'approved_plan_ref'),
         current_result_ref: null,
         selected_source_summaries: [],
-        compaction_summaries: [],
+        compaction_summaries: valueAt(workingContext, 'compaction_summaries'),
         adopted_handoff_packets: [],
         permission_state: {
           workspace_state: 'bound',
@@ -2596,8 +3609,11 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   async function recordConversationContextSnapshot(conversationContext, projectUnderstanding = null) {
-    const workingContextState = workingContextStateForSnapshot(conversationContext);
-    const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContextState);
+    const workingContext = workingContextForSnapshot(conversationContext);
+    const workingContextState = workingContext === null
+      ? null
+      : valueAt(workingContext, 'working_context_state');
+    const contextAssembly = contextAssemblyForSnapshot(conversationContext, workingContext);
     const providerContextProjection = await providerContextProjectionForSnapshot(contextAssembly);
     const providerContextPromptEgressGate = providerContextPromptEgressGateForSnapshot(providerContextProjection);
     const snapshottedContext = Reflect.apply(
@@ -2653,6 +3669,56 @@ function createBuilderGenerationMainService(rawOptions) {
     );
   }
 
+  function taskTargetForRequest(request, projectId) {
+    if (resolveSessionTaskTarget === null) {
+      if (request.task_address_id !== null) fail();
+      return freezeDeep({
+        project_id: projectId,
+        task_address_id: null,
+        conversation_id: createBuilderConversationAddress(
+          projectId,
+          safeUuid(Reflect.apply(options.createUuid, undefined, [])),
+        ),
+        should_record_task_address: true,
+      });
+    }
+    const result = Reflect.apply(
+      resolveSessionTaskTarget,
+      options.sessionTaskTargetService,
+      [{ project_id: projectId, task_address_id: request.task_address_id }],
+    );
+    exactObject(result, [
+      'result_version',
+      'operation',
+      'project_id',
+      'task_address_id',
+      'conversation_id',
+      'agent_id',
+      'should_record_task_address',
+      'authority',
+    ]);
+    const taskAddressId = valueAt(result, 'task_address_id');
+    const shouldRecord = valueAt(result, 'should_record_task_address');
+    if (
+      valueAt(result, 'result_version') !== 'builder-session-task-target-result.v1'
+      || valueAt(result, 'project_id') !== projectId
+      || valueAt(result, 'authority') !== 'main_owned_task_target_resolution'
+      || (taskAddressId !== null && !TASK_ADDRESS_ID_PATTERN.test(taskAddressId))
+      || taskAddressId !== request.task_address_id
+      || typeof shouldRecord !== 'boolean'
+      || shouldRecord !== (taskAddressId === null)
+    ) fail();
+    return freezeDeep({
+      project_id: projectId,
+      task_address_id: taskAddressId,
+      conversation_id: sanitizeBuilderConversationAddress(
+        projectId,
+        safePattern(valueAt(result, 'conversation_id'), CONVERSATION_ID_PATTERN, 96),
+      ),
+      should_record_task_address: shouldRecord,
+    });
+  }
+
   function bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup) {
     if (bindQueuedFollowupWorkToCurrentTaskAddress === null) return;
     Reflect.apply(
@@ -2706,9 +3772,10 @@ function createBuilderGenerationMainService(rawOptions) {
 
   function generationRequestFromApprovedPlan(editContext) {
     const unsigned = freezeDeep({
-      version: 'builder-generation-request.v2',
-      instruction: editContext.approved_plan_public_text,
+      version: 'builder-generation-request.v3',
+      instruction: APPROVED_PLAN_EXECUTION_INSTRUCTION,
       existing_project_id: editContext.project_id,
+      task_address_id: null,
     });
     return freezeDeep({
       ...unsigned,
@@ -2763,17 +3830,20 @@ function createBuilderGenerationMainService(rawOptions) {
       [conversationDraft.git_candidate_receipt],
     );
     const verifiedCandidate = sanitizeVerifiedCandidateRead(verifiedRead, conversationDraft.git_candidate_receipt);
-    const draft = existingDraft ?? freezeDeep({
-      title: conversationDraft.title,
-      summary: conversationDraft.summary,
-      draft_id: draftId,
-      git_request_id: conversationDraft.git_candidate_receipt.request_id,
-      conversation_head: conversationDraft.conversation_head,
-      candidate_proof: conversationDraft.candidate_proof,
-      source_tree: verifiedCandidate.source_tree,
-      restart_restore: 'git_sqlite_verified',
-    });
-    if (existingDraft === undefined) pendingDrafts.set(draftId, draft);
+      const draft = existingDraft === undefined
+      ? freezeDeep({
+        title: conversationDraft.title,
+        summary: conversationDraft.summary,
+        draft_id: draftId,
+        git_request_id: conversationDraft.git_candidate_receipt.request_id,
+        conversation_head: conversationDraft.conversation_head,
+        candidate_proof: conversationDraft.candidate_proof,
+        source_tree: verifiedCandidate.source_tree,
+        restart_restore: 'git_sqlite_verified',
+        current_materialization: conversationDraft.current_materialization,
+      })
+      : refreshPendingDraftConversationHead(existingDraft, conversationDraft.conversation_head);
+    pendingDrafts.set(draftId, draft);
     return freezeDeep({
       draft,
       conversation_draft: conversationDraft,
@@ -2815,7 +3885,7 @@ function createBuilderGenerationMainService(rawOptions) {
         pendingApprovedPlanEditContexts.delete(key);
         if (
           request.existing_project_id !== approvedPlanEditContext.project_id
-          || request.instruction !== approvedPlanEditContext.approved_plan_public_text
+          || request.instruction !== APPROVED_PLAN_EXECUTION_INSTRUCTION
         ) fail();
         let conversationContext = Reflect.apply(
           beginApprovedPlanWork,
@@ -2849,6 +3919,7 @@ function createBuilderGenerationMainService(rawOptions) {
             source_tree: approvedPlanEditContext.base_source_tree,
           },
           conversationContext,
+          approvedPlanEditContext.approved_plan_public_text,
         );
         executionAdmissionContexts.set(generationContext, freezeDeep({
           edit_context: approvedPlanEditContext,
@@ -2881,27 +3952,23 @@ function createBuilderGenerationMainService(rawOptions) {
       const routeDecisionHint = pendingGenerateRouteDecisionHints.get(key)
         ?? buildRouteDecisionHint(['clear_build']);
       const queuedFollowup = pendingGenerateQueuedFollowups.get(key) ?? null;
-      const projectId = existingProjectId === null
-        ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
-        : existingProjectId;
-      const base = existingProjectId === null
-        ? {
-          base_revision: null,
-          base_revision_evidence: null,
-          source_tree: createBuilderProjectSourceTree({ files: [] }),
-        }
-        : await (async () => {
-          setupPhase = 'load_existing_base';
-          return await loadBaseForExistingProject(
-            existingProjectId,
-            loadCurrentProject,
-            loadProjectIdentity,
-            options.projectReadAuthority,
-            options.projectIdentityAuthority,
-          );
-        })();
+      if (existingProjectId === null) fail('builder_generation_project_workspace_required');
+      const projectId = existingProjectId;
+      const taskTarget = taskTargetForRequest(request, projectId);
+      if (queuedFollowup !== null && taskTarget.should_record_task_address) fail();
+      setupPhase = 'load_existing_base';
+      const base = await loadBaseForExistingProject(
+        existingProjectId,
+        loadCurrentProject,
+        loadProjectIdentity,
+        loadFreshWorkspace,
+        options.projectReadAuthority,
+        options.projectIdentityAuthority,
+        options.workspaceReadAuthority,
+      );
       const beginRequest = {
         project_id: projectId,
+        conversation_id: taskTarget.conversation_id,
         instruction: request.instruction,
         request_digest: request.request_digest,
         base_revision: base.base_revision,
@@ -2924,10 +3991,10 @@ function createBuilderGenerationMainService(rawOptions) {
             queued_followup: queuedFollowup,
           }],
         );
-      if (queuedFollowup === null) {
+      if (queuedFollowup === null && taskTarget.should_record_task_address) {
         setupPhase = 'record_session_task_address';
         recordSessionTaskAddressesFromWorkContext(conversationContext);
-      } else {
+      } else if (queuedFollowup !== null) {
         setupPhase = 'bind_queued_followup_task_address';
         bindQueuedFollowupWorkContextToCurrentTaskAddress(conversationContext, queuedFollowup);
       }
@@ -2948,6 +4015,7 @@ function createBuilderGenerationMainService(rawOptions) {
   }
 
   async function buildDraftContinuationContext(request) {
+    let setupPhase = 'lookup_continuation';
     try {
       const key = operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, request.request_digest);
       const continuation = pendingDraftContinuationContexts.get(key);
@@ -2957,6 +4025,7 @@ function createBuilderGenerationMainService(rawOptions) {
         request.existing_project_id !== continuation.admission.project_id
         || request.instruction !== continuation.instruction
       ) fail();
+      setupPhase = 'begin_conversation_work';
       let conversationContext = Reflect.apply(
         beginDraftContinuationWork,
         options.conversationService,
@@ -2967,10 +4036,13 @@ function createBuilderGenerationMainService(rawOptions) {
           ...(continuation.queued_followup === null
             ? {}
             : { queued_followup: continuation.queued_followup }),
-        }],
+          }],
       );
+      setupPhase = 'bind_task_address';
       bindDraftContinuationContextToCurrentTaskAddress(conversationContext, continuation);
+      setupPhase = 'record_context_snapshot';
       conversationContext = await recordConversationContextSnapshot(conversationContext);
+      setupPhase = 'read_candidate_base';
       const candidateBase = await baseForGeneration(
         request,
         conversationContext.project.project_id,
@@ -2993,7 +4065,8 @@ function createBuilderGenerationMainService(rawOptions) {
       retryableContexts.delete(key);
       notifyGenerationStarted(request, conversationContext.project.project_id);
       return context;
-    } catch {
+    } catch (error) {
+      recordCanaryGenerationDebug(`draft_continuation_context_${setupPhase}`, error);
       fail();
     }
   }
@@ -3017,6 +4090,7 @@ function createBuilderGenerationMainService(rawOptions) {
           options.conversationService,
           [{
             project_id: draftAnswerContext.project_id,
+            conversation_id: draftAnswerContext.conversation_id,
             question: request.instruction,
             request_digest: request.request_digest,
             base_revision: draftAnswerContext.base_revision,
@@ -3040,24 +4114,54 @@ function createBuilderGenerationMainService(rawOptions) {
         return explanationContext;
       }
       const existingProjectId = request.existing_project_id;
-      const projectId = existingProjectId === null
-        ? `builder-project:${safeUuid(Reflect.apply(options.createUuid, undefined, []))}`
-        : existingProjectId;
-      const base = existingProjectId === null
-        ? {
-          base_revision: null,
-          base_revision_evidence: null,
-          source_tree: createBuilderProjectSourceTree({ files: [] }),
-        }
-        : await loadBaseForExistingProject(
-          existingProjectId,
-          loadCurrentProject,
-          loadProjectIdentity,
-          options.projectReadAuthority,
-          options.projectIdentityAuthority,
+      if (existingProjectId === null) {
+        if (
+          options.agentConversationService === undefined
+          || beginAgentConversationQuestion === null
+          || queuedFollowup !== null && request.task_address_id !== null
+        ) fail();
+        const conversationContext = Reflect.apply(
+          beginAgentConversationQuestion,
+          options.agentConversationService,
+          [{
+            agent_id: valueAt(options.agentConversationService, 'agent_id'),
+            question: request.instruction,
+            request_digest: request.request_digest,
+            route_decision_hint: queuedFollowup === null
+              ? routeDecisionHint
+              : withRouteDecisionMatchedSignal(routeDecisionHint, 'active_run_followup'),
+          }],
         );
+        activeContexts.set(key, conversationContext);
+        notifyGenerationStarted(request, null);
+        const explanationContext = freezeDeep({
+          project_id: null,
+          base_revision_evidence: null,
+          base_source_tree: createBuilderProjectSourceTree({ files: [] }),
+          conversation_events: conversationContext.events,
+          turn_id: conversationContext.ids.turn_id,
+          task_id: null,
+          run_id: conversationContext.ids.run_id,
+        });
+        explanationContexts.set(explanationContext, conversationContext);
+        liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
+        return explanationContext;
+      }
+      const projectId = existingProjectId;
+      const taskTarget = taskTargetForRequest(request, projectId);
+      if (queuedFollowup !== null && taskTarget.should_record_task_address) fail();
+      const base = await loadBaseForExistingProject(
+        existingProjectId,
+        loadCurrentProject,
+        loadProjectIdentity,
+        loadFreshWorkspace,
+        options.projectReadAuthority,
+        options.projectIdentityAuthority,
+        options.workspaceReadAuthority,
+      );
       const beginRequest = {
         project_id: projectId,
+        conversation_id: taskTarget.conversation_id,
         question: request.instruction,
         request_digest: request.request_digest,
         base_revision: base.base_revision,
@@ -3079,6 +4183,9 @@ function createBuilderGenerationMainService(rawOptions) {
             queued_followup: queuedFollowup,
           }],
         );
+      if (queuedFollowup === null && taskTarget.should_record_task_address) {
+        recordSessionTaskAddressesFromWorkContext(conversationContext);
+      }
       conversationContext = await recordConversationContextSnapshot(conversationContext);
       activeContexts.set(
         operationKey(ANSWER_OPERATION_PREFIX, request.request_digest),
@@ -3112,13 +4219,16 @@ function createBuilderGenerationMainService(rawOptions) {
       if (pendingPlan === undefined) fail();
       pendingPlanRequests.delete(key);
       const projectId = request.existing_project_id;
+      const taskTarget = taskTargetForRequest(request, projectId);
       setupPhase = 'plan_load_existing_base';
       const base = await loadBaseForExistingProject(
         projectId,
         loadCurrentProject,
         loadProjectIdentity,
+        loadFreshWorkspace,
         options.projectReadAuthority,
         options.projectIdentityAuthority,
+        options.workspaceReadAuthority,
       );
       let projectUnderstanding = null;
       if (refreshProjectUnderstanding !== null) {
@@ -3141,14 +4251,17 @@ function createBuilderGenerationMainService(rawOptions) {
         options.conversationService,
         [{
           project_id: projectId,
+          conversation_id: taskTarget.conversation_id,
           instruction: request.instruction,
           request_digest: request.request_digest,
           base_revision: base.base_revision,
           route_decision_hint: pendingPlan.route_decision_hint,
         }],
       );
-      setupPhase = 'plan_record_session_task_address';
-      recordSessionTaskAddressesFromWorkContext(conversationContext);
+      if (taskTarget.should_record_task_address) {
+        setupPhase = 'plan_record_session_task_address';
+        recordSessionTaskAddressesFromWorkContext(conversationContext);
+      }
       setupPhase = 'plan_record_context_snapshot';
       conversationContext = await recordConversationContextSnapshot(
         conversationContext,
@@ -3186,14 +4299,18 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  const host = createBuilderGenerationHostAdapter({
-    readProviderConfig,
-    resolveSecret,
-    buildGenerationContext,
-    buildDraftContinuationContext,
-    buildExplanationContext,
-    buildPlanContext,
-    admitProviderDispatch: async ({ context, provider_config_digest: providerConfigDigest }) => {
+  async function admitProviderDispatch({ context, provider_config_digest: providerConfigDigest }) {
+      const admittedProviderConfigDigest = safeDigest(providerConfigDigest);
+      const runtimeConversationContext = latestConversationContext(
+        context,
+        generationContexts.get(context) ?? draftContinuationContexts.get(context),
+      );
+      if (runtimeConversationContext !== undefined && runtimeConversationContext.mode === 'work') {
+        providerConfigDigestsByRunId.set(
+          runtimeConversationContext.ids.run_id,
+          admittedProviderConfigDigest,
+        );
+      }
       const pending = executionAdmissionContexts.get(context);
       if (pending === undefined) return context;
       executionAdmissionContexts.delete(context);
@@ -3201,7 +4318,7 @@ function createBuilderGenerationMainService(rawOptions) {
       const executionApproval = createBuilderExecutionApproval({
         approved_plan_continuation: pending.edit_context.approved_plan_continuation,
         write_permission_decision: pending.edit_context.write_permission_decision,
-        provider_config_digest: safeDigest(providerConfigDigest),
+        provider_config_digest: admittedProviderConfigDigest,
         source_tree_digest: pending.edit_context.base_source_tree.source_tree_digest,
         project_understanding: pending.edit_context.project_understanding,
         approved_at_ms: admittedAtMs,
@@ -3235,7 +4352,16 @@ function createBuilderGenerationMainService(rawOptions) {
         admittedConversationContext,
       );
       return admittedContext;
-    },
+  }
+
+  const host = createBuilderGenerationHostAdapter({
+    readProviderConfig,
+    resolveSecret,
+    buildGenerationContext,
+    buildDraftContinuationContext,
+    buildExplanationContext,
+    buildPlanContext,
+    admitProviderDispatch,
     onProgress({ context, stage }) {
       const generationContext = latestConversationContext(context, generationContexts.get(context));
       if (generationContext !== undefined) {
@@ -3283,10 +4409,11 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       const explanationContext = latestConversationContext(context, explanationContexts.get(context));
       if (explanationContext !== undefined) {
-        const progressed = Reflect.apply(
+        const progressed = applyConversationContextMethod(
+          explanationContext,
           recordConversationRunProgress,
-          options.conversationService,
-          [{ context: explanationContext, stage }],
+          recordAgentConversationRunProgress,
+          { context: explanationContext, stage },
         );
         const updated = freezeDeep({
           ...context,
@@ -3364,8 +4491,28 @@ function createBuilderGenerationMainService(rawOptions) {
     });
   }
 
+  function publicHarnessWorkResponse(runnerResult, request, context) {
+    return freezeDeep({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'explanation',
+      request_id: request.request_digest,
+      project_id: context.project_id,
+      existing_project_id: request.existing_project_id,
+      title: 'Request completed',
+      summary: runnerResult.summary,
+      explanation: runnerResult.assistant_text,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+  }
+
   function recordTaskCapsuleFromExplanationTerminal(conversationContext, terminal) {
-    if (recordTaskCapsuleFromConversation === null) return;
+    if (recordTaskCapsuleFromConversation === null || isAgentConversationContext(conversationContext)) return;
     const events = valueAt(terminal, 'events');
     if (!Array.isArray(events)) fail();
     const targets = events.filter((event) => (
@@ -3416,14 +4563,60 @@ function createBuilderGenerationMainService(rawOptions) {
     return 'builder_generation_failed';
   }
 
+  function publicHarnessFailure(error) {
+    if (
+      failureCodeFrom(error) === 'builder_harness_generation_runner_failed'
+      && error
+      && typeof error === 'object'
+      && !utilTypes.isProxy(error)
+    ) {
+      try {
+        const runtimeCode = Object.getOwnPropertyDescriptor(error, 'runtime_code');
+        if (runtimeCode && Object.hasOwn(runtimeCode, 'value')) {
+          if (runtimeCode.value === 'builder_harness_programming_runtime_timeout') {
+            return new BuilderGenerationMainServiceError('builder_generation_timeout');
+          }
+          if (runtimeCode.value === 'builder_harness_programming_runtime_idle_timeout') {
+            return new BuilderGenerationMainServiceError('builder_generation_runtime_stalled');
+          }
+          if (runtimeCode.value === 'builder_harness_programming_run_limit_reached') {
+            return new BuilderGenerationMainServiceError('builder_generation_run_limit_reached');
+          }
+        }
+      } catch {
+        return error;
+      }
+    }
+    return error;
+  }
+
   function recordFailure(key, error) {
     const conversationContext = activeContexts.get(key);
     if (conversationContext === undefined) return;
     try {
-      const failedContext = Reflect.apply(
+      const failureCode = failureCodeFrom(error);
+      if (
+        failureCode === 'builder_generation_cancelled'
+        && cancellationTerminalOperationKeys.has(key)
+      ) return;
+      if (
+        failureCode === 'builder_generation_cancelled'
+        && !isAgentConversationContext(conversationContext)
+      ) {
+        Reflect.apply(
+          completeConversationFailure,
+          options.conversationService,
+          [{ context: conversationContext, failure_code: failureCode }],
+        );
+        retryableContexts.delete(key);
+        clearProviderContextDisclosureStatusForContext(conversationContext);
+        return;
+      }
+      const failedContext = applyConversationContextMethod(
+        conversationContext,
         recordConversationRetryableFailure,
-        options.conversationService,
-        [{ context: conversationContext, failure_code: failureCodeFrom(error) }],
+        recordAgentConversationRetryableFailure,
+        { context: conversationContext, failure_code: failureCode },
       );
       retryableContexts.set(key, failedContext);
       clearProviderContextDisclosureStatusForContext(failedContext);
@@ -3432,7 +4625,49 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  async function admitCandidateWorkspaceGuard(candidate, existingProjectId) {
+  function completeAcceptedCancellation(key, context) {
+    if (cancellationTerminalOperationKeys.has(key)) return context;
+    if (isAgentConversationContext(context)) {
+      const completedContext = applyConversationContextMethod(
+        context,
+        recordConversationRetryableFailure,
+        recordAgentConversationRetryableFailure,
+        { context, failure_code: 'builder_generation_cancelled' },
+      );
+      cancellationTerminalOperationKeys.add(key);
+      return completedContext;
+    }
+    Reflect.apply(
+      completeConversationFailure,
+      options.conversationService,
+      [{ context, failure_code: 'builder_generation_cancelled' }],
+    );
+    cancellationTerminalOperationKeys.add(key);
+    return context;
+  }
+
+  function recordRecoveryActionForOperation(key, action, phase) {
+    const conversationContext = activeContexts.get(key);
+    if (conversationContext === undefined) return false;
+    try {
+      const recordedContext = Reflect.apply(
+        recordConversationRecoveryAction,
+        options.conversationService,
+        [{ context: conversationContext, action, phase }],
+      );
+      activeContexts.set(key, recordedContext);
+      return true;
+    } catch (error) {
+      recordCanaryGenerationDebug('recovery_action_record_failed', error);
+      return false;
+    }
+  }
+
+  async function admitCandidateWorkspaceGuard(
+    candidate,
+    existingProjectId,
+    expectedWorkspaceSourceTreeDigest = candidate.base_source_tree.source_tree_digest,
+  ) {
     const editIntentPlan = createBuilderEditIntentPlan({
       candidate,
       created_at_ms: safeTimestamp(Date.now()),
@@ -3456,6 +4691,7 @@ function createBuilderGenerationMainService(rawOptions) {
       candidate,
       edit_intent_plan: editIntentPlan,
       observed_workspace_source_tree: observed.source_tree,
+      expected_workspace_source_tree_digest: expectedWorkspaceSourceTreeDigest,
       evaluated_at_ms: safeTimestamp(Date.now()),
     });
     if (report.status === 'allowed') {
@@ -3581,9 +4817,20 @@ function createBuilderGenerationMainService(rawOptions) {
 
   function restoreRevisionPublicRequest(request, requestDigest) {
     return freezeDeep({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: 'Restore the selected saved version.',
       existing_project_id: request.project_id,
+      task_address_id: null,
+      request_digest: requestDigest,
+    });
+  }
+
+  function restoreCheckpointPublicRequest(projectId, requestDigest) {
+    return freezeDeep({
+      version: 'builder-generation-request.v3',
+      instruction: 'Undo the latest AI change.',
+      existing_project_id: projectId,
+      task_address_id: null,
       request_digest: requestDigest,
     });
   }
@@ -3618,19 +4865,28 @@ function createBuilderGenerationMainService(rawOptions) {
       );
       if (routeConflict) return routeConflict;
       const publicRequest = restoreRevisionPublicRequest(request, requestDigest);
+      const taskTarget = taskTargetForRequest({ task_address_id: null }, request.project_id);
       const operation = (async () => {
         let conversationContext = Reflect.apply(
           beginConversationWork,
           options.conversationService,
           [{
             project_id: request.project_id,
+            conversation_id: taskTarget.conversation_id,
             instruction: publicRequest.instruction,
             request_digest: requestDigest,
             base_revision: current.base_revision,
           }],
         );
+        recordSessionTaskAddressesFromWorkContext(conversationContext);
         activeContexts.set(key, conversationContext);
         conversationContext = await recordConversationContextSnapshot(conversationContext);
+        activeContexts.set(key, conversationContext);
+        conversationContext = Reflect.apply(
+          recordConversationRecoveryAction,
+          options.conversationService,
+          [{ context: conversationContext, action: 'restore_revision', phase: 'requested' }],
+        );
         activeContexts.set(key, conversationContext);
         conversationContext = Reflect.apply(
           recordConversationRunProgress,
@@ -3680,7 +4936,21 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         const title = 'Restored saved version';
         const summary = 'Review this restored draft before saving it as a new version.';
-        recordAutomaticDraftCheckpoint(candidate, receiptPair, summary, editEvidence.edit_attempt);
+        conversationContext = recordAutomaticDraftCheckpoint(
+          key,
+          conversationContext,
+          candidate,
+          receiptPair,
+          summary,
+          editEvidence.edit_attempt,
+        );
+        const currentMaterialization = await materializeCandidateToCurrentWorkspace(receiptPair);
+        conversationContext = Reflect.apply(
+          recordConversationRecoveryAction,
+          options.conversationService,
+          [{ context: conversationContext, action: 'restore_revision', phase: 'completed' }],
+        );
+        activeContexts.set(key, conversationContext);
         const recorded = Reflect.apply(
           completeConversationCandidate,
           options.conversationService,
@@ -3691,6 +4961,7 @@ function createBuilderGenerationMainService(rawOptions) {
               title,
               summary,
               git_candidate_receipt: receiptPair.candidate_receipt,
+              current_materialization: conversationCurrentMaterialization(currentMaterialization),
             },
             assistant_text: summary,
           }],
@@ -3717,16 +4988,21 @@ function createBuilderGenerationMainService(rawOptions) {
           git_request_id: gitRequestId,
           conversation_head: recorded.head,
           restart_restore: 'not_persisted',
+          current_materialization: currentMaterialization,
         });
         pendingDrafts.set(draftId, stored);
         return publicDraftResult(stored);
       })().catch((error) => {
-        if (key !== null) recordFailure(key, error);
+        if (key !== null) {
+          recordRecoveryActionForOperation(key, 'restore_revision', 'failed');
+          recordFailure(key, error);
+        }
         if (error instanceof BuilderGenerationMainServiceError) throw error;
         throw new BuilderGenerationMainServiceError();
       }).finally(() => {
         clearProviderContextDisclosureStatusForKey(key);
         activeContexts.delete(key);
+        cancellationTerminalOperationKeys.delete(key);
         if (inFlight.get(key) === operation) inFlight.delete(key);
       });
       inFlight.set(key, operation);
@@ -3738,7 +5014,271 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function startGenerate(request, retryableContext, routeDecisionHint = null, queuedFollowup = null) {
+  async function restorePreviousCheckpointAsDraft(rawRequest) {
+    let key = null;
+    try {
+      exactObject(rawRequest, ['draft_id', 'project_id']);
+      const previousDraftId = safeDraftId(valueAt(rawRequest, 'draft_id'));
+      const selectedProjectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      if (preparePreviousCheckpointRestore === null) {
+        fail('builder_generation_checkpoint_undo_unavailable');
+      }
+      const previousDraft = await loadPendingDraftById(previousDraftId);
+      const proof = previousDraft.candidate_proof;
+      if (proof.project_id !== selectedProjectId) {
+        fail('builder_generation_project_workspace_required');
+      }
+      const previousDraftReceipt = sanitizeConversationDraft(
+        Reflect.apply(
+          readConversationCandidateDraft,
+          options.conversationService,
+          [{ draft_id: previousDraftId }],
+        ),
+        previousDraftId,
+      ).git_candidate_receipt;
+      if (
+        previousDraftReceipt.candidate_id !== proof.candidate_id
+        || previousDraftReceipt.candidate_digest !== proof.candidate_digest
+      ) fail();
+      const prepared = Reflect.apply(
+        preparePreviousCheckpointRestore,
+        options.automaticDraftCheckpointService,
+        [{
+          project_id: proof.project_id,
+          conversation_id: proof.conversation_id,
+          candidate_id: proof.candidate_id,
+        }],
+      );
+      const preparedStatus = valueAt(prepared, 'status');
+      if (preparedStatus === 'baseline') {
+        const rejected = sanitizeConversationCandidateReject(
+          Reflect.apply(
+            rejectConversationCandidate,
+            options.conversationService,
+            [{ draft_id: previousDraftId }],
+          ),
+          previousDraftId,
+        );
+        pendingDrafts.delete(previousDraftId);
+        return freezeDeep({
+          result_version: 'builder-generation-draft-undo-result.v1',
+          operation: 'draft_baseline_restored',
+          draft_id: previousDraftId,
+          project_id: rejected.project_id,
+          pending_draft_released: true,
+          conversation_event_admission: rejected.rejection_admission,
+        });
+      }
+      if (preparedStatus !== 'ready') fail('builder_generation_checkpoint_undo_unavailable');
+      const targetCheckpoint = valueAt(prepared, 'target_checkpoint');
+      const targetReceipt = candidateReceiptFromCheckpoint(targetCheckpoint);
+      const target = sanitizeVerifiedCandidateRead(
+        await Reflect.apply(readVerifiedCandidate, options.gitAuthority, [targetReceipt]),
+        targetReceipt,
+      );
+      const candidateBase = sanitizeVerifiedCandidateBaseRead(
+        await Reflect.apply(
+          readVerifiedCandidateBase,
+          options.gitAuthority,
+          [previousDraftReceipt],
+        ),
+        previousDraftReceipt,
+      );
+      const base = freezeDeep({
+        source_tree: candidateBase.source_tree,
+        base_revision: proof.base_revision,
+        base_revision_evidence: await baseRevisionEvidenceForRestoredDraft(proof),
+      });
+      const operations = operationsToReachSourceTree(base.source_tree, target.source_tree);
+      const requestDigest = sha256Canonical({
+        request_version: 'builder-generation-restore-checkpoint-request.v1',
+        project_id: proof.project_id,
+        previous_draft_id: previousDraftId,
+        previous_candidate_id: proof.candidate_id,
+        target_checkpoint_id: valueAt(targetCheckpoint, 'checkpoint_id'),
+        target_tree_digest: target.source_tree.source_tree_digest,
+      });
+      key = operationKey(RESTORE_CHECKPOINT_OPERATION_PREFIX, requestDigest);
+      if (inFlight.has(key)) return inFlight.get(key);
+      const routeConflict = rejectIfOtherRouteInFlight(
+        RESTORE_CHECKPOINT_OPERATION_PREFIX,
+        requestDigest,
+      );
+      if (routeConflict) return routeConflict;
+      const publicRequest = restoreCheckpointPublicRequest(proof.project_id, requestDigest);
+      const operation = (async () => {
+        let conversationContext = Reflect.apply(
+          beginConversationWork,
+          options.conversationService,
+          [{
+            project_id: proof.project_id,
+            conversation_id: proof.conversation_id,
+            instruction: 'Undo the latest AI change.',
+            request_digest: requestDigest,
+            base_revision: base.base_revision,
+          }],
+        );
+        activeContexts.set(key, conversationContext);
+        conversationContext = await recordConversationContextSnapshot(conversationContext);
+        activeContexts.set(key, conversationContext);
+        conversationContext = Reflect.apply(
+          recordConversationRecoveryAction,
+          options.conversationService,
+          [{ context: conversationContext, action: 'restore_checkpoint', phase: 'requested' }],
+        );
+        activeContexts.set(key, conversationContext);
+        conversationContext = Reflect.apply(
+          recordConversationRunProgress,
+          options.conversationService,
+          [{ context: conversationContext, stage: 'context_ready' }],
+        );
+        activeContexts.set(key, conversationContext);
+        liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
+
+        const candidate = createBuilderCodeChangeCandidate({
+          conversation_events: conversationContext.events,
+          turn_id: conversationContext.ids.turn_id,
+          run_id: conversationContext.ids.run_id,
+          base_revision_evidence: base.base_revision_evidence,
+          base_source_tree: base.source_tree,
+          operations,
+        });
+        const workspaceExpectation = pendingDraftWorkspaceExpectation(previousDraft, candidate);
+        const gitRequestId = newId(options.createUuid, 'builder-git-request');
+        const targetCheckpointId = valueAt(targetCheckpoint, 'checkpoint_id');
+        const draftId = `builder-generation-draft:${sha256Canonical({
+          draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
+          request_id: requestDigest,
+          candidate_id: candidate.candidate_id,
+          candidate_digest: candidate.candidate_digest,
+          run_id: candidate.run_id,
+          target_checkpoint_id: targetCheckpointId,
+        }).slice('sha256:'.length)}`;
+        const editEvidence = await admitCandidateWorkspaceGuard(
+          candidate,
+          proof.project_id,
+          workspaceExpectation.expected_workspace_source_tree_digest,
+        );
+        const gitCandidateReceipt = await Reflect.apply(
+          persistCandidateCommit,
+          options.gitAuthority,
+          [{
+            request_id: gitRequestId,
+            expected_base_oid: candidate.base_revision_evidence === null
+              ? null
+              : candidate.base_revision_evidence.commit_oid,
+            candidate,
+          }],
+        );
+        const gitVerificationReceipt = await Reflect.apply(
+          verifyCandidateReceipt,
+          options.gitAuthority,
+          [gitCandidateReceipt],
+        );
+        const receiptPair = sanitizeBuilderGitCandidateReceiptPair(
+          gitCandidateReceipt,
+          gitVerificationReceipt,
+        );
+        const title = 'Previous AI change undone';
+        const summary = 'Restored the previous recoverable AI work checkpoint.';
+        conversationContext = recordAutomaticDraftCheckpoint(
+          key,
+          conversationContext,
+          candidate,
+          receiptPair,
+          `Restored earlier draft checkpoint ${targetCheckpointId}.`,
+          editEvidence.edit_attempt,
+        );
+        const automaticCheck = await coordinateAutomaticCandidateCheck(
+          draftId,
+          candidate,
+          receiptPair,
+        );
+        const currentMaterialization = await materializeCandidateToCurrentWorkspace(
+          receiptPair,
+          workspaceExpectation,
+        );
+        conversationContext = Reflect.apply(
+          recordConversationRecoveryAction,
+          options.conversationService,
+          [{ context: conversationContext, action: 'restore_checkpoint', phase: 'completed' }],
+        );
+        activeContexts.set(key, conversationContext);
+        const recorded = Reflect.apply(
+          completeConversationCandidate,
+          options.conversationService,
+          [{
+            context: conversationContext,
+            candidate_result: {
+              draft_id: draftId,
+              title,
+              summary,
+              git_candidate_receipt: receiptPair.candidate_receipt,
+              current_materialization: conversationCurrentMaterialization(currentMaterialization),
+            },
+            assistant_text: summary,
+          }],
+        );
+        const stored = freezeDeep({
+          version: BUILDER_GENERATION_RESULT_PROTOCOL,
+          request_id: requestDigest,
+          title,
+          summary,
+          admissions: {
+            conversation: 'sqlite_recorded',
+            draft: 'candidate_not_saved',
+            save: 'not_performed',
+            preview: 'not_evaluated',
+            execution: 'not_evaluated',
+          },
+          candidate,
+          candidate_proof: {
+            ...candidateProofFromCandidate(candidate),
+            git_request_id: gitRequestId,
+          },
+          draft_id: draftId,
+          request: publicRequest,
+          git_request_id: gitRequestId,
+          conversation_head: recorded.head,
+          restart_restore: 'not_persisted',
+          current_materialization: currentMaterialization,
+          automatic_check: automaticCheck,
+          checkpoint_undo: {
+            previous_draft_id: previousDraftId,
+            target_checkpoint_id: targetCheckpointId,
+          },
+        });
+        pendingDrafts.set(draftId, stored);
+        pendingDrafts.delete(previousDraftId);
+        return publicDraftResult(stored);
+      })().catch((error) => {
+        if (key !== null) {
+          recordRecoveryActionForOperation(key, 'restore_checkpoint', 'failed');
+          recordFailure(key, error);
+        }
+        if (error instanceof BuilderGenerationMainServiceError) throw error;
+        throw new BuilderGenerationMainServiceError('builder_generation_checkpoint_undo_unavailable');
+      }).finally(() => {
+        clearProviderContextDisclosureStatusForKey(key);
+        activeContexts.delete(key);
+        cancellationTerminalOperationKeys.delete(key);
+        if (inFlight.get(key) === operation) inFlight.delete(key);
+      });
+      inFlight.set(key, operation);
+      return operation;
+    } catch (error) {
+      recordCanaryGenerationDebug('restore_checkpoint_prepare', error);
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      fail('builder_generation_checkpoint_undo_unavailable');
+    }
+  }
+
+  function startStructuredGenerate(
+    request,
+    retryableContext,
+    routeDecisionHint = null,
+    queuedFollowup = null,
+  ) {
     const key = operationKey(GENERATE_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
@@ -3750,7 +5290,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (queuedFollowup !== null) pendingGenerateQueuedFollowups.set(key, queuedFollowup);
     const operation = Promise.resolve(host.generate(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
-      const conversationContext = latestConversationContext(context, generationContexts.get(context));
+      let conversationContext = latestConversationContext(context, generationContexts.get(context));
       if (conversationContext === undefined) fail();
       const draftId = `builder-generation-draft:${sha256Canonical({
         draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
@@ -3783,12 +5323,42 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
-      recordAutomaticDraftCheckpoint(
+      conversationContext = recordAutomaticDraftCheckpoint(
+        key,
+        conversationContext,
         internal.candidate,
         receiptPair,
         internal.summary,
         editEvidence.edit_attempt,
       );
+      const runtimeSession = await beginStructuredRuntimeTrace({
+        context: conversationContext,
+        operation_key: key,
+        provider_context: context,
+        source_tree: internal.candidate.base_source_tree,
+        instruction: request.instruction,
+      });
+      if (runtimeSession === null) fail();
+      let automaticCheck;
+      try {
+        await recordStructuredCandidateFacts(runtimeSession, internal.candidate, internal.summary);
+        automaticCheck = await coordinateAutomaticCandidateCheck(
+          draftId,
+          internal.candidate,
+          receiptPair,
+        );
+        await recordStructuredCheckFact(runtimeSession, automaticCheck);
+        conversationContext = await finishStructuredRuntimeTrace(runtimeSession, 'created');
+      } catch (error) {
+        try {
+          conversationContext = await cancelStructuredRuntimeTrace(runtimeSession);
+          activeContexts.set(key, conversationContext);
+        } catch (cancellationError) {
+          recordCanaryGenerationDebug('structured_runtime_cancel_failed', cancellationError);
+        }
+        throw error;
+      }
+      const currentMaterialization = await materializeCandidateToCurrentWorkspace(receiptPair);
       const recorded = Reflect.apply(
         completeConversationCandidate,
         options.conversationService,
@@ -3799,6 +5369,7 @@ function createBuilderGenerationMainService(rawOptions) {
             title: internal.title,
             summary: internal.summary,
             git_candidate_receipt: receiptPair.candidate_receipt,
+            current_materialization: conversationCurrentMaterialization(currentMaterialization),
           },
           assistant_text: internal.summary,
         }],
@@ -3822,6 +5393,8 @@ function createBuilderGenerationMainService(rawOptions) {
         git_request_id: valueAt(context, 'git_request_id'),
         conversation_head: recorded.head,
         restart_restore: 'not_persisted',
+        current_materialization: currentMaterialization,
+        automatic_check: automaticCheck,
       });
       pendingDrafts.set(draftId, stored);
       retryableContexts.delete(key);
@@ -3831,18 +5404,656 @@ function createBuilderGenerationMainService(rawOptions) {
       recordFailure(key, error);
       throw error;
     }).finally(() => {
+      clearStructuredRuntimeDigestForOperation(key);
       pendingRetryContexts.delete(key);
       pendingGenerateRouteDecisionHints.delete(key);
       pendingGenerateQueuedFollowups.delete(key);
       clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
+      cancellationTerminalOperationKeys.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
     return operation;
   }
 
+  function startHarnessGenerate(
+    request,
+    retryableContext,
+    routeDecisionHint = null,
+    queuedFollowup = null,
+    admittedProviderConfig = null,
+    draftContinuationContext = null,
+  ) {
+    const operationPrefix = draftContinuationContext === null
+      ? GENERATE_OPERATION_PREFIX
+      : DRAFT_CONTINUATION_OPERATION_PREFIX;
+    const key = operationKey(operationPrefix, request.request_digest);
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const routeConflict = rejectIfOtherRouteInFlight(
+      operationPrefix,
+      request.request_digest,
+    );
+    if (routeConflict) return routeConflict;
+    if (retryableContext !== null && queuedFollowup !== null) fail();
+    if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
+    if (routeDecisionHint !== null) pendingGenerateRouteDecisionHints.set(key, routeDecisionHint);
+    if (queuedFollowup !== null) pendingGenerateQueuedFollowups.set(key, queuedFollowup);
+    if (draftContinuationContext !== null) {
+      pendingDraftContinuationContexts.set(key, draftContinuationContext);
+    }
+    let runner = null;
+    let runnerResult = null;
+    let runLease = null;
+    const operation = (async () => {
+      let context = await measureTraceWindow(
+        'harness_start_build_context',
+        'main.harness_start.build_context.duration_ms',
+        () => (draftContinuationContext === null
+          ? buildGenerationContext(request)
+          : buildDraftContinuationContext(request)),
+      );
+      const contextStore = draftContinuationContext === null
+        ? generationContexts
+        : draftContinuationContexts;
+      let conversationContext = latestConversationContext(context, contextStore.get(context));
+      if (conversationContext === undefined) fail();
+      const providerConfig = await measureTraceWindow(
+        'harness_start_provider_config',
+        'main.harness_start.provider_config.duration_ms',
+        async () => (admittedProviderConfig === null
+          ? readProviderConfig()
+          : sanitizeBuilderProviderConfig(admittedProviderConfig)),
+      );
+      if (!harnessProviderCompatible(providerConfig)) fail();
+      let credential = builderPerformanceTrace.measureSync(
+        'main.harness_start.resolve_secret.duration_ms',
+        () => harnessCredentialFromResolution(
+          resolveSecret(providerConfig.secret_ref),
+          providerConfig,
+        ),
+      );
+      context = await measureTraceWindow(
+        'harness_start_provider_dispatch',
+        'main.harness_start.provider_dispatch.duration_ms',
+        () => admitProviderDispatch({
+          context,
+          provider_config_digest: providerConfig.config_digest,
+        }),
+      );
+      conversationContext = latestConversationContext(context, contextStore.get(context));
+      if (conversationContext === undefined) fail();
+      const state = { context: conversationContext };
+      const workingSourceTree = draftContinuationContext === null
+        ? context.base_source_tree
+        : context.prompt_base_source_tree;
+      const candidateBaseSourceTree = draftContinuationContext === null
+        ? context.base_source_tree
+        : context.candidate_base_source_tree;
+      const baseRevisionEvidence = draftContinuationContext === null
+        ? context.base_revision_evidence
+        : context.candidate_base_revision_evidence;
+      const runContract = builderPerformanceTrace.measureSync(
+        'main.harness_start.run_contract.duration_ms',
+        () => createBuilderProgrammingRuntimeRunContract({
+          runtime_descriptor: options.harnessRuntimeComposition.descriptor,
+          admission: {
+            project_id: context.project_id,
+            conversation_id: conversationContext.conversation.conversation_id,
+            turn_id: context.turn_id,
+            task_id: context.task_id,
+            run_id: context.run_id,
+            mode: 'build',
+            workspace_ref: {
+              ref_version: 'builder-programming-workspace-ref.v1',
+              workspace_id: `builder-programming-workspace:${workingSourceTree.source_tree_digest.slice('sha256:'.length)}`,
+              source_tree_digest: workingSourceTree.source_tree_digest,
+              writable: true,
+            },
+            provider_config_digest: providerConfig.config_digest,
+            allowed_tools: ['read', 'search', 'edit', 'write', 'command', 'browser', 'question'],
+            limits: {
+              max_steps: 128,
+              max_duration_ms:
+                BUILDER_PROGRAMMING_RUNTIME_SUPERVISION_DEFAULTS.max_run_duration_ms,
+              max_model_tokens: providerConfig.max_tokens ?? 32_768,
+              max_tool_output_bytes: runtimeMaxToolOutputBytes(),
+            },
+            admitted_at_ms: runtimeTimestamp(state.context),
+          },
+          input: {
+            message_id: conversationContext.ids.message_id,
+            text: harnessRuntimeInputText(request, context),
+          },
+        }),
+      );
+      const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract });
+      let pendingRuntimeEvents = [];
+      function assertHarnessRunActive(candidateEvent = null) {
+        if (runLease?.cancellation_requested !== true) return;
+        const eventTypeDescriptor = candidateEvent === null
+          ? null
+          : Object.getOwnPropertyDescriptor(candidateEvent, 'event_type');
+        if (eventTypeDescriptor?.value === 'run_cancelled') return;
+        throw new BuilderGenerationMainServiceError('builder_generation_cancelled');
+      }
+      async function recordRuntimeEvents(runtimeEvents) {
+        return await builderPerformanceTrace.measureAsync(
+          'main.harness_runtime.record_events.duration_ms',
+          async () => {
+            if (runtimeEvents.length === 0) return;
+            if (recordConversationProgrammingRuntimeEvents !== null) {
+              state.context = Reflect.apply(
+                recordConversationProgrammingRuntimeEvents,
+                options.conversationService,
+                [{ context: state.context, runtime_events: runtimeEvents }],
+              );
+              return;
+            }
+            for (const runtimeEvent of runtimeEvents) {
+              state.context = Reflect.apply(
+                recordConversationProgrammingRuntimeEvent,
+                options.conversationService,
+                [{ context: state.context, runtime_event: runtimeEvent }],
+              );
+            }
+          },
+        );
+      }
+      async function flushPendingRuntimeEvents() {
+        if (pendingRuntimeEvents.length === 0) return;
+        const batch = pendingRuntimeEvents;
+        builderPerformanceTrace.observe('main.harness_runtime.pending_batch_size', batch.length);
+        await builderPerformanceTrace.measureAsync(
+          'main.harness_runtime.flush_pending_events.duration_ms',
+          () => recordRuntimeEvents(batch),
+        );
+        pendingRuntimeEvents = [];
+      }
+      async function persistRuntimeEvent(candidate, mainFact) {
+        return await builderPerformanceTrace.measureAsync(
+          'main.harness_runtime.persist_event.duration_ms',
+          async () => {
+            assertHarnessRunActive(candidate);
+            state.context = latestConversationContext(
+              state.context,
+              activeContexts.get(key),
+            );
+            const normalizedAtMs = Math.max(
+              runtimeTimestamp(state.context),
+              safeTimestamp(Date.now()),
+            );
+            let runtimeEvent;
+            try {
+              runtimeEvent = builderPerformanceTrace.measureSync(
+                'main.harness_runtime.journal_append.duration_ms',
+                () => (mainFact
+                  ? journal.appendMainFact(candidate, normalizedAtMs)
+                  : journal.append(candidate, normalizedAtMs)),
+              );
+            } catch (error) {
+              recordCanaryGenerationDebug('harness_runtime_journal_append', error);
+              throw error;
+            }
+            if (!mainFact && runtimeEvent.event_type === 'assistant_text_delta') {
+              builderPerformanceTrace.increment('main.provider_output.delta_event_count');
+              notifyProviderOutputDelta(context, runtimeEvent.payload.delta_text);
+              pendingRuntimeEvents.push(runtimeEvent);
+              if (pendingRuntimeEvents.length >= MAX_RUNTIME_EVENT_BATCH_SIZE) {
+                try {
+                  await flushPendingRuntimeEvents();
+                } catch (error) {
+                  recordCanaryGenerationDebug('harness_runtime_conversation_record_batch', error);
+                  throw error;
+                }
+                activeContexts.set(key, state.context);
+                contextStore.set(context, state.context);
+                liveOutputContextsByRunId.set(state.context.ids.run_id, state.context);
+              }
+              return runtimeEvent;
+            }
+            try {
+              if (pendingRuntimeEvents.length > 0) {
+                const batch = [...pendingRuntimeEvents, runtimeEvent];
+                builderPerformanceTrace.observe('main.harness_runtime.pending_batch_size', batch.length);
+                await recordRuntimeEvents(batch);
+                pendingRuntimeEvents = [];
+              } else {
+                await recordRuntimeEvents([runtimeEvent]);
+              }
+            } catch (error) {
+              recordCanaryGenerationDebug('harness_runtime_conversation_record', error);
+              throw error;
+            }
+            activeContexts.set(key, state.context);
+            contextStore.set(context, state.context);
+            liveOutputContextsByRunId.set(state.context.ids.run_id, state.context);
+            if (!mainFact && [
+              'assistant_reasoning_status',
+              'runtime_activity_status',
+            ].includes(runtimeEvent.event_type)) {
+              notifyProviderActivity(context, runtimeEvent.payload.status);
+            }
+            if (!mainFact && runtimeEvent.event_type === 'assistant_text_discarded') {
+              notifyProviderOutputReset(context, runtimeEvent);
+            }
+            if (
+              !mainFact
+              && runtimeEvent.event_type === 'tool_call_started'
+              && ['read', 'edit', 'write'].includes(runtimeEvent.payload.tool_kind)
+              && runtimeEvent.payload.target_label !== null
+            ) {
+              await builderPerformanceTrace.measureAsync(
+                'main.harness_runtime.bind_tool_file.duration_ms',
+                () => options.harnessRuntimeComposition.bindToolFile({
+                  project_id: runContract.admission.project_id,
+                  conversation_id: runContract.admission.conversation_id,
+                  run_id: runtimeEvent.run_id,
+                  tool_call_id: runtimeEvent.tool_call_id,
+                  path: runtimeEvent.payload.target_label,
+                }),
+              );
+            }
+            return runtimeEvent;
+          },
+        );
+      }
+      runner = builderPerformanceTrace.measureSync(
+        'main.harness_start.runner_create.duration_ms',
+        () => createBuilderHarnessGenerationRunner({
+          runtime_composition: options.harnessRuntimeComposition,
+          read_conversation_events() { return state.context.events; },
+        }),
+      );
+      runLease = {
+        runner,
+        run_id: runContract.admission.run_id,
+        cancellation_requested: false,
+        cancellation_promise: null,
+      };
+      harnessRunnersByOperationKey.set(key, runLease);
+      try {
+        runnerResult = await measureTraceWindow(
+          'harness_start_runner_run',
+          'main.harness_start.runner_run.duration_ms',
+          () => runner.run({
+            run_contract: runContract,
+            source_tree: workingSourceTree,
+            candidate_base_source_tree: candidateBaseSourceTree,
+            base_revision_evidence: baseRevisionEvidence,
+            provider_config: providerConfig,
+            credential,
+            event_sink: {
+              emit(candidate) { return persistRuntimeEvent(candidate, false); },
+            },
+          }),
+        );
+      } finally {
+        credential = null;
+      }
+      assertHarnessRunActive();
+      if (runnerResult.status === 'response_ready') {
+        await measureTraceWindow(
+          'harness_response_reconcile',
+          'main.harness_response.reconcile.duration_ms',
+          () => runner.reconcile({
+            run_handle: runnerResult.run_handle,
+            checkpoint_status: 'not_applicable',
+          }),
+        );
+        assertHarnessRunActive();
+        conversationContext = state.context;
+        await measureTraceWindow(
+          'harness_response_complete_conversation',
+          'main.harness_response.complete_conversation.duration_ms',
+          async () => {
+            Reflect.apply(
+              completeConversationWorkResponse,
+              options.conversationService,
+              [{
+                context: conversationContext,
+                assistant_text: runnerResult.assistant_text,
+              }],
+            );
+          },
+        );
+        retryableContexts.delete(key);
+        return publicHarnessWorkResponse(runnerResult, request, context);
+      }
+      const interruptedCandidate = runnerResult.status === 'interrupted_candidate_ready';
+      if (runnerResult.status !== 'candidate_ready' && !interruptedCandidate) fail();
+      let title = interruptedCandidate ? 'Recoverable project update' : 'Project update ready';
+      const factRecorder = createBuilderProgrammingRuntimeMainFactRecorder({
+        run_contract: runContract,
+        append_main_fact(candidateEvent) {
+          return persistRuntimeEvent(candidateEvent, true);
+        },
+        clock: () => runtimeTimestamp(state.context),
+      });
+      let candidate;
+      let draftId;
+      let receiptPair;
+      let automaticCheck;
+      let summary;
+      let gitRequestId;
+      let repairAttempt = 0;
+      let finalCheckProjection = null;
+      for (;;) {
+        assertHarnessRunActive();
+        candidate = runnerResult.candidate;
+        summary = runnerResult.summary;
+        draftId = `builder-generation-draft:${sha256Canonical({
+          draft_version: BUILDER_GENERATION_PENDING_DRAFT_VERSION,
+          request_id: request.request_digest,
+          candidate_id: candidate.candidate_id,
+          candidate_digest: candidate.candidate_digest,
+          run_id: candidate.run_id,
+          runtime_kind: 'deepseek_harness.v1',
+          ...(draftContinuationContext === null
+            ? {}
+            : {
+                continuation_base_digest: draftContinuationContext.base.base_digest,
+                previous_draft_id: draftContinuationContext.admission.draft_id,
+              }),
+        }).slice('sha256:'.length)}`;
+        const workspaceExpectation = continuationWorkspaceExpectation(
+          draftContinuationContext,
+          candidate,
+        );
+        const editEvidence = await measureTraceWindow(
+          'harness_candidate_workspace_guard',
+          'main.harness_candidate.workspace_guard.duration_ms',
+          () => admitCandidateWorkspaceGuard(
+            candidate,
+            request.existing_project_id,
+            workspaceExpectation.expected_workspace_source_tree_digest,
+          ),
+        );
+        assertHarnessRunActive();
+        gitRequestId = repairAttempt === 0
+          ? valueAt(context, 'git_request_id')
+          : newId(options.createUuid, 'builder-git-request');
+        const gitCandidateReceipt = await measureTraceWindow(
+          'harness_candidate_git_persist',
+          'main.harness_candidate.git_persist.duration_ms',
+          () => Reflect.apply(
+            persistCandidateCommit,
+            options.gitAuthority,
+            [{
+              request_id: gitRequestId,
+              expected_base_oid: candidate.base_revision_evidence === null
+                ? null
+                : candidate.base_revision_evidence.commit_oid,
+              candidate,
+            }],
+          ),
+        );
+        assertHarnessRunActive();
+        const gitVerificationReceipt = await measureTraceWindow(
+          'harness_candidate_git_verify',
+          'main.harness_candidate.git_verify.duration_ms',
+          () => Reflect.apply(
+            verifyCandidateReceipt,
+            options.gitAuthority,
+            [gitCandidateReceipt],
+          ),
+        );
+        receiptPair = sanitizeBuilderGitCandidateReceiptPair(
+          gitCandidateReceipt,
+          gitVerificationReceipt,
+        );
+        assertHarnessRunActive();
+        conversationContext = await measureTraceWindow(
+          'harness_candidate_checkpoint',
+          'main.harness_candidate.checkpoint.duration_ms',
+          async () => recordAutomaticDraftCheckpoint(
+            key,
+            state.context,
+            candidate,
+            receiptPair,
+            summary,
+            editEvidence.edit_attempt,
+          ),
+        );
+        state.context = conversationContext;
+        assertHarnessRunActive();
+        automaticCheck = interruptedCandidate
+          ? null
+          : await measureTraceWindow(
+            'harness_candidate_automatic_check',
+            'main.harness_candidate.automatic_check.duration_ms',
+            () => coordinateAutomaticCandidateCheck(
+              draftId,
+              candidate,
+              receiptPair,
+            ),
+          );
+        assertHarnessRunActive();
+        finalCheckProjection = automaticCheck?.status === 'completed'
+          ? automaticCheck.check_run_status_projection
+          : null;
+        if (
+          automaticCheck?.status === 'completed'
+          && automaticCheck.profile !== null
+          && finalCheckProjection !== null
+          && ['passed', 'failed', 'incomplete'].includes(finalCheckProjection.status)
+        ) {
+          await measureTraceWindow(
+            'harness_candidate_record_check_fact',
+            'main.harness_candidate.record_check_fact.duration_ms',
+            () => factRecorder.record_check({
+              verification_step_id: runnerResult.verification_step_id,
+              command_display: automaticCheck.profile.command_display,
+              status: finalCheckProjection.status,
+              duration_ms: automaticCheck.duration_ms,
+              summary: finalCheckProjection.summary,
+            }),
+          );
+          assertHarnessRunActive();
+        }
+        if (
+          interruptedCandidate
+          || finalCheckProjection?.status !== 'failed'
+          || repairAttempt >= MAX_HARNESS_CHECK_REPAIR_ATTEMPTS
+        ) break;
+        repairAttempt += 1;
+        assertHarnessRunActive();
+        runnerResult = await measureTraceWindow(
+          'harness_candidate_repair',
+          'main.harness_candidate.repair.duration_ms',
+          () => runner.repair({
+            run_handle: runnerResult.run_handle,
+            failure_summary: finalCheckProjection.summary,
+          }),
+        );
+        assertHarnessRunActive();
+      }
+      if (!interruptedCandidate && finalCheckProjection?.status === 'failed') {
+        const closure = failedCheckClosure(summary);
+        title = closure.title;
+        summary = closure.summary;
+      } else if (!interruptedCandidate && finalCheckProjection?.status === 'incomplete') {
+        const closure = unavailableCheckClosure(summary);
+        title = closure.title;
+        summary = closure.summary;
+      }
+      assertHarnessRunActive();
+      if (!interruptedCandidate) {
+        await measureTraceWindow(
+          'harness_candidate_reconcile',
+          'main.harness_candidate.reconcile.duration_ms',
+          () => runner.reconcile({
+            run_handle: runnerResult.run_handle,
+            checkpoint_status: draftContinuationContext !== null || repairAttempt > 0
+              ? 'updated'
+              : 'created',
+          }),
+        );
+      }
+      assertHarnessRunActive();
+      conversationContext = state.context;
+      const currentMaterialization = await measureTraceWindow(
+        'harness_candidate_materialize_current',
+        'main.harness_candidate.materialize_current.duration_ms',
+        () => materializeCandidateToCurrentWorkspace(
+          receiptPair,
+          continuationWorkspaceExpectation(draftContinuationContext, candidate),
+        ),
+      );
+      const completionSummary = chineseHarnessBuildClosure({
+        modelSummary: summary,
+        candidate,
+        automaticCheck,
+        currentMaterialization,
+      });
+      const recorded = await measureTraceWindow(
+        'harness_candidate_complete_conversation',
+        'main.harness_candidate.complete_conversation.duration_ms',
+        async () => Reflect.apply(
+          completeConversationCandidate,
+          options.conversationService,
+          [{
+            context: conversationContext,
+            candidate_result: {
+              draft_id: draftId,
+              title,
+              summary,
+              git_candidate_receipt: receiptPair.candidate_receipt,
+              current_materialization: conversationCurrentMaterialization(currentMaterialization),
+            },
+            assistant_text: completionSummary,
+          }],
+        ),
+      );
+      const stored = freezeDeep({
+        version: BUILDER_GENERATION_RESULT_PROTOCOL,
+        request_id: request.request_digest,
+        title,
+        summary,
+        admissions: {
+          conversation: 'sqlite_recorded',
+          draft: 'candidate_not_saved',
+          save: 'not_performed',
+          preview: 'not_evaluated',
+          execution: 'not_evaluated',
+        },
+        candidate,
+        candidate_proof: {
+          ...candidateProofFromCandidate(candidate),
+          git_request_id: gitRequestId,
+        },
+        draft_id: draftId,
+        request,
+        git_request_id: gitRequestId,
+        conversation_head: recorded.head,
+        restart_restore: 'not_persisted',
+        current_materialization: currentMaterialization,
+        automatic_check: automaticCheck,
+        programming_runtime: 'deepseek_harness.v1',
+        ...(interruptedCandidate
+          ? { programming_runtime_interruption: { ...runnerResult.interruption } }
+          : {}),
+        ...(draftContinuationContext === null
+          ? {}
+          : {
+              draft_continuation: {
+                previous_draft_id: draftContinuationContext.admission.draft_id,
+                admission_digest: draftContinuationContext.admission.admission_digest,
+                base_digest: draftContinuationContext.base.base_digest,
+                squash_authority: 'pending_candidate_context_project_base_candidate_v1',
+              },
+            }),
+      });
+      assertHarnessRunActive();
+      pendingDrafts.set(draftId, stored);
+      if (draftContinuationContext !== null) {
+        pendingDrafts.delete(draftContinuationContext.admission.draft_id);
+      }
+      retryableContexts.delete(key);
+      return publicDraftResult(stored);
+    })().catch(async (error) => {
+      recordCanaryGenerationDebug('harness_generate_candidate_prepare', error);
+      if (runLease !== null && runLease.cancellation_promise !== null) {
+        await runLease.cancellation_promise;
+      }
+      const settledError = runLease?.cancellation_requested === true
+        ? new BuilderGenerationMainServiceError('builder_generation_cancelled')
+        : publicHarnessFailure(error);
+      if (runner !== null && runnerResult !== null) {
+        try { await runner.cancel(runnerResult.run_handle, 'superseded'); } catch { /* stable failure below */ }
+      }
+      recordFailure(key, settledError);
+      throw settledError;
+    }).finally(() => {
+      clearStructuredRuntimeDigestForOperation(key);
+      pendingRetryContexts.delete(key);
+      pendingGenerateRouteDecisionHints.delete(key);
+      pendingGenerateQueuedFollowups.delete(key);
+      pendingDraftContinuationContexts.delete(key);
+      clearProviderContextDisclosureStatusForKey(key);
+      harnessRunnersByOperationKey.delete(key);
+      activeContexts.delete(key);
+      cancellationTerminalOperationKeys.delete(key);
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    });
+    inFlight.set(key, operation);
+    return operation;
+  }
+
+  function startGenerate(request, retryableContext, routeDecisionHint = null, queuedFollowup = null) {
+    let providerConfig = null;
+    let providerCompatible = true;
+    if (
+      options.programmingRuntimeFeatureFlag === 'enabled'
+      && options.harnessRuntimeComposition !== null
+    ) {
+      providerConfig = readProviderConfig();
+      providerCompatible = harnessProviderCompatible(providerConfig);
+      if (!providerCompatible) pendingAuthority = null;
+    }
+    const selection = selectBuilderProgrammingRuntime({
+      feature_flag: options.programmingRuntimeFeatureFlag,
+      harness_available: options.harnessRuntimeComposition !== null,
+      provider_compatible: providerCompatible,
+    });
+    return selection.selected_runtime === 'deepseek_harness.v1'
+      ? startHarnessGenerate(
+        request,
+        retryableContext,
+        routeDecisionHint,
+        queuedFollowup,
+        providerConfig,
+      )
+      : startStructuredGenerate(request, retryableContext, routeDecisionHint, queuedFollowup);
+  }
+
   function startDraftContinuationGenerate(request, continuationContext) {
+    let providerConfig = null;
+    let providerCompatible = true;
+    if (
+      options.programmingRuntimeFeatureFlag === 'enabled'
+      && options.harnessRuntimeComposition !== null
+    ) {
+      providerConfig = readProviderConfig();
+      providerCompatible = harnessProviderCompatible(providerConfig);
+      if (!providerCompatible) pendingAuthority = null;
+    }
+    const selection = selectBuilderProgrammingRuntime({
+      feature_flag: options.programmingRuntimeFeatureFlag,
+      harness_available: options.harnessRuntimeComposition !== null,
+      provider_compatible: providerCompatible,
+    });
+    if (selection.selected_runtime === 'deepseek_harness.v1') {
+      return startHarnessGenerate(
+        request,
+        null,
+        null,
+        null,
+        providerConfig,
+        continuationContext,
+      );
+    }
     const key = operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
@@ -3854,7 +6065,7 @@ function createBuilderGenerationMainService(rawOptions) {
     pendingDraftContinuationContexts.set(key, continuationContext);
     const operation = Promise.resolve(host.generateDraftContinuation(request)).then(async (internal) => {
       const context = valueAt(internal, 'context');
-      const conversationContext = latestConversationContext(
+      let conversationContext = latestConversationContext(
         context,
         draftContinuationContexts.get(context),
       );
@@ -3868,9 +6079,14 @@ function createBuilderGenerationMainService(rawOptions) {
         continuation_base_digest: continuationContext.base.base_digest,
         previous_draft_id: continuationContext.admission.draft_id,
       }).slice('sha256:'.length)}`;
+      const workspaceExpectation = continuationWorkspaceExpectation(
+        continuationContext,
+        internal.candidate,
+      );
       const editEvidence = await admitCandidateWorkspaceGuard(
         internal.candidate,
         request.existing_project_id,
+        workspaceExpectation.expected_workspace_source_tree_digest,
       );
       const gitCandidateReceipt = await Reflect.apply(
         persistCandidateCommit,
@@ -3892,11 +6108,44 @@ function createBuilderGenerationMainService(rawOptions) {
         gitCandidateReceipt,
         gitVerificationReceipt,
       );
-      recordAutomaticDraftCheckpoint(
+      conversationContext = recordAutomaticDraftCheckpoint(
+        key,
+        conversationContext,
         internal.candidate,
         receiptPair,
         internal.summary,
         editEvidence.edit_attempt,
+      );
+      const runtimeSession = await beginStructuredRuntimeTrace({
+        context: conversationContext,
+        operation_key: key,
+        provider_context: context,
+        source_tree: internal.candidate.base_source_tree,
+        instruction: request.instruction,
+      });
+      if (runtimeSession === null) fail();
+      let automaticCheck;
+      try {
+        await recordStructuredCandidateFacts(runtimeSession, internal.candidate, internal.summary);
+        automaticCheck = await coordinateAutomaticCandidateCheck(
+          draftId,
+          internal.candidate,
+          receiptPair,
+        );
+        await recordStructuredCheckFact(runtimeSession, automaticCheck);
+        conversationContext = await finishStructuredRuntimeTrace(runtimeSession, 'updated');
+      } catch (error) {
+        try {
+          conversationContext = await cancelStructuredRuntimeTrace(runtimeSession);
+          activeContexts.set(key, conversationContext);
+        } catch (cancellationError) {
+          recordCanaryGenerationDebug('structured_runtime_cancel_failed', cancellationError);
+        }
+        throw error;
+      }
+      const currentMaterialization = await materializeCandidateToCurrentWorkspace(
+        receiptPair,
+        workspaceExpectation,
       );
       const recorded = Reflect.apply(
         completeConversationCandidate,
@@ -3908,6 +6157,7 @@ function createBuilderGenerationMainService(rawOptions) {
             title: internal.title,
             summary: internal.summary,
             git_candidate_receipt: receiptPair.candidate_receipt,
+            current_materialization: conversationCurrentMaterialization(currentMaterialization),
           },
           assistant_text: internal.summary,
         }],
@@ -3931,6 +6181,8 @@ function createBuilderGenerationMainService(rawOptions) {
         git_request_id: valueAt(context, 'git_request_id'),
         conversation_head: recorded.head,
         restart_restore: 'not_persisted',
+        current_materialization: currentMaterialization,
+        automatic_check: automaticCheck,
         draft_continuation: {
           previous_draft_id: continuationContext.admission.draft_id,
           admission_digest: continuationContext.admission.admission_digest,
@@ -3947,9 +6199,11 @@ function createBuilderGenerationMainService(rawOptions) {
       recordFailure(key, error);
       throw error;
     }).finally(() => {
+      clearStructuredRuntimeDigestForOperation(key);
       pendingDraftContinuationContexts.delete(key);
       clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
+      cancellationTerminalOperationKeys.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
@@ -3972,6 +6226,7 @@ function createBuilderGenerationMainService(rawOptions) {
       request = createBuilderGenerationRequest({
         instruction: continuationRequest.instruction,
         existing_project_id: continuationContext.admission.project_id,
+        task_address_id: null,
       });
       return await startDraftContinuationGenerate(request, freezeDeep({
         ...continuationContext,
@@ -4021,28 +6276,15 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  async function proposePlan(rawRequest) {
-    let request;
-    let key;
-    try {
-      exactObject(rawRequest, ['request', 'resource_ids']);
-      request = sanitizeBuilderGenerationRequest(valueAt(rawRequest, 'request'));
-      if (request.existing_project_id === null) fail();
-      key = operationKey(PLAN_OPERATION_PREFIX, request.request_digest);
-      if (inFlight.has(key) || pendingPlanRequests.has(key) || collectProjectSourceContext === null) fail();
-      const routeConflict = rejectIfOtherRouteInFlight(PLAN_OPERATION_PREFIX, request.request_digest);
-      if (routeConflict) return routeConflict;
-      const semanticClassification = consumeSemanticRouteClassification(request);
-      pendingPlanRequests.set(key, freezeDeep({
-        resource_ids: safeResourceIds(valueAt(rawRequest, 'resource_ids')),
-        route_decision_hint: semanticClassification === null
-          ? planRouteDecisionHint()
-          : semanticRouteDecisionHint(semanticClassification, ['plan']),
-      }));
-    } catch (error) {
-      if (error instanceof BuilderGenerationMainServiceError) throw error;
-      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
-    }
+  function startPlan(request, resourceIds, routeDecisionHint) {
+    const key = operationKey(PLAN_OPERATION_PREFIX, request.request_digest);
+    if (inFlight.has(key) || pendingPlanRequests.has(key) || collectProjectSourceContext === null) fail();
+    const routeConflict = rejectIfOtherRouteInFlight(PLAN_OPERATION_PREFIX, request.request_digest);
+    if (routeConflict) return routeConflict;
+    pendingPlanRequests.set(key, freezeDeep({
+      resource_ids: safeResourceIds(resourceIds),
+      route_decision_hint: routeDecisionHint,
+    }));
     const operation = Promise.resolve(host.plan(request)).then((internal) => {
       const context = valueAt(internal, 'context');
       const sourceContextResult = planContexts.get(context);
@@ -4064,10 +6306,31 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingPlanRequests.delete(key);
       clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
+      cancellationTerminalOperationKeys.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
     return operation;
+  }
+
+  async function proposePlan(rawRequest) {
+    let request;
+    try {
+      exactObject(rawRequest, ['request', 'resource_ids']);
+      request = sanitizeBuilderGenerationRequest(valueAt(rawRequest, 'request'));
+      if (request.existing_project_id === null) fail();
+      const semanticClassification = consumeSemanticRouteClassification(request);
+      return startPlan(
+        request,
+        valueAt(rawRequest, 'resource_ids'),
+        semanticClassification === null
+          ? planRouteDecisionHint()
+          : semanticRouteDecisionHint(semanticClassification, ['plan']),
+      );
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
   }
 
   async function submit(rawRequest) {
@@ -4083,33 +6346,40 @@ function createBuilderGenerationMainService(rawOptions) {
         semanticClassification,
         ['answer', 'clarify', 'update_brief', 'build'],
       );
-    const shouldAnswer = routeDecision.route !== 'build';
-    if (!shouldAnswer && request.existing_project_id === null) {
+    if ((routeDecision.route === 'build' || routeDecision.route === 'plan') && request.existing_project_id === null) {
       return Promise.reject(new BuilderGenerationMainServiceError(
         'builder_generation_project_workspace_required',
       ));
     }
-    return shouldAnswer
-      ? startAnswer(request, routeDecision)
-      : startGenerate(request, null, routeDecision);
+    if (routeDecision.route === 'plan') return startPlan(request, [], routeDecision);
+    return routeDecision.route === 'build'
+      ? startGenerate(request, null, routeDecision)
+      : startAnswer(request, routeDecision);
   }
 
   async function classifyIntent(rawRequest) {
     let instruction;
     let projectId;
+    let taskAddressId;
     try {
-      exactObject(rawRequest, ['instruction', 'existing_project_id']);
+      exactObject(rawRequest, ['instruction', 'existing_project_id', 'task_address_id']);
       instruction = safeText(valueAt(rawRequest, 'instruction'), 12_000, 48_000);
       const rawProjectId = valueAt(rawRequest, 'existing_project_id');
       projectId = rawProjectId === null ? null : safeProjectId(rawProjectId);
+      const rawTaskAddressId = valueAt(rawRequest, 'task_address_id');
+      taskAddressId = rawTaskAddressId === null
+        ? null
+        : safePattern(rawTaskAddressId, TASK_ADDRESS_ID_PATTERN, 96);
+      if (projectId === null && taskAddressId !== null) fail();
     } catch {
       throw new BuilderGenerationMainServiceError('builder_generation_request_invalid');
     }
-    const semanticRequest = semanticRouteRequestFor(instruction, projectId);
+    const semanticRequest = semanticRouteRequestFor(instruction, projectId, taskAddressId);
     const classification = await host.classifyIntent(semanticRequest);
     const generationRequest = createBuilderGenerationRequest({
       instruction,
       existing_project_id: projectId,
+      task_address_id: taskAddressId,
     });
     rememberSemanticRouteClassification(generationRequest, classification);
     return classification;
@@ -4173,13 +6443,14 @@ function createBuilderGenerationMainService(rawOptions) {
       const conversationContext = latestConversationContext(context, explanationContexts.get(context));
       if (conversationContext === undefined) fail();
       const publicResult = publicExplanationResult(internal, request);
-      const terminal = Reflect.apply(
+      const terminal = applyConversationContextMethod(
+        conversationContext,
         completeConversationExplanation,
-        options.conversationService,
-        [{
+        completeAgentConversationExplanation,
+        {
           context: conversationContext,
           assistant_text: internal.explanation,
-        }],
+        },
       );
       recordTaskCapsuleFromExplanationTerminal(conversationContext, terminal);
       return publicResult;
@@ -4192,6 +6463,7 @@ function createBuilderGenerationMainService(rawOptions) {
       pendingAnswerQueuedFollowups.delete(key);
       clearProviderContextDisclosureStatusForKey(key);
       activeContexts.delete(key);
+      cancellationTerminalOperationKeys.delete(key);
       if (inFlight.get(key) === operation) inFlight.delete(key);
     });
     inFlight.set(key, operation);
@@ -4215,6 +6487,17 @@ function createBuilderGenerationMainService(rawOptions) {
       ));
   }
 
+  async function answerPlan(rawRequest) {
+    let request;
+    try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    if (request.existing_project_id !== null || request.task_address_id !== null) {
+      return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
+    }
+    return startAnswer(request, planRouteDecisionHint());
+  }
+
   async function answerQueuedFollowup(rawRequest) {
     let request;
     let queuedFollowup;
@@ -4222,7 +6505,6 @@ function createBuilderGenerationMainService(rawOptions) {
       const sanitized = sanitizeQueuedFollowupTurnRequest(rawRequest);
       request = sanitized.request;
       queuedFollowup = sanitized.queued_followup;
-      if (request.existing_project_id === null) fail();
     } catch {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
@@ -4248,6 +6530,7 @@ function createBuilderGenerationMainService(rawOptions) {
       request = createBuilderGenerationRequest({
         instruction: draftRequest.instruction,
         existing_project_id: draftRequest.project_id,
+        task_address_id: null,
       });
       const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
       if (inFlight.has(key) || pendingDraftAnswerContexts.has(key)) fail();
@@ -4257,6 +6540,7 @@ function createBuilderGenerationMainService(rawOptions) {
         draft_id: draftRequest.draft_id,
         instruction: request.instruction,
         project_id: draftRequest.project_id,
+        conversation_id: verified.conversation_draft.candidate_proof.conversation_id,
         base_revision: verified.conversation_draft.candidate_proof.base_revision,
         base_revision_evidence: await baseRevisionEvidenceForRestoredDraft(
           verified.conversation_draft.candidate_proof,
@@ -4283,6 +6567,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     const keys = [
       operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, requestId),
       operationKey(ANSWER_OPERATION_PREFIX, requestId),
       operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
@@ -4290,18 +6575,43 @@ function createBuilderGenerationMainService(rawOptions) {
     for (const key of keys) {
       const context = activeContexts.get(key);
       if (context === undefined) continue;
+      const harnessRun = harnessRunnersByOperationKey.get(key);
+      if (harnessRun !== undefined) {
+        harnessRun.cancellation_requested = true;
+      }
       let cancelledContext;
       try {
-        cancelledContext = Reflect.apply(
+        cancelledContext = applyConversationContextMethod(
+          context,
           requestConversationCancel,
-          options.conversationService,
-          [{ context }],
+          requestAgentConversationCancel,
+          { context },
         );
       } catch {
+        if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
+          harnessRun.cancellation_promise = harnessRun.runner
+            .cancel_run_id(harnessRun.run_id, 'user_requested')
+            .catch(() => false);
+        }
+        throw new BuilderGenerationMainServiceError();
+      }
+      try {
+        cancelledContext = completeAcceptedCancellation(key, cancelledContext);
+      } catch {
+        if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
+          harnessRun.cancellation_promise = harnessRun.runner
+            .cancel_run_id(harnessRun.run_id, 'user_requested')
+            .catch(() => false);
+        }
         throw new BuilderGenerationMainServiceError();
       }
       activeContexts.set(key, cancelledContext);
       clearProviderContextDisclosureStatusForContext(cancelledContext);
+      if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
+        harnessRun.cancellation_promise = harnessRun.runner
+          .cancel_run_id(harnessRun.run_id, 'user_requested')
+          .catch(() => false);
+      }
       cancelled = true;
     }
     if (!cancelled) {
@@ -4323,6 +6633,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     const keys = [
       operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, requestId),
       operationKey(ANSWER_OPERATION_PREFIX, requestId),
       operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
@@ -4330,18 +6641,26 @@ function createBuilderGenerationMainService(rawOptions) {
     for (const key of keys) {
       const context = activeContexts.get(key);
       if (context === undefined) continue;
+      const harnessRun = harnessRunnersByOperationKey.get(key);
+      const pendingQuestion = harnessRun === undefined
+        ? null
+        : harnessRun.runner.pending_user_question(harnessRun.run_id);
       let steeredContext;
       try {
-        steeredContext = Reflect.apply(
+        steeredContext = applyConversationContextMethod(
+          context,
           recordConversationSteering,
-          options.conversationService,
-          [{ context, message }],
+          recordAgentConversationSteering,
+          { context, message },
         );
       } catch {
         throw new BuilderGenerationMainServiceError();
       }
       activeContexts.set(key, steeredContext);
       liveOutputContextsByRunId.set(steeredContext.ids.run_id, steeredContext);
+      if (pendingQuestion !== null) {
+        harnessRun.runner.answer_user_question(harnessRun.run_id, message);
+      }
       steered = true;
     }
     return Object.freeze({ request_id: requestId, steered });
@@ -4359,6 +6678,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     const keys = [
       operationKey(GENERATE_OPERATION_PREFIX, requestId),
+      operationKey(DRAFT_CONTINUATION_OPERATION_PREFIX, requestId),
       operationKey(ANSWER_OPERATION_PREFIX, requestId),
       operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
@@ -4369,10 +6689,11 @@ function createBuilderGenerationMainService(rawOptions) {
       if (context === undefined) continue;
       let queuedContext;
       try {
-        queuedContext = Reflect.apply(
+        queuedContext = applyConversationContextMethod(
+          context,
           recordConversationQueuedFollowup,
-          options.conversationService,
-          [{ context, message }],
+          recordAgentConversationQueuedFollowup,
+          { context, message },
         );
       } catch {
         throw new BuilderGenerationMainServiceError();
@@ -4406,8 +6727,9 @@ function createBuilderGenerationMainService(rawOptions) {
   async function loadPendingDraftById(draftId) {
     const draft = pendingDrafts.get(draftId);
     if (draft) {
+      let restoredConversation;
       try {
-        const restoredConversation = sanitizeConversationDraft(
+        restoredConversation = sanitizeConversationDraft(
           Reflect.apply(
             readConversationCandidateDraft,
             options.conversationService,
@@ -4415,31 +6737,17 @@ function createBuilderGenerationMainService(rawOptions) {
           ),
           draftId,
         );
-        if (
-          restoredConversation.title !== draft.title
-          || restoredConversation.summary !== draft.summary
-          || restoredConversation.conversation_head.sequence !== draft.conversation_head.sequence
-          || restoredConversation.conversation_head.event_id !== draft.conversation_head.event_id
-          || restoredConversation.conversation_head.event_digest !== draft.conversation_head.event_digest
-          || restoredConversation.git_candidate_receipt.request_id !== draft.git_request_id
-          || restoredConversation.candidate_proof.git_request_id !== draft.git_request_id
-          || restoredConversation.candidate_proof.project_id !== draft.candidate_proof.project_id
-          || restoredConversation.candidate_proof.conversation_id !== draft.candidate_proof.conversation_id
-          || restoredConversation.candidate_proof.turn_id !== draft.candidate_proof.turn_id
-          || restoredConversation.candidate_proof.task_id !== draft.candidate_proof.task_id
-          || restoredConversation.candidate_proof.run_id !== draft.candidate_proof.run_id
-          || restoredConversation.candidate_proof.candidate_id !== draft.candidate_proof.candidate_id
-          || restoredConversation.candidate_proof.candidate_digest !== draft.candidate_proof.candidate_digest
-          || restoredConversation.candidate_proof.resulting_tree_digest !== draft.candidate_proof.resulting_tree_digest
-          || restoredConversation.candidate_proof.expected_base_oid !== draft.candidate_proof.expected_base_oid
-          || canonicalJson(restoredConversation.candidate_proof.base_revision)
-            !== canonicalJson(draft.candidate_proof.base_revision)
-        ) fail();
+        assertConversationDraftMatchesPending(restoredConversation, draft);
       } catch (error) {
         pendingDrafts.delete(draftId);
         throw error;
       }
-      return draft;
+      const refreshed = refreshPendingDraftConversationHead(
+        draft,
+        restoredConversation.conversation_head,
+      );
+      pendingDrafts.set(draftId, refreshed);
+      return refreshed;
     }
     const restoredConversation = sanitizeConversationDraft(
       Reflect.apply(
@@ -4464,6 +6772,7 @@ function createBuilderGenerationMainService(rawOptions) {
       git_request_id: restoredConversation.git_candidate_receipt.request_id,
       conversation_head: restoredConversation.conversation_head,
       candidate_proof: restoredConversation.candidate_proof,
+      current_materialization: restoredConversation.current_materialization,
       source_tree: verified.source_tree,
       restart_restore: 'git_sqlite_verified',
     });
@@ -4519,9 +6828,14 @@ function createBuilderGenerationMainService(rawOptions) {
     if (
       conversationDraft.title !== draft.title
       || conversationDraft.summary !== draft.summary
-      || conversationDraft.conversation_head.sequence !== draft.conversation_head.sequence
-      || conversationDraft.conversation_head.event_id !== draft.conversation_head.event_id
-      || conversationDraft.conversation_head.event_digest !== draft.conversation_head.event_digest
+      || conversationDraft.conversation_head.sequence < draft.conversation_head.sequence
+      || (
+        conversationDraft.conversation_head.sequence === draft.conversation_head.sequence
+        && (
+          conversationDraft.conversation_head.event_id !== draft.conversation_head.event_id
+          || conversationDraft.conversation_head.event_digest !== draft.conversation_head.event_digest
+        )
+      )
       || conversationDraft.git_candidate_receipt.request_id !== draft.git_request_id
       || conversationDraft.candidate_proof.git_request_id !== draft.git_request_id
       || conversationDraft.candidate_proof.project_id !== draft.candidate_proof.project_id
@@ -4536,6 +6850,18 @@ function createBuilderGenerationMainService(rawOptions) {
       || canonicalJson(conversationDraft.candidate_proof.base_revision)
         !== canonicalJson(draft.candidate_proof.base_revision)
     ) fail();
+  }
+
+  function refreshPendingDraftConversationHead(draft, conversationHead) {
+    if (
+      draft.conversation_head.sequence === conversationHead.sequence
+      && draft.conversation_head.event_id === conversationHead.event_id
+      && draft.conversation_head.event_digest === conversationHead.event_digest
+    ) return draft;
+    return freezeDeep({
+      ...draft,
+      conversation_head: { ...conversationHead },
+    });
   }
 
   async function prepareDraftContinuationBase(rawRequest) {
@@ -4605,6 +6931,7 @@ function createBuilderGenerationMainService(rawOptions) {
     classify_intent: classifyIntent,
     submit_queued_followup: submitQueuedFollowup,
     answer,
+    answer_plan: answerPlan,
     answer_queued_followup: answerQueuedFollowup,
     answer_draft: answerDraft,
     propose_plan: proposePlan,
@@ -4618,6 +6945,7 @@ function createBuilderGenerationMainService(rawOptions) {
     queue_followup: queueFollowup,
     availability: host.availability,
     restore_revision_as_draft: restoreRevisionAsDraft,
+    restore_previous_checkpoint_as_draft: restorePreviousCheckpointAsDraft,
     restore_draft: restoreDraft,
     read_pending_draft: readPendingDraft,
     prepare_draft_continuation: prepareDraftContinuation,
@@ -4641,6 +6969,7 @@ function createBuilderGenerationMainService(rawOptions) {
       draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
       draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
       history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
+      history_checkpoint_undo: 'main_only_verified_checkpoint_git_candidate_or_project_baseline',
       run_steering: 'request_id_only_main_conversation_fact',
       run_followup_queue: 'request_id_only_main_conversation_fact',
       run_followup_consumption: 'main_conversation_replay_verified',

@@ -13,11 +13,17 @@ The side workspace should make Builder feel like a Codex-like programming
 workbench:
 
 - chat remains the primary planning and instruction surface;
+- the complete public Plan and its approve/reject controls render in chat as
+  bounded Markdown; the workspace is not required to read or decide on it;
 - the side workspace shows the active artifact or tool needed for the current
   task;
 - tools can switch without losing the current chat context;
 - project facts come from main-owned Git, SQLite, source, and runtime authority;
 - renderer UI never fabricates source, command, review, or browser evidence.
+
+A file reference inside Plan Markdown may open an admitted File or Changes tab.
+The rendered path itself is not authority: main must supply the matching opaque
+file reference, and a missing or stale reference remains inert readable text.
 
 ## Workspace Tab Model
 
@@ -49,8 +55,10 @@ does not grant tool authority by itself.
 Current implementation checkpoint:
 
 - the right workspace uses an open-tab shell rather than a fixed tool switcher;
-- projected Browser/Preview, Files, Review/Changes, Logs, Permissions, and
-  Versions can appear as tabs when their facts are available;
+- projected Browser/Preview, Files, Review/Changes, Permissions, and Versions
+  can appear as tabs when their facts are available;
+- live work progress and completed work details stay in the Codex-like chat
+  timeline; Logs are no longer a normal side-workspace destination;
 - tabs can be closed without deleting drafts, stopping runtimes, or changing
   save/review authority;
 - the `+` menu reopens available tool types and keeps future Terminal and Side
@@ -359,7 +367,7 @@ Suggested contracts:
 ```text
 builder-side-workspace-file-tree.v1
   project_id
-  source_kind: current_draft | saved_revision | inspected_revision
+  source_kind: current_draft | saved_revision | inspected_revision | runtime_snapshot
   root_label
   entries[]
   authority
@@ -374,9 +382,33 @@ builder-side-workspace-file-content.v1
   authority
 ```
 
+Runtime tool rows use a separate identity-only lookup. The renderer submits the
+main-issued `run_id` and `tool_call_id`; main resolves the verified tool event to
+the bounded runtime workspace snapshot and returns a normal file tree projection
+with the selected file. The file ref carries `source_kind`, so equal content in a
+draft and a runtime snapshot cannot silently switch source authority. Runtime
+snapshots are read-only, bounded, retained on disk for recent runs, and remain
+available when a run fails before producing a candidate.
+
+File-source transitions are also part of the contract, not incidental renderer
+state. Opening a runtime tool file may temporarily project a
+`runtime_snapshot`, but that snapshot is scoped to its current draft identity.
+When a replacement draft becomes current, Files must request and render that
+draft exactly as it would on a fresh open. A renderer-local suppression flag
+must be consumed while the runtime snapshot is visible and must never suppress
+the later current-draft request.
+
+Current-draft projection can briefly lag candidate materialization across the
+main/SQLite boundary. Files therefore performs a bounded, identity-checked
+retry while the durable projection converges. A superseding request or draft
+change cancels the old retry; only the final failed attempt may publish the
+unavailable state. This prevents a transient authority gap from becoming a
+permanent empty panel while still failing closed for stale refs.
+
 Required safety tests:
 
 - renderer cannot pass `source_tree`;
+- renderer cannot pass a path when opening a runtime tool file;
 - renderer cannot read outside the projected source snapshot;
 - stale draft/revision refs fail closed;
 - deleted files show metadata but no content body;
@@ -384,6 +416,9 @@ Required safety tests:
 - large files are truncated with explicit status;
 - no source write, Git write, SQLite write, provider dispatch, command
   execution, or save admission.
+- runtime snapshot -> replacement current draft resumes file discovery;
+- transient current-draft projection convergence retries are bounded and stale
+  retries cannot overwrite a newer draft.
 
 ## Relationship To Live Preview
 
@@ -414,7 +449,10 @@ Do not claim the side workspace is complete until:
 
 - Browser has packaged canary evidence;
 - Files read-only tree/content projections are main-owned and tested;
-- Review save/discard/check transitions are stable under packaged app restart;
+- Files source transitions remain correct after opening a runtime tool file and
+  after replacing or recovering the current draft;
+- Review, check, undo/restore, and optional milestone transitions are stable
+  under packaged app restart;
 - Terminal has bounded command authority and shutdown drain;
 - tool switching preserves chat/composer state;
 - the latest chat is never covered by the side workspace or composer;

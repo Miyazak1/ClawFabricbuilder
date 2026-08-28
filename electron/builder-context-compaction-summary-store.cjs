@@ -426,7 +426,7 @@ function latestSummary(db, conversationId, taskAddressId) {
     db,
     `SELECT ${columns()} FROM context_compaction_summaries
       WHERE conversation_id = ? AND task_address_id = ?
-      ORDER BY created_at_ms DESC, summary_id DESC
+      ORDER BY source_event_count DESC, created_at_ms DESC, summary_id DESC
       LIMIT 1`,
     [conversationId, taskAddressId],
   ));

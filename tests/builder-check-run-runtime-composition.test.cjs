@@ -41,6 +41,14 @@ function dependencies(root) {
         ? (process.env.SystemRoot ?? `${path.parse(process.execPath).root}Windows`)
         : null,
     }),
+    toolchain_probe_spawn_process() { throw new Error('toolchain probe not dispatched by composition test'); },
+    dependency_prepare_spawn_process() {
+      throw new Error('dependency prepare not dispatched by composition test');
+    },
+    project_workspace_path_service: {
+      service_version: 'builder-project-workspace-path-service.v1',
+      async resolve_project_workspace_path() {},
+    },
     clock,
     conversation_service: {
       service_version: 'builder-conversation-main-service.v1',
@@ -79,6 +87,11 @@ test('composes a current-draft service from one shared main-owned CheckRun runti
     composition.current_draft_service.service_version,
     'builder-check-run-current-draft-service.v1',
   );
+  assert.equal(typeof composition.current_draft_service.diagnose_check_environment, 'function');
+  assert.equal(
+    composition.coding_loop_check_coordinator.coordinator_version,
+    'builder-coding-loop-check-coordinator.v1',
+  );
   assert.equal(
     composition.current_draft_skip_service.service_version,
     'builder-check-skip-current-draft-service.v1',
@@ -102,6 +115,18 @@ test('fails closed before composition for extra options, bad paths, or malformed
     ...dependencies(root),
     process_adapter: {},
   }), { code: 'builder_check_run_runtime_composition_failed' });
+  assert.throws(() => createBuilderCheckRunRuntimeComposition({
+    ...dependencies(root),
+    toolchain_probe_spawn_process: {},
+  }), { code: 'builder_check_run_runtime_composition_failed' });
+  assert.throws(() => createBuilderCheckRunRuntimeComposition({
+    ...dependencies(root),
+    dependency_prepare_spawn_process: {},
+  }), { code: 'builder_check_run_runtime_composition_failed' });
+  assert.throws(() => createBuilderCheckRunRuntimeComposition({
+    ...dependencies(root),
+    project_workspace_path_service: {},
+  }), { code: 'builder_check_run_runtime_composition_failed' });
 });
 
 test('composition source contains no IPC, renderer, provider, save, or project mutation authority', () => {
@@ -112,4 +137,6 @@ test('composition source contains no IPC, renderer, provider, save, or project m
   assert.doesNotMatch(source, /ipcMain|contextBridge|preload|provider|save_draft|writeFile|git write/iu);
   assert.match(source, /createBuilderCheckRunRunner/u);
   assert.match(source, /createBuilderCheckRunCurrentDraftService/u);
+  assert.match(source, /toolchain_probe_spawn_process/u);
+  assert.match(source, /dependency_prepare_spawn_process/u);
 });

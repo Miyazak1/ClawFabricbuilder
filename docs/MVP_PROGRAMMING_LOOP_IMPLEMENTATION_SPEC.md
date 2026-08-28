@@ -4,6 +4,12 @@ This document translates the Codex-like Programming Runtime Architecture into
 the first shippable implementation target. It is intentionally narrower than
 the full architecture and the post-MVP expansion plan.
 
+The current runtime-adapter, plugin, checkpoint, and rollout decisions are
+defined in
+[Foundational Coding Loop And Plugin Runtime Roadmap](FOUNDATIONAL_CODING_LOOP_PLUGIN_RUNTIME_ROADMAP.md).
+That roadmap supersedes the earlier requirement to press `Save version` after
+every mutating turn.
+
 ## Goal
 
 Builder MVP must prove one reliable local programming loop:
@@ -17,8 +23,8 @@ select project
 -> apply bounded edits
 -> record an automatic draft checkpoint
 -> show diff, preview, and basic check evidence
--> explicitly save a version
--> restart and recover the same project state
+-> continue, review, undo, or optionally mark a milestone
+-> restart and recover the same project, conversation, and working state
 ```
 
 This is the release target. Hooks, open extensions, persistent Agents,
@@ -82,7 +88,8 @@ Required behavior:
 
 - Detect stack, package manager, likely entry points, likely build/test/lint
   commands, and key paths.
-- Show ordinary status such as `Reading project`.
+- Show real read/search actions when they occur; do not synthesize a completed
+  `Reading project` chat item from the discovery lifecycle.
 - Do not expose internal digests or source summaries by default.
 
 MVP limit:
@@ -197,23 +204,25 @@ MVP limit:
 - A failed basic check may stop the run; automatic multi-step repair is not
   required.
 
-### Step 8: Save Version
+### Step 8: Continue, Undo, Or Mark A Milestone
 
-User explicitly saves a reviewed draft.
+The completed working state is immediately available for another coding turn.
 
 Required behavior:
 
-- Save requires current draft checkpoint or candidate evidence.
-- Save creates Git candidate evidence and SQLite Project Revision receipt.
-- Save updates selected current revision only after receipt success.
-- Save is restart-safe.
+- User can continue improving the current checkpoint without saving a Version.
+- Undo/restore targets a durable checkpoint and conversation boundary.
+- Restore appends a new fact and does not erase historical events.
+- A formal Version may be created as an optional milestone from stable
+  checkpoint or candidate evidence.
+- Undo, restore, and optional milestone creation are restart-safe.
 
 Not allowed:
 
-- provider output silently saves;
-- passing checks silently saves;
-- preview success silently saves;
-- hooks or future agents silently save.
+- provider output silently accepts or publishes work;
+- passing checks silently marks a formal milestone;
+- restore overwrites newer external changes without conflict detection;
+- a missing Version blocks the next coding turn.
 
 ### Step 9: Restart Recovery
 
@@ -222,8 +231,8 @@ Packaged app restart must restore the work state.
 Required behavior:
 
 - Current project list is restored.
-- Current saved version is restored.
-- Unsaved draft state is restored or safely marked recoverable/discardable.
+- Current working checkpoint and optional milestone history are restored.
+- Recoverable changes are restored or safely marked recoverable/discardable.
 - Conversation/task stream remains coherent enough to continue.
 
 ## MVP Backend Contracts
@@ -246,7 +255,8 @@ implementation guidance; exact module names may follow existing local patterns.
 | `CheckRun` | Basic lint/build/test evidence | permission-bound fact |
 | `PreviewRun` | Static preview evidence | artifact evidence |
 | `ReviewState` | Current reviewable draft projection | renderer-safe projection |
-| `SaveVersionReceipt` | Accepted revision persistence | Git + SQLite authority |
+| `RestoreReceipt` | Undo/restore result bound to checkpoint and conversation boundary | Git/snapshot + SQLite authority |
+| `SaveVersionReceipt` | Optional milestone persistence | Git + SQLite authority |
 | `RestartRecoveryCanary` | Packaged recovery proof | release evidence |
 
 ## MVP State Machine
@@ -262,9 +272,8 @@ idle
 -> execution_admitted
 -> editing
 -> draft_checkpointing
--> review_ready
--> saving_version
--> version_saved
+-> working_state_ready
+-> continuing | reviewing | restoring | milestone_marking
 ```
 
 Terminal states:
@@ -284,7 +293,7 @@ Allowed interruption behavior:
 
 ## Permission Matrix
 
-| Operation | Chat without project | Plan mode | Execute mode | Save |
+| Operation | Chat without project | Plan mode | Execute mode | History/milestone |
 | --- | --- | --- | --- | --- |
 | Discuss idea | Allowed | Allowed | Allowed | N/A |
 | Read selected project files | Denied until selected | Allowed through source policy | Allowed through source policy | N/A |
@@ -296,20 +305,21 @@ Allowed interruption behavior:
 | Install dependencies | Denied | Denied | Post-MVP high-risk permission | N/A |
 | Start dev server | Denied | Denied | Post-MVP/live-preview permission | N/A |
 | Create draft checkpoint | Denied | Denied | Automatic after successful mutation | N/A |
-| Save version | Denied | Denied | Denied directly | Explicit user action only |
+| Restore checkpoint | Denied | Denied | Denied directly | Explicit user action only |
+| Mark milestone Version | Denied | Denied | Denied directly | Optional user action or future explicit project policy |
 
 ## UI Projection Map
 
 | Surface | MVP projection |
 | --- | --- |
-| Project sidebar | Saved projects, current version, unsaved draft marker |
+| Project sidebar | Projects, current working state, optional milestone label |
 | Composer top edge | Selected project, source folder status, persistent Ask/Build chip, one-shot Plan chip, write mode |
 | Composer `+` menu | Files/folders, Ask mode, Plan mode, Build mode; no Brief user mode |
 | Chat timeline | User request, assistant plan, execution status, change explanation |
-| Status chips | Reading project, Planning, Ready to execute, Changing files, Review draft |
+| Active status | Unobtrusive loading before the first model/tool event; otherwise the current real tool or check state |
 | Right drawer | Preview, Changes, Source summary if available, basic check result |
-| Review actions | Discard draft, Save version, with Preview/Changes in the side workspace |
-| History/version surface | Saved version after explicit save |
+| Review actions | Undo/restore and optional milestone action, with Preview/Changes in the side workspace |
+| History/version surface | Automatic restore points plus optional milestone Versions |
 
 The UI should avoid duplicate controls. One global workspace tab can choose the
 right drawer view, while the drawer content should not repeat the same view
@@ -351,9 +361,10 @@ MVP is not done until a packaged app can pass this canary with a real provider:
 9. Show static preview if applicable.
 10. Let Builder run a discovered basic check automatically, or surface an
     honest not-checked/failed state without a manual check button.
-11. Save version.
-12. Quit and relaunch packaged app.
-13. Reopen project and verify saved version, draft state, and conversation
+11. Submit a follow-up improvement without saving a Version first.
+12. Undo or restore to a known checkpoint and verify the files are coherent.
+13. Quit and relaunch packaged app.
+14. Reopen project and verify working state, checkpoint history, and conversation
     continuity are coherent.
 ```
 
@@ -366,7 +377,8 @@ Required evidence:
 - draft checkpoint receipt;
 - review state projection;
 - check/no-check evidence;
-- save version receipt;
+- restore receipt;
+- optional milestone receipt only when that path is exercised;
 - restart recovery result.
 
 ## Implementation Order
@@ -376,7 +388,7 @@ Required evidence:
 3. Add ProgrammingRun and ExecutionApproval binding for execute mode.
 4. Add EditIntentPlan and WorkspaceGuard for bounded project writes.
 5. Make Draft Checkpoint automatic after successful mutating runs.
-6. Consolidate Review Workspace: diff, preview, check evidence, save/discard.
+6. Consolidate Review Workspace: diff, preview, check evidence, undo/restore.
 7. Add CheckRun MVP with one discovered/approved command path.
 8. Add packaged MVP canary for the full loop.
 

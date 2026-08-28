@@ -234,9 +234,11 @@ materialize public bundles.
 
 Current runtime checkpoint: `electron/builder-generation-ipc-runtime.cjs`
 creates that store in the real desktop main lifecycle at
-`builder-session-task-addresses-v1/session-task-addresses.sqlite` and closes it
+`builder-session-task-addresses-v2/session-task-addresses.sqlite` and closes it
 on registration failure or runtime dispose. This proves the address store is
-part of the main-owned runtime composition while still withholding migration,
+part of the main-owned runtime composition. The v2 directory is an intentional
+incompatible cutover for composite Conversation identity; it does not read or
+rewrite the pre-cutover v1 database and still withholds migration,
 run binding, renderer lookup, archive/delete/fork/export, provider/tool
 dispatch, source/Git mutation, and permission authority.
 

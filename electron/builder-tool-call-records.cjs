@@ -10,6 +10,9 @@ const {
   BUILDER_TOOL_SESSION_POLICY_VERSION,
   sanitizeBuilderToolSessionPolicy,
 } = require('./builder-tool-session-policy.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_TOOL_CALL_RECORD_VERSION = 'builder-tool-call-record.v1';
 const TOOL_CALL_RECORD_KIND = 'builder_tool_call_record';
@@ -82,7 +85,6 @@ const AUTHORITY_KEYS = Object.freeze([
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:(${UUID_SOURCE})$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -210,10 +212,11 @@ function safeProjectId(value) {
 }
 
 function safeConversationId(value, projectId) {
-  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
-  if (conversationId.slice('builder-conversation:'.length)
-    !== projectId.slice('builder-project:'.length)) fail();
-  return conversationId;
+  try {
+    return sanitizeBuilderConversationAddress(projectId, value);
+  } catch {
+    fail();
+  }
 }
 
 function safeTurnId(value) {

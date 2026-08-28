@@ -10,17 +10,33 @@ const STOP_CURRENT_LIVE_PREVIEW_CHANNEL =
   'clawfabric-builder:live-preview:stop-current';
 const READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL =
   'clawfabric-builder:live-preview:read-current-status';
+const UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL =
+  'clawfabric-builder:live-preview:update-current-layout';
+const DECIDE_DEV_SERVER_APPROVAL_CHANNEL =
+  'clawfabric-builder:live-preview:decide-dev-server-approval';
 
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id']);
+const LAYOUT_REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id', 'view_bounds']);
+const DEV_SERVER_DECISION_KEYS = Object.freeze([
+  'project_id', 'conversation_id', 'approval_request_id', 'decision',
+]);
+const DEV_SERVER_APPROVAL_KEYS = Object.freeze([
+  'request_version', 'approval_request_id', 'project_id', 'conversation_id',
+  'command_display', 'source_tree_digest', 'risk_notice', 'requested_at_ms',
+  'expires_at_ms', 'decisions',
+]);
+const VIEW_BOUNDS_KEYS = Object.freeze(['x', 'y', 'width', 'height']);
 const OPTION_KEYS = Object.freeze([
   'requestCurrentDraftLivePreview',
   'reloadCurrentLivePreview',
   'stopCurrentLivePreview',
   'readCurrentLivePreviewStatus',
+  'updateCurrentLivePreviewLayout',
+  'decideDevServerApproval',
   'mainWindowRef',
 ]);
 const STATUS_KEYS = Object.freeze([
@@ -28,6 +44,7 @@ const STATUS_KEYS = Object.freeze([
   'project_id',
   'conversation_id',
   'preview_kind',
+  'entry_url',
   'status',
   'can_start',
   'can_reload',
@@ -39,6 +56,7 @@ const STATUS_KEYS = Object.freeze([
   'download_block_count',
   'window_open_block_count',
   'message',
+  'dev_server_approval',
   'unavailable_reason',
   'updated_at_ms',
   'authority',
@@ -65,6 +83,7 @@ const AUTHORITY_KEYS = Object.freeze([
 ]);
 const STATUSES = Object.freeze([
   'idle',
+  'approval_required',
   'unavailable',
   'starting',
   'ready',
@@ -77,6 +96,9 @@ const UNAVAILABLE_REASONS = Object.freeze([
   'preview_source_resolver_not_connected',
   'no_current_draft_preview_source',
   'live_preview_runtime_unavailable',
+  'live_preview_static_server_unavailable',
+  'live_preview_view_attachment_failed',
+  'live_preview_dev_server_unavailable',
 ]);
 const ERROR_MESSAGES = Object.freeze({
   builder_live_preview_forbidden: 'Live preview is unavailable.',
@@ -149,6 +171,8 @@ function safeOptions(value) {
       reloadCurrentLivePreview: stableMethod(value, 'reloadCurrentLivePreview'),
       stopCurrentLivePreview: stableMethod(value, 'stopCurrentLivePreview'),
       readCurrentLivePreviewStatus: stableMethod(value, 'readCurrentLivePreviewStatus'),
+      updateCurrentLivePreviewLayout: stableMethod(value, 'updateCurrentLivePreviewLayout'),
+      decideDevServerApproval: stableMethod(value, 'decideDevServerApproval'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
   } catch {
@@ -167,7 +191,9 @@ function safeConversationId(value, projectId) {
   if (
     typeof value !== 'string'
     || !CONVERSATION_ID_PATTERN.test(value)
-    || value.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)
+    || !value.startsWith(
+      `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+    )
   ) throw ipcError('builder_live_preview_invalid');
   return value;
 }
@@ -178,6 +204,96 @@ function safeRequest(value) {
   return Object.freeze({
     project_id: projectId,
     conversation_id: safeConversationId(descriptors.conversation_id.value, projectId),
+  });
+}
+
+function safeViewBounds(value) {
+  if (value === null) return null;
+  const descriptors = exactObject(value, VIEW_BOUNDS_KEYS);
+  const bounds = Object.freeze(Object.fromEntries(VIEW_BOUNDS_KEYS.map((key) => [
+    key,
+    descriptors[key].value,
+  ])));
+  if (
+    !Number.isSafeInteger(bounds.x)
+    || !Number.isSafeInteger(bounds.y)
+    || !Number.isSafeInteger(bounds.width)
+    || !Number.isSafeInteger(bounds.height)
+    || bounds.x < 0
+    || bounds.y < 0
+    || bounds.width < 1
+    || bounds.height < 1
+    || bounds.x > 100_000
+    || bounds.y > 100_000
+    || bounds.width > 100_000
+    || bounds.height > 100_000
+  ) throw ipcError('builder_live_preview_invalid');
+  return bounds;
+}
+
+function safeLayoutRequest(value) {
+  const descriptors = exactObject(value, LAYOUT_REQUEST_KEYS);
+  const identity = safeRequest({
+    project_id: descriptors.project_id.value,
+    conversation_id: descriptors.conversation_id.value,
+  });
+  return Object.freeze({
+    ...identity,
+    view_bounds: safeViewBounds(descriptors.view_bounds.value),
+  });
+}
+
+function safeDevServerDecision(value) {
+  const descriptors = exactObject(value, DEV_SERVER_DECISION_KEYS);
+  const identity = safeRequest({
+    project_id: descriptors.project_id.value,
+    conversation_id: descriptors.conversation_id.value,
+  });
+  if (
+    typeof descriptors.approval_request_id.value !== 'string'
+    || !/^builder-live-preview-dev-server-approval-request:[0-9a-f-]{36}$/u
+      .test(descriptors.approval_request_id.value)
+    || !['allow_once', 'deny'].includes(descriptors.decision.value)
+  ) throw ipcError('builder_live_preview_invalid');
+  return Object.freeze({
+    ...identity,
+    approval_request_id: descriptors.approval_request_id.value,
+    decision: descriptors.decision.value,
+  });
+}
+
+function safeDevServerApproval(value, request) {
+  if (value === null) return null;
+  const descriptors = exactObject(value, DEV_SERVER_APPROVAL_KEYS, 'builder_live_preview_unavailable');
+  const requestedAtMs = safeTimestamp(descriptors.requested_at_ms.value);
+  const expiresAtMs = safeTimestamp(descriptors.expires_at_ms.value);
+  if (
+    descriptors.request_version.value !== 'builder-live-preview-dev-server-approval-request.v1'
+    || typeof descriptors.approval_request_id.value !== 'string'
+    || !/^builder-live-preview-dev-server-approval-request:[0-9a-f-]{36}$/u
+      .test(descriptors.approval_request_id.value)
+    || descriptors.project_id.value !== request.project_id
+    || descriptors.conversation_id.value !== request.conversation_id
+    || typeof descriptors.command_display.value !== 'string'
+    || descriptors.command_display.value.length < 1
+    || descriptors.command_display.value.length > 120
+    || !/^sha256:[0-9a-f]{64}$/u.test(descriptors.source_tree_digest.value)
+    || descriptors.risk_notice.value !== 'This project script may modify files or use the network.'
+    || !Array.isArray(descriptors.decisions.value)
+    || descriptors.decisions.value.join('|') !== 'allow_once|deny'
+    || expiresAtMs <= requestedAtMs
+  ) throw ipcError();
+  return Object.freeze({
+    request_version: descriptors.request_version.value,
+    approval_request_id: descriptors.approval_request_id.value,
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    command_display: descriptors.command_display.value,
+    source_tree_digest: descriptors.source_tree_digest.value,
+    risk_notice: descriptors.risk_notice.value,
+    requested_at_ms: requestedAtMs,
+    expires_at_ms: expiresAtMs,
+    decisions: Object.freeze(['allow_once', 'deny']),
   });
 }
 
@@ -200,6 +316,7 @@ function safeNullableReason(value) {
 function safeMessage(value) {
   if (
     value !== 'Live preview can start for this draft.'
+    && value !== 'Allow this project development server to run once.'
     && value !== 'Live preview is starting.'
     && value !== 'Live preview is ready.'
     && value !== 'Live preview is reloading.'
@@ -226,7 +343,7 @@ function safeAuthority(value) {
     || authority.source_write !== 'not_performed'
     || authority.provider_dispatch !== false
     || authority.tool_dispatch !== false
-    || authority.command_execution !== false
+    || typeof authority.command_execution !== 'boolean'
     || authority.git_mutation !== false
     || authority.sqlite_write !== false
     || authority.permission_grant !== false
@@ -247,7 +364,7 @@ function safeStatus(value, request) {
     descriptors.status_version.value !== 'builder-live-preview-status-projection.v1'
     || descriptors.project_id.value !== request.project_id
     || descriptors.conversation_id.value !== request.conversation_id
-    || descriptors.preview_kind.value !== 'live_static_web'
+    || !['live_static_web', 'live_dev_server_web'].includes(descriptors.preview_kind.value)
     || !STATUSES.includes(status)
     || typeof descriptors.can_start.value !== 'boolean'
     || typeof descriptors.can_reload.value !== 'boolean'
@@ -266,11 +383,24 @@ function safeStatus(value, request) {
       + downloadBlockCount
       + windowOpenBlockCount
   ) throw ipcError();
+  const entryUrl = descriptors.entry_url.value;
+  if (
+    entryUrl !== null
+    && (
+      typeof entryUrl !== 'string'
+      || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\//u.test(entryUrl)
+    )
+  ) throw ipcError();
+  const devServerApproval = safeDevServerApproval(descriptors.dev_server_approval.value, request);
+  if (
+    (status === 'approval_required') !== (devServerApproval !== null)
+  ) throw ipcError();
   return Object.freeze({
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    preview_kind: 'live_static_web',
+    preview_kind: descriptors.preview_kind.value,
+    entry_url: entryUrl,
     status,
     can_start: descriptors.can_start.value,
     can_reload: descriptors.can_reload.value,
@@ -282,6 +412,7 @@ function safeStatus(value, request) {
     download_block_count: downloadBlockCount,
     window_open_block_count: windowOpenBlockCount,
     message: safeMessage(descriptors.message.value),
+    dev_server_approval: devServerApproval,
     unavailable_reason: safeNullableReason(descriptors.unavailable_reason.value),
     updated_at_ms: safeTimestamp(descriptors.updated_at_ms.value),
     authority: safeAuthority(descriptors.authority.value),
@@ -349,6 +480,34 @@ function createBuilderLivePreviewIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokeLayout(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_live_preview_invalid');
+      const request = safeLayoutRequest(rawArguments[0]);
+      return safeStatus(
+        await Reflect.apply(options.updateCurrentLivePreviewLayout, undefined, [request]),
+        request,
+      );
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
+  async function invokeDevServerDecision(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_live_preview_invalid');
+      const decision = safeDevServerDecision(rawArguments[0]);
+      return safeStatus(
+        await Reflect.apply(options.decideDevServerApproval, undefined, [decision]),
+        decision,
+      );
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   return Object.freeze({
     adapter_id: 'builder_live_preview.controlled_ipc_adapter.v1',
     namespace: 'builderLivePreview',
@@ -382,12 +541,28 @@ function createBuilderLivePreviewIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.readCurrentLivePreviewStatus);
         },
       }),
+      updateCurrentPreviewLayout: Object.freeze({
+        channel: UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
+        method: 'updateCurrentPreviewLayout',
+        invoke(event, ...rawArguments) {
+          return invokeLayout(event, rawArguments);
+        },
+      }),
+      decideDevServerApproval: Object.freeze({
+        channel: DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
+        method: 'decideDevServerApproval',
+        invoke(event, ...rawArguments) {
+          return invokeDevServerDecision(event, rawArguments);
+        },
+      }),
     }),
     exposed_methods: Object.freeze([
       'requestCurrentDraftPreview',
       'reloadCurrentPreview',
       'stopCurrentPreview',
       'readCurrentPreviewStatus',
+      'updateCurrentPreviewLayout',
+      'decideDevServerApproval',
     ]),
     authority: Object.freeze({
       renderer_authority: 'current_project_conversation_only',
@@ -414,6 +589,8 @@ module.exports = Object.freeze({
   RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL,
   STOP_CURRENT_LIVE_PREVIEW_CHANNEL,
   READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL,
+  UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
+  DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
   BuilderLivePreviewIpcError,
   createBuilderLivePreviewIpcAdapter,
 });

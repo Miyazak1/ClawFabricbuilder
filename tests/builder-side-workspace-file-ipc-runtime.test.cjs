@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
   READ_CURRENT_DRAFT_FILE_TREE_CHANNEL,
+  READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
 } = require('../electron/builder-side-workspace-file-ipc-adapter.cjs');
 const {
   BUILDER_SIDE_WORKSPACE_FILE_IPC_RUNTIME_VERSION,
@@ -54,10 +55,12 @@ test('registers fixed side workspace file channels in a preview-specific runtime
   assert.deepEqual(runtime.channels, [
     READ_CURRENT_DRAFT_FILE_TREE_CHANNEL,
     READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
+    READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
   ]);
   assert.equal(runtime.register(), true);
   assert.equal(ipc.handlers.has(READ_CURRENT_DRAFT_FILE_TREE_CHANNEL), true);
   assert.equal(ipc.handlers.has(READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL), true);
+  assert.equal(ipc.handlers.has(READ_RUNTIME_TOOL_FILE_TREE_CHANNEL), true);
   assert.equal(runtime.dispose(), true);
   assert.equal(ipc.handlers.size, 0);
 });

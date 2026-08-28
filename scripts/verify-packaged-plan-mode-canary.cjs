@@ -20,7 +20,7 @@ const {
 const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-default.cjs');
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
-const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v2';
+const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v4';
 const AUTO_QUESTION_INSTRUCTION = '这个项目是什么';
 const AUTO_BUILD_ARTIFACT_INSTRUCTION = '做一个计划管理页面';
 const ASK_MODE_INSTRUCTION = 'Make a timer.';
@@ -28,6 +28,7 @@ const BUILD_MODE_INSTRUCTION = '这个文件夹是什么结构？';
 const CONTINUE_DRAFT_INSTRUCTION = '继续优化标题和说明，不要保存版本';
 const SEMANTIC_PLAN_INSTRUCTION = '帮我做一个静态技术博客实施计划';
 const PLAN_MODE_INSTRUCTION = '我打算做一个技术博客，静态的，帮我做成计划';
+const PROJECT_USAGE_QUESTION = '这个项目应该怎么运行和使用？';
 
 function fail(code, diagnostic = undefined) {
   const error = new Error(code);
@@ -335,20 +336,76 @@ async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
       userDataPath,
     ));
   }
-  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.undoDraft).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.reviewMore).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden', timeout: 30_000 });
   return approvedCurrentProjectWrite;
+}
+
+async function verifyCodingClosureAndUsageAnswer(page) {
+  const completion = page.locator(SELECTORS.draftProposed).last();
+  await completion.waitFor({ state: 'visible', timeout: 120_000 });
+  await page.locator(
+    `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
+  ).waitFor({ state: 'visible', timeout: 120_000 });
+  const idea = page.locator(SELECTORS.idea);
+  await idea.waitFor({ state: 'visible', timeout: 30_000 });
+  if (await idea.isDisabled().catch(() => true)) {
+    fail('approved_plan_composer_not_reenabled');
+  }
+
+  const command = page.locator(SELECTORS.runtimeCommandAction).last();
+  await command.waitFor({ state: 'visible', timeout: 30_000 });
+  const summaryText = (await completion.textContent())?.trim() ?? '';
+  if (summaryText.length === 0) fail('approved_plan_final_summary_missing');
+  const summaryAfterCheck = await page.evaluate(({ commandSelector, completionSelector }) => {
+    /* global Node */
+    const commands = document.querySelectorAll(commandSelector);
+    const completions = document.querySelectorAll(completionSelector);
+    const lastCommand = commands.item(commands.length - 1);
+    const lastCompletion = completions.item(completions.length - 1);
+    return lastCommand !== null
+      && lastCompletion !== null
+      && Boolean(lastCommand.compareDocumentPosition(lastCompletion) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }, {
+    commandSelector: SELECTORS.runtimeCommandAction,
+    completionSelector: SELECTORS.draftProposed,
+  });
+  if (!summaryAfterCheck) {
+    fail('approved_plan_final_summary_precedes_check', { summary_text: summaryText });
+  }
+
+  const answersBefore = await page.locator(SELECTORS.questionAnswer).count().catch(() => 0);
+  await selectComposerMode(page, 'ask');
+  await idea.fill(PROJECT_USAGE_QUESTION);
+  await waitForSubmitEnabled(page, 'project_usage_question_before_submit');
+  await page.locator(SELECTORS.submitTurn).click();
+  const answer = page.locator(SELECTORS.questionAnswer).nth(answersBefore);
+  await answer.waitFor({ state: 'visible', timeout: 120_000 });
+  const answerText = (await answer.textContent())?.trim() ?? '';
+  if (!answerText.includes('index.html') || !answerText.includes('npm test')) {
+    fail('project_usage_answer_not_grounded', { answer_text: answerText });
+  }
+  await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'visible', timeout: 30_000 });
+  await clearComposerMode(page, 'ask');
+  return Object.freeze({
+    composer_reenabled_after_completion: true,
+    final_summary_after_check: true,
+    final_summary_visible: true,
+    project_usage_answer_grounded_in_current_draft: true,
+  });
 }
 
 async function verifyContinueUnsavedDraftWithoutSave(page, providerServer, userDataPath) {
   const before = providerServer.snapshot();
-  const beforeCodeChangeCount = countProviderRequests(before, 'builder_code_change_operations');
+  const beforeHarnessRunCount = countProviderRequests(before, 'harness_tool_read');
   await page.locator(SELECTORS.idea).fill(CONTINUE_DRAFT_INSTRUCTION);
   await waitForSubmitEnabled(page, 'continue_unsaved_draft_before_submit');
   await page.locator(SELECTORS.submitTurn).click();
   await waitForProviderRequestCount(
     providerServer,
-    'builder_code_change_operations',
-    beforeCodeChangeCount,
+    'harness_tool_read',
+    beforeHarnessRunCount,
     'continue_unsaved_draft_provider_request_missing',
   );
   const draftReady = page.locator(SELECTORS.unsavedDraft).
@@ -366,15 +423,19 @@ async function verifyContinueUnsavedDraftWithoutSave(page, providerServer, userD
       userDataPath,
     ));
   }
-  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.undoDraft).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.reviewMore).waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden', timeout: 30_000 });
   return Object.freeze({
     continuation_provider_request_observed: true,
-    save_version_still_explicit: true,
+    formal_version_save_is_secondary: true,
+    undo_draft_directly_visible: true,
     unsaved_draft_continued_without_save: true,
   });
 }
 
 async function verifyNaturalLanguagePlanAndReject(page, providerServer, userDataPath) {
+  const providerRequestsBefore = providerServer.snapshot();
   await page.locator(SELECTORS.idea).fill(SEMANTIC_PLAN_INSTRUCTION);
   await waitForSubmitEnabled(page, 'semantic_plan_before_submit');
   await page.locator(SELECTORS.submitTurn).click();
@@ -397,10 +458,11 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
   const composerSignals = await page.locator(SELECTORS.composer).
     getAttribute('data-builder-route-signals');
   const providerRequests = providerServer.snapshot();
-  if (!providerRequests.some((request) => (
-    request.response_kind === 'builder_semantic_route_classification'
-  ))) {
-    fail('semantic_plan_classifier_request_missing', { provider_requests: providerRequests });
+  if (
+    countProviderRequests(providerRequests, 'builder_semantic_route_classification')
+    !== countProviderRequests(providerRequestsBefore, 'builder_semantic_route_classification')
+  ) {
+    fail('natural_language_plan_spent_semantic_classifier', { provider_requests: providerRequests });
   }
   if (!providerRequests.some((request) => request.response_kind === 'builder_project_plan_proposal')) {
     fail('semantic_plan_provider_request_missing', { provider_requests: providerRequests });
@@ -408,17 +470,17 @@ async function verifyNaturalLanguagePlanAndReject(page, providerServer, userData
   if (composerRoute !== 'plan' || composerDispatch !== 'plan') {
     fail('semantic_plan_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute });
   }
-  if (composerSignals !== 'semantic_route') {
-    fail('semantic_plan_signal_mismatch', { composer_signals: composerSignals });
+  if (composerSignals !== 'clear_plan_deliverable') {
+    fail('natural_language_plan_signal_mismatch', { composer_signals: composerSignals });
   }
   await clickByRole(page, 'button', 'Reject');
   await page.locator(SELECTORS.planRejected).waitFor({ state: 'visible', timeout: 30_000 });
   await page.locator(SELECTORS.planReviewActions).waitFor({ state: 'hidden', timeout: 30_000 });
   return Object.freeze({
     plan_source_read_approved: approvedSourceRead,
-    semantic_classifier_observed: true,
-    semantic_plan_rejected: true,
-    semantic_plan_route_signal_observed: true,
+    natural_language_plan_rejected: true,
+    natural_language_plan_route_signal_observed: true,
+    semantic_classifier_skipped: true,
   });
 }
 
@@ -461,7 +523,7 @@ async function run() {
       temperature: 0.2,
       timeout_ms: 30000,
     }), gate);
-    await clickByRole(page, 'button', 'New project');
+    await page.locator(SELECTORS.catalogNewProject).click();
     await bindNewProjectWorkspace(page);
     const autoRoutes = await verifyAutoDeterministicRoutesSkipClassifier(page, providerServer);
     const askMode = await verifyAskModePersistentAndClear(page, providerServer);
@@ -502,9 +564,15 @@ async function run() {
       userDataPath,
     );
     const providerRequestsAfterApproval = providerServer.snapshot();
-    if (!providerRequestsAfterApproval.some((request) => request.response_kind === 'builder_code_change_operations')) {
+    const approvedPlanHarnessRequest = providerRequestsAfterApproval.find((request) => (
+      request.response_kind === 'harness_tool_read'
+      && request.approved_plan_context_present === true
+      && request.approved_plan_canary_step_present === true
+    ));
+    if (approvedPlanHarnessRequest === undefined) {
       fail('approved_plan_provider_request_missing', { provider_requests: providerRequestsAfterApproval });
     }
+    const codingClosure = await verifyCodingClosureAndUsageAnswer(page);
     const continuation = await verifyContinueUnsavedDraftWithoutSave(
       page,
       providerServer,
@@ -525,24 +593,33 @@ async function run() {
       build_mode_skipped_classifier: buildMode.build_mode_skipped_classifier,
       plan_mode_enabled: true,
       plan_mode_chip_visible: true,
-      semantic_classifier_observed: semanticPlan.semantic_classifier_observed,
-      semantic_plan_rejected: semanticPlan.semantic_plan_rejected,
-      semantic_plan_route_signal_observed: semanticPlan.semantic_plan_route_signal_observed,
+      natural_language_plan_rejected: semanticPlan.natural_language_plan_rejected,
+      natural_language_plan_route_signal_observed:
+        semanticPlan.natural_language_plan_route_signal_observed,
+      semantic_classifier_skipped: semanticPlan.semantic_classifier_skipped,
       semantic_plan_source_read_approved: semanticPlan.plan_source_read_approved,
       plan_source_read_approved: approvedSourceRead,
       plan_review_actions_visible: true,
       plan_approved: true,
       current_project_write_approved: approvedCurrentProjectWrite,
+      approved_plan_context_reached_harness: true,
       approved_plan_executed: true,
+      composer_reenabled_after_completion: codingClosure.composer_reenabled_after_completion,
+      final_summary_after_check: codingClosure.final_summary_after_check,
+      final_summary_visible: codingClosure.final_summary_visible,
+      project_usage_answer_grounded_in_current_draft:
+        codingClosure.project_usage_answer_grounded_in_current_draft,
       continuation_provider_request_observed: continuation.continuation_provider_request_observed,
-      save_version_still_explicit: continuation.save_version_still_explicit,
+      formal_version_save_is_secondary: continuation.formal_version_save_is_secondary,
+      undo_draft_directly_visible: continuation.undo_draft_directly_visible,
       unsaved_draft_continued_without_save: continuation.unsaved_draft_continued_without_save,
       unsaved_draft_visible: true,
-      save_version_visible: true,
+      save_version_directly_visible: false,
       composer_route: composerRoute,
       composer_dispatch: composerDispatch,
       provider_plan_request_observed: true,
       provider_code_change_request_observed: true,
+      programming_runtime: 'deepseek_harness.v1',
       project_root_basename: path.basename(projectRootPath),
       release_gate_integration: 'included_in_verify_release',
       schema_version: CANARY_INPUT_VERSION,

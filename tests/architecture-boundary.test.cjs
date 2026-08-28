@@ -104,6 +104,8 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:code-generator:restore-draft/u);
   assert.match(preload, /restoreRevisionAsDraft/u);
   assert.match(preload, /clawfabric-builder:code-generator:restore-revision-as-draft/u);
+  assert.match(preload, /restorePreviousCheckpointAsDraft/u);
+  assert.match(preload, /clawfabric-builder:code-generator:restore-previous-checkpoint-as-draft/u);
   assert.match(preload, /rejectDraft/u);
   assert.match(preload, /clawfabric-builder:code-generator:reject-draft/u);
   assert.match(preload, /\bsteer\b/u);
@@ -114,10 +116,21 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:task-stream:read/u);
   assert.match(preload, /clawfabric-builder:task-stream:changed/u);
   assert.match(preload, /subscribeChanged/u);
+  assert.match(preload, /agentProjectTree/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:read/u);
+  assert.match(preload, /agentWorkbench/u);
+  assert.match(preload, /createTaskProposal/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:create-task-proposal/u);
+  assert.match(preload, /decideTaskProposal/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:decide-task-proposal/u);
+  assert.match(preload, /controlTask/u);
+  assert.match(preload, /clawfabric-builder:agent-workbench:control-task/u);
   assert.match(preload, /planReview/u);
   assert.match(preload, /clawfabric-builder:plan-review:review/u);
   assert.match(preload, /permissions/u);
   assert.match(preload, /clawfabric-builder:permissions:evaluate/u);
+  assert.match(preload, /decideCurrentDraftDependencyPreparation/u);
+  assert.match(preload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
   assert.match(preload, /skipCurrentDraftCheck/u);
   assert.match(preload, /clawfabric-builder:check-run:skip-current-draft-check/u);
   assert.match(preload, /livePreview/u);
@@ -125,6 +138,9 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:live-preview:reload-current/u);
   assert.match(preload, /clawfabric-builder:live-preview:stop-current/u);
   assert.match(preload, /clawfabric-builder:live-preview:read-current-status/u);
+  assert.match(preload, /clawfabric-builder:live-preview:update-current-layout/u);
+  assert.match(preload, /agentTestBrowser/u);
+  assert.match(preload, /clawfabric-builder:agent-test-browser:update-layout/u);
   assert.match(preload, /sideWorkspaceFiles/u);
   assert.match(preload, /readCurrentDraftFileTree/u);
   assert.match(preload, /readCurrentDraftFileContent/u);
@@ -132,7 +148,7 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:side-workspace-files:read-current-draft-content/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 49);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 75);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {
@@ -183,7 +199,7 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(lifecycle, /read_stream:\s*readStream/u);
   assert.match(lifecycle, /builder-git-receipt-contract\.cjs/u);
   assert.match(taskStream, /builder-task-stream-read-result\.v1/u);
-  assert.match(taskStream, /MAX_PUBLIC_ITEMS = 128/u);
+  assert.match(taskStream, /MAX_PUBLIC_ITEMS = 512/u);
   assert.match(taskStream, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
   assert.match(taskStream, /replayBuilderConversation/u);
   assert.match(generationRuntime, /createBuilderConversationMainService/u);
@@ -192,9 +208,9 @@ test('conversation lifecycle authority stays main-only and cannot dispatch provi
   assert.match(generationRuntime, /TASK_STREAM_CHANGED_CHANNEL/u);
   assert.match(generationRuntime, /GENERATION_STARTED_CHANNEL/u);
   assert.match(generationRuntime, /builder-generation-started\.v1/u);
-  assert.match(taskStreamAdapter, /renderer_authority:\s*'project_id_only'/u);
+  assert.match(taskStreamAdapter, /renderer_authority:\s*'agent_or_project_task_address_only'/u);
   assert.match(taskStreamAdapter, /read_only:\s*true/u);
-  assert.match(taskStreamAdapter, /change_notification:\s*'project_id_only'/u);
+  assert.match(taskStreamAdapter, /change_notification:\s*'agent_id_or_project_id_only'/u);
   assert.match(taskStreamAdapter, /active_renderer_required:\s*true/u);
   assert.match(taskStreamAdapter, /direct_electron_registration:\s*false/u);
   assert.match(taskStreamAdapter, /direct_preload_exposure:\s*false/u);
@@ -221,6 +237,7 @@ test('package identity and dependencies remain Builder-only', () => {
   assert.deepEqual(packageJson.build.asarUnpack, [
     'electron/builder-packaged-check-script-worker.cjs',
     'electron/builder-packaged-check-runtime-contract.cjs',
+    'electron/harness/**/*',
     'node_modules/@npmcli/promise-spawn/**/*',
     'node_modules/which/**/*',
     'node_modules/isexe/**/*',
@@ -228,6 +245,14 @@ test('package identity and dependencies remain Builder-only', () => {
     'node_modules/dugite/LICENSE',
     'node_modules/dugite/git/LICENSE.txt',
   ]);
+  assert.deepEqual(packageJson.build.extraResources, [
+    { from: '.release-runtime/harness-runtime.asar', to: 'harness-runtime.asar' },
+    { from: '.release-runtime/harness-runtime-manifest.json', to: 'harness-runtime-manifest.json' },
+  ]);
+  assert.equal(
+    packageJson.build.files.includes('scripts/verify-builder-harness-coding-loop.cjs'),
+    true,
+  );
   assert.equal(path.isAbsolute(packageJson.build.electronDist), false);
   assert.equal(packageJson.build.electronDist.includes('..'), false);
   assert.equal(packageJson.dependencies?.electron, undefined);

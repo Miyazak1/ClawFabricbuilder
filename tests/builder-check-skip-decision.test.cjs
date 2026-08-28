@@ -43,6 +43,17 @@ test('creates a deterministic candidate-bound explicit check skip decision', () 
   assert.deepEqual(sanitizeBuilderCheckSkipDecision(first), first);
 });
 
+test('creates a main-owned skip decision when no project checks are detected', () => {
+  const decision = createBuilderCheckSkipDecision(input({
+    reason_code: 'no_project_checks_detected',
+  }));
+  assert.equal(decision.reason_code, 'no_project_checks_detected');
+  assert.equal(decision.authority.intent_evidence, 'main_verified_no_project_checks');
+  assert.equal(decision.authority.check_execution, 'not_performed_by_decision');
+  assert.equal(decision.authority.save_authority, 'not_granted');
+  assert.deepEqual(sanitizeBuilderCheckSkipDecision(decision), decision);
+});
+
 test('binds decision identity to every current draft and candidate fact', () => {
   const baseline = createBuilderCheckSkipDecision(input());
   const drifts = [

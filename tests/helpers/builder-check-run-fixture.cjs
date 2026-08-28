@@ -20,13 +20,19 @@ const { checkRuntimeIdentity } = require('./builder-check-runtime-identity-fixtu
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
 
-function admittedCheck(manager = 'npm', kind = 'test') {
+function admittedCheck(manager = 'npm', kind = 'test', packageJsonOverrides = {}, runtimeOverrides = {}) {
   const lock = manager === 'pnpm' ? 'pnpm-lock.yaml'
     : manager === 'yarn' ? 'yarn.lock'
       : manager === 'bun' ? 'bun.lock' : null;
   const files = [{
     path: 'package.json',
-    content: `${JSON.stringify({ scripts: { [kind]: 'fixed-script' } })}\n`,
+    content: `${JSON.stringify({
+      ...packageJsonOverrides,
+      scripts: {
+        ...(packageJsonOverrides.scripts ?? {}),
+        [kind]: 'fixed-script',
+      },
+    })}\n`,
   }];
   if (lock) files.push({ path: lock, content: 'lock\n' });
   const tree = createBuilderProjectSourceTree({ files });
@@ -78,6 +84,7 @@ function admittedCheck(manager = 'npm', kind = 'test') {
     package_manager: manager,
     launcher_kind: manager === 'bun' ? 'native_binary' : 'node_cli',
     cli_entry_digest: manager === 'bun' ? null : `sha256:${'b'.repeat(64)}`,
+    ...runtimeOverrides,
   });
   const approval = createBuilderCheckRunExecutionApproval({
     draft_id: `builder-generation-draft:${'d'.repeat(64)}`,

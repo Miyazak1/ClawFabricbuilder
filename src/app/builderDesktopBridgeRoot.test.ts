@@ -10,6 +10,8 @@ import {
 function bridge() {
   return {
     bridgeVersion: BUILDER_DESKTOP_BRIDGE_VERSION,
+    agentProjectTree: Object.freeze({}),
+    agentWorkbench: Object.freeze({}),
     codeGenerator: Object.freeze({}),
     projectWorkspace: Object.freeze({}),
     providerSettings: Object.freeze({}),
@@ -18,14 +20,16 @@ function bridge() {
     providerContextDisclosureApproval: Object.freeze({}),
     checkRun: Object.freeze({}),
     livePreview: Object.freeze({}),
+    agentTestBrowser: Object.freeze({}),
+    userWeb: Object.freeze({}),
     sideWorkspaceFiles: Object.freeze({}),
     taskStream: Object.freeze({}),
     windowControls: Object.freeze({}),
   };
 }
 
-describe('Builder desktop bridge root v27', () => {
-  it('accepts the exact v27 namespaces and returns a fresh frozen root', () => {
+describe('Builder desktop bridge root v38', () => {
+  it('accepts the exact v38 namespaces and returns a fresh frozen root', () => {
     const input = bridge();
     const result = sanitizeBuilderDesktopBridgeRoot(input);
     expect(result).toEqual(input);

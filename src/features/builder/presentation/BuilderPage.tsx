@@ -1,24 +1,30 @@
 import {
   Fragment,
+  memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
+  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type Ref,
 } from 'react';
 import {
   AlertCircle,
+  Archive,
   ArrowLeft,
   ArrowRight,
   Bot,
   ChevronDown,
   CheckCircle2,
+  Circle,
+  Copy,
   Download,
-  Eye,
   FileCode2,
   FolderOpen,
   GitCompareArrows,
@@ -32,12 +38,16 @@ import {
   MoreVertical,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
+  Save,
   ShieldCheck,
   SquareTerminal,
   StopCircle,
+  Trash2,
+  Undo2,
   UserRound,
   X,
 } from 'lucide-react';
@@ -46,6 +56,15 @@ import {
   isTrustedBuilderConversationControllerSnapshot,
   type BuilderConversationControllerSnapshot,
 } from '../application/builderConversationController';
+import type { BuilderAgentWorkbenchSnapshot } from '../application/builderAgentWorkbenchController';
+import type {
+  BuilderLiveOutputSnapshot,
+  BuilderLiveOutputStore,
+} from '../application/builderLiveOutputStore';
+import type {
+  BuilderCommandOutputSnapshot,
+  BuilderCommandOutputStore,
+} from '../application/builderCommandOutputStore';
 import {
   isTrustedBuilderProjectControllerSnapshot,
   type BuilderProjectControllerSnapshot,
@@ -53,17 +72,24 @@ import {
 } from '../application/builderProjectController';
 import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
+  type BuilderCheckRunEnvironmentDiagnosis,
+  type BuilderCheckRunDependencyPreparationDecision,
   type BuilderCheckRunProfile,
   type BuilderCheckRunStatusProjection,
+  type BuilderCommandApprovalRequest,
   type BuilderLivePreviewStatusProjection,
+  type BuilderLivePreviewViewBounds,
+  type BuilderUserWebStatusProjection,
   type BuilderPlanReviewDecision,
   type BuilderPlanReviewRequest,
   type BuilderSideWorkspaceFileContentProjection,
   type BuilderSideWorkspaceFileRef,
   type BuilderSideWorkspaceFileTreeEntry,
   type BuilderSideWorkspaceFileTreeProjection,
+  type BuilderWorkbenchMessageStateOperation,
 } from '../application/builderPorts';
 import type { BuilderComposerRouteDecision } from '../application/builderComposerIntent';
+import { incrementBuilderPerformance } from '../application/builderPerformanceTrace';
 import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
@@ -75,10 +101,19 @@ import {
 import type {
   BuilderConversationItem,
   BuilderConversationRunProgressStage,
+  BuilderConversationWorkspaceMaterialization,
 } from '../domain/builderConversationSnapshot';
 import type { BuilderAgentActivityProjectionWire } from '../domain/builderAgentActivityProjection';
+import type { BuilderAgentWorkbenchTaskProposalAction } from '../domain/builderAgentWorkbenchProjection';
+import {
+  canStopBuilderAgentTask,
+  type BuilderAgentTaskMonitorItem,
+} from '../domain/builderAgentTaskMonitorProjection';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
+import type { BuilderDraftCheckpointStatusProjectionWire } from '../domain/builderDraftCheckpointStatusProjection';
+import type { BuilderDraftCheckpointTimelineProjectionWire } from '../domain/builderDraftCheckpointTimelineProjection';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
+import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 import {
   createBuilderSourceTreeChanges,
@@ -90,6 +125,13 @@ import type {
   BuilderProviderContextDisclosureStatusProjectionWire,
 } from '../domain/builderProviderContextDisclosureStatusProjection';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
+import { BuilderConversationMarkdown } from './BuilderConversationMarkdown';
+import {
+  builderDurableUserMessage,
+  builderPendingUserMessageMatchesDurable,
+  type BuilderDurableUserMessage,
+  type BuilderPendingUserMessage,
+} from './builderUserMessageReconciliation';
 import {
   BuilderComposer,
   type BuilderComposerApprovalMode,
@@ -97,23 +139,62 @@ import {
   type BuilderComposerMode,
 } from './BuilderComposer';
 import {
-  BuilderDraftWorkspaceActions,
-  BuilderReviewCheckpoint,
+  BuilderDraftCheckStatus,
 } from './BuilderReviewCheckpoint';
 import { BuilderResultPanel } from './BuilderResultPanel';
 import { BuilderSourceDisclosure } from './BuilderSourceDisclosure';
-import { builderChangesSummary, builderReviewPreviewStatus } from './builderReviewText';
 
 export type BuilderFileName = string;
 
-export type BuilderLiveOutputSnapshot = Readonly<{
-  state: 'streaming';
-  request_id: string;
-  project_id: string;
-  text: string;
-  chunk_count: number;
-  waiting_text?: string;
+export type BuilderTaskConversationSeed = Readonly<{
+  task_address_id: string;
+  conversation_id: string;
+  goal: string;
+  waiting_to_start: boolean;
 }>;
+
+function taskConversationSeedFromMonitorTask(
+  task: BuilderAgentTaskMonitorItem,
+): BuilderTaskConversationSeed {
+  return Object.freeze({
+    task_address_id: task.task_address_id,
+    conversation_id: task.conversation_id,
+    goal: task.goal,
+    waiting_to_start: task.state === 'draft',
+  });
+}
+
+function taskConversationSeedFromProposalAction(
+  action: BuilderAgentWorkbenchTaskProposalAction,
+): BuilderTaskConversationSeed | null {
+  if (action.task_address_id === null || action.conversation_id === null) return null;
+  return Object.freeze({
+    task_address_id: action.task_address_id,
+    conversation_id: action.conversation_id,
+    goal: action.objective,
+    waiting_to_start: true,
+  });
+}
+
+type BuilderDisplayedCheckStatus = Pick<
+  BuilderCheckRunStatusProjection,
+  'command_kind' | 'status' | 'summary' | 'environment_reason' | 'completed_at_ms'
+>;
+
+function sameDisplayedCheckStatus(
+  previous: BuilderDisplayedCheckStatus | null,
+  current: BuilderDisplayedCheckStatus | null,
+): boolean {
+  return previous === current || (
+    previous !== null
+    && current !== null
+    && previous.command_kind === current.command_kind
+    && previous.status === current.status
+    && previous.summary === current.summary
+    && previous.environment_reason === current.environment_reason
+    && previous.completed_at_ms === current.completed_at_ms
+  );
+}
 
 export type BuilderPlanReviewInFlight = Readonly<{
   project_id: string;
@@ -135,10 +216,31 @@ export type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
   state: 'pending' | 'approving' | 'failed';
 }>;
 
+export type BuilderCommandApprovalPrompt = Readonly<{
+  request: BuilderCommandApprovalRequest;
+  state: 'pending' | 'deciding' | 'failed';
+}>;
+
+export type BuilderCheckRunOperationFailureCode =
+  | 'busy'
+  | 'stale_draft'
+  | 'invalid_request'
+  | 'forbidden'
+  | 'unavailable';
+
+export type BuilderCheckEnvironmentDiagnosisView = Readonly<{
+  command_profile_id: string;
+  status: 'idle' | 'loading' | 'ready' | 'failed';
+  diagnosis?: BuilderCheckRunEnvironmentDiagnosis;
+  failure_message?: string;
+}>;
+
 export type BuilderPageProps = {
   activeRunFollowupQueued?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
-  checkRunOperation?: 'loading' | 'running' | 'skipping' | 'failed' | null;
+  checkRunOperation?: 'loading' | 'running' | 'preparing_dependencies' | 'skipping' | 'failed' | null;
+  checkRunOperationFailureCode?: BuilderCheckRunOperationFailureCode | null;
+  checkEnvironmentDiagnosis?: BuilderCheckEnvironmentDiagnosisView | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
   instruction: string;
@@ -149,8 +251,11 @@ export type BuilderPageProps = {
   composerMode?: BuilderComposerMode | null;
   composerSubmitLocked?: boolean;
   liveOutput?: BuilderLiveOutputSnapshot | null;
+  liveOutputStore?: BuilderLiveOutputStore | null;
   livePreviewOperation?: 'starting' | 'reloading' | 'stopping' | null;
   livePreviewStatus?: BuilderLivePreviewStatusProjection | null;
+  userWebOperation?: 'navigating' | 'reloading' | 'stopping' | null;
+  userWebStatus?: BuilderUserWebStatusProjection | null;
   sideWorkspaceFileContent?: BuilderSideWorkspaceFileContentProjection | null;
   sideWorkspaceFileContentStatus?: 'idle' | 'loading' | 'ready' | 'failed';
   sideWorkspaceFileTree?: BuilderSideWorkspaceFileTreeProjection | null;
@@ -162,11 +267,20 @@ export type BuilderPageProps = {
   planReviewRecorded?: BuilderPlanReviewInFlight | null;
   planSourceReadApproval?: BuilderPlanSourceReadApprovalPrompt | null;
   currentProjectWriteApproval?: BuilderCurrentProjectWriteApprovalPrompt | null;
+  commandApproval?: BuilderCommandApprovalPrompt | null;
+  commandOutputStore?: BuilderCommandOutputStore | null;
+  pendingUserMessages?: readonly BuilderPendingUserMessage[];
   workspacePickerRequest?: number;
   workspaceNewProjectRequest?: number;
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
+  onDecideCommandApproval?: (decision: 'allow_once' | 'deny') => Promise<unknown> | void;
+  onDecideCheckDependencyPreparation?: (
+    decision: BuilderCheckRunDependencyPreparationDecision,
+    profile: BuilderCheckRunProfile,
+  ) => Promise<unknown> | void;
+  onDiagnoseCheckEnvironment?: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
   onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onCancel?: () => void;
   onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
@@ -184,10 +298,26 @@ export type BuilderPageProps = {
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
   onReloadLivePreview?: () => Promise<unknown> | void;
+  onDecideLivePreviewDevServerApproval?: (
+    decision: 'allow_once' | 'deny',
+  ) => Promise<unknown> | void;
+  onLivePreviewLayoutChange?: (bounds: BuilderLivePreviewViewBounds | null) => Promise<unknown> | void;
+  onAgentTestBrowserLayoutChange?: (
+    ownerRunId: string,
+    bounds: BuilderLivePreviewViewBounds | null,
+  ) => Promise<unknown> | void;
+  activeAgentTestBrowserRunId?: string | null;
+  onNavigateUserWeb?: (url: string) => Promise<unknown> | void;
+  onGoBackUserWeb?: () => Promise<unknown> | void;
+  onGoForwardUserWeb?: () => Promise<unknown> | void;
+  onReloadUserWeb?: () => Promise<unknown> | void;
+  onStopUserWeb?: () => Promise<unknown> | void;
+  onUserWebLayoutChange?: (bounds: BuilderLivePreviewViewBounds | null) => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
   onRequestLivePreview?: () => Promise<unknown> | void;
   onRequestSideWorkspaceFiles?: () => Promise<unknown> | void;
   onSave?: () => void;
+  onUndoDraft?: () => void;
   onSelectSideWorkspaceFile?: (fileRef: BuilderSideWorkspaceFileRef) => Promise<unknown> | void;
   onStopLivePreview?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
@@ -197,11 +327,49 @@ export type BuilderPageProps = {
   onShowCurrentRevision?: () => Promise<unknown> | void;
   onOpenSettings?: () => void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
+  taskConversationSeed?: BuilderTaskConversationSeed | null;
+  agentWorkbenchSnapshot?: BuilderAgentWorkbenchSnapshot;
+  onRefreshAgentWorkbench?: () => Promise<unknown> | void;
+  onUpdateAgentWorkbenchMessageState?: (
+    messageId: string,
+    operation: BuilderWorkbenchMessageStateOperation,
+  ) => Promise<unknown> | void;
+  onDecideAgentTaskProposal?: (
+    proposalId: string,
+    operation: 'approve_existing_project' | 'reject',
+    projectId: string | null,
+  ) => Promise<unknown> | void;
+  onCreateProjectForAgentTaskProposal?: (
+    proposalId: string,
+    objective: string,
+  ) => Promise<unknown> | void;
+  onOpenAgentTaskProposal?: (
+    projectId: string,
+    taskAddressId: string,
+    seed?: BuilderTaskConversationSeed | null,
+  ) => void;
+  onArchiveAgentTask?: (
+    projectId: string,
+    taskAddressId: string,
+  ) => Promise<unknown> | void;
+  onControlAgentTask?: (
+    projectId: string,
+    taskAddressId: string,
+    operation: 'cancel_task',
+  ) => Promise<unknown> | void;
+  onRenameAgentTask?: (
+    projectId: string,
+    taskAddressId: string,
+    title: string,
+  ) => Promise<unknown> | void;
   projectCatalogSnapshot?: BuilderProjectCatalogSnapshot;
   historySnapshot?: BuilderProjectHistorySnapshot;
   snapshot: BuilderProjectControllerSnapshot;
   activeFile: BuilderFileName | null;
   onSelectFile?: (file: BuilderFileName) => void;
+  onOpenRuntimeToolFile?: (
+    request: Readonly<{ run_id: string; tool_call_id: string }>,
+  ) => Promise<boolean>;
 };
 
 const GENERATABLE_STATUSES = new Set<BuilderProjectControllerStatus>([
@@ -221,16 +389,15 @@ const PLAN_PROPOSAL_READY_STATUSES = new Set<BuilderProjectControllerStatus>([
   'generation_failed',
 ]);
 const CHAT_FOLLOW_BOTTOM_THRESHOLD_PX = 96;
-const ARTIFACT_DEFAULT_WIDTH_PX = 480;
-const ARTIFACT_MIN_WIDTH_PX = 360;
-const ARTIFACT_MAX_WIDTH_PX = 760;
-const ARTIFACT_MIN_CHAT_WIDTH_PX = 360;
+const ARTIFACT_DEFAULT_WIDTH_PX = 400;
+const ARTIFACT_MIN_WIDTH_PX = 320;
+const ARTIFACT_MAX_WIDTH_PX = 1_100;
+const ARTIFACT_MIN_CHAT_WIDTH_PX = 420;
 const ARTIFACT_KEYBOARD_STEP_PX = 24;
 const ARTIFACT_KEYBOARD_LARGE_STEP_PX = 80;
 type BuilderArtifactTab =
   | 'browser_placeholder'
   | 'changes'
-  | 'logs'
   | 'permissions'
   | 'preview'
   | 'side_chat_placeholder'
@@ -305,14 +472,42 @@ function currentCheckRunOutcome(
     : null;
 }
 
+function ChangeLineDelta({ change }: Readonly<{ change: BuilderSourceTreeChange }>) {
+  if (change.diff_availability === 'too_large') return <small>Large change</small>;
+  const added = change.diff_lines.filter((line) => line.line_kind === 'added').length;
+  const removed = change.diff_lines.filter((line) => line.line_kind === 'removed').length;
+  return (
+    <small className="cf-builder-change-line-delta">
+      <span data-builder-delta-added="true">+{added}</span>
+      {' '}
+      <span data-builder-delta-removed="true">-{removed}</span>
+    </small>
+  );
+}
+
 function activityEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
   const entries: ActivityEntry[] = [];
   const completedRuns = new Set<string>();
-  const progressStagesByRun = new Map<string, BuilderConversationRunProgressStage[]>();
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
-  const agentStepEntries = new Map<string, ActivityItemEntry>();
-  for (const item of activityItems(snapshot)) {
+  const runtimeToolEntries = new Map<string, ActivityItemEntry>();
+  const toolEntriesByRun = new Map<string, ActivityItemEntry[]>();
+  const latestRuntimeAssistantByRun = new Map<string, ActivityItemEntry>();
+  const latestRuntimeStatusByRun = new Map<string, ActivityItemEntry>();
+  const recoveryActionEntries = new Map<string, ActivityItemEntry>();
+  const items = activityItems(snapshot);
+  const approvedPlanContinuationTurns = new Set(items
+    .filter((item) => item.item_kind === 'programming_run_admitted')
+    .map((item) => item.turn_id));
+  for (const item of items) {
+    if (
+      item.item_kind === 'user_message'
+      && item.mode === 'work'
+      && item.task?.title === 'Apply approved plan'
+      && approvedPlanContinuationTurns.has(item.turn_id)
+    ) {
+      continue;
+    }
     if (item.item_kind === 'run_started') {
       const key = `${item.turn_id}:${item.run_id}`;
       const entry: ActivityWorkStatusEntry = {
@@ -330,11 +525,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     }
     if (item.item_kind === 'run_progress_recorded') {
       const key = `${item.turn_id}:${item.run_id}`;
-      const progressStages = progressStagesByRun.get(key) ?? [];
-      if (progressStages.at(-1) !== item.stage) {
-        progressStages.push(item.stage);
-        progressStagesByRun.set(key, progressStages);
-      }
       const existing = workEntries.get(key);
       if (existing === undefined) {
         const entry: ActivityWorkStatusEntry = {
@@ -353,39 +543,116 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       }
       continue;
     }
-    if (item.item_kind === 'run_context_snapshot_recorded') {
+    if (
+      item.item_kind === 'run_context_snapshot_recorded'
+      || item.item_kind === 'programming_run_admitted'
+      || item.item_kind === 'task_brief_updated'
+    ) {
       continue;
     }
     if (item.item_kind === 'tool_call_requested') {
+      const runKey = `${item.turn_id}:${item.run_id}`;
       const entry: ActivityItemEntry = {
         entry_kind: 'item',
+        key: `tool:${runKey}:${item.tool_call_id}`,
         item,
-        hidden: false,
+        hidden: true,
       };
-      toolRequestEntries.set(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`, entry);
+      toolRequestEntries.set(`${runKey}:${item.tool_call_id}`, entry);
+      toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
       entries.push(entry);
       continue;
     }
     if (item.item_kind === 'tool_call_result_recorded') {
-      const toolRequestEntry = toolRequestEntries.get(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`);
-      if (toolRequestEntry !== undefined) toolRequestEntry.hidden = true;
-      entries.push({ entry_kind: 'item', item, hidden: false });
-      continue;
-    }
-    if (item.item_kind === 'agent_step_progress_recorded') {
-      const key = `${item.turn_id}:${item.run_id}:${item.step_id}`;
-      if (item.recorded_state === 'start_recorded') {
+      const runKey = `${item.turn_id}:${item.run_id}`;
+      const requestEntry = toolRequestEntries.get(`${runKey}:${item.tool_call_id}`);
+      if (requestEntry !== undefined) {
+        requestEntry.item = item;
+        requestEntry.hidden = item.result.status === 'succeeded';
+      } else {
         const entry: ActivityItemEntry = {
           entry_kind: 'item',
+          key: `tool:${runKey}:${item.tool_call_id}`,
+          item,
+          hidden: item.result.status === 'succeeded',
+        };
+        toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
+        entries.push(entry);
+      }
+      continue;
+    }
+    if (item.item_kind === 'programming_runtime_assistant_message') {
+      const runKey = `${item.turn_id}:${item.run_id}`;
+      const workEntry = workEntries.get(runKey);
+      if (workEntry !== undefined) workEntry.hidden = true;
+      const statusEntry = latestRuntimeStatusByRun.get(item.run_id);
+      if (statusEntry !== undefined) statusEntry.hidden = true;
+      const entry: ActivityItemEntry = {
+        entry_kind: 'item',
+        key: `item:${item.sequence}`,
+        item,
+        hidden: false,
+      };
+      latestRuntimeAssistantByRun.set(runKey, entry);
+      entries.push(entry);
+      continue;
+    }
+    if (item.item_kind === 'programming_runtime_tool_activity') {
+      const runKey = `${item.turn_id}:${item.run_id}`;
+      const activityKey = `${runKey}:${item.tool_call_id}`;
+      const workEntry = workEntries.get(runKey);
+      if (workEntry !== undefined) workEntry.hidden = true;
+      const statusEntry = latestRuntimeStatusByRun.get(item.run_id);
+      if (statusEntry !== undefined) statusEntry.hidden = true;
+      const existing = runtimeToolEntries.get(activityKey);
+      if (existing !== undefined) {
+        existing.item = item;
+      } else {
+        const entry: ActivityItemEntry = {
+          entry_kind: 'item',
+          key: `runtime-tool:${activityKey}`,
           item,
           hidden: false,
         };
-        agentStepEntries.set(key, entry);
+        runtimeToolEntries.set(activityKey, entry);
+        toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
         entries.push(entry);
+      }
+      continue;
+    }
+    if (item.item_kind === 'programming_runtime_status') {
+      const existing = latestRuntimeStatusByRun.get(item.run_id);
+      if (existing !== undefined) existing.hidden = true;
+      for (const workEntry of workEntries.values()) {
+        if (workEntry.runId === item.run_id) workEntry.hidden = true;
+      }
+      const entry: ActivityItemEntry = {
+        entry_kind: 'item',
+        key: `runtime-status:${item.run_id}:${item.sequence}`,
+        item,
+        hidden: false,
+      };
+      latestRuntimeStatusByRun.set(item.run_id, entry);
+      entries.push(entry);
+      continue;
+    }
+    if (item.item_kind === 'agent_step_progress_recorded') {
+      continue;
+    }
+    if (item.item_kind === 'recovery_action_recorded') {
+      const key = `${item.run_id}:${item.action}`;
+      const existing = recoveryActionEntries.get(key);
+      if (existing !== undefined) {
+        existing.item = item;
       } else {
-        const startEntry = agentStepEntries.get(key);
-        if (startEntry !== undefined) startEntry.hidden = true;
-        entries.push({ entry_kind: 'item', item, hidden: false });
+        const entry: ActivityItemEntry = {
+          entry_kind: 'item',
+          key: `recovery:${key}`,
+          item,
+          hidden: false,
+        };
+        recoveryActionEntries.set(key, entry);
+        entries.push(entry);
       }
       continue;
     }
@@ -394,10 +661,40 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
       completedRuns.add(key);
       const workEntry = workEntries.get(key);
       if (workEntry !== undefined) workEntry.hidden = true;
+      const statusEntry = latestRuntimeStatusByRun.get(item.run_id);
+      if (statusEntry !== undefined) statusEntry.hidden = true;
+      const historyEntries = toolEntriesByRun.get(key) ?? [];
+      const historyItems = historyEntries
+        .filter((historyEntry) => !historyEntry.hidden)
+        .map((historyEntry) => historyEntry.item)
+        .filter((historyItem) => (
+          historyItem.item_kind === 'programming_runtime_tool_activity'
+          || (
+            historyItem.item_kind === 'tool_call_result_recorded'
+            && historyItem.result.status !== 'succeeded'
+          )
+        ));
+      for (const historyEntry of historyEntries) historyEntry.hidden = true;
+      if (historyItems.length > 0) {
+        entries.push({
+          entry_kind: 'run_history',
+          key: `history:${key}`,
+          runKey: key,
+          items: historyItems,
+        });
+      }
+      const runtimeAssistantEntry = latestRuntimeAssistantByRun.get(key);
+      const duplicateRuntimeSummary = item.result_kind === 'candidate'
+        && item.assistant_message !== null
+        && runtimeAssistantEntry?.item.item_kind === 'programming_runtime_assistant_message'
+        && runtimeAssistantEntry.item.message.text === item.assistant_message.text;
+      if (duplicateRuntimeSummary && runtimeAssistantEntry !== undefined) {
+        runtimeAssistantEntry.hidden = true;
+      }
       entries.push({
         entry_kind: 'item',
+        key: `item:${item.sequence}`,
         item,
-        progressStages: progressStagesByRun.get(key) ?? [],
         hidden: false,
       });
       continue;
@@ -409,137 +706,36 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     ) {
       continue;
     }
-    entries.push({ entry_kind: 'item', item, hidden: false });
+    entries.push({ entry_kind: 'item', key: `item:${item.sequence}`, item, hidden: false });
   }
-  return entries.filter((entry) => !entry.hidden);
-}
-
-function isArtifactLogItem(item: BuilderConversationItem): boolean {
-  if (
-    item.item_kind === 'run_control_requested'
-    || item.item_kind === 'run_context_snapshot_recorded'
-    || item.item_kind === 'task_brief_updated'
-    || item.item_kind === 'tool_call_requested'
-    || item.item_kind === 'tool_call_result_recorded'
-    || item.item_kind === 'agent_step_progress_recorded'
-    || item.item_kind === 'candidate_reviewed'
-    || item.item_kind === 'plan_reviewed'
-  ) return true;
-  if (item.item_kind === 'run_completed') {
-    return item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation';
-  }
-  return false;
-}
-
-function artifactWorkStatusEntry(
-  item: Extract<BuilderConversationItem, { item_kind: 'run_started' | 'run_progress_recorded' }>,
-): ActivityWorkStatusEntry {
-  return {
-    entry_kind: 'work_status',
-    key: `${item.turn_id}:${item.run_id}:${item.sequence}`,
-    sequence: item.sequence,
-    turnId: item.turn_id,
-    runId: item.run_id,
-    status: item.item_kind === 'run_started' ? 'started' : item.stage,
-    hidden: false,
-  };
-}
-
-function artifactLogEntries(snapshot: BuilderConversationControllerSnapshot | null): readonly ActivityEntry[] {
-  const entries: ActivityEntry[] = [];
-  const toolRequestEntries = new Map<string, ActivityItemEntry>();
-  const agentStepEntries = new Map<string, ActivityItemEntry>();
-  for (const item of activityItems(snapshot)) {
-    if (item.item_kind === 'run_started' || item.item_kind === 'run_progress_recorded') {
-      entries.push(artifactWorkStatusEntry(item));
-      continue;
-    }
-    if (item.item_kind === 'tool_call_requested') {
-      const entry: ActivityItemEntry = { entry_kind: 'item', item, hidden: false };
-      toolRequestEntries.set(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`, entry);
-      entries.push(entry);
-      continue;
-    }
-    if (item.item_kind === 'tool_call_result_recorded') {
-      const toolRequestEntry = toolRequestEntries.get(`${item.turn_id}:${item.run_id}:${item.tool_call_id}`);
-      if (toolRequestEntry !== undefined) toolRequestEntry.hidden = true;
-      entries.push({ entry_kind: 'item', item, hidden: false });
-      continue;
-    }
-    if (item.item_kind === 'agent_step_progress_recorded') {
-      const key = `${item.turn_id}:${item.run_id}:${item.step_id}`;
-      if (item.recorded_state === 'start_recorded') {
-        const entry: ActivityItemEntry = { entry_kind: 'item', item, hidden: false };
-        agentStepEntries.set(key, entry);
-        entries.push(entry);
-      } else {
-        const startEntry = agentStepEntries.get(key);
-        if (startEntry !== undefined) startEntry.hidden = true;
-        entries.push({ entry_kind: 'item', item, hidden: false });
-      }
-      continue;
-    }
-    if (isArtifactLogItem(item)) {
-      entries.push({ entry_kind: 'item', item, hidden: false });
-    }
-  }
-  return entries.filter((entry) => !entry.hidden).sort((left, right) => {
-    const leftSequence = left.entry_kind === 'work_status' ? left.sequence : left.item.sequence;
-    const rightSequence = right.entry_kind === 'work_status' ? right.sequence : right.item.sequence;
-    return leftSequence - rightSequence;
-  });
-}
-
-function latestTaskBriefItem(
-  snapshot: BuilderConversationControllerSnapshot | null,
-): Extract<BuilderConversationItem, { item_kind: 'task_brief_updated' }> | null {
-  const items = activityItems(snapshot);
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (item.item_kind === 'task_brief_updated') return item;
-  }
-  return null;
+  return entries.filter((entry) => entry.entry_kind === 'run_history' || !entry.hidden);
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_FOLLOW_BOTTOM_THRESHOLD_PX;
 }
 
-function usableRect(box: DOMRect): boolean {
-  return Number.isFinite(box.top)
-    && Number.isFinite(box.bottom)
-    && Number.isFinite(box.height)
-    && box.height > 0;
+function useLatestCallback<Arguments extends unknown[], Result>(
+  callback: (...args: Arguments) => Result,
+): (...args: Arguments) => Result {
+  const callbackRef = useRef(callback);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+  return useCallback((...args: Arguments) => callbackRef.current(...args), []);
 }
 
-function scrollElementRangeIntoChatView(
-  scroll: HTMLElement | null,
-  startTarget: HTMLElement,
-  endTarget: HTMLElement = startTarget,
-): void {
-  if (scroll !== null) {
-    const scrollBox = scroll.getBoundingClientRect();
-    const startBox = startTarget.getBoundingClientRect();
-    const rawEndBox = endTarget.getBoundingClientRect();
-    const endBox = usableRect(rawEndBox) ? rawEndBox : startBox;
-    if (
-      Number.isFinite(scrollBox.top)
-      && Number.isFinite(scrollBox.bottom)
-      && Number.isFinite(scrollBox.height)
-      && scrollBox.height > 0
-      && usableRect(startBox)
-    ) {
-      let delta = startBox.top - scrollBox.top - 12;
-      const bottomAfterStartScroll = endBox.bottom - delta;
-      const bottomLimit = scrollBox.bottom - 12;
-      if (bottomAfterStartScroll > bottomLimit) {
-        delta += bottomAfterStartScroll - bottomLimit;
-      }
-      scroll.scrollTop += delta;
-      return;
-    }
-  }
-  startTarget.scrollIntoView?.({ block: 'start' });
+function useLatestOptionalCallback<Arguments extends unknown[], Result>(
+  callback: ((...args: Arguments) => Result) | undefined,
+): ((...args: Arguments) => Result) | undefined {
+  const callbackRef = useRef(callback);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+  const stable = useCallback((...args: Arguments) => callbackRef.current?.(...args), []);
+  return callback === undefined
+    ? undefined
+    : stable as (...args: Arguments) => Result;
 }
 
 function planReviewKey(turnId: string, runId: string): string {
@@ -550,7 +746,7 @@ function pendingPlanReviewTarget(
   snapshot: BuilderConversationControllerSnapshot | null,
 ): BuilderPlanReviewRequest | null {
   const conversation = snapshot?.conversation;
-  if (conversation?.state !== 'ready') return null;
+  if (conversation?.state !== 'ready' || conversation.project_id === null) return null;
   const planRuns = new Set<string>();
   const pending = new Map<string, BuilderPlanReviewRequest>();
   for (const item of conversation.conversation.items) {
@@ -580,6 +776,30 @@ function pendingPlanReviewTarget(
   return [...pending.values()].at(-1) ?? null;
 }
 
+function inlinePlanReviewDecisions(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): ReadonlyMap<string, BuilderPlanReviewDecision> {
+  const conversation = snapshot?.conversation;
+  if (conversation?.state !== 'ready') return new Map();
+  const planRuns = new Set<string>();
+  const reviews = new Map<string, BuilderPlanReviewDecision>();
+  for (const item of conversation.conversation.items) {
+    if (
+      item.item_kind === 'run_completed'
+      && item.terminal_status === 'succeeded'
+      && item.result_kind === 'plan'
+    ) {
+      planRuns.add(planReviewKey(item.turn_id, item.run_id));
+    }
+  }
+  for (const item of conversation.conversation.items) {
+    if (item.item_kind !== 'plan_reviewed') continue;
+    const key = planReviewKey(item.turn_id, item.run_id);
+    if (planRuns.has(key)) reviews.set(key, item.decision);
+  }
+  return reviews;
+}
+
 function activityMessage(
   snapshot: BuilderConversationControllerSnapshot | null,
 ): string | null {
@@ -587,8 +807,18 @@ function activityMessage(
   if (snapshot.status === 'loading') return 'Loading activity...';
   if (snapshot.status === 'unavailable') return 'Activity is unavailable.';
   if (snapshot.status === 'stale') return 'Activity could not be refreshed.';
-  if (snapshot.conversation?.state === 'absent') return null;
+  if (snapshot.conversation?.state === 'absent') {
+    return 'No recorded activity for this project yet. History is available.';
+  }
   return null;
+}
+
+function isTranscriptRestoredConversation(
+  snapshot: BuilderConversationControllerSnapshot | null,
+): boolean {
+  return snapshot?.conversation?.state === 'ready'
+    && snapshot.conversation.conversation.source === 'sqlite_derived_public_transcript'
+    && snapshot.conversation.conversation.recovery?.recovery_kind === 'transcript_restored';
 }
 
 function shouldShowActivityPanel(snapshot: BuilderConversationControllerSnapshot | null): boolean {
@@ -601,15 +831,15 @@ function shouldShowActivityPanel(snapshot: BuilderConversationControllerSnapshot
     || snapshot.status === 'stale';
 }
 
-function versionHistoryMessage(
+function projectHistoryMessage(
   snapshot: BuilderProjectHistorySnapshot | null,
   hasSavedProject: boolean,
 ): string | null {
-  if (!hasSavedProject) return 'Save a version to see history.';
-  if (snapshot === null || snapshot.status === 'idle') return 'Loading versions...';
-  if (snapshot.status === 'loading') return 'Loading versions...';
-  if (snapshot.status === 'unavailable') return 'Versions are unavailable.';
-  if (snapshot.status === 'stale') return 'Versions could not be refreshed.';
+  if (!hasSavedProject) return 'No milestone versions yet.';
+  if (snapshot === null || snapshot.status === 'idle') return 'Loading history...';
+  if (snapshot.status === 'loading') return 'Loading history...';
+  if (snapshot.status === 'unavailable') return 'History is unavailable.';
+  if (snapshot.status === 'stale') return 'History could not be refreshed.';
   return null;
 }
 
@@ -682,59 +912,88 @@ type ActivityWorkStatusEntry = {
 
 type ActivityItemEntry = {
   entry_kind: 'item';
+  key: string;
   item: BuilderConversationItem;
-  progressStages?: readonly BuilderConversationRunProgressStage[];
   hidden: boolean;
+};
+
+type ActivityRunHistoryEntry = {
+  entry_kind: 'run_history';
+  key: string;
+  runKey: string;
+  items: readonly BuilderConversationItem[];
 };
 
 type ActivityEntry =
   | ActivityItemEntry
+  | ActivityRunHistoryEntry
   | ActivityWorkStatusEntry;
 
 function shouldShowLiveOutput(
   liveOutput: BuilderLiveOutputSnapshot | null,
-  entries: readonly ActivityEntry[],
 ): liveOutput is BuilderLiveOutputSnapshot {
   if (liveOutput === null) return false;
   if (liveOutput.text.length > 0) return true;
-  if (liveOutput.waiting_text !== undefined) return true;
-  return !entries.some((entry) => entry.entry_kind === 'work_status');
-}
-
-function workStatusBody(status: ActivityWorkStatus): string {
-  if (status === 'started') return 'Preparing this request.';
-  if (status === 'context_ready') return 'Reading the current project context.';
-  if (status === 'provider_request_started') return 'Writing the response.';
-  if (status === 'provider_response_received') return 'Checking the response.';
-  return 'Preparing the result for review.';
-}
-
-function progressStepLabel(stage: BuilderConversationRunProgressStage): string {
-  if (stage === 'context_ready') return 'Read the current project context.';
-  if (stage === 'provider_request_started') return 'Wrote the response.';
-  if (stage === 'provider_response_received') return 'Checked the response.';
-  return 'Prepared the result for review.';
+  return liveOutput.waiting_text !== undefined;
 }
 
 function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   if (item.item_kind === 'user_message') return <UserRound className="size-3.5" />;
+  if (item.item_kind === 'transcript_message') {
+    return item.role === 'user' ? <UserRound className="size-3.5" /> : <Bot className="size-3.5" />;
+  }
   if (item.item_kind === 'queued_followup_consumed') return <CheckCircle2 className="size-3.5" />;
   if (item.item_kind === 'run_started') return <Play className="size-3.5" />;
   if (item.item_kind === 'run_context_snapshot_recorded') return <ListChecks className="size-3.5" />;
   if (item.item_kind === 'run_progress_recorded') return <RefreshCw className="size-3.5" />;
   if (item.item_kind === 'run_control_requested') return <StopCircle className="size-3.5" />;
+  if (item.item_kind === 'checkpoint_recorded') {
+    return item.status === 'failed'
+      ? <AlertCircle className="size-3.5" />
+      : <ShieldCheck className="size-3.5" />;
+  }
+  if (item.item_kind === 'recovery_action_recorded') {
+    if (item.phase === 'requested') {
+      return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
+    }
+    return item.phase === 'completed'
+      ? <CheckCircle2 className="size-3.5" />
+      : <AlertCircle className="size-3.5" />;
+  }
   if (item.item_kind === 'task_brief_updated') return <ListChecks className="size-3.5" />;
   if (item.item_kind === 'agent_step_progress_recorded') {
-    if (item.recorded_state === 'start_recorded') return <RefreshCw className="size-3.5" />;
+    if (item.recorded_state === 'start_recorded') {
+      return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
+    }
     if (item.result?.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
     if (item.result?.status === 'cancelled') return <StopCircle className="size-3.5" />;
     return <AlertCircle className="size-3.5" />;
   }
-  if (item.item_kind === 'tool_call_requested') return <Play className="size-3.5" />;
+  if (item.item_kind === 'tool_call_requested') {
+    return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
+  }
   if (item.item_kind === 'tool_call_result_recorded') {
     if (item.result.status === 'succeeded') return <CheckCircle2 className="size-3.5" />;
     if (item.result.status === 'cancelled') return <StopCircle className="size-3.5" />;
     return <AlertCircle className="size-3.5" />;
+  }
+  if (item.item_kind === 'programming_runtime_tool_activity') {
+    if (item.state === 'running') {
+      return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
+    }
+    if (item.state === 'failed' || item.check_result?.status === 'failed') {
+      return <AlertCircle className="size-3.5" />;
+    }
+    return <CheckCircle2 className="size-3.5" />;
+  }
+  if (item.item_kind === 'programming_runtime_assistant_message') {
+    return <Bot className="size-3.5" />;
+  }
+  if (item.item_kind === 'programming_runtime_status') {
+    if (item.status_kind === 'failure') return <AlertCircle className="size-3.5" />;
+    if (item.status_kind === 'cancelled') return <StopCircle className="size-3.5" />;
+    if (item.status_kind === 'attention') return <AlertCircle className="size-3.5" />;
+    return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
   }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted'
@@ -753,12 +1012,46 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
   return <CheckCircle2 className="size-3.5" />;
 }
 
+type BuilderActivityNodeKind =
+  | 'checkpoint_event'
+  | 'message'
+  | 'product_fact'
+  | 'reasoning'
+  | 'tool_evidence'
+  | 'turn_tail';
+
+function activityNodeKind(item: BuilderConversationItem): BuilderActivityNodeKind {
+  if (item.item_kind === 'user_message') return 'message';
+  if (item.item_kind === 'transcript_message') return 'message';
+  if (item.item_kind === 'programming_runtime_assistant_message') return 'message';
+  if (item.item_kind === 'run_completed' && item.assistant_message !== null) return 'message';
+  if (item.item_kind === 'programming_runtime_status' && item.status_kind === 'reasoning') return 'reasoning';
+  if (item.item_kind === 'checkpoint_recorded') return 'checkpoint_event';
+  if (
+    item.item_kind === 'tool_call_requested'
+    || item.item_kind === 'tool_call_result_recorded'
+    || item.item_kind === 'programming_runtime_tool_activity'
+  ) {
+    return 'tool_evidence';
+  }
+  if (item.item_kind === 'turn_completed') return 'turn_tail';
+  return 'product_fact';
+}
+
+function checkpointTurnEventKind(
+  item: Extract<BuilderConversationItem, { item_kind: 'checkpoint_recorded' }>,
+): 'created' | 'failed' | 'updated' {
+  if (item.status === 'failed') return 'failed';
+  return item.status === 'created' ? 'created' : 'updated';
+}
+
 function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') {
     if (item.message_kind === 'steering') return 'You added context';
     if (item.message_kind === 'queued_followup') return 'You queued a follow-up';
     return 'You';
   }
+  if (item.item_kind === 'transcript_message') return item.role === 'user' ? 'You' : 'Assistant';
   if (item.item_kind === 'queued_followup_consumed') return 'Follow-up picked up';
   if (item.item_kind === 'run_started') return 'Assistant is working';
   if (item.item_kind === 'run_context_snapshot_recorded') return 'Why this ran';
@@ -767,10 +1060,33 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'run_control_requested') {
     return item.action === 'interrupt' ? 'Interrupt requested' : 'Stop requested';
   }
+  if (item.item_kind === 'checkpoint_recorded') {
+    if (item.status === 'failed') return '检查点保存失败';
+    return item.status === 'created' ? '检查点已创建' : '检查点已更新';
+  }
+  if (item.item_kind === 'recovery_action_recorded') {
+    if (item.action === 'restore_checkpoint') {
+      if (item.phase === 'requested') return '正在恢复上个检查点';
+      return item.phase === 'completed' ? '已恢复上个检查点' : '检查点恢复失败';
+    }
+    if (item.phase === 'requested') return '正在恢复历史版本';
+    return item.phase === 'completed' ? '已恢复历史版本' : '历史版本恢复失败';
+  }
   if (item.item_kind === 'task_brief_updated') return 'Direction updated';
   if (item.item_kind === 'agent_step_progress_recorded') return agentStepTitle(item);
   if (item.item_kind === 'tool_call_requested') return toolRequestTitle(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultTitle(item);
+  if (item.item_kind === 'programming_runtime_tool_activity') {
+    if (item.state === 'running') return item.status_label ?? item.active_label;
+    if (item.state === 'completed') return item.completed_label;
+    return item.target_label === null
+      ? 'This step could not finish'
+      : `Could not finish ${item.target_label}`;
+  }
+  if (item.item_kind === 'programming_runtime_assistant_message') return 'Assistant';
+  if (item.item_kind === 'programming_runtime_status') {
+    return item.status_kind === 'reasoning' ? 'Think' : item.status;
+  }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
   }
@@ -779,6 +1095,96 @@ function activityTitle(item: BuilderConversationItem): string {
   }
   if (item.item_kind === 'run_completed') return completionLabel(item);
   return outcomeLabel(item.outcome);
+}
+
+function activityRecoveryTone(item: BuilderConversationItem): 'success' | 'pending' | 'failure' | undefined {
+  if (item.item_kind === 'checkpoint_recorded') {
+    return item.status === 'failed' ? 'failure' : 'success';
+  }
+  if (item.item_kind === 'recovery_action_recorded') {
+    if (item.phase === 'requested') return 'pending';
+    return item.phase === 'completed' ? 'success' : 'failure';
+  }
+  if (item.item_kind === 'run_control_requested') return 'pending';
+  if (item.item_kind === 'candidate_reviewed') {
+    return item.decision === 'accepted' ? 'success' : 'failure';
+  }
+  return undefined;
+}
+
+function BuilderComposerVersionDecisionCard({
+  blockedMessage,
+  canReject,
+  canSave,
+  discardLabel,
+  onRejectDraft,
+  onSave,
+  saveLabel,
+}: Readonly<{
+  blockedMessage: string | null;
+  canReject: boolean;
+  canSave: boolean;
+  discardLabel: string;
+  onRejectDraft?: () => void;
+  onSave?: () => void;
+  saveLabel: string;
+}>) {
+  const showSaveAction = typeof onSave === 'function';
+  const showDiscardAction = typeof onRejectDraft === 'function';
+  if (!showSaveAction && !showDiscardAction) return null;
+  return (
+    <section
+      aria-label="Review draft version"
+      className="cf-builder-composer-version-decision"
+      data-builder-composer-version-decision="true"
+    >
+      <div className="cf-builder-composer-version-strip">
+        <span aria-hidden="true" className="cf-builder-composer-version-dot" />
+        Draft ready for review
+      </div>
+      <div className="cf-builder-composer-version-body">
+        <div className="cf-builder-composer-version-copy">
+          <h2>Save this draft?</h2>
+          <p>Save it as a project version, or discard it and keep the previous version.</p>
+          {blockedMessage !== null ? (
+            <p
+              className="cf-builder-composer-version-warning"
+              data-builder-composer-version-blocked="true"
+              role="status"
+            >
+              {blockedMessage}
+            </p>
+          ) : null}
+        </div>
+        <div className="cf-builder-composer-version-actions">
+          {showDiscardAction ? (
+            <button
+              className="cf-builder-composer-version-button cf-builder-composer-version-button-secondary"
+              data-builder-discard-draft="true"
+              disabled={!canReject}
+              onClick={onRejectDraft}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" className="size-3.5" />
+              {discardLabel}
+            </button>
+          ) : null}
+          {showSaveAction ? (
+            <button
+              className="cf-builder-composer-version-button cf-builder-composer-version-button-primary"
+              data-builder-save-version="true"
+              disabled={!canSave}
+              onClick={onSave}
+              type="button"
+            >
+              <Save aria-hidden="true" className="size-3.5" />
+              {saveLabel}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 type BuilderToolActivityAction = Extract<
@@ -924,6 +1330,7 @@ function runContextSnapshotBody(
 
 function activityBody(item: BuilderConversationItem): string {
   if (item.item_kind === 'user_message') return item.message.text;
+  if (item.item_kind === 'transcript_message') return item.message.text;
   if (item.item_kind === 'queued_followup_consumed') {
     return 'The queued follow-up moved into the next request.';
   }
@@ -936,10 +1343,37 @@ function activityBody(item: BuilderConversationItem): string {
       ? 'You asked to steer the current work.'
       : 'You asked to stop the current work.';
   }
+  if (item.item_kind === 'checkpoint_recorded') {
+    if (item.status === 'failed') return '草稿仍可审查，但本轮没有生成新的恢复点。';
+    const files = `${item.changed_file_count} 个文件`;
+    return item.verification_status === 'candidate_verified_with_warnings'
+      ? `${files}已受到保护，验证包含警告。`
+      : `${files}已受到保护，可以继续修改或恢复。`;
+  }
+  if (item.item_kind === 'recovery_action_recorded') {
+    if (item.phase === 'requested') return '正在准备一个可审查的新草稿。';
+    if (item.phase === 'completed') return '恢复结果已写入当前项目，并保留为可审查草稿。';
+    return '项目没有完成恢复，原有版本与恢复点仍然保留。';
+  }
   if (item.item_kind === 'task_brief_updated') return item.brief.summary;
   if (item.item_kind === 'agent_step_progress_recorded') return agentStepBody(item);
   if (item.item_kind === 'tool_call_requested') return toolRequestBody(item);
   if (item.item_kind === 'tool_call_result_recorded') return toolResultBody(item);
+  if (item.item_kind === 'programming_runtime_tool_activity') {
+    if (item.check_result !== null) return item.check_result.summary;
+    if (item.file_change !== null) {
+      return `+${item.file_change.added_lines} -${item.file_change.deleted_lines}`;
+    }
+    return item.summary ?? '';
+  }
+  if (item.item_kind === 'programming_runtime_assistant_message') return item.message.text;
+  if (item.item_kind === 'programming_runtime_status') {
+    if (item.status_kind === 'reasoning') return item.status;
+    if (item.status_kind === 'attention') return '需要你完成这一步后，任务才能继续。';
+    if (item.status_kind === 'failure') return '本轮已经结束，可以查看上方活动后重试。';
+    if (item.status_kind === 'cancelled') return '本轮已停止。';
+    return '';
+  }
   if (item.item_kind === 'candidate_reviewed') {
     if (item.decision === 'accepted') {
       const revisionNumber = item.saved_revision?.revision_number;
@@ -963,100 +1397,12 @@ function activityBody(item: BuilderConversationItem): string {
   return `${outcomeLabel(item.outcome)}.`;
 }
 
-type ActivityCompletionSummary = Readonly<{
-  happened: string;
-  changed: string;
-  next: string;
-}>;
-
-function failedCompletionSummary(
-  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
-): ActivityCompletionSummary {
-  if (item.failure_phase === 'provider_request_started') {
-    return {
-      happened: 'The AI request started but did not return a usable result.',
-      changed: 'No version was saved by this result.',
-      next: 'Check your network or proxy, then retry. If the service rejects the request, check the AI settings.',
-    };
-  }
-  if (
-    item.failure_phase === 'provider_response_received'
-    || item.failure_phase === 'result_preparing'
-  ) {
-    return {
-      happened: 'The AI response arrived but could not be prepared for review.',
-      changed: 'No version was saved by this result.',
-      next: 'Try again with a smaller request or continue with a clearer follow-up.',
-    };
-  }
-  if (item.failure_phase === 'context_ready') {
-    return {
-      happened: 'Builder prepared the project context, but the request did not finish.',
-      changed: 'No version was saved by this result.',
-      next: 'Try again or adjust the request before continuing.',
-    };
-  }
-  return {
-    happened: 'The request could not finish.',
-    changed: 'No version was saved by this result.',
-    next: 'Try again or adjust the request before continuing.',
-  };
-}
-
-function completionSummary(
-  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>,
-  hasUnsavedDraft: boolean,
-): ActivityCompletionSummary {
-  if (item.terminal_status === 'failed') {
-    return failedCompletionSummary(item);
-  }
-  if (item.terminal_status === 'interrupted') {
-    return {
-      happened: 'The work was interrupted.',
-      changed: 'No version was saved by this result.',
-      next: 'Send a follow-up with the change in direction.',
-    };
-  }
-  if (item.terminal_status === 'cancelled') {
-    return {
-      happened: 'The work was stopped.',
-      changed: 'No version was saved by this result.',
-      next: 'Start again when you are ready.',
-    };
-  }
-  if (item.result_kind === 'candidate' && item.candidate !== null) {
-    return {
-      happened: 'A draft is ready for review.',
-      changed: item.candidate.summary,
-      next: hasUnsavedDraft
-        ? 'Review the workspace, then save a version if it looks right.'
-        : 'Review the available result before deciding what to do next.',
-    };
-  }
-  if (item.result_kind === 'plan') {
-    return {
-      happened: 'A plan is ready for review.',
-      changed: 'The project files have not changed.',
-      next: 'Approve the plan to continue, or reject it to keep discussing.',
-    };
-  }
-  return {
-    happened: 'The assistant answered.',
-    changed: 'No files were changed.',
-    next: 'Ask a follow-up or describe the next change.',
-  };
-}
-
 function activityDisplayRole(item: BuilderConversationItem): 'assistant' | 'status' | 'user' {
   if (item.item_kind === 'user_message') return 'user';
+  if (item.item_kind === 'transcript_message') return item.role;
+  if (item.item_kind === 'programming_runtime_assistant_message') return 'assistant';
   if (item.item_kind === 'run_completed' && item.assistant_message !== null) return 'assistant';
   return 'status';
-}
-
-function candidateAvailabilityNote(hasUnsavedDraft: boolean): string {
-  return hasUnsavedDraft
-    ? 'The review workspace is ready before saving this version.'
-    : 'Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.';
 }
 
 function failedStatusMessage(
@@ -1064,49 +1410,61 @@ function failedStatusMessage(
   error: BuilderProjectControllerSnapshot['error'],
 ): string {
   if (status === 'answer_failed') {
-    if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
-    if (error === 'builder_generation_timeout') return 'Answering took too long. Try again.';
-    if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
-    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
-    return 'The answer could not be prepared. Try again.';
+    if (error === 'builder_generation_provider_unavailable') return '尚未配置 AI 服务。';
+    if (error === 'builder_generation_timeout') return '回答超时，请重试。';
+    if (error === 'builder_generation_runtime_stalled') return '编码运行长时间没有新进展，请查看上方活动后重试。';
+    if (error === 'builder_generation_run_limit_reached') return '本轮已达到运行上限，请查看上方活动后继续或重试。';
+    if (error === 'builder_generation_provider_http_error') return 'AI 服务拒绝了请求，请检查 API Key、模型或账户状态。';
+    if (error === 'builder_generation_provider_transport_error') return '无法连接 AI 服务，请检查网络或代理后重试。';
+    return '暂时无法完成回答，请重试。';
   }
   if (status === 'submit_failed') {
-    if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I build.';
-    if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I build.';
-    if (error === 'builder_generation_workspace_changed') return 'The project changed while I was working. Review it, then retry.';
-    if (error === 'builder_generation_workspace_guard_denied') return 'I blocked these file changes to protect the project.';
-    if (error === 'builder_generation_workspace_guard_approval_required') return 'These file changes need additional approval before I can continue.';
-    if (error === 'builder_generation_provider_unavailable') return 'AI is not configured yet.';
-    if (error === 'builder_generation_timeout') return 'Working on this request took too long. Try again.';
-    if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
-    if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
-    if (error === 'builder_generation_static_preview_contract_rejected') return 'This result needs Browser preview support. Your current draft was kept.';
-    return 'This request could not be completed. Try again.';
+    if (error === 'builder_generation_project_workspace_required') return '开始构建前，请先选择或打开项目文件夹。';
+    if (error === 'builder_generation_project_write_permission_required') return '开始构建前，请允许修改当前项目。';
+    if (error === 'builder_generation_workspace_changed') return '工作期间项目发生了变化，请检查后重试。';
+    if (error === 'builder_generation_workspace_guard_denied') return '为保护项目，本次文件修改已被阻止。';
+    if (error === 'builder_generation_workspace_guard_approval_required') return '这些文件修改需要额外确认后才能继续。';
+    if (error === 'builder_generation_provider_unavailable') return '尚未配置 AI 服务。';
+    if (error === 'builder_generation_timeout') return '本次处理超时，请重试。';
+    if (error === 'builder_generation_runtime_stalled') return '编码运行长时间没有新进展，请查看上方活动后重试。';
+    if (error === 'builder_generation_run_limit_reached') return '本轮已达到运行上限，请查看上方活动后继续或重试。';
+    if (error === 'builder_generation_provider_http_error') return 'AI 服务拒绝了请求，请检查 API Key、模型或账户状态。';
+    if (error === 'builder_generation_provider_transport_error') return '无法连接 AI 服务，请检查网络或代理后重试。';
+    if (error === 'builder_generation_static_preview_contract_rejected') return '此结果需要 Browser 预览支持，当前草稿已保留。';
+    return '本次请求未能完成，请重试。';
   }
-  if (error === 'builder_generation_project_workspace_required') return 'Choose or open a project folder before I make a draft.';
-  if (error === 'builder_generation_project_write_permission_required') return 'Allow current project changes before I make a draft.';
-  if (error === 'builder_generation_workspace_changed') return 'The project changed while I was working. Review it, then retry.';
-  if (error === 'builder_generation_workspace_guard_denied') return 'I blocked these file changes to protect the project.';
-  if (error === 'builder_generation_workspace_guard_approval_required') return 'These file changes need additional approval before I can continue.';
-  if (error === 'builder_generation_provider_unavailable') return 'AI generation is not configured yet.';
-  if (error === 'builder_generation_timeout') return 'Making this draft took too long. Try again.';
-  if (error === 'builder_generation_provider_http_error') return 'The AI service rejected the request. Check the API key, model, or account.';
-  if (error === 'builder_generation_provider_transport_error') return 'The AI service could not be reached. Check your network or proxy, then retry.';
-  if (error === 'builder_generation_static_preview_contract_rejected') return 'This result needs Browser preview support. Your current draft was kept.';
-  if (error === 'builder_generation_structured_response_invalid') return 'The draft could not be prepared. Try again.';
-  return 'The draft could not be made. Try again.';
+  if (error === 'builder_generation_project_workspace_required') return '生成草稿前，请先选择或打开项目文件夹。';
+  if (error === 'builder_generation_project_write_permission_required') return '生成草稿前，请允许修改当前项目。';
+  if (error === 'builder_generation_workspace_changed') return '工作期间项目发生了变化，请检查后重试。';
+  if (error === 'builder_generation_workspace_guard_denied') return '为保护项目，本次文件修改已被阻止。';
+  if (error === 'builder_generation_workspace_guard_approval_required') return '这些文件修改需要额外确认后才能继续。';
+  if (error === 'builder_generation_provider_unavailable') return '尚未配置 AI 服务。';
+  if (error === 'builder_generation_timeout') return '生成草稿超时，请重试。';
+  if (error === 'builder_generation_runtime_stalled') return '编码运行长时间没有新进展，请查看上方活动后重试。';
+  if (error === 'builder_generation_run_limit_reached') return '本轮已达到运行上限，请查看上方活动后继续或重试。';
+  if (error === 'builder_generation_provider_http_error') return 'AI 服务拒绝了请求，请检查 API Key、模型或账户状态。';
+  if (error === 'builder_generation_provider_transport_error') return '无法连接 AI 服务，请检查网络或代理后重试。';
+  if (error === 'builder_generation_static_preview_contract_rejected') return '此结果需要 Browser 预览支持，当前草稿已保留。';
+  if (error === 'builder_generation_structured_response_invalid') return '草稿内容未通过校验，请重试。';
+  return '草稿未能生成，请重试。';
 }
 
 function approvedPlanContinuationFailureMessage(
   error: BuilderProjectControllerSnapshot['error'],
 ): string {
   if (error === 'builder_generation_provider_unavailable') {
-    return 'The plan was approved, but AI generation is not configured yet.';
+    return '计划已批准，但尚未配置 AI 服务。';
   }
   if (error === 'builder_generation_timeout') {
-    return 'The plan was approved, but making the draft took too long. Retry to continue from that plan.';
+    return '计划已批准，但生成草稿超时；重试后会从该计划继续。';
   }
-  return 'The plan was approved, but the draft could not be created. Retry to continue from that plan.';
+  if (error === 'builder_generation_runtime_stalled') {
+    return '计划已批准，但编码运行长时间没有新进展，请查看活动后重试。';
+  }
+  if (error === 'builder_generation_run_limit_reached') {
+    return '计划已批准，但本轮已达到运行上限，请查看活动后继续或重试。';
+  }
+  return '计划已批准，但草稿未能生成；重试后会从该计划继续。';
 }
 
 function VersionItem({
@@ -1183,22 +1541,35 @@ function VersionItem({
 }
 
 function VersionHistoryPanel({
+  canUndo,
+  draftCheckpointStatus,
+  draftCheckpointTimeline,
   hasSavedProject,
+  hasUnsavedDraft,
   inspectedRevisionReceiptDigest,
   onInspectRevision,
   onRefresh,
   onRestoreRevisionAsDraft,
+  onUndoDraft,
   snapshot,
 }: Readonly<{
+  canUndo: boolean;
+  draftCheckpointStatus: BuilderDraftCheckpointStatusProjectionWire | null;
+  draftCheckpointTimeline: BuilderDraftCheckpointTimelineProjectionWire | null;
   hasSavedProject: boolean;
+  hasUnsavedDraft: boolean;
   inspectedRevisionReceiptDigest: string | null;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onRefresh?: () => Promise<unknown> | void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onUndoDraft?: () => void;
   snapshot: BuilderProjectHistorySnapshot | null;
 }>) {
   const revisions = snapshot?.history?.revisions ?? [];
-  const message = versionHistoryMessage(snapshot, hasSavedProject);
+  const earlierCheckpoints = draftCheckpointTimeline?.status === 'ready'
+    ? draftCheckpointTimeline.entries.filter((entry) => !entry.is_current)
+    : [];
+  const message = projectHistoryMessage(snapshot, hasSavedProject);
   const canRefresh = hasSavedProject
     && snapshot !== null
     && snapshot.project_id !== null
@@ -1206,18 +1577,27 @@ function VersionHistoryPanel({
     && typeof onRefresh === 'function';
   return (
     <aside
-      aria-label="Project versions"
+      aria-label="Project history"
       className="cf-builder-version-panel"
+      data-builder-project-history="true"
       data-builder-version-history="true"
       data-builder-version-history-status={snapshot?.status ?? 'idle'}
     >
       <header className="cf-builder-side-header">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">Versions</p>
-          <h3 className="truncate text-sm font-semibold">Saved history</h3>
+          <p className="text-xs font-medium text-muted-foreground">History</p>
+          <h3 className="truncate text-sm font-semibold">Project history</h3>
+          <p
+            className="cf-builder-version-scope"
+            data-builder-version-history-scope="true"
+          >
+            {hasUnsavedDraft
+              ? 'Current work is protected automatically. Versions are optional milestones.'
+              : 'Versions are optional milestones.'}
+          </p>
         </div>
         <button
-          aria-label="Refresh versions"
+          aria-label="Refresh history"
           className="cf-builder-secondary-button cf-builder-icon-button inline-flex size-8 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
           disabled={!canRefresh}
           onClick={() => {
@@ -1230,11 +1610,89 @@ function VersionHistoryPanel({
       </header>
       <div className="cf-builder-version-body-wrap">
         {snapshot?.status === 'refreshing' ? (
-          <p className="cf-builder-version-status" role="status">Refreshing versions...</p>
+          <p className="cf-builder-version-status" role="status">Refreshing history...</p>
         ) : null}
+        {hasUnsavedDraft && draftCheckpointStatus !== null ? (
+          <section className="cf-builder-history-section" aria-labelledby="builder-current-work-history">
+            <p className="cf-builder-history-section-label" id="builder-current-work-history">Current work</p>
+            <div
+              aria-label="Current work recovery"
+              className="cf-builder-draft-recovery-card"
+              data-builder-draft-recovery-card="true"
+            >
+              <div className="cf-builder-activity-icon" aria-hidden="true">
+                <CheckCircle2 className="size-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="cf-builder-version-title">
+                  <span className="truncate">Automatic recovery</span>
+                  <span className="cf-builder-version-current">Now</span>
+                </div>
+                <p className="cf-builder-version-summary">
+                  {draftCheckpointStatus.label}. {draftCheckpointStatus.changed_file_count}
+                  {' '}
+                  {draftCheckpointStatus.changed_file_count === 1 ? 'file' : 'files'} protected.
+                </p>
+              </div>
+              <button
+                aria-label="Undo to the previous checkpoint"
+                className="cf-builder-secondary-button cf-builder-history-undo-button"
+                data-builder-history-undo="true"
+                disabled={!canUndo}
+                onClick={onUndoDraft}
+                title="Undo to the previous checkpoint"
+                type="button"
+              >
+                <Undo2 aria-hidden="true" className="size-3.5" />
+                <span>Undo</span>
+              </button>
+            </div>
+            {earlierCheckpoints.length > 0 ? (
+              <ol
+                aria-label="Earlier automatic checkpoints"
+                className="cf-builder-checkpoint-timeline"
+                data-builder-checkpoint-timeline="true"
+              >
+                {earlierCheckpoints.map((checkpoint) => (
+                  <li
+                    className="cf-builder-checkpoint-timeline-item"
+                    data-builder-checkpoint-sequence={checkpoint.checkpoint_sequence}
+                    key={checkpoint.checkpoint_sequence}
+                  >
+                    <span className="cf-builder-checkpoint-timeline-marker" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <div className="cf-builder-checkpoint-timeline-title">
+                        <span>Checkpoint {checkpoint.checkpoint_sequence}</span>
+                        <time dateTime={new Date(checkpoint.created_at_ms).toISOString()}>
+                          {new Intl.DateTimeFormat(undefined, {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          }).format(checkpoint.created_at_ms)}
+                        </time>
+                      </div>
+                      <p className="cf-builder-version-summary">
+                        {checkpoint.changed_file_count}
+                        {' '}
+                        {checkpoint.changed_file_count === 1 ? 'file' : 'files'} protected
+                        {checkpoint.verification_status === 'candidate_verified_with_warnings'
+                          ? ' with warnings'
+                          : ''}
+                        .
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {draftCheckpointTimeline?.truncated === true ? (
+              <p className="cf-builder-version-status">Older checkpoints are not shown.</p>
+            ) : null}
+          </section>
+        ) : null}
+        <p className="cf-builder-history-section-label">Milestones</p>
         {revisions.length === 0 ? (
           <div className="cf-builder-empty cf-builder-version-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
-            {message ?? 'No saved versions yet.'}
+            {message ?? 'No milestone versions yet.'}
           </div>
         ) : (
           <ol className="cf-builder-version-list">
@@ -1261,34 +1719,74 @@ function VersionHistoryPanel({
 }
 
 function ActivityItem({
+  canUndoDraft,
   canReviewPlan,
+  candidateChanges,
+  checkRunProfile,
+  checkRunStatus,
   hasUnsavedDraft,
+  hasRuntimeFacts,
+  isCurrentDraftCompletion,
   item,
+  onOpenCandidateChange,
+  onOpenCheckCommand,
+  onOpenHistory,
+  resolveRuntimeToolAction,
   onReviewPlan,
+  onUndoDraft,
   planReviewBusy,
   planReviewFailed,
   planReviewRecorded,
   pendingPlanReview,
-  progressStages = [],
+  planReviewDecision,
 }: Readonly<{
+  canUndoDraft: boolean;
   canReviewPlan: boolean;
+  candidateChanges: readonly BuilderSourceTreeChange[];
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
   hasUnsavedDraft: boolean;
+  hasRuntimeFacts: boolean;
+  isCurrentDraftCompletion: boolean;
   item: BuilderConversationItem;
+  onOpenCandidateChange?: (change: BuilderSourceTreeChange) => void;
+  onOpenCheckCommand?: () => void;
+  onOpenHistory?: () => void;
+  resolveRuntimeToolAction?: ResolveRuntimeToolAction;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  onUndoDraft?: () => void;
   planReviewBusy: boolean;
   planReviewFailed: boolean;
   planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
-  progressStages?: readonly BuilderConversationRunProgressStage[];
+  planReviewDecision: BuilderPlanReviewDecision | null;
 }>) {
+  const nodeKind = activityNodeKind(item);
   const displayRole = activityDisplayRole(item);
   const title = activityTitle(item);
+  const body = activityBody(item);
+  const recoveryTone = activityRecoveryTone(item);
+  const isRuntimeToolActivity = item.item_kind === 'programming_runtime_tool_activity';
+  const isCheckpointEvent = item.item_kind === 'checkpoint_recorded';
+  const activityItemClassName = [
+    'cf-builder-activity-item',
+    isRuntimeToolActivity ? 'cf-builder-tool-evidence-row' : null,
+    isCheckpointEvent ? 'cf-builder-checkpoint-event-row' : null,
+  ].filter(Boolean).join(' ');
   const messageSurface = displayRole === 'user'
     ? 'bubble'
     : displayRole === 'assistant'
       ? 'plain'
       : 'status';
-  const showTitle = !(displayRole === 'user' && title === 'You');
+  const showTitle = displayRole === 'status';
+  const runtimeToolAction = item.item_kind === 'programming_runtime_tool_activity'
+    ? resolveRuntimeToolAction?.(item) ?? null
+    : null;
+  const isAssistantMessage = item.item_kind === 'programming_runtime_assistant_message'
+    || (item.item_kind === 'run_completed' && item.assistant_message !== null);
+  const isPlanMessage = item.item_kind === 'run_completed'
+    && item.assistant_message !== null
+    && item.result_kind === 'plan';
   const itemPlanReviewKey = item.item_kind === 'run_completed' && item.result_kind === 'plan'
     ? planReviewKey(item.turn_id, item.run_id)
     : null;
@@ -1308,16 +1806,49 @@ function ActivityItem({
 
   return (
     <li
-      className="cf-builder-activity-item"
+      className={activityItemClassName}
       data-builder-activity-card={title}
       data-builder-activity-role={displayRole}
+      data-builder-checkpoint-animation={isCheckpointEvent && item.status !== 'failed' ? 'settle' : undefined}
+      data-builder-checkpoint-turn-event={isCheckpointEvent ? checkpointTurnEventKind(item) : undefined}
+      data-builder-conversation-node={nodeKind}
+      data-builder-reasoning-row={nodeKind === 'reasoning' ? 'true' : undefined}
       data-builder-tool-activity={item.item_kind === 'tool_call_requested'
         ? 'requested'
         : item.item_kind === 'tool_call_result_recorded'
           ? item.result.status
+          : item.item_kind === 'programming_runtime_tool_activity'
+            ? item.state
           : undefined}
       data-builder-agent-step-progress={item.item_kind === 'agent_step_progress_recorded'
         ? item.recorded_state
+        : undefined}
+      data-builder-plan-markdown={isPlanMessage ? 'true' : undefined}
+      data-builder-runtime-assistant-message={item.item_kind === 'programming_runtime_assistant_message'
+        ? item.message.message_id
+        : undefined}
+      data-builder-runtime-status={item.item_kind === 'programming_runtime_status'
+        ? item.status_kind
+        : undefined}
+      data-builder-draft-checkpoint-status={item.item_kind === 'checkpoint_recorded'
+        ? item.status === 'failed' ? 'failed' : 'ready'
+        : undefined}
+      data-builder-recovery-action={item.item_kind === 'run_control_requested'
+        ? `${item.action}_requested`
+        : item.item_kind === 'recovery_action_recorded'
+          ? `${item.action}_${item.phase}`
+        : item.item_kind === 'checkpoint_recorded'
+          ? `checkpoint_${item.status}`
+        : item.item_kind === 'candidate_reviewed'
+          ? item.decision === 'accepted' ? 'version_saved' : 'draft_discarded'
+          : undefined}
+      data-builder-recovery-tone={recoveryTone}
+      data-builder-run-completion-message={item.item_kind === 'run_completed'
+        && item.assistant_message !== null
+        ? item.run_id
+        : undefined}
+      data-builder-plan-review-decision={isPlanMessage && planReviewDecision !== null
+        ? planReviewDecision
         : undefined}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
@@ -1327,28 +1858,82 @@ function ActivityItem({
         className="cf-builder-activity-content min-w-0"
         data-builder-message-surface={messageSurface}
       >
-        {showTitle ? (
-          <div className="cf-builder-activity-title">{title}</div>
+        {item.item_kind === 'programming_runtime_tool_activity' ? (
+          <RuntimeToolEvidenceContent item={item} action={runtimeToolAction} />
+        ) : showTitle && runtimeToolAction !== null ? (
+          <button
+            className="cf-builder-activity-title cf-builder-runtime-activity-button cf-builder-tool-evidence-title"
+            onClick={runtimeToolAction}
+            type="button"
+          >
+            {title}
+          </button>
+        ) : showTitle ? (
+          <div className={isRuntimeToolActivity
+            ? 'cf-builder-activity-title cf-builder-tool-evidence-title'
+            : 'cf-builder-activity-title'}>{title}</div>
         ) : null}
-        <p className="cf-builder-activity-body">{activityBody(item)}</p>
-        {item.item_kind === 'run_completed' && (
-          item.terminal_status !== 'succeeded' || item.result_kind !== 'explanation'
-        ) ? (
-          <ActivityCompletionSummaryView
-            hasUnsavedDraft={hasUnsavedDraft}
-            item={item}
-            progressStages={progressStages}
+        {item.item_kind === 'programming_runtime_tool_activity' ? null : isAssistantMessage ? (
+          <BuilderConversationMarkdown
+            source={body}
+            variant={isPlanMessage ? 'plan' : 'response'}
           />
+        ) : body.length > 0 ? (
+          <p className={isRuntimeToolActivity
+            ? 'cf-builder-activity-body cf-builder-tool-evidence-detail'
+            : 'cf-builder-activity-body'}>{body}</p>
         ) : null}
-        {item.item_kind === 'run_completed' && item.candidate !== null ? (
-          <>
-            <p className="cf-builder-activity-note">
-              {item.candidate.title}: {item.candidate.summary}
-            </p>
-            <p className="cf-builder-activity-note">
-              {candidateAvailabilityNote(hasUnsavedDraft)}
-            </p>
-          </>
+        {item.item_kind === 'checkpoint_recorded' && item.status !== 'failed' ? (
+          <div
+            aria-label="Checkpoint recovery actions"
+            className="cf-builder-recovery-actions"
+            data-builder-recovery-actions="checkpoint"
+          >
+            {typeof onUndoDraft === 'function' ? (
+              <button
+                aria-label="撤回到上一个检查点"
+                className="cf-builder-recovery-action-button"
+                data-builder-chat-undo-checkpoint="true"
+                data-builder-recovery-action-command="undo_checkpoint"
+                disabled={!canUndoDraft}
+                onClick={onUndoDraft}
+                title="撤回到上一个检查点"
+                type="button"
+              >
+                <Undo2 aria-hidden="true" className="size-3.5" />
+                <span>撤回</span>
+              </button>
+            ) : null}
+            {typeof onOpenHistory === 'function' ? (
+              <button
+                aria-label="打开恢复历史"
+                className="cf-builder-recovery-action-button"
+                data-builder-chat-open-history="true"
+                data-builder-recovery-action-command="open_history"
+                onClick={onOpenHistory}
+                title="打开恢复历史"
+                type="button"
+              >
+                <History aria-hidden="true" className="size-3.5" />
+                <span>历史</span>
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {item.item_kind === 'run_completed' && item.candidate !== null && !hasUnsavedDraft ? (
+          <p className="cf-builder-activity-note">
+            This older draft is no longer available in Review.
+          </p>
+        ) : null}
+        {item.item_kind === 'run_completed' && item.assistant_message !== null ? (
+          <BuilderTurnTailActions
+            changes={isCurrentDraftCompletion && !hasRuntimeFacts ? candidateChanges : []}
+            checkRunProfile={isCurrentDraftCompletion && !hasRuntimeFacts ? checkRunProfile : null}
+            checkRunStatus={isCurrentDraftCompletion && !hasRuntimeFacts ? checkRunStatus : null}
+            item={item}
+            onOpenCandidateChange={onOpenCandidateChange}
+            onOpenCheckCommand={onOpenCheckCommand}
+          />
         ) : null}
         {showPlanReviewActions ? (
           <div
@@ -1360,15 +1945,15 @@ function ActivityItem({
                 ? 'recorded'
                 : planReviewFailed ? 'failed' : 'ready'}
           >
-            <p className="cf-builder-activity-note" role={planReviewFailed ? 'alert' : undefined}>
-              {planReviewBusy
-                ? 'Recording your decision...'
-                : planReviewRecorded
-                  ? 'Decision recorded. Updating the conversation...'
-                  : planReviewFailed
-                    ? 'That decision could not be recorded. Try again.'
-                    : 'Approve this plan to let the assistant continue. Reject it to keep the project unchanged.'}
-            </p>
+            {planReviewBusy || planReviewRecorded || planReviewFailed ? (
+              <p className="cf-builder-activity-note" role={planReviewFailed ? 'alert' : undefined}>
+                {planReviewBusy
+                  ? 'Recording your decision...'
+                  : planReviewRecorded
+                    ? 'Decision recorded. Updating the conversation...'
+                    : 'That decision could not be recorded. Try again.'}
+              </p>
+            ) : null}
             <button
               className="cf-builder-primary-button inline-flex min-h-8 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
               data-builder-approve-plan="true"
@@ -1391,8 +1976,172 @@ function ActivityItem({
             </button>
           </div>
         ) : null}
+        {isPlanMessage && planReviewDecision !== null ? (
+          <div
+            className="cf-builder-plan-review-result"
+            data-builder-plan-review-result={planReviewDecision}
+          >
+            {planReviewDecision === 'approved' ? (
+              <CheckCircle2 aria-hidden="true" className="size-3.5" />
+            ) : (
+              <AlertCircle aria-hidden="true" className="size-3.5" />
+            )}
+            <span>
+              <strong>{planReviewDecision === 'approved' ? 'Plan approved' : 'Plan rejected'}</strong>
+              <small>
+                {planReviewDecision === 'approved'
+                  ? 'Continuing with the approved plan.'
+                  : 'No project files were changed.'}
+              </small>
+            </span>
+          </div>
+        ) : null}
       </div>
     </li>
+  );
+}
+
+function PendingUserMessageItem({
+  message,
+}: Readonly<{
+  message: BuilderPendingUserMessage;
+}>) {
+  const title = message.message_kind === 'queued_followup'
+    ? 'You queued a follow-up'
+    : message.message_kind === 'steering'
+      ? 'You added context'
+      : 'You';
+  return (
+    <li
+      className="cf-builder-activity-item"
+      data-builder-activity-card={title}
+      data-builder-activity-pending="true"
+      data-builder-activity-role="user"
+      data-builder-conversation-node="message"
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <UserRound className="size-3.5" />
+      </div>
+      <div className="cf-builder-activity-content min-w-0" data-builder-message-surface="bubble">
+        <p className="cf-builder-activity-body">{message.text}</p>
+      </div>
+    </li>
+  );
+}
+
+function BuilderTurnTailActions({
+  changes,
+  checkRunProfile,
+  checkRunStatus,
+  item,
+  onOpenCandidateChange,
+  onOpenCheckCommand,
+}: Readonly<{
+  changes: readonly BuilderSourceTreeChange[];
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
+  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>;
+  onOpenCandidateChange?: (change: BuilderSourceTreeChange) => void;
+  onOpenCheckCommand?: () => void;
+}>) {
+  const [copied, setCopied] = useState(false);
+  const messageText = item.assistant_message?.text ?? '';
+  const canCopy = messageText.trim().length > 0;
+  const hasWorkActions = changes.length > 0 || (checkRunProfile !== null && checkRunStatus !== null);
+
+  function copyMessage(): void {
+    if (!canCopy) return;
+    const writeText = navigator.clipboard?.writeText;
+    if (typeof writeText !== 'function') return;
+    void writeText.call(navigator.clipboard, messageText).then(() => {
+      setCopied(true);
+    }).catch(() => undefined);
+  }
+
+  return (
+    <div
+      className="cf-builder-turn-tail"
+      data-builder-turn-tail="true"
+      data-builder-turn-tail-result={item.result_kind}
+      data-builder-turn-tail-status={item.terminal_status}
+    >
+      <div className="cf-builder-turn-tail-bar" data-builder-message-actions="true">
+        <button
+          aria-label="Copy assistant response"
+          className="cf-builder-turn-tail-button"
+          data-builder-copy-run-message="true"
+          disabled={!canCopy}
+          onClick={copyMessage}
+          title="Copy assistant response"
+          type="button"
+        >
+          <Copy aria-hidden="true" className="size-3.5" />
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+        <span className="cf-builder-turn-tail-meta" data-builder-turn-tail-meta="true">
+          {completionLabel(item)}
+        </span>
+      </div>
+      {hasWorkActions ? (
+        <ol className="cf-builder-turn-tail-work-list" data-builder-turn-tail-work="true">
+          <ActivityCompletedActions
+            changes={changes}
+            checkRunProfile={checkRunProfile}
+            checkRunStatus={checkRunStatus}
+            onOpenCandidateChange={onOpenCandidateChange}
+            onOpenCheckCommand={onOpenCheckCommand}
+          />
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskConversationSeedPanel({ task }: Readonly<{ task: BuilderTaskConversationSeed }>) {
+  const waitingToStart = task.waiting_to_start;
+  return (
+    <section
+      aria-label="Task conversation start"
+      className="cf-builder-activity-panel cf-builder-chat-flow-surface"
+      data-builder-task-conversation-seed={task.task_address_id}
+    >
+      <div className="cf-builder-activity-body-wrap">
+        <ol className="cf-builder-activity-list">
+          <li
+            className="cf-builder-activity-item"
+            data-builder-activity-role="user"
+            data-builder-task-seed-message="true"
+          >
+            <div className="cf-builder-activity-icon" aria-hidden="true">
+              <UserRound className="size-3.5" />
+            </div>
+            <div
+              className="cf-builder-activity-content min-w-0"
+              data-builder-message-surface="bubble"
+            >
+              <p className="cf-builder-activity-body">{task.goal}</p>
+            </div>
+          </li>
+          <li
+            className="cf-builder-activity-item"
+            data-builder-activity-role="status"
+            data-builder-task-seed-status={waitingToStart ? 'draft' : 'active'}
+          >
+            <div className="cf-builder-activity-icon" aria-hidden="true">
+              <Circle className="size-3.5" />
+            </div>
+            <div className="cf-builder-activity-content min-w-0" data-builder-message-surface="status">
+              <div className="cf-builder-activity-title">{waitingToStart ? 'Task ready' : 'Task context'}</div>
+              <p className="cf-builder-activity-body">
+                {waitingToStart
+                  ? 'Created from the Agent workbench. It has not started yet.'
+                  : 'This task has no recorded conversation activity yet.'}
+              </p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
   );
 }
 
@@ -1402,7 +2151,7 @@ function ActivityLiveOutputItem({
   liveOutput: BuilderLiveOutputSnapshot;
 }>) {
   const hasText = liveOutput.text.length > 0;
-  const waitingText = liveOutput.waiting_text ?? "I'm working on this...";
+  const waitingText = liveOutput.waiting_text ?? '正在处理当前任务';
   return (
     <li
       className="cf-builder-activity-item"
@@ -1411,55 +2160,65 @@ function ActivityLiveOutputItem({
       data-builder-live-output="true"
       data-builder-live-output-state={hasText ? 'text' : 'waiting'}
     >
-      <div className="cf-builder-activity-icon" aria-hidden="true">
-        <Bot className="size-3.5" />
-      </div>
       <div
         className="cf-builder-activity-content min-w-0"
         data-builder-message-surface="plain"
       >
-        <div className="cf-builder-activity-title">Assistant</div>
-        <p className="cf-builder-activity-body">
-          {hasText ? liveOutput.text : waitingText}
-          <span className="cf-builder-live-output-cursor" aria-hidden="true" />
+        <p
+          className="cf-builder-live-activity-status"
+          data-builder-live-activity="true"
+          role="status"
+        >
+          <RefreshCw aria-hidden="true" className="cf-builder-activity-spinner size-3.5" />
+          <span>{waitingText}</span>
         </p>
+        <div className="cf-builder-live-output-text" aria-live="polite">
+          {hasText ? (
+            <BuilderConversationMarkdown source={liveOutput.text} />
+          ) : null}
+        </div>
       </div>
     </li>
   );
 }
 
-function ActivityWorkStatusItem({
-  entry,
-  projection,
+const subscribeToNoLiveOutput = () => () => undefined;
+const readNoLiveOutput = () => null;
+
+function remainingLiveOutput(
+  liveOutput: BuilderLiveOutputSnapshot | null,
+  committedPrefix: string,
+): BuilderLiveOutputSnapshot | null {
+  if (liveOutput === null || committedPrefix.length === 0) return liveOutput;
+  if (!liveOutput.text.startsWith(committedPrefix)) return liveOutput;
+  const remaining = liveOutput.text.slice(committedPrefix.length);
+  if (remaining.length === 0) return null;
+  return Object.freeze({ ...liveOutput, text: remaining });
+}
+
+function ActivityLiveOutputSlot({
+  committedPrefix,
+  fallback,
+  onVisibleFrame,
+  store,
 }: Readonly<{
-  entry: ActivityWorkStatusEntry;
-  projection: BuilderAgentActivityProjectionWire | null;
+  committedPrefix: string;
+  fallback: BuilderLiveOutputSnapshot | null;
+  onVisibleFrame?: () => void;
+  store: BuilderLiveOutputStore | null;
 }>) {
-  const current = projection?.current.turn_id === entry.turnId
-    && projection.current.run_id === entry.runId
-    ? projection.current
-    : null;
-  return (
-    <li
-      className="cf-builder-activity-item"
-      data-builder-activity-card="Assistant working"
-      data-builder-activity-role="status"
-      data-builder-work-status="true"
-      data-builder-work-phase={current?.phase}
-      data-builder-work-status-stage={entry.status}
-    >
-      <div className="cf-builder-activity-icon" aria-hidden="true">
-        <RefreshCw className="size-3.5" />
-      </div>
-      <div
-        className="cf-builder-activity-content min-w-0"
-        data-builder-message-surface="status"
-      >
-        <div className="cf-builder-activity-title">{current?.label ?? 'Assistant is working'}</div>
-        <p className="cf-builder-activity-body">{current?.summary ?? workStatusBody(entry.status)}</p>
-      </div>
-    </li>
+  const stored = useSyncExternalStore(
+    store?.subscribe ?? subscribeToNoLiveOutput,
+    store?.getSnapshot ?? readNoLiveOutput,
+    store?.getSnapshot ?? readNoLiveOutput,
   );
+  const liveOutput = remainingLiveOutput(store === null ? fallback : stored, committedPrefix);
+  const visible = shouldShowLiveOutput(liveOutput);
+  useLayoutEffect(() => {
+    if (!visible) return;
+    onVisibleFrame?.();
+  }, [liveOutput?.chunk_count, liveOutput?.request_id, liveOutput?.state, onVisibleFrame, visible]);
+  return visible ? <ActivityLiveOutputItem liveOutput={liveOutput} /> : null;
 }
 
 function ActivityProjectedStatusItem({
@@ -1476,7 +2235,7 @@ function ActivityProjectedStatusItem({
       data-builder-work-phase={projection.current.phase}
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
-        <RefreshCw className="size-3.5" />
+        <RefreshCw className="cf-builder-activity-spinner size-3.5" />
       </div>
       <div
         className="cf-builder-activity-content min-w-0"
@@ -1499,7 +2258,7 @@ function ActivitySavingVersionItem() {
       data-builder-work-phase="saving_version"
     >
       <div className="cf-builder-activity-icon" aria-hidden="true">
-        <RefreshCw className="size-3.5" />
+        <RefreshCw className="cf-builder-activity-spinner size-3.5" />
       </div>
       <div
         className="cf-builder-activity-content min-w-0"
@@ -1517,6 +2276,13 @@ function standaloneAgentActivity(
   entries: readonly ActivityEntry[],
 ): BuilderAgentActivityProjectionWire | null {
   if (projection === null || projection.current.status === 'complete') return null;
+  const completedRunShown = projection.current.status !== 'active' && entries.some((entry) => (
+    entry.entry_kind === 'item'
+    && entry.item.item_kind === 'run_completed'
+    && entry.item.turn_id === projection.current.turn_id
+    && entry.item.run_id === projection.current.run_id
+  ));
+  if (completedRunShown) return null;
   const alreadyShown = entries.some((entry) => (
     entry.entry_kind === 'work_status'
     && entry.turnId === projection.current.turn_id
@@ -1525,57 +2291,492 @@ function standaloneAgentActivity(
   return alreadyShown ? null : projection;
 }
 
-function ActivityCompletionSummaryView({
-  hasUnsavedDraft,
-  item,
-  progressStages,
-}: Readonly<{
-  hasUnsavedDraft: boolean;
-  item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>;
-  progressStages: readonly BuilderConversationRunProgressStage[];
-}>) {
-  const summary = completionSummary(item, hasUnsavedDraft);
-  const result = item.terminal_status === 'succeeded' ? item.result_kind : item.terminal_status;
+type RuntimeToolActivityItem = Extract<
+  BuilderConversationItem,
+  { item_kind: 'programming_runtime_tool_activity' }
+>;
+
+function RuntimeToolPresentationDetail({ item }: Readonly<{ item: RuntimeToolActivityItem }>) {
+  const detail = item.presentation_detail;
+  if (detail === null) return null;
+  if (detail.detail_kind === 'read') {
+    const lineRange = detail.returned_lines === 0
+      ? 'No lines returned'
+      : `Lines ${detail.first_line}-${detail.last_line} of ${detail.total_lines}`;
+    return (
+      <div className="cf-builder-tool-presentation-detail" data-builder-tool-detail="read">
+        <code>{detail.path}</code>
+        <span>{lineRange}{detail.language_hint === null ? '' : ` · ${detail.language_hint}`}</span>
+      </div>
+    );
+  }
+  if (detail.detail_kind === 'diff') {
+    return (
+      <div className="cf-builder-tool-presentation-detail" data-builder-tool-detail="diff">
+        <code>{detail.path}</code>
+        <span className="cf-builder-tool-diff-counts">
+          <b>+{detail.added_lines}</b>
+          <i>-{detail.deleted_lines}</i>
+        </span>
+      </div>
+    );
+  }
+  if (detail.detail_kind === 'command') {
+    const outcome = detail.exit_code === null
+      ? detail.status.replaceAll('_', ' ')
+      : `exit ${detail.exit_code}`;
+    const facts = [
+      outcome,
+      detail.duration_ms === 0 ? null : `${detail.duration_ms} ms`,
+      detail.truncated ? 'output truncated' : null,
+    ].filter((fact): fact is string => fact !== null);
+    return (
+      <div className="cf-builder-tool-presentation-detail" data-builder-tool-detail="command">
+        <code>{detail.command}</code>
+        <span>{facts.join(' · ')}</span>
+      </div>
+    );
+  }
+  const visibleMatches = detail.matches.slice(0, 6);
   return (
-    <dl
-      className="cf-builder-completion-summary"
-      data-builder-completion-result={result}
-      data-builder-completion-summary="true"
-    >
-      <div>
-        <dt>What happened</dt>
-        <dd>{summary.happened}</dd>
-      </div>
-      <div>
-        <dt>Changed</dt>
-        <dd>{summary.changed}</dd>
-      </div>
-      <div>
-        <dt>Next</dt>
-        <dd>{summary.next}</dd>
-      </div>
-      {progressStages.length > 0 ? (
-        <div data-builder-completion-steps="true">
-          <dt>Recorded steps</dt>
-          <dd>
-            <ol className="cf-builder-completion-steps">
-              {progressStages.map((stage, index) => (
-                <li key={`${stage}:${index}`}>{progressStepLabel(stage)}</li>
-              ))}
-            </ol>
-          </dd>
-        </div>
-      ) : null}
-    </dl>
+    <div className="cf-builder-tool-presentation-detail" data-builder-tool-detail="search">
+      <span>
+        {detail.matches.length} shown of {detail.total} {detail.total === 1 ? 'match' : 'matches'}
+        {detail.truncated ? ' · truncated' : ''}
+      </span>
+      {visibleMatches.length === 0 ? null : (
+        <ol className="cf-builder-tool-search-locations">
+          {visibleMatches.map((match, index) => (
+            <li key={`${match.path}:${match.line}:${match.column}:${index}`}>
+              <code>{match.path}</code>
+              {match.line > 0 ? <span>:{match.line}:{match.column}</span> : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 
-function ActivityPanel({
+function runtimeHistoryGroup(
+  item: RuntimeToolActivityItem,
+): 'file' | 'command' | 'browser' | 'read' | 'search' {
+  if (item.tool_kind === 'edit' || item.tool_kind === 'write') return 'file';
+  if (item.tool_kind === 'command') return 'command';
+  if (item.tool_kind === 'browser') return 'browser';
+  if (item.tool_kind === 'search') return 'search';
+  return 'read';
+}
+
+function runtimeHistoryGroupLabel(
+  kind: ReturnType<typeof runtimeHistoryGroup>,
+  count: number,
+): string {
+  if (kind === 'file') return `Edited ${count} files`;
+  if (kind === 'command') return `Ran ${count} commands`;
+  if (kind === 'browser') return `Ran ${count} browser actions`;
+  if (kind === 'search') return `Ran ${count} searches`;
+  return `Read ${count} files`;
+}
+
+type ResolveRuntimeToolAction = (
+  item: RuntimeToolActivityItem,
+) => (() => void) | null;
+
+function runtimeToolEvidenceActionLabel(item: RuntimeToolActivityItem): string {
+  if (item.presentation === 'terminal') return 'Inspect';
+  if (item.presentation === 'changes') return 'Open';
+  if (item.presentation === 'file') return 'Open';
+  if (item.presentation === 'search') return 'Inspect';
+  if (item.presentation === 'browser') return 'Open';
+  return 'Review';
+}
+
+function RuntimeToolEvidenceContent({
+  item,
+  action,
+}: Readonly<{
+  item: RuntimeToolActivityItem;
+  action: (() => void) | null;
+}>) {
+  const body = activityBody(item);
+  const hasDetail = body.length > 0 || item.presentation_detail !== null || action !== null;
+  const summary = (
+    <span className="cf-builder-tool-evidence-summary">
+      <strong className="cf-builder-tool-evidence-title">{activityTitle(item)}</strong>
+      {body.length > 0 ? <small className="cf-builder-tool-evidence-detail">{body}</small> : null}
+    </span>
+  );
+  if (!hasDetail) return summary;
+  return (
+    <details
+      className="cf-builder-tool-evidence-details"
+      data-builder-tool-evidence-details={item.presentation}
+    >
+      <summary>
+        <ChevronDown aria-hidden="true" className="size-3.5" />
+        {summary}
+        {action === null ? null : (
+          <button
+            className="cf-builder-tool-evidence-action"
+            data-builder-runtime-tool-open={item.presentation}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              action();
+            }}
+            type="button"
+          >
+            {runtimeToolEvidenceActionLabel(item)}
+          </button>
+        )}
+      </summary>
+      <div className="cf-builder-tool-evidence-body">
+        <RuntimeToolPresentationDetail item={item} />
+      </div>
+    </details>
+  );
+}
+
+function RuntimeHistoryAction({
+  item,
+  resolveAction,
+}: Readonly<{
+  item: RuntimeToolActivityItem;
+  resolveAction?: ResolveRuntimeToolAction;
+}>) {
+  const action = resolveAction?.(item) ?? null;
+  return (
+    <li
+      className="cf-builder-run-history-action cf-builder-tool-evidence-row"
+      data-builder-conversation-node="tool_evidence"
+      data-builder-runtime-tool-kind={item.tool_kind}
+      data-builder-tool-activity={item.state}
+    >
+      <ActivityGlyph item={item} />
+      <RuntimeToolEvidenceContent item={item} action={action} />
+    </li>
+  );
+}
+
+function RuntimeMainCheckAction({
+  checkRunProfile,
+  checkRunStatus,
+  onOpenCheckCommand,
+}: Readonly<{
+  checkRunProfile: BuilderCheckRunProfile;
+  checkRunStatus: BuilderDisplayedCheckStatus;
+  onOpenCheckCommand?: () => void;
+}>) {
+  return (
+    <li
+      className="cf-builder-run-history-action cf-builder-tool-evidence-row"
+      data-builder-conversation-node="tool_evidence"
+      data-builder-runtime-tool-kind="command"
+      data-builder-tool-activity={checkRunStatus.status === 'passed' ? 'completed' : 'failed'}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        <SquareTerminal className="size-3.5" />
+      </div>
+      <span className="cf-builder-tool-evidence-summary">
+        <strong className="cf-builder-tool-evidence-title">
+          {checkRunStatus.status === 'passed' ? 'Ran' : 'Tried'} {checkRunProfile.command_display}
+        </strong>
+        <small className="cf-builder-tool-evidence-detail">{checkRunStatus.summary}</small>
+        {typeof onOpenCheckCommand === 'function' ? (
+          <button
+            className="cf-builder-tool-evidence-action"
+            data-builder-runtime-tool-open="terminal"
+            onClick={onOpenCheckCommand}
+            type="button"
+          >
+            Inspect
+          </button>
+        ) : null}
+      </span>
+    </li>
+  );
+}
+
+function RuntimeHistoryGroup({
+  items,
+  kind,
+  resolveAction,
+}: Readonly<{
+  items: readonly RuntimeToolActivityItem[];
+  kind: ReturnType<typeof runtimeHistoryGroup>;
+  resolveAction?: ResolveRuntimeToolAction;
+}>) {
+  const representative = items.at(-1);
+  if (representative === undefined) return null;
+  if (items.length === 1) {
+    return <RuntimeHistoryAction item={representative} resolveAction={resolveAction} />;
+  }
+  return (
+    <li
+      className="cf-builder-run-history-action cf-builder-runtime-history-group cf-builder-tool-evidence-row"
+      data-builder-conversation-node="tool_evidence"
+      data-builder-runtime-tool-group={kind}
+    >
+      <ActivityGlyph item={representative} />
+      <details className="cf-builder-run-history" data-builder-runtime-history-details={kind}>
+        <summary>
+          <ChevronDown aria-hidden="true" className="size-3.5" />
+          <span>{runtimeHistoryGroupLabel(kind, items.length)}</span>
+        </summary>
+        <ol className="cf-builder-run-history-list">
+          {items.map((item) => (
+            <RuntimeHistoryAction
+              item={item}
+              key={item.tool_call_id}
+              resolveAction={resolveAction}
+            />
+          ))}
+        </ol>
+      </details>
+    </li>
+  );
+}
+
+function ActivityRunHistory({
+  checkRunProfile,
+  checkRunStatus,
+  entry,
+  includeMainCheckFallback,
+  onOpenCheckCommand,
+  resolveRuntimeToolAction,
+}: Readonly<{
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
+  entry: ActivityRunHistoryEntry;
+  includeMainCheckFallback: boolean;
+  onOpenCheckCommand?: () => void;
+  resolveRuntimeToolAction?: ResolveRuntimeToolAction;
+}>) {
+  const runtimeItems = entry.items.filter(
+    (item): item is RuntimeToolActivityItem => item.item_kind === 'programming_runtime_tool_activity',
+  );
+  const legacyItems = entry.items.filter(
+    (item) => item.item_kind !== 'programming_runtime_tool_activity',
+  );
+  const runtimeGroups: Array<{
+    kind: ReturnType<typeof runtimeHistoryGroup>;
+    items: RuntimeToolActivityItem[];
+  }> = [];
+  for (const item of runtimeItems) {
+    const kind = runtimeHistoryGroup(item);
+    const previous = runtimeGroups.at(-1);
+    if (previous?.kind === kind) previous.items.push(item);
+    else runtimeGroups.push({ kind, items: [item] });
+  }
+  const showMainCheckFallback = includeMainCheckFallback
+    && checkRunProfile !== null
+    && checkRunStatus !== null
+    && !runtimeItems.some((item) => item.tool_kind === 'command');
+  return (
+    <>
+      {runtimeGroups.map(({ kind, items }, index) => (
+        <RuntimeHistoryGroup
+          items={items}
+          key={`${kind}:${index}`}
+          kind={kind}
+          resolveAction={resolveRuntimeToolAction}
+        />
+      ))}
+      {showMainCheckFallback ? (
+        <RuntimeMainCheckAction
+          checkRunProfile={checkRunProfile}
+          checkRunStatus={checkRunStatus}
+          onOpenCheckCommand={onOpenCheckCommand}
+        />
+      ) : null}
+      {legacyItems.length === 0 ? null : (
+        <li
+          className="cf-builder-activity-item cf-builder-run-history-item"
+          data-builder-run-history-item="true"
+        >
+          <div className="cf-builder-activity-icon" aria-hidden="true">
+            <History className="size-3.5" />
+          </div>
+          <details className="cf-builder-run-history" data-builder-run-history="true">
+            <summary data-builder-run-history-toggle="true">
+              <ChevronDown aria-hidden="true" className="size-3.5" />
+              <span>Completed work</span>
+              <span className="cf-builder-completion-work-count">
+                {legacyItems.length} {legacyItems.length === 1 ? 'action' : 'actions'}
+              </span>
+            </summary>
+            <ol className="cf-builder-run-history-list">
+              {legacyItems.map((item) => (
+            <li
+              className="cf-builder-run-history-action"
+              data-builder-tool-activity={item.item_kind === 'tool_call_requested'
+                ? 'requested'
+                : item.item_kind === 'tool_call_result_recorded'
+                  ? item.result.status
+                  : undefined}
+              key={item.sequence}
+            >
+              <ActivityGlyph item={item} />
+              <span>
+                <strong>{activityTitle(item)}</strong>
+                <small>{activityBody(item)}</small>
+              </span>
+            </li>
+              ))}
+            </ol>
+          </details>
+        </li>
+      )}
+    </>
+  );
+}
+
+function ActivityCompletedActions({
+  changes,
+  checkRunProfile,
+  checkRunStatus,
+  onOpenCandidateChange,
+  onOpenCheckCommand,
+}: Readonly<{
+  changes: readonly BuilderSourceTreeChange[];
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
+  onOpenCandidateChange?: (change: BuilderSourceTreeChange) => void;
+  onOpenCheckCommand?: () => void;
+}>) {
+  const singleChange = changes.length === 1 ? changes[0] : null;
+  return (
+    <>
+      {singleChange === null ? null : (
+        <li
+          className="cf-builder-activity-item cf-builder-completed-action"
+          data-builder-completed-action-group="file"
+          data-builder-change-kind={singleChange.change_kind}
+        >
+          <div className="cf-builder-activity-icon" aria-hidden="true">
+            <FileCode2 className="size-3.5" />
+          </div>
+          <div data-builder-completion-candidate-change={singleChange.path}>
+            <button
+              className="cf-builder-completion-work-action"
+              onClick={() => onOpenCandidateChange?.(singleChange)}
+              type="button"
+            >
+              <strong>{singleChange.change_kind === 'added' ? 'Added' : singleChange.change_kind === 'deleted' ? 'Deleted' : 'Edited'} {singleChange.path}</strong>
+              <ChangeLineDelta change={singleChange} />
+            </button>
+          </div>
+        </li>
+      )}
+      {changes.length <= 1 ? null : (
+        <li
+          className="cf-builder-activity-item cf-builder-completed-action-group"
+          data-builder-completed-action-group="file"
+        >
+          <div className="cf-builder-activity-icon" aria-hidden="true">
+            <FileCode2 className="size-3.5" />
+          </div>
+          <details className="cf-builder-completed-actions" data-builder-completed-actions="file" open>
+            <summary data-builder-completed-actions-toggle="file">
+              <ChevronDown aria-hidden="true" className="size-3.5" />
+              <span>Edited {changes.length} files</span>
+            </summary>
+            <ol className="cf-builder-completion-work-list">
+              {changes.map((change) => (
+                <li
+                  data-builder-change-kind={change.change_kind}
+                  data-builder-completion-candidate-change={change.path}
+                  key={change.path}
+                >
+                  <CheckCircle2 aria-hidden="true" className="size-3.5" />
+                  <button
+                    className="cf-builder-completion-work-action"
+                    onClick={() => onOpenCandidateChange?.(change)}
+                    type="button"
+                  >
+                    <strong>{change.change_kind === 'added' ? 'Added' : change.change_kind === 'deleted' ? 'Deleted' : 'Edited'} {change.path}</strong>
+                    <ChangeLineDelta change={change} />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </details>
+        </li>
+      )}
+      {checkRunProfile === null || checkRunStatus === null ? null : (
+        <li
+          className="cf-builder-activity-item cf-builder-completed-action"
+          data-builder-completed-action-group="command"
+          data-builder-command-status={checkRunStatus.status}
+        >
+          <div className="cf-builder-activity-icon" aria-hidden="true">
+            <SquareTerminal className="size-3.5" />
+          </div>
+          <div data-builder-completion-command={checkRunProfile.command_display}>
+            <button
+              className="cf-builder-completion-work-action"
+              onClick={onOpenCheckCommand}
+              type="button"
+            >
+              <strong>{checkRunStatus.status === 'passed' ? 'Ran' : 'Tried'} {checkRunProfile.command_display}</strong>
+              <small>{checkRunStatus.summary}</small>
+            </button>
+          </div>
+        </li>
+      )}
+    </>
+  );
+}
+
+function ActivityWorkspaceMaterializationSummary({
+  materialization,
+}: Readonly<{
+  materialization: BuilderConversationWorkspaceMaterialization;
+}>) {
+  if (materialization.status === 'not_recorded') return null;
+  const synced = materialization.status === 'materialized';
+  const title = synced ? 'Project folder updated' : materialization.label;
+  const detail = synced
+    ? 'Latest draft files are available in the project folder.'
+    : materialization.detail;
+  return (
+    <li
+      className="cf-builder-activity-item cf-builder-workspace-materialization-summary"
+      data-builder-workspace-materialization={materialization.status}
+    >
+      <div className="cf-builder-activity-icon" aria-hidden="true">
+        {synced ? <CheckCircle2 className="size-3.5" /> : <AlertCircle className="size-3.5" />}
+      </div>
+      <div className="cf-builder-activity-content min-w-0">
+        <div className="cf-builder-activity-title">{title}</div>
+        <p className="cf-builder-activity-body">{detail}</p>
+      </div>
+    </li>
+  );
+}
+
+const ActivityPanel = memo(function ActivityPanel({
+  canUndoDraft,
+  candidateChanges,
+  checkRunProfile,
+  checkRunStatus,
+  currentDraftId,
   hasUnsavedDraft,
   liveOutput,
+  liveOutputStore,
+  pendingUserMessages,
+  onLiveOutputFrame,
+  onOpenCandidateChange,
+  onOpenCheckCommand,
+  onOpenRuntimeToolCommand,
+  onOpenRuntimeToolBrowser,
+  onOpenRuntimeToolFile,
+  onOpenHistory,
   snapshot,
   onRefresh,
   onReviewPlan,
+  onUndoDraft,
   planReviewBusy,
   planReviewFailed,
   planReviewRecorded,
@@ -1584,28 +2785,162 @@ function ActivityPanel({
   savingVersion,
 }: Readonly<{
   canReviewPlan: boolean;
+  canUndoDraft: boolean;
+  candidateChanges: readonly BuilderSourceTreeChange[];
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
+  currentDraftId: string | null;
   hasUnsavedDraft: boolean;
   liveOutput: BuilderLiveOutputSnapshot | null;
-  snapshot: BuilderConversationControllerSnapshot | null;
+  liveOutputStore: BuilderLiveOutputStore | null;
+  pendingUserMessages: readonly BuilderPendingUserMessage[];
+  onLiveOutputFrame?: () => void;
+  onOpenCandidateChange?: (change: BuilderSourceTreeChange) => void;
+  onOpenCheckCommand?: () => void;
+  onOpenRuntimeToolCommand?: (item: RuntimeToolActivityItem) => void;
+  onOpenRuntimeToolBrowser?: () => void;
+  onOpenRuntimeToolFile?: (
+    request: Readonly<{ run_id: string; tool_call_id: string }>,
+  ) => Promise<boolean>;
+  onOpenHistory?: () => void;
   onRefresh?: () => Promise<unknown> | void;
   onReviewPlan?: (request: BuilderPlanReviewRequest) => Promise<unknown> | void;
+  onUndoDraft?: () => void;
   planReviewBusy: boolean;
   planReviewFailed: boolean;
   planReviewRecorded: boolean;
   pendingPlanReview: BuilderPlanReviewRequest | null;
   savingVersion: boolean;
+  snapshot: BuilderConversationControllerSnapshot | null;
 }>) {
+  useLayoutEffect(() => {
+    incrementBuilderPerformance('renderer.activity.commit_count');
+  });
+  useEffect(() => {
+    incrementBuilderPerformance('renderer.activity.mount_count');
+    return () => {
+      incrementBuilderPerformance('renderer.activity.unmount_count');
+    };
+  }, []);
   const entries = activityEntries(snapshot);
-  const visibleEntries = entries;
+  const durableUserMessages = snapshot?.conversation?.state === 'ready'
+    ? snapshot.conversation.conversation.items
+      .map(builderDurableUserMessage)
+      .filter((message): message is BuilderDurableUserMessage => message !== null)
+    : [];
+  const visiblePendingUserMessages = pendingUserMessages.filter((message) => {
+    return !durableUserMessages.some((durable) => (
+      builderPendingUserMessageMatchesDurable(message, durable)
+    ));
+  });
+  const latestConversationRunId = snapshot?.conversation?.state === 'ready'
+    ? [...snapshot.conversation.conversation.items]
+      .reverse()
+      .find((item) => item.item_kind === 'run_started')?.run_id ?? null
+    : null;
+  const committedRuntimeOutputPrefix = liveOutput === null
+    || snapshot?.conversation?.state !== 'ready'
+    || latestConversationRunId === null
+    ? ''
+    : snapshot.conversation.conversation.items
+      .filter((item): item is Extract<BuilderConversationItem, {
+        item_kind: 'programming_runtime_assistant_message';
+      }> => (
+        item.item_kind === 'programming_runtime_assistant_message'
+        && item.run_id === latestConversationRunId
+      ))
+      .map((item) => item.message.text)
+      .join('');
+  const runtimeFactRuns = new Set(
+    snapshot?.conversation?.state === 'ready'
+      ? snapshot.conversation.conversation.items
+        .filter((item) => item.item_kind === 'programming_runtime_tool_activity')
+        .map((item) => `${item.turn_id}:${item.run_id}`)
+      : [],
+  );
+  const currentDraftCompletion = snapshot?.conversation?.state === 'ready'
+    ? [...snapshot.conversation.conversation.items]
+      .reverse()
+      .find((item): item is Extract<BuilderConversationItem, { item_kind: 'run_completed' }> => (
+        item.item_kind === 'run_completed'
+        && item.candidate?.draft_id === currentDraftId
+      ))
+    : undefined;
+  const currentDraftCompletionKey = currentDraftCompletion === undefined
+    ? null
+    : `${currentDraftCompletion.turn_id}:${currentDraftCompletion.run_id}`;
+  const planReviewDecisions = inlinePlanReviewDecisions(snapshot);
+  const hasLiveOutput = liveOutput !== null;
+  const visibleEntries = entries.filter((entry) => (
+    entry.entry_kind !== 'work_status'
+    && (
+      entry.entry_kind !== 'item'
+      || entry.item.item_kind !== 'plan_reviewed'
+      || !planReviewDecisions.has(planReviewKey(entry.item.turn_id, entry.item.run_id))
+    )
+    && (
+      !hasLiveOutput
+      || entry.entry_kind !== 'item'
+      || entry.item.item_kind !== 'programming_runtime_status'
+      || (entry.item.status_kind !== 'reasoning' && entry.item.status_kind !== 'activity')
+    )
+  ));
   const agentActivityProjection = currentAgentActivity(snapshot);
-  const currentAgentActivityStatus = standaloneAgentActivity(agentActivityProjection, visibleEntries);
-  const showLiveOutput = shouldShowLiveOutput(liveOutput, visibleEntries);
+  const currentAgentActivityStatus = agentActivityProjection?.current.phase === 'blocked'
+    ? standaloneAgentActivity(agentActivityProjection, visibleEntries)
+    : null;
   const message = activityMessage(snapshot);
+  const transcriptRestored = isTranscriptRestoredConversation(snapshot);
   const canRefresh = snapshot !== null
     && snapshot.project_id !== null
     && !snapshot.busy
     && typeof onRefresh === 'function';
   const showRefresh = canRefresh && snapshot.status === 'stale';
+  const resolveRuntimeToolAction: ResolveRuntimeToolAction = (item) => {
+    if (
+      item.tool_kind === 'read'
+      || item.tool_kind === 'search'
+      || item.tool_kind === 'edit'
+      || item.tool_kind === 'write'
+    ) {
+      const path = item.target_label;
+      if (path === null) return null;
+      const change = candidateChanges.find((candidateChange) => candidateChange.path === path);
+      if (typeof onOpenRuntimeToolFile === 'function') {
+        return () => {
+          void (async () => {
+            const opened = await onOpenRuntimeToolFile({
+              run_id: item.run_id,
+              tool_call_id: item.tool_call_id,
+            });
+            if (!opened && change !== undefined && typeof onOpenCandidateChange === 'function') {
+              onOpenCandidateChange(change);
+            }
+          })();
+        };
+      }
+      if (change !== undefined && typeof onOpenCandidateChange === 'function') {
+        return () => onOpenCandidateChange(change);
+      }
+      return null;
+    }
+    if (
+      item.tool_kind === 'browser'
+      && typeof onOpenRuntimeToolBrowser === 'function'
+    ) return onOpenRuntimeToolBrowser;
+    if (
+      item.tool_kind === 'command'
+      && item.target_label !== null
+      && item.check_result !== null
+      && typeof onOpenRuntimeToolCommand === 'function'
+    ) return () => onOpenRuntimeToolCommand(item);
+    if (
+      item.tool_kind === 'command'
+      && typeof onOpenCheckCommand === 'function'
+      && checkRunProfile?.command_display === item.target_label
+    ) return onOpenCheckCommand;
+    return null;
+  };
   return (
     <section
       aria-label="Project conversation"
@@ -1631,43 +2966,100 @@ function ActivityPanel({
         </header>
       ) : null}
       <div className="cf-builder-activity-body-wrap">
-        {snapshot?.status === 'refreshing' && visibleEntries.length === 0 && !showLiveOutput && !savingVersion ? (
+        {snapshot?.status === 'refreshing'
+        && visibleEntries.length === 0
+        && visiblePendingUserMessages.length === 0
+        && !hasLiveOutput
+        && !savingVersion ? (
           <p className="cf-builder-activity-status" role="status">Refreshing activity...</p>
         ) : null}
-        {visibleEntries.length === 0 && !showLiveOutput && !savingVersion && message !== null ? (
+        {transcriptRestored ? (
+          <p
+            className="cf-builder-activity-status cf-builder-activity-recovery-status"
+            data-builder-transcript-recovery-status="true"
+            role="status"
+          >
+            Showing saved transcript. Live activity is unavailable.
+          </p>
+        ) : null}
+        {visibleEntries.length === 0
+        && visiblePendingUserMessages.length === 0
+        && !hasLiveOutput
+        && !savingVersion
+        && message !== null ? (
           <div className="cf-builder-empty cf-builder-activity-empty flex min-h-32 items-center justify-center border border-dashed px-3 text-center text-sm">
             {message}
           </div>
         ) : (
           <ol className="cf-builder-activity-list">
-            {visibleEntries.map((entry) => (
-              entry.entry_kind === 'work_status' ? (
-                <ActivityWorkStatusItem
+            {visibleEntries.map((entry) => {
+              if (entry.entry_kind === 'work_status') return null;
+              if (entry.entry_kind === 'run_history') return (
+                <ActivityRunHistory
+                  checkRunProfile={checkRunProfile}
+                  checkRunStatus={checkRunStatus}
                   entry={entry}
+                  includeMainCheckFallback={entry.runKey === currentDraftCompletionKey}
                   key={entry.key}
-                  projection={agentActivityProjection}
+                  onOpenCheckCommand={onOpenCheckCommand}
+                  resolveRuntimeToolAction={resolveRuntimeToolAction}
                 />
-              ) : (
-                <ActivityItem
-                  canReviewPlan={canReviewPlan}
-                  hasUnsavedDraft={hasUnsavedDraft}
-                  item={entry.item}
-                  key={entry.item.sequence}
-                  onReviewPlan={onReviewPlan}
-                  planReviewBusy={planReviewBusy}
-                  planReviewFailed={planReviewFailed}
-                  planReviewRecorded={planReviewRecorded}
-                  pendingPlanReview={pendingPlanReview}
-                  progressStages={entry.progressStages}
-                />
-              )
+              );
+              const isCurrentDraftCompletion = entry.item.item_kind === 'run_completed'
+                && entry.item.candidate?.draft_id === currentDraftId;
+              const hasRuntimeFacts = entry.item.item_kind === 'run_completed'
+                && runtimeFactRuns.has(`${entry.item.turn_id}:${entry.item.run_id}`);
+              return (
+                <Fragment key={entry.key}>
+                  <ActivityItem
+                    canUndoDraft={canUndoDraft}
+                    canReviewPlan={canReviewPlan}
+                    candidateChanges={candidateChanges}
+                    checkRunProfile={checkRunProfile}
+                    checkRunStatus={checkRunStatus}
+                    hasUnsavedDraft={hasUnsavedDraft}
+                    hasRuntimeFacts={hasRuntimeFacts}
+                    isCurrentDraftCompletion={isCurrentDraftCompletion}
+                    item={entry.item}
+                    onOpenCandidateChange={onOpenCandidateChange}
+                    onOpenCheckCommand={onOpenCheckCommand}
+                    onOpenHistory={onOpenHistory}
+                    onReviewPlan={onReviewPlan}
+                    onUndoDraft={onUndoDraft}
+                    planReviewBusy={planReviewBusy}
+                    planReviewFailed={planReviewFailed}
+                    planReviewRecorded={planReviewRecorded}
+                    pendingPlanReview={pendingPlanReview}
+                    resolveRuntimeToolAction={resolveRuntimeToolAction}
+                    planReviewDecision={entry.item.item_kind === 'run_completed'
+                      && entry.item.result_kind === 'plan'
+                      ? planReviewDecisions.get(planReviewKey(entry.item.turn_id, entry.item.run_id)) ?? null
+                      : null}
+                  />
+                  {isCurrentDraftCompletion && entry.item.item_kind === 'run_completed'
+                  && entry.item.candidate !== null ? (
+                    <ActivityWorkspaceMaterializationSummary
+                      materialization={entry.item.candidate.workspace_materialization}
+                    />
+                    ) : null}
+                </Fragment>
+              );
+            })}
+            {visiblePendingUserMessages.map((pending) => (
+              <PendingUserMessageItem key={pending.client_id} message={pending} />
             ))}
             {currentAgentActivityStatus !== null ? (
               <ActivityProjectedStatusItem projection={currentAgentActivityStatus} />
             ) : null}
             {savingVersion ? <ActivitySavingVersionItem /> : null}
-            {showLiveOutput ? (
-              <ActivityLiveOutputItem liveOutput={liveOutput} />
+            {hasLiveOutput ? (
+              <ActivityLiveOutputSlot
+                committedPrefix={committedRuntimeOutputPrefix}
+                fallback={liveOutput}
+                key="active-live-output"
+                onVisibleFrame={onLiveOutputFrame}
+                store={liveOutputStore}
+              />
             ) : null}
           </ol>
         )}
@@ -1679,6 +3071,740 @@ function ActivityPanel({
       </div>
     </section>
   );
+}, (previous, current) => {
+  const snapshotChanged = previous.snapshot !== current.snapshot;
+  const candidateChangesChanged = previous.candidateChanges !== current.candidateChanges;
+  const liveOutputChanged = previous.liveOutput !== current.liveOutput;
+  const otherStateChanged = (
+    previous.canReviewPlan !== current.canReviewPlan
+    || previous.canUndoDraft !== current.canUndoDraft
+    || previous.checkRunProfile !== current.checkRunProfile
+    || !sameDisplayedCheckStatus(previous.checkRunStatus, current.checkRunStatus)
+    || previous.currentDraftId !== current.currentDraftId
+    || previous.hasUnsavedDraft !== current.hasUnsavedDraft
+    || previous.liveOutputStore !== current.liveOutputStore
+    || previous.pendingUserMessages !== current.pendingUserMessages
+    || previous.planReviewBusy !== current.planReviewBusy
+    || previous.planReviewFailed !== current.planReviewFailed
+    || previous.planReviewRecorded !== current.planReviewRecorded
+    || previous.pendingPlanReview !== current.pendingPlanReview
+    || previous.savingVersion !== current.savingVersion
+  );
+  if (snapshotChanged) {
+    incrementBuilderPerformance('renderer.activity.render_reason.snapshot');
+  }
+  if (candidateChangesChanged) {
+    incrementBuilderPerformance('renderer.activity.render_reason.candidate_changes');
+  }
+  if (liveOutputChanged) {
+    incrementBuilderPerformance('renderer.activity.render_reason.live_output');
+  }
+  if (otherStateChanged) {
+    incrementBuilderPerformance('renderer.activity.render_reason.other_state');
+  }
+  return previous.canReviewPlan === current.canReviewPlan
+  && previous.canUndoDraft === current.canUndoDraft
+  && previous.candidateChanges === current.candidateChanges
+  && previous.checkRunProfile === current.checkRunProfile
+  && sameDisplayedCheckStatus(previous.checkRunStatus, current.checkRunStatus)
+  && previous.currentDraftId === current.currentDraftId
+  && previous.hasUnsavedDraft === current.hasUnsavedDraft
+  && previous.liveOutput === current.liveOutput
+  && previous.liveOutputStore === current.liveOutputStore
+  && previous.pendingUserMessages === current.pendingUserMessages
+  && previous.planReviewBusy === current.planReviewBusy
+  && previous.planReviewFailed === current.planReviewFailed
+  && previous.planReviewRecorded === current.planReviewRecorded
+  && previous.pendingPlanReview === current.pendingPlanReview
+  && previous.savingVersion === current.savingVersion
+  && previous.snapshot === current.snapshot;
+});
+
+function AgentTaskProposalActions({
+  action,
+  disabled,
+  onCreateProject,
+  onDecide,
+  onOpenTask,
+  projectCatalogSnapshot,
+}: Readonly<{
+  action: BuilderAgentWorkbenchTaskProposalAction;
+  disabled: boolean;
+  onCreateProject?: (proposalId: string, objective: string) => Promise<unknown> | void;
+  onDecide?: (
+    proposalId: string,
+    operation: 'approve_existing_project' | 'reject',
+    projectId: string | null,
+  ) => Promise<unknown> | void;
+  onOpenTask?: (
+    projectId: string,
+    taskAddressId: string,
+    seed?: BuilderTaskConversationSeed | null,
+  ) => void;
+  projectCatalogSnapshot?: BuilderProjectCatalogSnapshot;
+}>) {
+  const projects = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const project of projectCatalogSnapshot?.workspaceProjects ?? []) {
+      byId.set(project.project_id, project.title);
+    }
+    for (const project of projectCatalogSnapshot?.projects ?? []) {
+      byId.set(project.project_id, project.title);
+    }
+    return [...byId].map(([projectId, title]) => ({ projectId, title }));
+  }, [projectCatalogSnapshot]);
+  const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.projectId ?? '');
+  const effectiveSelectedProjectId = projects.some(
+    (project) => project.projectId === selectedProjectId,
+  ) ? selectedProjectId : (projects[0]?.projectId ?? '');
+
+  if (action.status === 'rejected') {
+    return <p className="cf-builder-agent-task-proposal-state">Dismissed</p>;
+  }
+  if (action.status === 'materialized') {
+    return action.project_id !== null && action.task_address_id !== null && typeof onOpenTask === 'function' ? (
+      <button
+        className="cf-builder-secondary-button cf-builder-agent-task-proposal-open"
+        data-builder-agent-task-proposal-open="true"
+        onClick={() => onOpenTask(
+          action.project_id!,
+          action.task_address_id!,
+          taskConversationSeedFromProposalAction(action),
+        )}
+        type="button"
+      >
+        Open task
+        <ArrowRight aria-hidden="true" className="size-3.5" />
+      </button>
+    ) : <p className="cf-builder-agent-task-proposal-state">Task created</p>;
+  }
+  return (
+    <div
+      className="cf-builder-agent-task-proposal-actions"
+      data-builder-agent-task-proposal-actions="true"
+    >
+      {projects.length > 0 ? (
+        <label className="cf-builder-agent-task-proposal-project">
+          <span>Project</span>
+          <select
+            aria-label="Project for task proposal"
+            disabled={disabled}
+            onChange={(event) => setSelectedProjectId(event.target.value)}
+            value={effectiveSelectedProjectId}
+          >
+            {projects.map((project) => (
+              <option key={project.projectId} value={project.projectId}>{project.title}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <div className="cf-builder-agent-task-proposal-commands">
+        {projects.length > 0 && typeof onDecide === 'function' ? (
+          <button
+            className="cf-builder-primary-button"
+            data-builder-agent-task-proposal-create-task="true"
+            disabled={disabled || effectiveSelectedProjectId.length === 0}
+            onClick={() => { void onDecide(action.proposal_id, 'approve_existing_project', effectiveSelectedProjectId); }}
+            type="button"
+          >
+            Create task
+          </button>
+        ) : null}
+        {typeof onCreateProject === 'function' ? (
+          <button
+            className="cf-builder-secondary-button"
+            data-builder-agent-task-proposal-new-project="true"
+            disabled={disabled}
+            onClick={() => { void onCreateProject(action.proposal_id, action.objective); }}
+            type="button"
+          >
+            <FolderOpen aria-hidden="true" className="size-3.5" />
+            New project
+          </button>
+        ) : null}
+        {typeof onDecide === 'function' ? (
+          <button
+            className="cf-builder-agent-task-proposal-dismiss"
+            data-builder-agent-task-proposal-dismiss="true"
+            disabled={disabled}
+            onClick={() => { void onDecide(action.proposal_id, 'reject', null); }}
+            type="button"
+          >
+            Dismiss
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AgentWorkbenchPanel({
+  actionsDisabled,
+  liveOutput,
+  liveOutputStore,
+  onLiveOutputFrame,
+  onRefresh,
+  onUpdateMessageState,
+  onDecideTaskProposal,
+  onCreateProjectForTaskProposal,
+  onOpenTaskProposal,
+  projectCatalogSnapshot,
+  snapshot,
+}: Readonly<{
+  actionsDisabled: boolean;
+  onRefresh?: () => Promise<unknown> | void;
+  onUpdateMessageState?: (
+    messageId: string,
+    operation: BuilderWorkbenchMessageStateOperation,
+  ) => Promise<unknown> | void;
+  onDecideTaskProposal?: (
+    proposalId: string,
+    operation: 'approve_existing_project' | 'reject',
+    projectId: string | null,
+  ) => Promise<unknown> | void;
+  onCreateProjectForTaskProposal?: (proposalId: string, objective: string) => Promise<unknown> | void;
+  onOpenTaskProposal?: (
+    projectId: string,
+    taskAddressId: string,
+    seed?: BuilderTaskConversationSeed | null,
+  ) => void;
+  projectCatalogSnapshot?: BuilderProjectCatalogSnapshot;
+  snapshot?: BuilderAgentWorkbenchSnapshot;
+  liveOutput?: BuilderLiveOutputSnapshot | null;
+  liveOutputStore?: BuilderLiveOutputStore | null;
+  onLiveOutputFrame?: () => void;
+}>) {
+  const projection = snapshot?.projection ?? null;
+  type WorkbenchFamily = 'conversation' | 'proposal' | 'result' | 'status';
+  const [selectedFamilies, setSelectedFamilies] = useState<ReadonlySet<WorkbenchFamily>>(
+    () => new Set(),
+  );
+  const [attentionOnly, setAttentionOnly] = useState(false);
+  const unarchivedItems = projection?.stream.items.filter((item) => !item.state.archived) ?? [];
+  const items = unarchivedItems.filter((item) => {
+    const familyMatches = selectedFamilies.size === 0
+      || selectedFamilies.has(item.presentation_family as WorkbenchFamily);
+    const attentionMatches = !attentionOnly
+      || item.state.unread
+      || item.attention === 'action_required'
+      || item.attention === 'urgent';
+    return familyMatches && attentionMatches;
+  });
+  const visibleMessageIds = new Set(items.map((item) => item.message_id));
+  const hiddenAttentionCount = unarchivedItems.filter((item) => (
+    !visibleMessageIds.has(item.message_id)
+    && (item.state.unread || item.attention === 'action_required' || item.attention === 'urgent')
+  )).length;
+  const unavailable = snapshot?.status === 'unavailable' || snapshot?.status === 'stale';
+  const filterOptions = [
+    { family: 'conversation', label: 'Conversation' },
+    { family: 'proposal', label: 'Proposals' },
+    { family: 'result', label: 'Results' },
+    { family: 'status', label: 'Status' },
+  ] as const;
+  function toggleFamily(family: WorkbenchFamily): void {
+    setSelectedFamilies((current) => {
+      if (current.size === 0) return new Set([family]);
+      const next = new Set(current);
+      if (next.has(family)) next.delete(family);
+      else next.add(family);
+      return next;
+    });
+  }
+  return (
+    <section
+      aria-label="Agent Workbench conversation"
+      className="cf-builder-agent-workbench-stream"
+      data-builder-agent-workbench-stream="true"
+      data-builder-agent-workbench-status={snapshot?.status ?? 'unavailable'}
+    >
+      {projection !== null ? (
+        <div
+          aria-label="Filter Agent messages"
+          className="cf-builder-agent-workbench-filters"
+          data-builder-agent-workbench-filters="true"
+          role="group"
+        >
+          <button
+            aria-pressed={selectedFamilies.size === 0 && !attentionOnly}
+            data-builder-agent-workbench-filter="all"
+            onClick={() => {
+              setSelectedFamilies(new Set());
+              setAttentionOnly(false);
+            }}
+            type="button"
+          >
+            All
+          </button>
+          {filterOptions.map((option) => (
+            <button
+              aria-pressed={selectedFamilies.has(option.family)}
+              data-builder-agent-workbench-filter={option.family}
+              key={option.family}
+              onClick={() => toggleFamily(option.family)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+          <button
+            aria-pressed={attentionOnly}
+            data-builder-agent-workbench-filter="attention"
+            onClick={() => setAttentionOnly((current) => !current)}
+            type="button"
+          >
+            Needs attention
+          </button>
+          {hiddenAttentionCount > 0 ? (
+            <span data-builder-agent-workbench-hidden-attention="true">
+              {hiddenAttentionCount} hidden
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {projection === null ? (
+        <div className="cf-builder-agent-workbench-empty" role="status">
+          <p>{snapshot?.status === 'loading' ? 'Loading messages...' : 'Messages are unavailable.'}</p>
+          {unavailable && typeof onRefresh === 'function' ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-8 items-center gap-2 px-2.5 text-xs font-medium"
+              onClick={() => { void onRefresh(); }}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" className="size-3.5" />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="cf-builder-agent-workbench-empty" role="status">
+          {unarchivedItems.length === 0 ? 'No messages yet.' : 'No messages match these filters.'}
+        </div>
+      ) : (
+        <ol className="cf-builder-agent-workbench-list">
+          {items.map((item) => {
+            const ownerMessage = item.content_type === 'builder.chat.user_message.v1';
+            const genericMessage = item.presentation_family === 'generic';
+            return (
+              <li
+                className={ownerMessage
+                  ? 'cf-builder-agent-workbench-message cf-builder-agent-workbench-message-owner'
+                  : 'cf-builder-agent-workbench-message'}
+                data-builder-workbench-content-type={item.content_type}
+                data-builder-workbench-family={item.presentation_family}
+                data-builder-workbench-message={item.message_id}
+                key={item.message_id}
+              >
+                {genericMessage ? (
+                  <div className="cf-builder-agent-workbench-message-meta">
+                    <span>{item.source_label}</span>
+                    <code>{item.content_type}</code>
+                  </div>
+                ) : null}
+                <div className="cf-builder-agent-workbench-message-body">
+                  {item.presentation.body_kind === 'markdown' ? (
+                    <BuilderConversationMarkdown source={item.presentation.body_text} />
+                  ) : (
+                    <p>{item.presentation.body_text}</p>
+                  )}
+                </div>
+                {item.actions.map((action) => (
+                  <AgentTaskProposalActions
+                    action={action}
+                    disabled={actionsDisabled}
+                    key={action.action_id}
+                    onCreateProject={onCreateProjectForTaskProposal}
+                    onDecide={onDecideTaskProposal}
+                    onOpenTask={onOpenTaskProposal}
+                    projectCatalogSnapshot={projectCatalogSnapshot}
+                  />
+                ))}
+                {item.presentation_family === 'result' ? (
+                  <div className="cf-builder-agent-result-actions">
+                    {item.task_ref !== null && typeof onOpenTaskProposal === 'function' ? (
+                      <button
+                        className="cf-builder-agent-result-open"
+                        data-builder-agent-result-open-task="true"
+                        data-builder-task-address-id={item.task_ref.task_address_id}
+                        onClick={() => {
+                          const taskRef = item.task_ref;
+                          if (taskRef === null) return;
+                          const monitoredTask = projection?.task_monitor.tasks.find(
+                            (task) => task.task_address_id === taskRef.task_address_id,
+                          ) ?? null;
+                          onOpenTaskProposal(
+                            taskRef.project_id,
+                            taskRef.task_address_id,
+                            monitoredTask === null
+                              ? null
+                              : taskConversationSeedFromMonitorTask(monitoredTask),
+                          );
+                        }}
+                        type="button"
+                      >
+                        <ArrowRight aria-hidden="true" className="size-3.5" />
+                        Open task
+                      </button>
+                    ) : null}
+                    <span className="cf-builder-agent-result-state-actions">
+                      {!item.state.acknowledged && typeof onUpdateMessageState === 'function' ? (
+                        <button
+                          className="cf-builder-agent-result-state-button"
+                          data-builder-agent-result-acknowledge="true"
+                          disabled={actionsDisabled}
+                          onClick={() => { void onUpdateMessageState(item.message_id, 'acknowledge'); }}
+                          type="button"
+                        >
+                          <CheckCircle2 aria-hidden="true" className="size-3.5" />
+                          Acknowledge
+                        </button>
+                      ) : null}
+                      {typeof onUpdateMessageState === 'function' ? (
+                        <button
+                          aria-label="Archive result"
+                          className="cf-builder-agent-result-archive"
+                          data-builder-agent-result-archive="true"
+                          disabled={actionsDisabled}
+                          onClick={() => { void onUpdateMessageState(item.message_id, 'archive'); }}
+                          title="Archive result"
+                          type="button"
+                        >
+                          <Archive aria-hidden="true" className="size-3.5" />
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                ) : item.task_ref !== null && typeof onOpenTaskProposal === 'function' ? (
+                  <button
+                    className="cf-builder-agent-result-open"
+                    data-builder-agent-result-open-task="true"
+                    data-builder-task-address-id={item.task_ref.task_address_id}
+                    onClick={() => onOpenTaskProposal(
+                      item.task_ref!.project_id,
+                      item.task_ref!.task_address_id,
+                    )}
+                    type="button"
+                  >
+                    <ArrowRight aria-hidden="true" className="size-3.5" />
+                    Open task
+                  </button>
+                ) : null}
+                {item.state.unread && !ownerMessage && typeof onUpdateMessageState === 'function' ? (
+                  <button
+                    aria-label="Mark message as read"
+                    className="cf-builder-agent-workbench-message-action"
+                    onClick={() => { void onUpdateMessageState(item.message_id, 'mark_read'); }}
+                    title="Mark as read"
+                    type="button"
+                  >
+                    <CheckCircle2 aria-hidden="true" className="size-3.5" />
+                  </button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {projection !== null && unavailable && typeof onRefresh === 'function' ? (
+        <button
+          aria-label="Refresh Agent Workbench"
+          className="cf-builder-agent-workbench-refresh"
+          onClick={() => { void onRefresh(); }}
+          title="Refresh"
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className="size-3.5" />
+        </button>
+      ) : null}
+      {liveOutput !== null && liveOutput !== undefined ? (
+        <ol className="cf-builder-agent-workbench-list cf-builder-agent-workbench-live-output">
+          <ActivityLiveOutputSlot
+            committedPrefix=""
+            fallback={liveOutput}
+            onVisibleFrame={onLiveOutputFrame}
+            store={liveOutputStore ?? null}
+          />
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
+function taskMonitorStateIcon(task: BuilderAgentTaskMonitorItem) {
+  if (task.state === 'working') return <RefreshCw aria-hidden="true" className="size-3.5 cf-builder-task-monitor-spin" />;
+  if (task.group === 'attention') return <AlertCircle aria-hidden="true" className="size-3.5" />;
+  if (task.state === 'stopped') return <StopCircle aria-hidden="true" className="size-3.5" />;
+  if (task.latest_result === null) return <Circle aria-hidden="true" className="size-3.5" />;
+  return <CheckCircle2 aria-hidden="true" className="size-3.5" />;
+}
+
+function AgentTaskMonitorPanel({
+  actionsDisabled,
+  onCollapse,
+  onArchiveTask,
+  onControlTask,
+  onOpenTask,
+  onRenameTask,
+  projectCatalogSnapshot,
+  snapshot,
+}: Readonly<{
+  actionsDisabled: boolean;
+  onCollapse(): void;
+  onArchiveTask?: (
+    projectId: string,
+    taskAddressId: string,
+  ) => Promise<unknown> | void;
+  onControlTask?: (
+    projectId: string,
+    taskAddressId: string,
+    operation: 'cancel_task',
+  ) => Promise<unknown> | void;
+  onOpenTask?: (
+    projectId: string,
+    taskAddressId: string,
+    seed?: BuilderTaskConversationSeed | null,
+  ) => void;
+  onRenameTask?: (
+    projectId: string,
+    taskAddressId: string,
+    title: string,
+  ) => Promise<unknown> | void;
+  projectCatalogSnapshot?: BuilderProjectCatalogSnapshot;
+  snapshot?: BuilderAgentWorkbenchSnapshot;
+}>) {
+  const tasks = snapshot?.projection?.task_monitor.tasks ?? [];
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskActionMenuOpenFor, setTaskActionMenuOpenFor] = useState<string | null>(null);
+  const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
+  const [draftTaskTitle, setDraftTaskTitle] = useState('');
+  const selectedTask = tasks.find((task) => task.task_address_id === selectedTaskId) ?? tasks[0] ?? null;
+  const projectTitleById = useMemo(() => {
+    const entries = [
+      ...(projectCatalogSnapshot?.projects ?? []),
+      ...(projectCatalogSnapshot?.workspaceProjects ?? []),
+    ].map((project) => [project.project_id, project.title] as const);
+    return new Map(entries);
+  }, [projectCatalogSnapshot]);
+  const groups = [
+    { id: 'active', label: 'Active' },
+    { id: 'attention', label: 'Needs attention' },
+    { id: 'recent', label: 'Recent' },
+  ] as const;
+  const selectedTaskActionsAvailable = selectedTask !== null
+    && (typeof onArchiveTask === 'function' || typeof onRenameTask === 'function');
+  const selectedTaskIsRenaming = selectedTask !== null
+    && renamingTaskId === selectedTask.task_address_id;
+
+  function submitTaskRename(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (selectedTask === null || typeof onRenameTask !== 'function') {
+      setRenamingTaskId(null);
+      return;
+    }
+    const nextTitle = draftTaskTitle.trim();
+    if (nextTitle.length === 0 || nextTitle === selectedTask.title) {
+      setRenamingTaskId(null);
+      setDraftTaskTitle('');
+      return;
+    }
+    void onRenameTask(selectedTask.project_id, selectedTask.task_address_id, nextTitle);
+    setRenamingTaskId(null);
+    setDraftTaskTitle('');
+  }
+
+  return (
+    <aside
+      aria-label="Tasks"
+      className="cf-builder-task-monitor"
+      data-builder-task-monitor="true"
+    >
+      <header className="cf-builder-task-monitor-header">
+        <div>
+          <strong>Tasks</strong>
+          <span>{tasks.length}</span>
+        </div>
+        <button
+          aria-label="Hide tasks"
+          className="cf-builder-icon-button"
+          onClick={onCollapse}
+          title="Hide tasks"
+          type="button"
+        >
+          <PanelRightClose aria-hidden="true" className="size-4" />
+        </button>
+      </header>
+      <div className="cf-builder-task-monitor-list">
+        {groups.map((group) => {
+          const groupTasks = tasks.filter((task) => task.group === group.id);
+          if (groupTasks.length === 0) return null;
+          return (
+            <section data-builder-task-monitor-group={group.id} key={group.id}>
+              <h2>{group.label}<span>{groupTasks.length}</span></h2>
+              <ul>
+                {groupTasks.map((task) => (
+                  <li key={task.task_address_id}>
+                    <button
+                      aria-pressed={selectedTask?.task_address_id === task.task_address_id}
+                      data-builder-task-monitor-item={task.task_address_id}
+                      data-builder-task-monitor-state={task.state}
+                      onClick={() => setSelectedTaskId(task.task_address_id)}
+                      type="button"
+                    >
+                      <span className="cf-builder-task-monitor-icon" data-state={task.state}>
+                        {taskMonitorStateIcon(task)}
+                      </span>
+                      <span className="min-w-0">
+                        <strong>{task.title}</strong>
+                        <small>{projectTitleById.get(task.project_id) ?? 'Local project'}</small>
+                      </span>
+                      <small data-state={task.state}>{task.status_label}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
+      {selectedTask !== null ? (
+        <footer className="cf-builder-task-monitor-detail" data-builder-task-monitor-detail={selectedTask.task_address_id}>
+          <div className="cf-builder-task-monitor-detail-heading">
+            <div className="min-w-0">
+              {selectedTaskIsRenaming ? (
+                <form
+                  className="cf-builder-task-monitor-rename-form"
+                  data-builder-task-monitor-rename-form="true"
+                  onSubmit={submitTaskRename}
+                >
+                  <input
+                    aria-label="Task name"
+                    className="cf-builder-input"
+                    data-builder-task-monitor-rename-input="true"
+                    onChange={(event) => setDraftTaskTitle(event.currentTarget.value)}
+                    value={draftTaskTitle}
+                  />
+                  <span>
+                    <button
+                      className="cf-builder-secondary-button"
+                      data-builder-task-monitor-rename-cancel="true"
+                      onClick={() => {
+                        setDraftTaskTitle('');
+                        setRenamingTaskId(null);
+                      }}
+                      type="button"
+                    >
+                      <X aria-hidden="true" className="size-3.5" />
+                      Cancel
+                    </button>
+                    <button
+                      className="cf-builder-primary-button"
+                      data-builder-task-monitor-rename-save="true"
+                      disabled={draftTaskTitle.trim().length === 0}
+                      type="submit"
+                    >
+                      Save
+                    </button>
+                  </span>
+                </form>
+              ) : (
+                <>
+                  <strong>{selectedTask.title}</strong>
+                  <p>{selectedTask.attention?.detail ?? selectedTask.latest_result?.summary ?? selectedTask.goal}</p>
+                </>
+              )}
+            </div>
+            {selectedTaskActionsAvailable ? (
+              <div className="cf-builder-task-monitor-action-shell">
+                <button
+                  aria-expanded={taskActionMenuOpenFor === selectedTask.task_address_id}
+                  aria-haspopup="menu"
+                  aria-label={`Task actions for ${selectedTask.title}`}
+                  className="cf-builder-task-monitor-action-button"
+                  data-builder-task-monitor-task-actions="true"
+                  onClick={() => setTaskActionMenuOpenFor((openFor) => (
+                    openFor === selectedTask.task_address_id ? null : selectedTask.task_address_id
+                  ))}
+                  title="Task actions"
+                  type="button"
+                >
+                  <MoreVertical aria-hidden="true" className="size-3.5" />
+                </button>
+                {taskActionMenuOpenFor === selectedTask.task_address_id ? (
+                  <div
+                    className="cf-builder-task-monitor-action-menu"
+                    data-builder-task-monitor-action-menu="true"
+                    role="menu"
+                  >
+                    {typeof onRenameTask === 'function' ? (
+                      <button
+                        data-builder-task-monitor-rename-task="true"
+                        onClick={() => {
+                          setDraftTaskTitle(selectedTask.title);
+                          setRenamingTaskId(selectedTask.task_address_id);
+                          setTaskActionMenuOpenFor(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <Pencil aria-hidden="true" className="size-3.5" />
+                        Rename
+                      </button>
+                    ) : null}
+                    {typeof onArchiveTask === 'function' ? (
+                      <button
+                        data-builder-task-monitor-archive-task="true"
+                        onClick={() => {
+                          setTaskActionMenuOpenFor(null);
+                          void onArchiveTask(selectedTask.project_id, selectedTask.task_address_id);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <Archive aria-hidden="true" className="size-3.5" />
+                        Archive
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="cf-builder-task-monitor-commands">
+            {canStopBuilderAgentTask(selectedTask) && typeof onControlTask === 'function' ? (
+              <button
+                className="cf-builder-secondary-button"
+                data-builder-task-monitor-cancel-task="true"
+                disabled={actionsDisabled}
+                onClick={() => { void onControlTask(
+                  selectedTask.project_id,
+                  selectedTask.task_address_id,
+                  'cancel_task',
+                ); }}
+                type="button"
+              >
+                <StopCircle aria-hidden="true" className="size-3.5" />
+                Stop
+              </button>
+            ) : null}
+            <button
+              className="cf-builder-primary-button"
+              data-builder-task-monitor-open-task="true"
+              disabled={typeof onOpenTask !== 'function'}
+              onClick={() => onOpenTask?.(
+                selectedTask.project_id,
+                selectedTask.task_address_id,
+                taskConversationSeedFromMonitorTask(selectedTask),
+              )}
+              type="button"
+            >
+              {selectedTask.attention?.action_label ?? 'Open task'}
+              <ArrowRight aria-hidden="true" className="size-3.5" />
+            </button>
+          </div>
+        </footer>
+      ) : null}
+    </aside>
+  );
 }
 
 function artifactTabLabel(tab: BuilderArtifactTab): string {
@@ -1686,11 +3812,10 @@ function artifactTabLabel(tab: BuilderArtifactTab): string {
   if (tab === 'preview') return 'Preview';
   if (tab === 'changes') return 'Changes';
   if (tab === 'source') return 'Files';
-  if (tab === 'logs') return 'Logs';
   if (tab === 'permissions') return 'Permissions';
   if (tab === 'side_chat_placeholder') return 'Side Chat';
   if (tab === 'terminal_placeholder') return 'Terminal';
-  return 'Versions';
+  return 'History';
 }
 
 function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
@@ -1698,7 +3823,6 @@ function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
   if (tab === 'preview') return <Globe2 aria-hidden="true" className="size-3.5" />;
   if (tab === 'changes') return <GitCompareArrows aria-hidden="true" className="size-3.5" />;
   if (tab === 'source') return <FileCode2 aria-hidden="true" className="size-3.5" />;
-  if (tab === 'logs') return <ListChecks aria-hidden="true" className="size-3.5" />;
   if (tab === 'permissions') return <ShieldCheck aria-hidden="true" className="size-3.5" />;
   if (tab === 'side_chat_placeholder') return <Bot aria-hidden="true" className="size-3.5" />;
   if (tab === 'terminal_placeholder') return <SquareTerminal aria-hidden="true" className="size-3.5" />;
@@ -1708,7 +3832,7 @@ function ArtifactTabIcon({ tab }: Readonly<{ tab: BuilderArtifactTab }>) {
 function sideWorkspaceTabTypeForArtifactTab(tab: BuilderArtifactTab): BuilderSideWorkspaceTabType {
   if (tab === 'browser_placeholder' || tab === 'preview') return 'browser';
   if (tab === 'source') return 'file';
-  if (tab === 'logs' || tab === 'terminal_placeholder') return 'terminal';
+  if (tab === 'terminal_placeholder') return 'terminal';
   if (tab === 'side_chat_placeholder') return 'side_chat';
   return 'review';
 }
@@ -1755,7 +3879,7 @@ const SIDE_WORKSPACE_NEW_TAB_ITEMS: readonly Readonly<{
 
 function sideWorkspaceFileRefKey(fileRef: BuilderSideWorkspaceFileRef | null): string {
   if (fileRef === null) return 'none';
-  return `${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
+  return `${fileRef.source_kind}:${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
 }
 
 function sideWorkspaceFileDepthStyle(depth: number): CSSProperties {
@@ -1765,11 +3889,6 @@ function sideWorkspaceFileDepthStyle(depth: number): CSSProperties {
 function sideWorkspaceFileDisplayName(path: string | null): string {
   if (path === null || path.trim().length === 0) return 'Files';
   return path.split('/').filter(Boolean).at(-1) ?? path;
-}
-
-function sideWorkspaceFileBreadcrumb(path: string | null): readonly string[] {
-  if (path === null || path.trim().length === 0) return [];
-  return path.split('/').filter(Boolean);
 }
 
 function sideWorkspaceCodeLines(text: string): readonly string[] {
@@ -1789,6 +3908,7 @@ function firstTextFileEntry(
 }
 
 function BuilderArtifactFilesPanel({
+  activePath,
   content,
   contentStatus,
   fallbackFiles,
@@ -1801,6 +3921,7 @@ function BuilderArtifactFilesPanel({
   sourceDisclosureRef,
   treeStatus,
 }: Readonly<{
+  activePath: string | null;
   content: BuilderSideWorkspaceFileContentProjection | null;
   contentStatus: 'idle' | 'loading' | 'ready' | 'failed';
   fallbackFiles: readonly BuilderProjectSourceFile[];
@@ -1828,73 +3949,69 @@ function BuilderArtifactFilesPanel({
     );
   }
 
-  const selectedRefKey = content === null ? sideWorkspaceFileRefKey(projection?.selected_file_ref ?? null) : sideWorkspaceFileRefKey(content.file_ref);
   const firstFile = firstTextFileEntry(projection);
   const fileCount = projection?.entries.filter((entry) => entry.entry_kind === 'text_file').length ?? 0;
-  const selectedPath = content?.path ?? projection?.selected_file_ref?.path ?? firstFile?.path ?? null;
+  const activeTreeFile = projection?.entries.find((entry) => (
+    entry.entry_kind === 'text_file' && entry.path === activePath
+  ));
+  const contentMatchesActivePath = activePath === null || content?.path === activePath;
+  const visibleContent = contentMatchesActivePath ? content : null;
+  const visibleContentStatus = contentMatchesActivePath
+    ? contentStatus
+    : contentStatus === 'failed' ? 'failed' : 'loading';
+  const selectedFileRef = (activeTreeFile?.entry_kind === 'text_file' ? activeTreeFile.file_ref : null)
+    ?? visibleContent?.file_ref
+    ?? projection?.selected_file_ref
+    ?? firstFile?.file_ref
+    ?? null;
+  const selectedRefKey = sideWorkspaceFileRefKey(selectedFileRef);
+  const selectedPath = selectedFileRef?.path ?? visibleContent?.path ?? null;
   const selectedName = sideWorkspaceFileDisplayName(selectedPath);
-  const breadcrumb = sideWorkspaceFileBreadcrumb(selectedPath);
   return (
     <section
       aria-label="Project files"
       className="cf-builder-artifact-files"
       data-builder-side-workspace-files="true"
+      data-builder-side-workspace-file-source-kind={projection?.source_kind ?? 'none'}
       data-builder-side-workspace-files-status={treeStatus}
     >
-      <div className="cf-builder-artifact-files-toolbar">
-        <div className="cf-builder-artifact-files-path">
-          <nav
-            aria-label="Selected file path"
-            className="cf-builder-artifact-files-breadcrumb"
-            data-builder-side-workspace-file-breadcrumb="true"
-          >
-            <span aria-label="Project root">/</span>
-            {breadcrumb.map((part, index) => (
-              <Fragment key={`${part}:${index}`}>
-                {index > 0 ? (
-                  <span aria-hidden="true" className="cf-builder-artifact-files-breadcrumb-separator">
-                    /
-                  </span>
-                ) : null}
-                <span data-builder-side-workspace-file-breadcrumb-part="true">
-                  {part}
-                </span>
-              </Fragment>
-            ))}
-          </nav>
-          <strong>{selectedName}</strong>
-        </div>
-        <span className="cf-builder-artifact-files-count">
-          {projection === null
-            ? 'Files'
-            : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
-        </span>
-      </div>
       <div className="cf-builder-artifact-files-body">
         <section
           aria-label="Selected file"
+          aria-busy={visibleContentStatus === 'loading'}
           className="cf-builder-artifact-file-content"
-          data-builder-side-workspace-file-content={content?.path ?? 'none'}
-          data-builder-side-workspace-file-content-status={contentStatus}
+          data-builder-side-workspace-file-content={visibleContent?.path ?? 'none'}
+          data-builder-side-workspace-file-content-status={visibleContentStatus}
         >
-          {contentStatus === 'loading' ? (
-            <p className="cf-builder-artifact-files-empty" role="status">Loading file...</p>
-          ) : content === null ? (
-            <p className="cf-builder-artifact-files-empty" role={contentStatus === 'failed' ? 'alert' : 'status'}>
-              {contentStatus === 'failed' ? 'This file is unavailable.' : 'Select a file to inspect its content.'}
+          <header className="cf-builder-artifact-file-content-header">
+            <strong data-builder-side-workspace-file-path="true">
+              {selectedPath === null ? 'No file selected' : `/${selectedPath}`}
+            </strong>
+            {visibleContent === null ? null : (
+              <span>{visibleContent.language_hint}{visibleContent.content_status === 'truncated' ? ' - truncated' : ''}</span>
+            )}
+          </header>
+          {visibleContentStatus === 'loading' ? (
+            <div className="cf-builder-artifact-file-loading" role="status">
+              <span className="cf-builder-visually-hidden">Loading {selectedName}...</span>
+              <div aria-hidden="true" className="cf-builder-artifact-file-loading-lines">
+                {Array.from({ length: 9 }, (_, index) => (
+                  <span className="cf-builder-artifact-file-loading-line" key={index} />
+                ))}
+              </div>
+            </div>
+          ) : visibleContent === null ? (
+            <p className="cf-builder-artifact-files-empty" role={visibleContentStatus === 'failed' ? 'alert' : 'status'}>
+              {visibleContentStatus === 'failed' ? 'This file is unavailable.' : 'Select a file to inspect its content.'}
             </p>
           ) : (
-            <>
-              <header className="cf-builder-artifact-file-content-header">
-                <strong>{content.path}</strong>
-                <span>{content.language_hint}{content.content_status === 'truncated' ? ' - truncated' : ''}</span>
-              </header>
               <ol
-                aria-label={`${content.path} source preview`}
+                aria-label={`${visibleContent.path} source preview`}
                 className="cf-builder-artifact-file-code"
+                data-builder-side-workspace-scroll-region="file-content"
                 data-builder-side-workspace-code-viewer="true"
               >
-                {sideWorkspaceCodeLines(content.text_preview).map((line, index) => (
+                {sideWorkspaceCodeLines(visibleContent.text_preview).map((line, index) => (
                   <li
                     className="cf-builder-artifact-file-code-line"
                     data-builder-side-workspace-code-line={index + 1}
@@ -1907,16 +4024,23 @@ function BuilderArtifactFilesPanel({
                   </li>
                 ))}
               </ol>
-            </>
           )}
         </section>
         <aside className="cf-builder-artifact-file-browser" aria-label="Project file browser">
           <div className="cf-builder-artifact-file-browser-header">
             <strong>Files</strong>
-            <span>{projection?.root_label ?? 'Current draft'}</span>
+            <span>
+              {projection === null
+                ? 'Current draft'
+                : `${projection.root_label} · ${fileCount}`}
+            </span>
           </div>
           <div className="cf-builder-artifact-file-filter" aria-hidden="true">Filter files...</div>
-          <div className="cf-builder-artifact-file-tree" aria-label="Project file tree">
+          <div
+            aria-label="Project file tree"
+            className="cf-builder-artifact-file-tree"
+            data-builder-side-workspace-scroll-region="file-tree"
+          >
             {projection === null ? (
               <p className="cf-builder-artifact-files-empty" role={treeStatus === 'failed' ? 'alert' : 'status'}>
                 {treeStatus === 'loading' ? 'Loading files...' : 'Current draft files are not available yet.'}
@@ -1968,16 +4092,34 @@ function BuilderArtifactFilesPanel({
 
 function BuilderSideWorkspaceBrowserToolbar({
   addressMode = 'project_preview',
+  addressValue = '',
   livePreviewOperation,
   livePreviewStatus,
+  userWebOperation = null,
+  userWebStatus = null,
+  onAddressChange,
+  onNavigateUserWeb,
+  onGoBackUserWeb,
+  onGoForwardUserWeb,
+  onReloadUserWeb,
+  onStopUserWeb,
   onExpandPreview,
   onRequestLivePreview,
   onReloadLivePreview,
   onStopLivePreview,
 }: Readonly<{
-  addressMode?: 'new_tab' | 'project_preview';
+  addressMode?: 'agent_test' | 'project_preview' | 'user_web';
+  addressValue?: string;
   livePreviewOperation?: 'starting' | 'reloading' | 'stopping' | null;
   livePreviewStatus: BuilderLivePreviewStatusProjection | null;
+  userWebOperation?: 'navigating' | 'reloading' | 'stopping' | null;
+  userWebStatus?: BuilderUserWebStatusProjection | null;
+  onAddressChange?: (value: string) => void;
+  onNavigateUserWeb?: () => void;
+  onGoBackUserWeb?: () => void;
+  onGoForwardUserWeb?: () => void;
+  onReloadUserWeb?: () => void;
+  onStopUserWeb?: () => void;
   onExpandPreview?: () => void;
   onRequestLivePreview?: () => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
@@ -1993,11 +4135,14 @@ function BuilderSideWorkspaceBrowserToolbar({
   const canStop = operation === null
     && typeof onStopLivePreview === 'function'
     && livePreviewStatus?.can_stop === true;
-  const addressLabel = addressMode === 'new_tab'
-    ? ''
-    : livePreviewStatus?.status === 'ready'
-    ? 'Project live preview'
-    : 'Project preview';
+  const userWebActive = addressMode === 'user_web';
+  const userWebBusy = userWebOperation !== null;
+  const addressLabel = userWebActive
+    ? addressValue
+    : addressMode === 'agent_test'
+      ? 'Agent Test local project'
+      : livePreviewStatus?.entry_url
+      ?? (livePreviewStatus?.status === 'ready' ? 'Project live preview' : 'Project preview');
   const blockedSummary = livePreviewStatus !== null && livePreviewStatus.blocked_request_count > 0
     ? `Blocked ${livePreviewStatus.blocked_request_count} unsafe preview request${
       livePreviewStatus.blocked_request_count === 1 ? '' : 's'
@@ -2010,18 +4155,37 @@ function BuilderSideWorkspaceBrowserToolbar({
       data-builder-side-workspace-browser-toolbar="true"
     >
       <span className="cf-builder-side-workspace-browser-nav" aria-label="Browser navigation">
-        <button aria-label="Back" disabled title="Back" type="button">
+        <button
+          aria-label="Back"
+          disabled={!userWebActive || userWebBusy || userWebStatus?.can_go_back !== true}
+          onClick={onGoBackUserWeb}
+          title="Back"
+          type="button"
+        >
           <ArrowLeft aria-hidden="true" className="size-3.5" />
         </button>
-        <button aria-label="Forward" disabled title="Forward" type="button">
+        <button
+          aria-label="Forward"
+          disabled={!userWebActive || userWebBusy || userWebStatus?.can_go_forward !== true}
+          onClick={onGoForwardUserWeb}
+          title="Forward"
+          type="button"
+        >
           <ArrowRight aria-hidden="true" className="size-3.5" />
         </button>
         <button
-          aria-label="Reload preview"
-          disabled={!canReload}
-          onClick={() => { void onReloadLivePreview?.(); }}
+          aria-label={userWebActive ? 'Reload page' : 'Reload preview'}
+          disabled={userWebActive
+            ? userWebBusy || userWebStatus?.can_reload !== true
+            : !canReload}
+          onClick={() => {
+            if (userWebActive) onReloadUserWeb?.();
+            else void onReloadLivePreview?.();
+          }}
           data-builder-live-preview-reload="true"
-          title={canReload ? 'Reload preview' : 'Reload preview unavailable'}
+          title={userWebActive
+            ? userWebStatus?.can_reload === true ? 'Reload page' : 'Reload page unavailable'
+            : canReload ? 'Reload preview' : 'Reload preview unavailable'}
           type="button"
         >
           <RefreshCw aria-hidden="true" className="size-3.5" />
@@ -2035,7 +4199,13 @@ function BuilderSideWorkspaceBrowserToolbar({
         <input
           aria-label="Browser address"
           placeholder="Enter URL"
-          readOnly
+          readOnly={!userWebActive}
+          onChange={(event) => onAddressChange?.(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (!userWebActive || event.key !== 'Enter' || userWebBusy || addressValue.trim() === '') return;
+            event.preventDefault();
+            onNavigateUserWeb?.();
+          }}
           value={addressLabel}
         />
       </label>
@@ -2052,7 +4222,7 @@ function BuilderSideWorkspaceBrowserToolbar({
         <button
           aria-label="Start live preview"
           data-builder-live-preview-start="true"
-          disabled={!canStart}
+          disabled={userWebActive || !canStart}
           onClick={() => { void onRequestLivePreview?.(); }}
           title={canStart ? 'Start live preview' : 'Start live preview unavailable'}
           type="button"
@@ -2060,11 +4230,16 @@ function BuilderSideWorkspaceBrowserToolbar({
           <Play aria-hidden="true" className="size-3.5" />
         </button>
         <button
-          aria-label="Stop live preview"
+          aria-label={userWebActive ? 'Close page' : 'Stop live preview'}
           data-builder-live-preview-stop="true"
-          disabled={!canStop}
-          onClick={() => { void onStopLivePreview?.(); }}
-          title={canStop ? 'Stop live preview' : 'Stop live preview unavailable'}
+          disabled={userWebActive
+            ? userWebBusy || userWebStatus?.can_stop !== true
+            : !canStop}
+          onClick={() => {
+            if (userWebActive) onStopUserWeb?.();
+            else void onStopLivePreview?.();
+          }}
+          title={userWebActive ? 'Close page' : canStop ? 'Stop live preview' : 'Stop live preview unavailable'}
           type="button"
         >
           <StopCircle aria-hidden="true" className="size-3.5" />
@@ -2091,39 +4266,248 @@ function BuilderSideWorkspaceBrowserToolbar({
   );
 }
 
-function BuilderSideWorkspaceBrowserPlaceholder() {
+function BuilderLivePreviewDevServerApproval({
+  livePreviewOperation,
+  livePreviewStatus,
+  onDecide,
+}: Readonly<{
+  livePreviewOperation: 'starting' | 'reloading' | 'stopping' | null;
+  livePreviewStatus: BuilderLivePreviewStatusProjection | null;
+  onDecide?: (decision: 'allow_once' | 'deny') => Promise<unknown> | void;
+}>) {
+  const approval = livePreviewStatus?.status === 'approval_required'
+    ? livePreviewStatus.dev_server_approval
+    : null;
+  if (approval === null) return null;
+  const disabled = livePreviewOperation !== null || typeof onDecide !== 'function';
   return (
     <section
-      aria-label="Browser new tab"
-      className="cf-builder-side-workspace-browser"
-      data-builder-side-workspace-browser-placeholder="true"
+      aria-label="Development server approval"
+      className="cf-builder-live-preview-approval"
+      data-builder-live-preview-dev-server-approval={approval.approval_request_id}
     >
-      <BuilderSideWorkspaceBrowserToolbar
-        addressMode="new_tab"
-        livePreviewStatus={null}
-      />
-      <div className="cf-builder-side-workspace-empty cf-builder-side-workspace-browser-empty">
-        <Globe2 aria-hidden="true" className="size-7" />
-        <h4>Start browsing</h4>
-        <p>URL browsing is not connected yet. Project previews still open in the Browser tab when available.</p>
+      <div className="cf-builder-live-preview-approval-copy">
+        <strong>允许运行项目开发服务器？</strong>
+        <code>{approval.command_display}</code>
+        <p>此项目脚本可能修改文件或访问网络。授权仅对本次启动有效。</p>
+      </div>
+      <div className="cf-builder-live-preview-approval-actions">
+        <button
+          className="cf-builder-secondary-button"
+          data-builder-deny-live-preview-dev-server="true"
+          disabled={disabled}
+          onClick={() => { void onDecide?.('deny'); }}
+          type="button"
+        >
+          拒绝
+        </button>
+        <button
+          className="cf-builder-primary-button"
+          data-builder-allow-live-preview-dev-server-once="true"
+          disabled={disabled}
+          onClick={() => { void onDecide?.('allow_once'); }}
+          type="button"
+        >
+          {livePreviewOperation === 'starting' ? '正在启动...' : '仅允许这一次'}
+        </button>
       </div>
     </section>
   );
 }
 
-function BuilderSideWorkspaceTerminalPlaceholder() {
+function BuilderSideWorkspaceBrowserPlaceholder({
+  agentTestActive,
+  userWebOperation,
+  userWebStatus,
+  userWebSurfaceRef,
+  onNavigateUserWeb,
+  onGoBackUserWeb,
+  onGoForwardUserWeb,
+  onReloadUserWeb,
+  onStopUserWeb,
+}: Readonly<{
+  agentTestActive: boolean;
+  userWebOperation: 'navigating' | 'reloading' | 'stopping' | null;
+  userWebStatus: BuilderUserWebStatusProjection | null;
+  userWebSurfaceRef: Ref<HTMLElement>;
+  onNavigateUserWeb?: (url: string) => Promise<unknown> | void;
+  onGoBackUserWeb?: () => Promise<unknown> | void;
+  onGoForwardUserWeb?: () => Promise<unknown> | void;
+  onReloadUserWeb?: () => Promise<unknown> | void;
+  onStopUserWeb?: () => Promise<unknown> | void;
+}>) {
+  const currentUrl = userWebStatus?.current_url ?? null;
+  const [addressEdit, setAddressEdit] = useState<Readonly<{
+    baseUrl: string | null;
+    value: string;
+  }> | null>(null);
+  const address = addressEdit?.baseUrl === currentUrl
+    ? addressEdit.value
+    : currentUrl ?? '';
+  return (
+    <section
+      aria-label={agentTestActive ? 'Agent Test browser' : 'Browser new tab'}
+      className="cf-builder-side-workspace-browser"
+      data-builder-side-workspace-browser-placeholder="true"
+    >
+      <BuilderSideWorkspaceBrowserToolbar
+        addressMode={agentTestActive ? 'agent_test' : 'user_web'}
+        addressValue={address}
+        livePreviewStatus={null}
+        onAddressChange={(value) => setAddressEdit({ baseUrl: currentUrl, value })}
+        onGoBackUserWeb={() => { void onGoBackUserWeb?.(); }}
+        onGoForwardUserWeb={() => { void onGoForwardUserWeb?.(); }}
+        onNavigateUserWeb={() => { void onNavigateUserWeb?.(address); }}
+        onReloadUserWeb={() => { void onReloadUserWeb?.(); }}
+        onStopUserWeb={() => { void onStopUserWeb?.(); }}
+        userWebOperation={userWebOperation}
+        userWebStatus={userWebStatus}
+      />
+      <div
+        className="cf-builder-side-workspace-empty cf-builder-side-workspace-browser-empty"
+        data-builder-agent-test-browser-surface={agentTestActive ? 'true' : undefined}
+        data-builder-user-web-surface={!agentTestActive ? 'true' : undefined}
+        ref={userWebSurfaceRef as Ref<HTMLDivElement>}
+      >
+        <Globe2 aria-hidden="true" className="size-7" />
+        <h4>{agentTestActive ? 'Agent Test' : userWebStatus?.status === 'failed' ? 'Page unavailable' : 'Browser'}</h4>
+        <p
+          className="cf-builder-visually-hidden"
+          data-builder-side-workspace-placeholder-note="browser"
+        >
+          {agentTestActive
+            ? 'The isolated local project is open in this browser surface.'
+            : userWebStatus?.message ?? 'Enter a URL in the address bar.'}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function BuilderSideWorkspaceTerminalPlaceholder({
+  checkRunProfile,
+  checkRunStatus,
+  commandOutput,
+  runtimeCommand,
+}: Readonly<{
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
+  commandOutput: BuilderCommandOutputSnapshot | null;
+  runtimeCommand: RuntimeToolActivityItem | null;
+}>) {
+  if (commandOutput !== null) {
+    const stateLabel = {
+      awaiting_approval: '等待授权',
+      running: '运行中',
+      denied: '已拒绝',
+      completed: '已完成',
+      failed: '执行失败',
+    }[commandOutput.state];
+    return (
+      <section
+        aria-label="命令输出"
+        className="cf-builder-side-workspace-terminal"
+        data-builder-command-terminal={commandOutput.state}
+      >
+        <div className="cf-builder-side-workspace-terminal-screen">
+          <div className="cf-builder-side-workspace-terminal-status">
+            <span aria-hidden="true" data-state={commandOutput.state} />
+            <strong>{stateLabel}</strong>
+          </div>
+          <p className="cf-builder-side-workspace-terminal-heading">命令</p>
+          <pre data-builder-command-display="true">{commandOutput.command_display}</pre>
+          <p className="cf-builder-side-workspace-terminal-description">{commandOutput.description}</p>
+          {commandOutput.stdout_text.length > 0 ? (
+            <>
+              <p className="cf-builder-side-workspace-terminal-heading">标准输出</p>
+              <pre data-builder-command-stdout="true">{commandOutput.stdout_text}</pre>
+            </>
+          ) : null}
+          {commandOutput.stderr_text.length > 0 ? (
+            <>
+              <p className="cf-builder-side-workspace-terminal-heading">错误输出</p>
+              <pre className="cf-builder-side-workspace-terminal-stderr" data-builder-command-stderr="true">
+                {commandOutput.stderr_text}
+              </pre>
+            </>
+          ) : null}
+          {commandOutput.result_summary !== null ? (
+            <>
+              <p className="cf-builder-side-workspace-terminal-heading">结果</p>
+              <p data-builder-command-result={commandOutput.state}>{commandOutput.result_summary}</p>
+            </>
+          ) : null}
+          {commandOutput.output_truncated ? (
+            <p className="cf-builder-side-workspace-terminal-truncated">较早的输出已折叠。</p>
+          ) : null}
+        </div>
+        <p className="cf-builder-side-workspace-terminal-note">
+          只读实时输出。命令、权限和进程生命周期由 Builder 管理。
+        </p>
+      </section>
+    );
+  }
+  if (
+    runtimeCommand !== null
+    && runtimeCommand.target_label !== null
+    && runtimeCommand.check_result !== null
+  ) {
+    return (
+      <section
+        aria-label="Command details"
+        className="cf-builder-side-workspace-terminal"
+        data-builder-command-inspector="true"
+      >
+        <div className="cf-builder-side-workspace-terminal-screen">
+          <p className="cf-builder-side-workspace-terminal-heading">Command</p>
+          <pre data-builder-command-display="true">{runtimeCommand.target_label}</pre>
+          <p className="cf-builder-side-workspace-terminal-heading">Result</p>
+          <p data-builder-command-result={runtimeCommand.check_result.status}>
+            {runtimeCommand.check_result.summary}
+          </p>
+        </div>
+        <p className="cf-builder-side-workspace-terminal-note">
+          Read-only runtime evidence. Command execution remains managed by Builder.
+        </p>
+      </section>
+    );
+  }
+  if (checkRunProfile !== null && checkRunStatus !== null) {
+    return (
+      <section
+        aria-label="Command details"
+        className="cf-builder-side-workspace-terminal"
+        data-builder-command-inspector="true"
+      >
+        <div className="cf-builder-side-workspace-terminal-screen">
+          <p className="cf-builder-side-workspace-terminal-heading">Command</p>
+          <pre data-builder-command-display="true">{checkRunProfile.command_display}</pre>
+          <p className="cf-builder-side-workspace-terminal-heading">Result</p>
+          <p data-builder-command-result={checkRunStatus.status}>{checkRunStatus.summary}</p>
+        </div>
+        <p className="cf-builder-side-workspace-terminal-note">
+          Read-only check details. Command execution remains managed by Builder.
+        </p>
+      </section>
+    );
+  }
   return (
     <section
       aria-label="Terminal"
       className="cf-builder-side-workspace-terminal"
       data-builder-side-workspace-terminal-placeholder="true"
     >
-      <div className="cf-builder-side-workspace-terminal-screen" aria-hidden="true">
-        <p>Windows PowerShell</p>
-        <p>Copyright (C) Microsoft Corporation. All rights reserved.</p>
+      <div
+        className="cf-builder-side-workspace-terminal-screen"
+        aria-hidden="true"
+        data-builder-side-workspace-terminal-idle="true"
+      >
         <p className="cf-builder-side-workspace-terminal-prompt">PS Project&gt;</p>
       </div>
-      <p className="cf-builder-side-workspace-terminal-note">
+      <p
+        className="cf-builder-side-workspace-terminal-note cf-builder-visually-hidden"
+        data-builder-side-workspace-placeholder-note="terminal"
+      >
         Terminal runtime is not connected yet.
       </p>
     </section>
@@ -2139,7 +4523,12 @@ function BuilderSideWorkspaceChatPlaceholder() {
     >
       <Bot aria-hidden="true" className="size-7" />
       <h4>Side chat</h4>
-      <p>Side chat will share this workspace without changing the main task thread.</p>
+      <p
+        className="cf-builder-visually-hidden"
+        data-builder-side-workspace-placeholder-note="side_chat"
+      >
+        Side chat will share this workspace without changing the main task thread.
+      </p>
     </section>
   );
 }
@@ -2348,147 +4737,48 @@ function BuilderArtifactPermissionsPanel({
   );
 }
 
-function BuilderArtifactLogsPanel({
-  hasUnsavedDraft,
-  liveOutput,
-  snapshot,
-}: Readonly<{
-  hasUnsavedDraft: boolean;
-  liveOutput: BuilderLiveOutputSnapshot | null;
-  snapshot: BuilderConversationControllerSnapshot | null;
-}>) {
-  const entries = artifactLogEntries(snapshot);
-  const latestBrief = latestTaskBriefItem(snapshot);
-  const showLiveOutput = shouldShowLiveOutput(liveOutput, entries);
-  const agentActivityProjection = currentAgentActivity(snapshot);
-  const currentAgentActivityStatus = standaloneAgentActivity(agentActivityProjection, entries);
-  return (
-    <section
-      aria-label="Work logs"
-      className="cf-builder-artifact-logs"
-      data-builder-artifact-logs="true"
-    >
-      <div className="cf-builder-artifact-logs-intro">
-        <h4>Work logs</h4>
-        <p>Readable steps from the current conversation.</p>
-      </div>
-      {latestBrief !== null ? (
-        <section
-          aria-label="Current direction"
-          className="cf-builder-current-direction"
-          data-builder-current-direction="true"
-        >
-          <div>
-            <p className="cf-builder-current-direction-kicker">Current direction</p>
-            <h4>Ready for later build</h4>
-          </div>
-          <p data-builder-current-direction-summary="true">{latestBrief.brief.summary}</p>
-          <p className="cf-builder-current-direction-note">
-            Used only after you ask Builder to start building from this direction.
-          </p>
-        </section>
-      ) : null}
-      {entries.length === 0 && !showLiveOutput ? (
-        <div className="cf-builder-empty cf-builder-artifact-logs-empty flex min-h-24 items-center justify-center border border-dashed px-3 text-center text-sm">
-          Work details will appear here when the assistant reads, plans, or prepares changes.
-        </div>
-      ) : (
-        <ol className="cf-builder-activity-list cf-builder-artifact-logs-list">
-          {entries.map((entry) => (
-            entry.entry_kind === 'work_status' ? (
-              <ActivityWorkStatusItem
-                entry={entry}
-                key={entry.key}
-                projection={agentActivityProjection}
-              />
-            ) : (
-              <ActivityItem
-                canReviewPlan={false}
-                hasUnsavedDraft={hasUnsavedDraft}
-                item={entry.item}
-                key={entry.item.sequence}
-                planReviewBusy={false}
-                planReviewFailed={false}
-                planReviewRecorded={false}
-                pendingPlanReview={null}
-                progressStages={entry.progressStages}
-              />
-            )
-          ))}
-          {currentAgentActivityStatus !== null ? (
-            <ActivityProjectedStatusItem projection={currentAgentActivityStatus} />
-          ) : null}
-          {showLiveOutput ? (
-            <ActivityLiveOutputItem liveOutput={liveOutput} />
-          ) : null}
-        </ol>
-      )}
-    </section>
-  );
-}
-
-function BuilderArtifactSummary({
-  changes,
-  hasContent,
-  preview,
-}: Readonly<{
-  changes: BuilderSourceTreeChanges;
-  hasContent: boolean;
-  preview: BuilderProjectControllerSnapshot['preview'];
-}>) {
-  return (
-    <section
-      aria-label="Draft result summary"
-      className="cf-builder-artifact-summary cf-builder-chat-flow-surface"
-      data-builder-artifact-summary="true"
-    >
-      <div className="cf-builder-artifact-summary-copy">
-        <div className="cf-builder-artifact-summary-icon" aria-hidden="true">
-          <Eye className="size-4" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="cf-builder-artifact-summary-title">Result ready</h2>
-          <p className="cf-builder-artifact-summary-text" data-builder-artifact-summary-preview="true">
-            {builderReviewPreviewStatus(preview, hasContent)}
-          </p>
-          <p className="cf-builder-artifact-summary-text" data-builder-artifact-summary-changes="true">
-            {builderChangesSummary(changes)}
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function BuilderArtifactSidebar({
+const BuilderArtifactSidebar = memo(function BuilderArtifactSidebar({
   activeTab,
+  activeFile,
+  agentTestBrowserActive,
   approvalMode,
   artifactTabs,
   availableArtifactTabs,
+  canUndo,
   changes,
   changesOpen,
+  draftCheckpointStatus,
+  draftCheckpointTimeline,
+  checkRunProfile,
+  checkRunStatus,
   currentProjectWriteApproval,
   files,
   hasSavedProject,
   hasUnsavedDraft,
   inspectedRevisionReceiptDigest,
-  liveOutput,
   livePreviewOperation,
   livePreviewStatus,
+  userWebOperation,
+  userWebStatus,
+  userWebSurfaceRef,
   onExpandPreview,
   onApproveProviderContextDisclosure,
   onInspectRevision,
   onOpenFile,
   onRefreshHistory,
   onReloadLivePreview,
+  onDecideLivePreviewDevServerApproval,
   onResizeKeyDown,
   onRestoreRevisionAsDraft,
+  onUndoDraft,
   onSelectArtifactTab,
   onCloseArtifactTab,
   onOpenWorkspaceTab,
   onRequestLivePreview,
   onResizeStart,
   resizing,
+  commandOutput,
+  runtimeCommand,
   onSelectFile,
   onSourceOpenChange,
   planSourceReadApproval,
@@ -2497,7 +4787,6 @@ function BuilderArtifactSidebar({
   preview,
   previewPanelRef,
   sidebarRef,
-  snapshot,
   sourceDisclosureOpen,
   sourceDisclosureRef,
   sourceFile,
@@ -2509,38 +4798,58 @@ function BuilderArtifactSidebar({
   widthMaximum,
   onSelectSideWorkspaceFile,
   onStopLivePreview,
+  onNavigateUserWeb,
+  onGoBackUserWeb,
+  onGoForwardUserWeb,
+  onReloadUserWeb,
+  onStopUserWeb,
   workingProject,
   history,
 }: Readonly<{
   activeTab: BuilderArtifactTab;
+  activeFile: BuilderFileName | null;
+  agentTestBrowserActive: boolean;
   approvalMode: BuilderComposerApprovalMode;
   artifactTabs: readonly BuilderArtifactTab[];
   availableArtifactTabs: readonly BuilderArtifactTab[];
+  canUndo: boolean;
   changes: BuilderSourceTreeChanges;
   changesOpen: boolean;
+  draftCheckpointStatus: BuilderDraftCheckpointStatusProjectionWire | null;
+  draftCheckpointTimeline: BuilderDraftCheckpointTimelineProjectionWire | null;
+  checkRunProfile: BuilderCheckRunProfile | null;
+  checkRunStatus: BuilderDisplayedCheckStatus | null;
   currentProjectWriteApproval: BuilderCurrentProjectWriteApprovalPrompt | null;
   files: readonly BuilderProjectSourceFile[];
   hasSavedProject: boolean;
   hasUnsavedDraft: boolean;
   history: BuilderProjectHistorySnapshot | null;
   inspectedRevisionReceiptDigest: string | null;
-  liveOutput: BuilderLiveOutputSnapshot | null;
   livePreviewOperation: 'starting' | 'reloading' | 'stopping' | null;
   livePreviewStatus: BuilderLivePreviewStatusProjection | null;
+  userWebOperation: 'navigating' | 'reloading' | 'stopping' | null;
+  userWebStatus: BuilderUserWebStatusProjection | null;
+  userWebSurfaceRef: Ref<HTMLElement>;
   onExpandPreview: () => void;
   onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenFile: (change: BuilderSourceTreeChange) => void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onReloadLivePreview?: () => Promise<unknown> | void;
+  onDecideLivePreviewDevServerApproval?: (
+    decision: 'allow_once' | 'deny',
+  ) => Promise<unknown> | void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
+  onUndoDraft?: () => void;
   onSelectArtifactTab: (tab: BuilderArtifactTab) => void;
   onCloseArtifactTab: (tab: BuilderArtifactTab) => void;
   onOpenWorkspaceTab: (type: BuilderSideWorkspaceTabType) => void;
   onRequestLivePreview?: () => Promise<unknown> | void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   resizing: boolean;
+  commandOutput: BuilderCommandOutputSnapshot | null;
+  runtimeCommand: RuntimeToolActivityItem | null;
   onSelectFile?: (file: BuilderFileName) => void;
   onSourceOpenChange: (open: boolean) => void;
   planSourceReadApproval: BuilderPlanSourceReadApprovalPrompt | null;
@@ -2549,7 +4858,6 @@ function BuilderArtifactSidebar({
   preview: BuilderProjectControllerSnapshot['preview'];
   previewPanelRef?: Ref<HTMLElement>;
   sidebarRef?: Ref<HTMLElement>;
-  snapshot: BuilderConversationControllerSnapshot | null;
   sourceDisclosureOpen: boolean;
   sourceDisclosureRef: Ref<HTMLDetailsElement>;
   sourceFile: BuilderProjectSourceFile | null;
@@ -2561,12 +4869,30 @@ function BuilderArtifactSidebar({
   widthMaximum: number;
   onSelectSideWorkspaceFile?: (fileRef: BuilderSideWorkspaceFileRef) => Promise<unknown> | void;
   onStopLivePreview?: () => Promise<unknown> | void;
+  onNavigateUserWeb?: (url: string) => Promise<unknown> | void;
+  onGoBackUserWeb?: () => Promise<unknown> | void;
+  onGoForwardUserWeb?: () => Promise<unknown> | void;
+  onReloadUserWeb?: () => Promise<unknown> | void;
+  onStopUserWeb?: () => Promise<unknown> | void;
   workingProject: BuilderProjectControllerSnapshot['workingProject'];
 }>) {
+  useLayoutEffect(() => {
+    incrementBuilderPerformance('renderer.side_workspace.commit_count');
+  });
+  useEffect(() => {
+    incrementBuilderPerformance('renderer.side_workspace.mount_count');
+    return () => {
+      incrementBuilderPerformance('renderer.side_workspace.unmount_count');
+    };
+  }, []);
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const openTabSet = useMemo(() => new Set<BuilderArtifactTab>(artifactTabs), [artifactTabs]);
+  const activeSideWorkspaceFile = sideWorkspaceFileTree?.entries.find((entry) => (
+    entry.entry_kind === 'text_file' && entry.path === activeFile
+  ));
   const sourceTabLabel = sideWorkspaceFileDisplayName(
-    sideWorkspaceFileContent?.path
+    activeSideWorkspaceFile?.path
+      ?? sideWorkspaceFileContent?.path
       ?? sideWorkspaceFileTree?.selected_file_ref?.path
       ?? firstTextFileEntry(sideWorkspaceFileTree)?.path
       ?? sourceFile?.path
@@ -2603,7 +4929,11 @@ function BuilderArtifactSidebar({
           role="tablist"
         >
           {artifactTabs.map((tab) => {
-            const label = tab === 'source' ? sourceTabLabel : artifactTabLabel(tab);
+            const label = tab === 'source'
+              ? sourceTabLabel
+              : tab === 'browser_placeholder' && agentTestBrowserActive
+                ? 'Agent Test'
+                : artifactTabLabel(tab);
             return (
               <div
                 className="cf-builder-side-workspace-tab"
@@ -2623,7 +4953,12 @@ function BuilderArtifactSidebar({
                   type="button"
                 >
                   <ArtifactTabIcon tab={tab} />
-                  <span>{label}</span>
+                  <span
+                    className={activeTab === tab ? undefined : 'cf-builder-visually-hidden'}
+                    data-builder-side-workspace-tab-label={activeTab === tab ? 'active' : 'collapsed'}
+                  >
+                    {label}
+                  </span>
                 </button>
                 <button
                   aria-label={`Close ${label} tab`}
@@ -2701,15 +5036,29 @@ function BuilderArtifactSidebar({
       </header>
       <div className="cf-builder-artifact-body" data-builder-artifact-body="true">
         {activeTab === 'browser_placeholder' ? (
-          <BuilderSideWorkspaceBrowserPlaceholder />
+          <BuilderSideWorkspaceBrowserPlaceholder
+            agentTestActive={agentTestBrowserActive}
+            onGoBackUserWeb={onGoBackUserWeb}
+            onGoForwardUserWeb={onGoForwardUserWeb}
+            onNavigateUserWeb={onNavigateUserWeb}
+            onReloadUserWeb={onReloadUserWeb}
+            onStopUserWeb={onStopUserWeb}
+            userWebOperation={userWebOperation}
+            userWebStatus={userWebStatus}
+            userWebSurfaceRef={userWebSurfaceRef}
+          />
         ) : null}
-        {activeTab === 'preview' ? (
+        {artifactTabs.includes('preview') ? (
           <section
             aria-label="Browser preview workspace"
             className="cf-builder-side-workspace-browser"
             data-builder-side-workspace-browser="true"
+            data-builder-live-preview-approval-visible={
+              livePreviewStatus?.status === 'approval_required' ? 'true' : 'false'
+            }
             data-builder-live-preview-panel="true"
             data-builder-live-preview-status={livePreviewStatus?.status ?? 'unknown'}
+            hidden={activeTab !== 'preview'}
           >
             <BuilderSideWorkspaceBrowserToolbar
               livePreviewOperation={livePreviewOperation}
@@ -2718,6 +5067,11 @@ function BuilderArtifactSidebar({
               onRequestLivePreview={onRequestLivePreview}
               onReloadLivePreview={onReloadLivePreview}
               onStopLivePreview={onStopLivePreview}
+            />
+            <BuilderLivePreviewDevServerApproval
+              livePreviewOperation={livePreviewOperation}
+              livePreviewStatus={livePreviewStatus}
+              onDecide={onDecideLivePreviewDevServerApproval}
             />
             <BuilderResultPanel
               livePreviewOperation={livePreviewOperation}
@@ -2745,6 +5099,7 @@ function BuilderArtifactSidebar({
         ) : null}
         {activeTab === 'source' ? (
           <BuilderArtifactFilesPanel
+            activePath={activeFile}
             content={sideWorkspaceFileContent}
             contentStatus={sideWorkspaceFileContentStatus}
             fallbackFiles={hasUnsavedDraft ? [] : files}
@@ -2765,23 +5120,26 @@ function BuilderArtifactSidebar({
           <BuilderSideWorkspaceChatPlaceholder />
         ) : null}
         {activeTab === 'terminal_placeholder' ? (
-          <BuilderSideWorkspaceTerminalPlaceholder />
+          <BuilderSideWorkspaceTerminalPlaceholder
+            checkRunProfile={checkRunProfile}
+            checkRunStatus={checkRunStatus}
+            commandOutput={commandOutput}
+            runtimeCommand={runtimeCommand}
+          />
         ) : null}
         {activeTab === 'versions' ? (
           <VersionHistoryPanel
+            canUndo={canUndo}
+            draftCheckpointStatus={draftCheckpointStatus}
+            draftCheckpointTimeline={draftCheckpointTimeline}
             hasSavedProject={hasSavedProject}
+            hasUnsavedDraft={hasUnsavedDraft}
             inspectedRevisionReceiptDigest={inspectedRevisionReceiptDigest}
             onInspectRevision={onInspectRevision}
             onRefresh={onRefreshHistory}
             onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
+            onUndoDraft={onUndoDraft}
             snapshot={history}
-          />
-        ) : null}
-        {activeTab === 'logs' ? (
-          <BuilderArtifactLogsPanel
-            hasUnsavedDraft={hasUnsavedDraft}
-            liveOutput={liveOutput}
-            snapshot={snapshot}
           />
         ) : null}
         {activeTab === 'permissions' ? (
@@ -2800,12 +5158,79 @@ function BuilderArtifactSidebar({
       </div>
     </aside>
   );
-}
+}, (previous, current) => {
+  const sameTabs = (left: readonly BuilderArtifactTab[], right: readonly BuilderArtifactTab[]) => (
+    left.length === right.length && left.every((tab, index) => tab === right[index])
+  );
+  if (
+    previous.activeTab !== current.activeTab
+    || !sameTabs(previous.artifactTabs, current.artifactTabs)
+    || !sameTabs(previous.availableArtifactTabs, current.availableArtifactTabs)
+    || previous.resizing !== current.resizing
+    || previous.width !== current.width
+    || previous.widthMaximum !== current.widthMaximum
+  ) return false;
+  if (current.activeTab === 'preview') {
+    return previous.livePreviewOperation === current.livePreviewOperation
+      && previous.livePreviewStatus === current.livePreviewStatus
+      && previous.preview === current.preview
+      && previous.previewPanelRef === current.previewPanelRef;
+  }
+  if (current.activeTab === 'browser_placeholder') {
+    return previous.agentTestBrowserActive === current.agentTestBrowserActive
+      && previous.userWebOperation === current.userWebOperation
+      && previous.userWebStatus === current.userWebStatus;
+  }
+  if (current.activeTab === 'changes') {
+    return previous.changes === current.changes
+      && previous.changesOpen === current.changesOpen;
+  }
+  if (current.activeTab === 'source') {
+    return previous.activeFile === current.activeFile
+      && previous.files === current.files
+      && previous.hasUnsavedDraft === current.hasUnsavedDraft
+      && previous.sideWorkspaceFileContent === current.sideWorkspaceFileContent
+      && previous.sideWorkspaceFileContentStatus === current.sideWorkspaceFileContentStatus
+      && previous.sideWorkspaceFileTree === current.sideWorkspaceFileTree
+      && previous.sideWorkspaceFileTreeStatus === current.sideWorkspaceFileTreeStatus
+      && previous.sourceDisclosureOpen === current.sourceDisclosureOpen
+      && previous.sourceFile === current.sourceFile;
+  }
+  if (current.activeTab === 'terminal_placeholder') {
+    return previous.checkRunProfile === current.checkRunProfile
+      && sameDisplayedCheckStatus(previous.checkRunStatus, current.checkRunStatus)
+      && previous.commandOutput === current.commandOutput
+      && previous.runtimeCommand === current.runtimeCommand;
+  }
+  if (current.activeTab === 'versions') {
+    return previous.canUndo === current.canUndo
+      && previous.draftCheckpointStatus === current.draftCheckpointStatus
+      && previous.draftCheckpointTimeline === current.draftCheckpointTimeline
+      && previous.hasSavedProject === current.hasSavedProject
+      && previous.hasUnsavedDraft === current.hasUnsavedDraft
+      && previous.history === current.history
+      && previous.inspectedRevisionReceiptDigest === current.inspectedRevisionReceiptDigest;
+  }
+  if (current.activeTab === 'permissions') {
+    return previous.approvalMode === current.approvalMode
+      && previous.currentProjectWriteApproval === current.currentProjectWriteApproval
+      && previous.hasSavedProject === current.hasSavedProject
+      && previous.hasUnsavedDraft === current.hasUnsavedDraft
+      && previous.planSourceReadApproval === current.planSourceReadApproval
+      && previous.providerContextDisclosureApprovalState
+        === current.providerContextDisclosureApprovalState
+      && previous.providerContextDisclosureStatus === current.providerContextDisclosureStatus
+      && previous.workingProject === current.workingProject;
+  }
+  return true;
+});
 
 export function BuilderPage({
   activeRunFollowupQueued = false,
   approvalMode = 'ask_before_write',
   checkRunOperation = null,
+  checkRunOperationFailureCode = null,
+  checkEnvironmentDiagnosis = null,
   checkRunProfiles = [],
   checkRunStatus = null,
   instruction,
@@ -2815,8 +5240,14 @@ export function BuilderPage({
   providerContextDisclosureApprovalState = 'idle',
   composerMode = null,
   composerSubmitLocked = false,
+  commandApproval = null,
+  commandOutputStore = null,
+  pendingUserMessages = [],
   currentProjectWriteApproval = null,
   onApproveCurrentProjectWrite,
+  onDecideCommandApproval,
+  onDecideCheckDependencyPreparation,
+  onDiagnoseCheckEnvironment,
   onApproveProviderContextDisclosure,
   onApprovePlanSourceRead,
   onCancel,
@@ -2838,17 +5269,37 @@ export function BuilderPage({
   onRefreshHistory,
   onRejectDraft,
   onReloadLivePreview,
+  onLivePreviewLayoutChange,
+  onAgentTestBrowserLayoutChange,
+  activeAgentTestBrowserRunId = null,
+  onNavigateUserWeb,
+  onGoBackUserWeb,
+  onGoForwardUserWeb,
+  onReloadUserWeb,
+  onStopUserWeb,
+  onUserWebLayoutChange,
   onReviewPlan,
   onRequestLivePreview,
   onRequestSideWorkspaceFiles,
   onRestoreRevisionAsDraft,
   onSave,
+  onUndoDraft,
   onSelectSideWorkspaceFile,
   onStopLivePreview,
   onInspectRevision,
   onShowCurrentRevision,
   onOpenSettings,
   conversationSnapshot,
+  taskConversationSeed = null,
+  agentWorkbenchSnapshot,
+  onRefreshAgentWorkbench,
+  onUpdateAgentWorkbenchMessageState,
+  onDecideAgentTaskProposal,
+  onCreateProjectForAgentTaskProposal,
+  onArchiveAgentTask,
+  onOpenAgentTaskProposal,
+  onControlAgentTask,
+  onRenameAgentTask,
   projectCatalogSnapshot,
   historySnapshot,
   snapshot,
@@ -2856,8 +5307,11 @@ export function BuilderPage({
   approvedPlanContinuationFailure = null,
   answerFailureRecordedSuccess = false,
   liveOutput = null,
+  liveOutputStore = null,
   livePreviewOperation = null,
   livePreviewStatus = null,
+  userWebOperation = null,
+  userWebStatus = null,
   sideWorkspaceFileContent = null,
   sideWorkspaceFileContentStatus = 'idle',
   sideWorkspaceFileTree = null,
@@ -2869,15 +5323,28 @@ export function BuilderPage({
   workspaceNewProjectRequest = 0,
   workspacePickerRequest = 0,
   onSelectFile,
+  onOpenRuntimeToolFile,
+  onDecideLivePreviewDevServerApproval,
 }: BuilderPageProps) {
+  useLayoutEffect(() => {
+    incrementBuilderPerformance('renderer.builder_page.commit_count');
+  });
   const trusted = isTrustedBuilderProjectControllerSnapshot(snapshot);
   const current = trusted ? snapshot : null;
   const status = current?.status ?? 'unavailable';
   const conversationStatus = conversationSnapshot?.status ?? 'unavailable';
+  const commandOutput = useSyncExternalStore(
+    commandOutputStore?.subscribe ?? subscribeToNoLiveOutput,
+    commandOutputStore?.getSnapshot ?? readNoLiveOutput,
+    commandOutputStore?.getSnapshot ?? readNoLiveOutput,
+  );
   const conversationProjectId = conversationSnapshot?.project_id ?? null;
   const conversationItemCount = conversationSnapshot?.conversation?.state === 'ready'
     ? conversationSnapshot.conversation.conversation.items.length
     : 0;
+  const showingAgentWorkbench = conversationSnapshot?.agent_id !== null
+    && conversationSnapshot?.agent_id !== undefined
+    && conversationSnapshot.project_id === null;
   const saved = current?.savedProject ?? null;
   const draft = current?.draft ?? null;
   const inspected = current?.inspectedRevision ?? null;
@@ -2896,7 +5363,30 @@ export function BuilderPage({
   const catalogProjects = catalog?.projects ?? [];
   const catalogWorkspaceProjects = catalog?.workspaceProjects ?? [];
   const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
-  const version = saved?.target.revision_number ?? null;
+  const activeConversationTurnId = conversationSnapshot?.conversation?.state === 'ready'
+    ? conversationSnapshot.conversation.conversation.recorded_active_turn_id
+    : null;
+  const activeConversationRunId = activeConversationTurnId === null
+    || conversationSnapshot?.conversation?.state !== 'ready'
+    ? null
+    : [...conversationSnapshot.conversation.conversation.items].reverse().find((item): item is Extract<
+      BuilderConversationItem,
+      { item_kind: 'run_started' }
+    > => (
+      item.item_kind === 'run_started' && item.turn_id === activeConversationTurnId
+    ))?.run_id ?? null;
+  const agentTestBrowserOwnerRunId = activeAgentTestBrowserRunId ?? activeConversationRunId;
+  const latestAgentTestBrowserActivity = agentTestBrowserOwnerRunId !== null
+    && conversationSnapshot?.conversation?.state === 'ready'
+    ? [...conversationSnapshot.conversation.conversation.items].reverse().find((item): item is RuntimeToolActivityItem => (
+      item.item_kind === 'programming_runtime_tool_activity'
+      && item.tool_kind === 'browser'
+      && item.run_id === agentTestBrowserOwnerRunId
+    )) ?? null
+    : null;
+  const agentTestBrowserActive = activeAgentTestBrowserRunId !== null
+    || latestAgentTestBrowserActivity !== null;
+  const composerBusy = busy || agentTestBrowserActive;
   const canAddContext = typeof onSubmitInstruction === 'function'
     && liveOutput !== null
     && busy
@@ -2905,17 +5395,30 @@ export function BuilderPage({
     && (status === 'answering' || status === 'generating' || status === 'submitting');
   const canSubmit = typeof onSubmitInstruction === 'function'
     && GENERATABLE_STATUSES.has(status)
+    && activeAgentTestBrowserRunId === null
     && !viewingHistory
     && !composerSubmitLocked
     && instruction.trim().length > 0;
   const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
   const canCancel = typeof onCancel === 'function'
-    && (status === 'answering' || status === 'generating' || status === 'submitting');
+    && (
+      status === 'answering'
+      || status === 'generating'
+      || status === 'submitting'
+      || agentTestBrowserActive
+    );
   const canEditInstruction = typeof onInstructionChange === 'function'
     && !viewingHistory
-    && (!busy || canAddContext);
+    && (!composerBusy || canAddContext);
+  const activity = visibleActivitySnapshot(conversationSnapshot);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
-  const showFailedNotice = failed && !(status === 'answer_failed' && answerFailureRecordedSuccess);
+  const workspaceConflictProjectedInConversation = current?.error === 'builder_generation_workspace_changed'
+    && current.retryableGeneration === false
+    && currentAgentActivity(activity)?.current.phase === 'blocked';
+  const showFailedNotice = failed
+    && !(status === 'answer_failed' && answerFailureRecordedSuccess)
+    && !(status === 'generation_failed' && hasUnsavedDraft)
+    && !workspaceConflictProjectedInConversation;
   const canRetryGenerate = typeof onRetryGenerate === 'function'
     && (status === 'generation_failed' || status === 'submit_failed')
     && current?.retryableGeneration === true
@@ -2923,33 +5426,97 @@ export function BuilderPage({
   const canOpenSettings = failed
     && current?.error === 'builder_generation_provider_unavailable'
     && typeof onOpenSettings === 'function';
-  const activity = visibleActivitySnapshot(conversationSnapshot);
   const draftCheckpointStatus = activity?.status === 'ready'
     && activity.conversation?.state === 'ready'
     ? activity.conversation.draft_checkpoint_status_projection ?? null
+    : null;
+  const draftCheckpointTimeline = activity?.status === 'ready'
+    && activity.conversation?.state === 'ready'
+    ? activity.conversation.draft_checkpoint_timeline_projection ?? null
     : null;
   const reviewState = activity?.status === 'ready'
     && activity.conversation?.state === 'ready'
     ? activity.conversation.review_state_projection ?? null
     : null;
   const checkRunOutcome = currentCheckRunOutcome(activity);
+  const displayedCheckRunStatus: BuilderDisplayedCheckStatus | null = checkRunStatus ?? (
+    checkRunOutcome?.state === 'completed'
+    && checkRunOutcome.command_kind !== null
+    && (
+      checkRunOutcome.status === 'passed'
+      || checkRunOutcome.status === 'failed'
+      || checkRunOutcome.status === 'incomplete'
+    )
+    && checkRunOutcome.completed_at_ms !== null
+      ? {
+        command_kind: checkRunOutcome.command_kind,
+        status: checkRunOutcome.status,
+        summary: checkRunOutcome.summary,
+        environment_reason: checkRunOutcome.environment_reason,
+        completed_at_ms: checkRunOutcome.completed_at_ms,
+      }
+      : null
+  );
+  const checkRunProfile = displayedCheckRunStatus === null
+    ? null
+    : checkRunProfiles?.find(
+      (profile) => profile.command_kind === displayedCheckRunStatus.command_kind,
+    ) ?? null;
+  const conversationHasActiveTurn = conversationSnapshot?.conversation?.state === 'ready'
+    && conversationSnapshot.conversation.conversation.recorded_active_turn_id !== null;
+  const projectedAgentActivity = currentAgentActivity(activity);
+  const conversationHasInFlightStage = conversationHasActiveTurn
+    && (
+      projectedAgentActivity === null
+      || projectedAgentActivity.current.status === 'active'
+      || projectedAgentActivity.current.status === 'waiting'
+    );
+  const checkRunInFlight = checkRunOperation === 'running'
+    || checkRunOperation === 'preparing_dependencies';
+  const reviewReadyForCurrentDraft = reviewState !== null
+    && reviewState.draft_id === draft?.draft_id
+    && reviewState.can_save === true;
+  const showVersionDecision = hasUnsavedDraft
+    && (!busy || status === 'save_unknown')
+    && !conversationHasInFlightStage
+    && (
+      status === 'save_unknown'
+      || reviewReadyForCurrentDraft
+    );
   const canSave = typeof onSave === 'function'
     && hasUnsavedDraft
     && !busy
-    && checkRunOperation !== 'running'
-    && checkRunStatus?.status !== 'failed'
-    && checkRunStatus?.status !== 'incomplete'
+    && !conversationHasInFlightStage
+    && !checkRunInFlight
+    && displayedCheckRunStatus?.status !== 'failed'
+    && displayedCheckRunStatus?.status !== 'incomplete'
     && reviewState?.draft_id === draft?.draft_id
     && reviewState?.can_save === true;
   const canReject = typeof onRejectDraft === 'function'
     && hasUnsavedDraft
     && !busy
+    && !conversationHasInFlightStage
     && reviewState?.draft_id === draft?.draft_id
     && reviewState?.can_discard === true;
+  const canUndo = typeof onUndoDraft === 'function'
+    && hasUnsavedDraft
+    && !busy
+    && !conversationHasInFlightStage
+    && !checkRunInFlight;
   const history = visibleHistorySnapshot(historySnapshot);
   const visibleLiveOutput = liveOutput;
-  const showActivity = shouldShowActivityPanel(activity) || visibleLiveOutput !== null || status === 'saving';
-  const showLogsPanel = artifactLogEntries(activity).length > 0 || visibleLiveOutput !== null;
+  const showActivity = shouldShowActivityPanel(activity)
+    || (saved !== null && activity?.status === 'absent')
+    || visibleLiveOutput !== null
+    || status === 'saving';
+  const hasCanonicalTaskConversationItems = conversationSnapshot?.conversation?.state === 'ready'
+    && taskConversationSeed !== null
+    && conversationSnapshot.conversation.conversation.conversation_id
+      === taskConversationSeed.conversation_id
+    && conversationSnapshot.conversation.conversation.items.length > 0;
+  const showTaskConversationSeed = !showingAgentWorkbench
+    && taskConversationSeed !== null
+    && !hasCanonicalTaskConversationItems;
   const showPermissionsPanel = saved !== null
     || workingProject !== null
     || hasUnsavedDraft
@@ -2989,11 +5556,11 @@ export function BuilderPage({
     && !hasUnsavedDraft
     && !viewingHistory;
   const canProposePlan = (typeof onSelectComposerMode === 'function' || typeof onSelectPlanMode === 'function')
-    && (saved !== null || workingProject !== null)
+    && (showingAgentWorkbench || saved !== null || workingProject !== null)
     && !busy
     && !hasUnsavedDraft
     && !viewingHistory
-    && PLAN_PROPOSAL_READY_STATUSES.has(status);
+    && (showingAgentWorkbench || PLAN_PROPOSAL_READY_STATUSES.has(status));
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
@@ -3001,34 +5568,56 @@ export function BuilderPage({
   const sourceFile = selected ?? (preview === null ? files[0] ?? null : null);
   const showPreviewUnavailableResult = preview === null && status === 'preview_unavailable' && hasContent;
   const showResultFlow = preview !== null || showPreviewUnavailableResult;
-  const showVersionHistoryPanel = saved !== null && !hasUnsavedDraft;
+  const showVersionHistoryPanel = saved !== null || hasUnsavedDraft;
   const sourceDisclosureRef = useRef<HTMLDetailsElement | null>(null);
-  const draftLandingRef = useRef<HTMLDivElement | null>(null);
-  const draftReviewRef = useRef<HTMLElement | null>(null);
-  const resultFlowRef = useRef<HTMLElement | null>(null);
+  const artifactPreviewRef = useRef<HTMLElement | null>(null);
+  const expandedPreviewRef = useRef<HTMLDivElement | null>(null);
   const artifactSidebarRef = useRef<HTMLElement | null>(null);
   const pendingChangesFocusRef = useRef(false);
   const pendingSourceFocusRef = useRef(false);
+  const skipNextDraftSourceRequestRef = useRef(false);
   const chatShellRef = useRef<HTMLElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatFlowColumnRef = useRef<HTMLDivElement | null>(null);
   const chatTailRef = useRef<HTMLDivElement | null>(null);
+  const composerStackRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowChatRef = useRef(true);
+  const observedChatScrollTopRef = useRef(0);
+  const chatReaderScrollIntentUntilRef = useRef(0);
+  const liveOutputFollowFrameRef = useRef<number | null>(null);
+  const livePreviewLayoutFrameRef = useRef<number | null>(null);
+  const livePreviewLayoutSignatureRef = useRef<string | null>(null);
+  const userWebSurfaceRef = useRef<HTMLElement | null>(null);
+  const userWebLayoutFrameRef = useRef<number | null>(null);
+  const userWebLayoutSignatureRef = useRef<string | null>(null);
+  const agentTestBrowserLayoutFrameRef = useRef<number | null>(null);
+  const agentTestBrowserLayoutSignatureRef = useRef<string | null>(null);
   const [artifactWidth, setArtifactWidth] = useState(ARTIFACT_DEFAULT_WIDTH_PX);
+  const artifactPreferredWidthRef = useRef(ARTIFACT_DEFAULT_WIDTH_PX);
   const [artifactWidthMaximum, setArtifactWidthMaximum] = useState(ARTIFACT_MAX_WIDTH_PX);
   const [artifactResizing, setArtifactResizing] = useState(false);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const changesPanelIdentity = [
-    draft?.draft_id ?? 'no-draft',
-    inspected?.target.revision_receipt_digest ?? 'no-inspected',
-    saved?.target.revision_receipt_digest ?? 'no-saved',
+  const [taskMonitorCollapsed, setTaskMonitorCollapsed] = useState(false);
+  const artifactWorkspaceIdentity = [
+    conversationSnapshot?.agent_id ?? 'no-agent',
+    conversationProjectId
+      ?? current?.conversationProjectId
+      ?? draft?.project_id
+      ?? saved?.target.project_id
+      ?? current?.workingProjectId
+      ?? 'no-project',
+    conversationSnapshot?.task_address_id ?? 'no-task-address',
   ].join('|');
+  const currentArtifactPanelIdentity = `${artifactWorkspaceIdentity}|current`;
+  const artifactPanelIdentity = inspected === null
+    ? currentArtifactPanelIdentity
+    : `${artifactWorkspaceIdentity}|${inspected.target.revision_receipt_digest}`;
+  const changesPanelIdentity = `${artifactPanelIdentity}|changes`;
   const sourceDisclosureIdentity = [
-    draft?.draft_id ?? 'no-draft',
-    inspected?.target.revision_receipt_digest ?? 'no-inspected',
-    saved?.target.revision_receipt_digest ?? 'no-saved',
+    artifactPanelIdentity,
+    'source',
     sourceFile?.path ?? 'no-source',
-    files.length,
   ].join('|');
   const [changesPanelState, setChangesPanelState] = useState<Readonly<{
     identity: string;
@@ -3054,49 +5643,47 @@ export function BuilderPage({
       && sourceDisclosureState.open
     )
   );
-  const currentFiles = draft?.source_tree.files ?? saved?.source_tree.files ?? [];
-  const currentSelected = currentFiles.find((file) => file.path === activeFile) ?? null;
-  const currentSourceFile = currentSelected ?? (preview === null ? currentFiles[0] ?? null : null);
-  const currentArtifactPanelIdentity = [
-    draft?.draft_id ?? 'no-draft',
-    'no-inspected',
-    saved?.target.revision_receipt_digest ?? 'no-saved',
-    currentSourceFile?.path ?? 'no-source',
-    currentFiles.length,
-    showResultFlow ? 'result' : 'no-result',
-    showVersionHistoryPanel ? 'versions' : 'no-versions',
-    showLogsPanel ? 'logs' : 'no-logs',
-    showPermissionsPanel ? 'permissions' : 'no-permissions',
-  ].join('|');
-  const artifactPanelIdentity = [
-    draft?.draft_id ?? 'no-draft',
-    inspected?.target.revision_receipt_digest ?? 'no-inspected',
-    saved?.target.revision_receipt_digest ?? 'no-saved',
-    sourceFile?.path ?? 'no-source',
-    files.length,
-    showResultFlow ? 'result' : 'no-result',
-    showVersionHistoryPanel ? 'versions' : 'no-versions',
-    showLogsPanel ? 'logs' : 'no-logs',
-    showPermissionsPanel ? 'permissions' : 'no-permissions',
-  ].join('|');
-  const showFilesPanel = sourceFile !== null || hasUnsavedDraft;
+  const [runtimeCommandState, setRuntimeCommandState] = useState<Readonly<{
+    identity: string;
+    item: RuntimeToolActivityItem;
+  }> | null>(null);
+  const runtimeCommand = runtimeCommandState?.identity === artifactPanelIdentity
+    ? runtimeCommandState.item
+    : null;
+  const agentTestBrowserIdentity = agentTestBrowserActive
+    ? activeAgentTestBrowserRunId ?? `${latestAgentTestBrowserActivity?.run_id}|${latestAgentTestBrowserActivity?.tool_call_id}`
+    : null;
+  const observedAgentTestBrowserIdentityRef = useRef<string | null>(null);
+  const showFilesPanel = sourceFile !== null
+    || hasUnsavedDraft
+    || sideWorkspaceFileTree !== null
+    || sideWorkspaceFileContent !== null;
   const artifactTabs = useMemo(() => {
     const tabs: BuilderArtifactTab[] = [];
+    if (agentTestBrowserActive) tabs.push('browser_placeholder');
     if (showResultFlow) tabs.push('preview');
-    if (!showResultFlow && (hasUnsavedDraft || showFilesPanel || showVersionHistoryPanel || showLogsPanel || showPermissionsPanel)) {
+    if (!showingAgentWorkbench && !tabs.includes('browser_placeholder')) {
       tabs.push('browser_placeholder');
     }
     if (hasUnsavedDraft) tabs.push('changes');
     if (showFilesPanel) tabs.push('source');
     if (showVersionHistoryPanel) tabs.push('versions');
-    if (showLogsPanel) tabs.push('logs');
     if (showPermissionsPanel) tabs.push('permissions');
-    if (tabs.length > 0) {
+    if (tabs.length > 0 || commandOutput !== null) {
       tabs.push('terminal_placeholder');
       tabs.push('side_chat_placeholder');
     }
     return tabs;
-  }, [hasUnsavedDraft, showFilesPanel, showLogsPanel, showPermissionsPanel, showResultFlow, showVersionHistoryPanel]);
+  }, [
+    agentTestBrowserActive,
+    commandOutput,
+    hasUnsavedDraft,
+    showFilesPanel,
+    showPermissionsPanel,
+    showResultFlow,
+    showVersionHistoryPanel,
+    showingAgentWorkbench,
+  ]);
   const hasArtifactControls = artifactTabs.length > 0;
   const defaultArtifactTab: BuilderArtifactTab | null = selected !== null && showFilesPanel
     ? 'source'
@@ -3104,6 +5691,8 @@ export function BuilderPage({
       ? 'preview'
     : hasUnsavedDraft && showResultFlow
       ? 'preview'
+    : hasUnsavedDraft && showFilesPanel
+      ? 'source'
       : showVersionHistoryPanel
         ? 'versions'
         : showResultFlow
@@ -3112,32 +5701,88 @@ export function BuilderPage({
             ? 'source'
             : hasUnsavedDraft
               ? 'changes'
-              : null;
+              : artifactTabs.includes('browser_placeholder')
+                ? 'browser_placeholder'
+                : null;
   const [artifactPanelState, setArtifactPanelState] = useState<Readonly<{
     active: BuilderArtifactTab | null;
     openTabs: readonly BuilderArtifactTab[];
     identity: string;
+    observedCommandIdentity: string | null;
   }>>(() => ({
-    active: defaultArtifactTab,
-    openTabs: defaultArtifactTab === null ? [] : [defaultArtifactTab],
+    active: null,
+    openTabs: [],
     identity: artifactPanelIdentity,
+    observedCommandIdentity: null,
   }));
-  const requestedOpenArtifactTabs = artifactPanelState.identity === artifactPanelIdentity
+  const commandOutputIdentity = commandOutput === null
+    ? null
+    : [
+      commandOutput.project_id,
+      commandOutput.conversation_id,
+      commandOutput.run_id,
+      commandOutput.command_profile_id,
+    ].join('|');
+  useEffect(() => {
+    if (commandOutputIdentity === null || !artifactTabs.includes('terminal_placeholder')) return;
+    setArtifactPanelState((panelState) => {
+      if (
+        panelState.identity === artifactPanelIdentity
+        && panelState.observedCommandIdentity === commandOutputIdentity
+      ) return panelState;
+      const baseOpenTabs = panelState.identity === artifactPanelIdentity
+        ? panelState.openTabs.filter((tab) => artifactTabs.includes(tab))
+        : [];
+      return {
+        active: 'terminal_placeholder',
+        openTabs: baseOpenTabs.includes('terminal_placeholder')
+          ? baseOpenTabs
+          : [...baseOpenTabs, 'terminal_placeholder'],
+        identity: artifactPanelIdentity,
+        observedCommandIdentity: commandOutputIdentity,
+      };
+    });
+  }, [artifactPanelIdentity, artifactTabs, commandOutputIdentity]);
+  useEffect(() => {
+    if (
+      agentTestBrowserIdentity === null
+      || observedAgentTestBrowserIdentityRef.current === agentTestBrowserIdentity
+      || !artifactTabs.includes('browser_placeholder')
+    ) return;
+    observedAgentTestBrowserIdentityRef.current = agentTestBrowserIdentity;
+    setArtifactPanelState((panelState) => {
+      const baseOpenTabs = panelState.identity === artifactPanelIdentity
+        ? panelState.openTabs.filter((tab) => artifactTabs.includes(tab))
+        : [];
+      return {
+        ...panelState,
+        active: 'browser_placeholder',
+        openTabs: baseOpenTabs.includes('browser_placeholder')
+          ? baseOpenTabs
+          : [...baseOpenTabs, 'browser_placeholder'],
+        identity: artifactPanelIdentity,
+      };
+    });
+  }, [agentTestBrowserIdentity, artifactPanelIdentity, artifactTabs]);
+  const retainedOpenArtifactTabs: readonly BuilderArtifactTab[] =
+    artifactPanelState.identity === artifactPanelIdentity
     ? artifactPanelState.openTabs.filter((tab) => artifactTabs.includes(tab))
-    : defaultArtifactTab === null ? [] : [defaultArtifactTab];
-  const openArtifactTabs = artifactPanelState.identity === artifactPanelIdentity || defaultArtifactTab === null
-    ? requestedOpenArtifactTabs
-    : [defaultArtifactTab];
-  const requestedArtifactTab = artifactPanelState.identity === artifactPanelIdentity
+    : [];
+  const openArtifactTabs: readonly BuilderArtifactTab[] = retainedOpenArtifactTabs;
+  const requestedArtifactTab: BuilderArtifactTab | null =
+    artifactPanelState.identity === artifactPanelIdentity
     ? artifactPanelState.active
-    : defaultArtifactTab;
-  const activeArtifactTab = requestedArtifactTab === null
+    : null;
+  const activeArtifactTab: BuilderArtifactTab | null = requestedArtifactTab === null
     ? null
     : openArtifactTabs.includes(requestedArtifactTab)
       ? requestedArtifactTab
       : openArtifactTabs[0] ?? null;
   const showArtifactSidebar = activeArtifactTab !== null;
-  const activeWorkspaceMenuLabel = activeArtifactTab === null ? 'Workspace' : artifactTabLabel(activeArtifactTab);
+  const taskMonitorTasks = agentWorkbenchSnapshot?.projection?.task_monitor.tasks ?? [];
+  const taskMonitorAvailable = showingAgentWorkbench && taskMonitorTasks.length > 0;
+  const showTaskMonitor = taskMonitorAvailable && !taskMonitorCollapsed;
+  const showRightSidebar = showArtifactSidebar || showTaskMonitor;
   const workspaceMenuVisible = workspaceMenuOpen && hasArtifactControls;
   const openLocationProjectId = draft?.project_id
     ?? inspected?.target.project_id
@@ -3146,11 +5791,195 @@ export function BuilderPage({
     ?? null;
   const showChangesPanel = activeArtifactTab === 'changes' && hasUnsavedDraft;
   const previewExpandedVisible = previewExpanded && showResultFlow;
-  const artifactShellStyle = showArtifactSidebar
+  const artifactShellStyle = showRightSidebar
     ? ({
-      '--cf-builder-artifact-width': `${artifactWidth}px`,
+      '--cf-builder-artifact-width': showTaskMonitor ? '328px' : `${artifactWidth}px`,
     } as CSSProperties)
     : undefined;
+  useLayoutEffect(() => {
+    if (typeof onLivePreviewLayoutChange !== 'function') return undefined;
+    // A new request-bound callback must receive the current bounds even when
+    // the DOM geometry is unchanged from an earlier, not-yet-admitted request.
+    livePreviewLayoutSignatureRef.current = null;
+    const previewElement = activeArtifactTab === 'preview'
+      ? previewExpandedVisible
+        ? expandedPreviewRef.current
+        : artifactPreviewRef.current
+      : null;
+
+    function publish(bounds: BuilderLivePreviewViewBounds | null): void {
+      const signature = bounds === null
+        ? 'hidden'
+        : `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`;
+      if (signature === livePreviewLayoutSignatureRef.current) return;
+      livePreviewLayoutSignatureRef.current = signature;
+      void onLivePreviewLayoutChange?.(bounds);
+    }
+
+    function measure(): void {
+      if (livePreviewLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(livePreviewLayoutFrameRef.current);
+      }
+      livePreviewLayoutFrameRef.current = window.requestAnimationFrame(() => {
+        livePreviewLayoutFrameRef.current = null;
+        if (previewElement === null || !previewElement.isConnected) {
+          publish(null);
+          return;
+        }
+        const rect = previewElement.getBoundingClientRect();
+        const bounds = Object.freeze({
+          x: Math.max(0, Math.round(rect.left)),
+          y: Math.max(0, Math.round(rect.top)),
+          width: Math.max(1, Math.round(rect.width)),
+          height: Math.max(1, Math.round(rect.height)),
+        });
+        publish(bounds);
+      });
+    }
+
+    if (previewElement === null) {
+      publish(null);
+      return undefined;
+    }
+    measure();
+    const observer = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(measure)
+      : null;
+    observer?.observe(previewElement);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+      if (livePreviewLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(livePreviewLayoutFrameRef.current);
+        livePreviewLayoutFrameRef.current = null;
+      }
+    };
+  }, [activeArtifactTab, onLivePreviewLayoutChange, previewExpandedVisible]);
+
+  useLayoutEffect(() => {
+    if (typeof onUserWebLayoutChange !== 'function') return undefined;
+    userWebLayoutSignatureRef.current = null;
+    const browserElement = activeArtifactTab === 'browser_placeholder' && !agentTestBrowserActive
+      ? userWebSurfaceRef.current
+      : null;
+
+    function publish(bounds: BuilderLivePreviewViewBounds | null): void {
+      const signature = bounds === null
+        ? 'hidden'
+        : `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`;
+      if (signature === userWebLayoutSignatureRef.current) return;
+      userWebLayoutSignatureRef.current = signature;
+      void onUserWebLayoutChange?.(bounds);
+    }
+
+    function measure(): void {
+      if (userWebLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(userWebLayoutFrameRef.current);
+      }
+      userWebLayoutFrameRef.current = window.requestAnimationFrame(() => {
+        userWebLayoutFrameRef.current = null;
+        if (browserElement === null || !browserElement.isConnected) {
+          publish(null);
+          return;
+        }
+        const rect = browserElement.getBoundingClientRect();
+        publish(Object.freeze({
+          x: Math.max(0, Math.round(rect.left)),
+          y: Math.max(0, Math.round(rect.top)),
+          width: Math.max(1, Math.round(rect.width)),
+          height: Math.max(1, Math.round(rect.height)),
+        }));
+      });
+    }
+
+    if (browserElement === null) {
+      publish(null);
+      return undefined;
+    }
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(browserElement);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+      if (userWebLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(userWebLayoutFrameRef.current);
+        userWebLayoutFrameRef.current = null;
+      }
+    };
+  }, [
+    activeArtifactTab,
+    agentTestBrowserActive,
+    onUserWebLayoutChange,
+    userWebStatus?.current_url,
+    userWebStatus?.status,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      typeof onAgentTestBrowserLayoutChange !== 'function'
+      || agentTestBrowserOwnerRunId === null
+    ) return undefined;
+    const ownerRunId = agentTestBrowserOwnerRunId;
+    agentTestBrowserLayoutSignatureRef.current = null;
+    const browserElement = activeArtifactTab === 'browser_placeholder' && agentTestBrowserActive
+      ? userWebSurfaceRef.current
+      : null;
+
+    function publish(bounds: BuilderLivePreviewViewBounds | null): void {
+      const signature = bounds === null
+        ? 'hidden'
+        : `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`;
+      if (signature === agentTestBrowserLayoutSignatureRef.current) return;
+      agentTestBrowserLayoutSignatureRef.current = signature;
+      void onAgentTestBrowserLayoutChange?.(ownerRunId, bounds);
+    }
+
+    function measure(): void {
+      if (agentTestBrowserLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(agentTestBrowserLayoutFrameRef.current);
+      }
+      agentTestBrowserLayoutFrameRef.current = window.requestAnimationFrame(() => {
+        agentTestBrowserLayoutFrameRef.current = null;
+        if (browserElement === null || !browserElement.isConnected) {
+          publish(null);
+          return;
+        }
+        const rect = browserElement.getBoundingClientRect();
+        publish(Object.freeze({
+          x: Math.max(0, Math.round(rect.left)),
+          y: Math.max(0, Math.round(rect.top)),
+          width: Math.max(1, Math.round(rect.width)),
+          height: Math.max(1, Math.round(rect.height)),
+        }));
+      });
+    }
+
+    if (browserElement === null) {
+      publish(null);
+      return undefined;
+    }
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(browserElement);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+      if (agentTestBrowserLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(agentTestBrowserLayoutFrameRef.current);
+        agentTestBrowserLayoutFrameRef.current = null;
+      }
+      void onAgentTestBrowserLayoutChange?.(ownerRunId, null);
+    };
+  }, [
+    activeArtifactTab,
+    agentTestBrowserOwnerRunId,
+    agentTestBrowserActive,
+    onAgentTestBrowserLayoutChange,
+  ]);
 
   useLayoutEffect(() => {
     if (!showArtifactSidebar) return undefined;
@@ -3161,7 +5990,7 @@ export function BuilderPage({
     function clampForCurrentShell(): void {
       const maximum = artifactMaxWidthForShell(shellElement.getBoundingClientRect().width);
       setArtifactWidthMaximum(maximum);
-      setArtifactWidth((currentWidth) => clampArtifactWidth(currentWidth, maximum));
+      setArtifactWidth(clampArtifactWidth(artifactPreferredWidthRef.current, maximum));
     }
 
     clampForCurrentShell();
@@ -3220,7 +6049,7 @@ export function BuilderPage({
   const activityFollowCursor = (() => {
     const liveCursor = visibleLiveOutput === null
       ? 'no-live-output'
-      : `${visibleLiveOutput.request_id}:${visibleLiveOutput.state}:${visibleLiveOutput.chunk_count}`;
+      : `${visibleLiveOutput.request_id}:${visibleLiveOutput.state}`;
     const conversation = activity?.conversation;
     if (conversation?.state !== 'ready') return `${activity?.status ?? 'no-activity'}:${liveCursor}`;
     const items = conversation.conversation.items;
@@ -3243,6 +6072,24 @@ export function BuilderPage({
     activityFollowCursor,
   ].join('|');
 
+  function followChatToBottom(): void {
+    if (!shouldFollowChatRef.current) return;
+    const scroll = chatScrollRef.current;
+    if (scroll === null) return;
+    scroll.scrollTop = scroll.scrollHeight;
+    observedChatScrollTopRef.current = scroll.scrollTop;
+  }
+
+  useLayoutEffect(() => {
+    const stack = composerStackRef.current;
+    if (stack === null) return undefined;
+    followChatToBottom();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(followChatToBottom);
+    observer.observe(stack);
+    return () => { observer.disconnect(); };
+  }, [showVersionDecision]);
+
   useEffect(() => {
     if (!pendingSourceFocusRef.current || !sourceDisclosureOpen) return;
     const disclosure = sourceDisclosureRef.current;
@@ -3252,55 +6099,35 @@ export function BuilderPage({
   }, [sourceDisclosureOpen, sourceFile?.path]);
 
   useEffect(() => {
-    if (hasUnsavedDraft) return;
     if (!shouldFollowChatRef.current) return;
-    chatTailRef.current?.scrollIntoView?.({ block: 'end' });
+    followChatToBottom();
   }, [chatFollowKey, hasUnsavedDraft]);
 
   useEffect(() => {
-    if (!hasUnsavedDraft) return;
-    shouldFollowChatRef.current = false;
-    let cancelled = false;
-    const frameHandles: number[] = [];
-    const timeoutHandles: number[] = [];
-    const scrollDraftReviewIntoView = () => {
-      if (cancelled) return;
-      const landingTarget = draftReviewRef.current
-        ?? draftLandingRef.current
-        ?? (showResultFlow ? resultFlowRef.current : null);
-      if (landingTarget !== null) {
-        scrollElementRangeIntoChatView(
-          chatScrollRef.current,
-          landingTarget,
-          draftLandingRef.current ?? landingTarget,
-        );
-      }
-    };
-    const scheduleFrame = (callback: () => void): void => {
-      frameHandles.push(window.requestAnimationFrame(callback));
-    };
-    const scheduleTimeout = (delayMs: number): void => {
-      timeoutHandles.push(window.setTimeout(scrollDraftReviewIntoView, delayMs));
-    };
-    scrollDraftReviewIntoView();
-    scheduleFrame(() => {
-      scrollDraftReviewIntoView();
-      scheduleFrame(scrollDraftReviewIntoView);
+    const column = chatFlowColumnRef.current;
+    if (column === null || typeof ResizeObserver !== 'function') return undefined;
+    const observer = new ResizeObserver(followChatToBottom);
+    observer.observe(column);
+    return () => { observer.disconnect(); };
+  }, []);
+
+  const followVisibleLiveOutput = useCallback(() => {
+    if (!shouldFollowChatRef.current) return;
+    if (liveOutputFollowFrameRef.current !== null) return;
+    liveOutputFollowFrameRef.current = window.requestAnimationFrame(() => {
+      liveOutputFollowFrameRef.current = null;
+      if (!shouldFollowChatRef.current) return;
+      const scroll = chatScrollRef.current;
+      if (scroll === null) return;
+      followChatToBottom();
     });
-    scheduleTimeout(120);
-    scheduleTimeout(320);
-    return () => {
-      cancelled = true;
-      for (const frameHandle of frameHandles) window.cancelAnimationFrame(frameHandle);
-      for (const timeoutHandle of timeoutHandles) window.clearTimeout(timeoutHandle);
-    };
-  }, [
-    draft?.draft_id,
-    hasUnsavedDraft,
-    preview?.source_tree_digest,
-    showPreviewUnavailableResult,
-    showResultFlow,
-  ]);
+  }, []);
+
+  useEffect(() => () => {
+    if (liveOutputFollowFrameRef.current === null) return;
+    window.cancelAnimationFrame(liveOutputFollowFrameRef.current);
+    liveOutputFollowFrameRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!pendingChangesFocusRef.current || !showChangesPanel) return;
@@ -3312,13 +6139,41 @@ export function BuilderPage({
 
   useEffect(() => {
     if (activeArtifactTab !== 'source' || !hasUnsavedDraft) return;
+    if (skipNextDraftSourceRequestRef.current) {
+      skipNextDraftSourceRequestRef.current = false;
+      return;
+    }
+    if (sideWorkspaceFileTree?.source_kind === 'runtime_snapshot') return;
     void onRequestSideWorkspaceFiles?.();
-  }, [activeArtifactTab, hasUnsavedDraft, onRequestSideWorkspaceFiles]);
+  }, [activeArtifactTab, hasUnsavedDraft, onRequestSideWorkspaceFiles, sideWorkspaceFileTree]);
 
   function updateChatFollowState(): void {
     const scroll = chatScrollRef.current;
     if (scroll === null) return;
+    if (Date.now() > chatReaderScrollIntentUntilRef.current) {
+      if (shouldFollowChatRef.current) followChatToBottom();
+      else observedChatScrollTopRef.current = scroll.scrollTop;
+      return;
+    }
+    const floor = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const expectedTop = Math.min(observedChatScrollTopRef.current, floor);
+    const movedByUser = Math.abs(scroll.scrollTop - expectedTop) > 0.5;
+    if (!movedByUser) {
+      if (shouldFollowChatRef.current) followChatToBottom();
+      return;
+    }
     shouldFollowChatRef.current = isNearChatBottom(scroll);
+    observedChatScrollTopRef.current = scroll.scrollTop;
+  }
+
+  function markChatReaderScrollIntent(): void {
+    chatReaderScrollIntentUntilRef.current = Date.now() + 500;
+  }
+
+  function markChatKeyboardScrollIntent(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+      markChatReaderScrollIntent();
+    }
   }
 
   function setChangesPanelOpen(open: boolean): void {
@@ -3367,19 +6222,38 @@ export function BuilderPage({
         active,
         openTabs: nextOpenTabs,
         identity: artifactPanelIdentity,
+        observedCommandIdentity: commandOutputIdentity,
       };
     });
   }
 
   function openArtifactTab(tab: BuilderArtifactTab): void {
-    shouldFollowChatRef.current = false;
     setActiveArtifactTab(tab);
     if (tab === 'changes') setChangesPanelOpen(true);
     if (tab === 'source') setSourceDisclosureOpen(true);
   }
 
+  function runProjectPreview(): void {
+    if (!artifactTabs.includes('preview')) return;
+    openArtifactTab('preview');
+    if (
+      livePreviewOperation === null
+      && livePreviewStatus?.can_start === true
+    ) {
+      void onRequestLivePreview?.();
+    }
+  }
+
+  function stopProjectPreview(): void {
+    if (
+      livePreviewOperation === null
+      && livePreviewStatus?.can_stop === true
+    ) {
+      void onStopLivePreview?.();
+    }
+  }
+
   function closeArtifactTab(tab: BuilderArtifactTab): void {
-    shouldFollowChatRef.current = false;
     setArtifactPanelState((panelState) => {
       const baseOpenTabs = panelState.identity === artifactPanelIdentity
         ? panelState.openTabs.filter((openTab) => artifactTabs.includes(openTab))
@@ -3393,6 +6267,7 @@ export function BuilderPage({
         active: nextActive,
         openTabs: nextOpenTabs,
         identity: artifactPanelIdentity,
+        observedCommandIdentity: commandOutputIdentity,
       };
     });
   }
@@ -3410,6 +6285,9 @@ export function BuilderPage({
 
   function openWorkspaceMenuTab(tab: BuilderArtifactTab): void {
     if (tab === 'changes') pendingChangesFocusRef.current = true;
+    if (tab === 'source' && sideWorkspaceFileTree?.source_kind === 'runtime_snapshot') {
+      void onRequestSideWorkspaceFiles?.();
+    }
     openArtifactTab(tab);
     setWorkspaceMenuOpen(false);
     if (tab === 'preview') {
@@ -3420,8 +6298,8 @@ export function BuilderPage({
   }
 
   function minimizeArtifactSidebar(): void {
-    shouldFollowChatRef.current = false;
     const fallbackTab = activeArtifactTab ?? defaultArtifactTab ?? artifactTabs[0] ?? null;
+    artifactPreferredWidthRef.current = ARTIFACT_MIN_WIDTH_PX;
     setArtifactWidth(ARTIFACT_MIN_WIDTH_PX);
     if (fallbackTab !== null) {
       setActiveArtifactTab(fallbackTab);
@@ -3429,7 +6307,6 @@ export function BuilderPage({
   }
 
   function toggleArtifactSidebar(): void {
-    shouldFollowChatRef.current = false;
     if (showArtifactSidebar) {
       setActiveArtifactTab(null);
       return;
@@ -3448,7 +6325,6 @@ export function BuilderPage({
   function startArtifactResize(event: ReactPointerEvent<HTMLButtonElement>): void {
     if (event.button !== 0) return;
     event.preventDefault();
-    shouldFollowChatRef.current = false;
     const sidebar = artifactSidebarRef.current;
     const startWidth = sidebar?.getBoundingClientRect().width ?? artifactWidth;
     const startX = event.clientX;
@@ -3469,11 +6345,13 @@ export function BuilderPage({
     function onPointerMove(moveEvent: globalThis.PointerEvent): void {
       const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? Number.NaN;
       const maximum = artifactMaxWidthForShell(shellWidth);
-      setArtifactWidthMaximum(maximum);
-      setArtifactWidth(clampArtifactWidth(
+      const nextWidth = clampArtifactWidth(
         startWidth + startX - moveEvent.clientX,
         maximum,
-      ));
+      );
+      setArtifactWidthMaximum(maximum);
+      artifactPreferredWidthRef.current = nextWidth;
+      setArtifactWidth(nextWidth);
     }
 
     function stopResize(): void {
@@ -3515,8 +6393,9 @@ export function BuilderPage({
     }
     if (nextWidth === null) return;
     event.preventDefault();
-    shouldFollowChatRef.current = false;
-    setArtifactWidth(clampArtifactWidth(nextWidth, maximum));
+    const clampedWidth = clampArtifactWidth(nextWidth, maximum);
+    artifactPreferredWidthRef.current = clampedWidth;
+    setArtifactWidth(clampedWidth);
   }
 
   function selectFile(path: string): boolean {
@@ -3526,7 +6405,10 @@ export function BuilderPage({
   }
 
   function openChangedFile(change: BuilderSourceTreeChange): void {
-    if (change.change_kind === 'deleted') return;
+    if (change.change_kind === 'deleted') {
+      openArtifactTab('changes');
+      return;
+    }
     if (!selectFile(change.path)) return;
     pendingSourceFocusRef.current = true;
     openArtifactTab('source');
@@ -3537,8 +6419,55 @@ export function BuilderPage({
     }
   }
 
+  async function openRuntimeToolFile(
+    request: Readonly<{ run_id: string; tool_call_id: string }>,
+  ): Promise<boolean> {
+    if (typeof onOpenRuntimeToolFile !== 'function') return false;
+    skipNextDraftSourceRequestRef.current = true;
+    const opened = await onOpenRuntimeToolFile(request);
+    if (!opened) {
+      skipNextDraftSourceRequestRef.current = false;
+      return false;
+    }
+    pendingSourceFocusRef.current = true;
+    openArtifactTab('source');
+    window.requestAnimationFrame(() => {
+      const disclosure = sourceDisclosureRef.current;
+      if (disclosure === null) return;
+      pendingSourceFocusRef.current = false;
+      disclosure.focus();
+    });
+    return true;
+  }
+
+  function openCheckCommand(): void {
+    openArtifactTab('terminal_placeholder');
+  }
+
+  function openHistoryWorkspace(): void {
+    setArtifactPanelState({
+      active: 'versions',
+      openTabs: artifactTabs.includes('versions')
+        ? [...new Set<BuilderArtifactTab>([
+          ...artifactPanelState.openTabs,
+          'versions',
+        ])]
+        : artifactPanelState.openTabs,
+      identity: artifactPanelIdentity,
+      observedCommandIdentity: commandOutputIdentity,
+    });
+  }
+
+  function openRuntimeToolCommand(item: RuntimeToolActivityItem): void {
+    setRuntimeCommandState({ identity: artifactPanelIdentity, item });
+    openArtifactTab('terminal_placeholder');
+  }
+
+  function openRuntimeToolBrowser(): void {
+    openArtifactTab('browser_placeholder');
+  }
+
   function openExpandedPreview(): void {
-    shouldFollowChatRef.current = false;
     openArtifactTab('preview');
     setPreviewExpanded(true);
   }
@@ -3548,14 +6477,6 @@ export function BuilderPage({
     window.requestAnimationFrame(() => {
       document.getElementById('builder-tool-preview')?.focus({ preventScroll: true });
     });
-  }
-
-  function focusDraftReview(): void {
-    shouldFollowChatRef.current = false;
-    const review = draftReviewRef.current;
-    if (review === null) return;
-    review.scrollIntoView?.({ block: 'start' });
-    review.focus({ preventScroll: true });
   }
 
   const conversationNotice = (() => {
@@ -3710,20 +6631,147 @@ export function BuilderPage({
     }
     return null;
   })();
-  const draftReview = hasUnsavedDraft ? (
-    <BuilderReviewCheckpoint
-      checkRunOperation={checkRunOperation}
-      checkRunOutcome={checkRunOutcome}
-      checkRunProfiles={checkRunProfiles}
-      checkRunStatus={checkRunStatus}
-      changes={changes}
-      checkpointRef={draftReviewRef}
-      hasContent={hasContent}
-      preview={preview}
-      reviewState={reviewState}
-    />
-  ) : null;
-
+  const dependencyPreparationReason = displayedCheckRunStatus?.environment_reason ?? 'none';
+  const dependencyPreparationAttemptFailed = dependencyPreparationReason === 'dependency_preparation_failed'
+    || dependencyPreparationReason === 'dependency_preparation_timed_out'
+    || dependencyPreparationReason === 'package_manager_unavailable';
+  const dependencyPreparationInteractionActive = checkRunOperation === 'preparing_dependencies'
+    || checkRunOperation === 'failed';
+  const dependencyPreparationNeeded = hasUnsavedDraft
+    && (
+      dependencyPreparationInteractionActive
+      || (!busy && !conversationHasInFlightStage)
+    )
+    && checkRunProfile !== null
+    && displayedCheckRunStatus?.status === 'incomplete'
+    && (
+      dependencyPreparationReason === 'dependency_workspace_missing'
+      || dependencyPreparationReason === 'install_approval_required'
+      || dependencyPreparationAttemptFailed
+    )
+    && typeof onDecideCheckDependencyPreparation === 'function';
+  const dependencyPreparationProfile = dependencyPreparationNeeded ? checkRunProfile : null;
+  const dependencyPreparationTitle = dependencyPreparationAttemptFailed
+    ? dependencyPreparationReason === 'package_manager_unavailable'
+      ? 'Package manager unavailable'
+      : 'Check dependency preparation failed'
+    : 'Prepare check dependencies?';
+  const dependencyPreparationSummary = dependencyPreparationAttemptFailed
+    ? dependencyPreparationReason === 'dependency_preparation_timed_out'
+      ? 'Dependency preparation reached the time limit in the isolated check workspace.'
+      : dependencyPreparationReason === 'package_manager_unavailable'
+        ? 'Builder could not start the package manager needed to prepare check dependencies.'
+        : 'Dependency preparation failed in the isolated check workspace.'
+    : `I can install dependencies in the isolated check workspace before rerunning ${dependencyPreparationProfile?.command_display ?? 'the check'}.`;
+  const dependencyPreparationNote = dependencyPreparationAttemptFailed
+    ? 'This did not write to the project folder or save a version. You can retry this check preparation.'
+    : 'This does not write to the project folder or save a version. Approval is only for this check.';
+  const dependencyPreparationDecisionFailureMessage = checkRunOperationFailureCode === 'busy'
+    ? 'A project check is already running. Try again when it finishes.'
+    : checkRunOperationFailureCode === 'stale_draft'
+      ? 'This draft or check option changed. Refresh the current draft and try again.'
+      : checkRunOperationFailureCode === 'invalid_request'
+        ? 'Builder could not verify this check request. Refresh the draft and try again.'
+        : checkRunOperationFailureCode === 'forbidden'
+          ? 'The check request did not come from the active Builder window. Try again from this window.'
+          : 'I could not record that decision. Try again.';
+  const dependencyPreparationDiagnosis = dependencyPreparationProfile !== null
+    && checkEnvironmentDiagnosis?.command_profile_id === dependencyPreparationProfile.command_profile_id
+    ? checkEnvironmentDiagnosis
+    : null;
+  const dependencyPreparationDiagnosisFacts = dependencyPreparationDiagnosis?.diagnosis === undefined
+    ? null
+    : [
+      `Readiness: ${dependencyPreparationDiagnosis.diagnosis.safe_summary}`,
+      `Toolchain: ${dependencyPreparationDiagnosis.diagnosis.host_toolchain_state}`,
+      `Check workspace: ${dependencyPreparationDiagnosis.diagnosis.check_workspace_dependency_state}`,
+      `Package manager: ${dependencyPreparationDiagnosis.diagnosis.package_manager}`,
+    ];
+  const dependencyPreparationCard = dependencyPreparationProfile === null ? null : (
+    <section
+      aria-label="Check dependency preparation"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
+      data-builder-dependency-preparation="true"
+      data-builder-dependency-preparation-failed={dependencyPreparationAttemptFailed ? 'true' : undefined}
+    >
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <Download className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-review-title">{dependencyPreparationTitle}</h2>
+          <p className="cf-builder-review-summary">
+            {dependencyPreparationSummary}
+          </p>
+          <p className="cf-builder-review-note">
+            {dependencyPreparationNote}
+          </p>
+          {dependencyPreparationDiagnosis === null ? null : (
+            <div
+              className="mt-2 space-y-1 text-xs text-muted-foreground"
+              data-builder-check-environment-diagnosis={dependencyPreparationDiagnosis.status}
+            >
+              {dependencyPreparationDiagnosis.status === 'loading' ? (
+                <p>Checking local tools and isolated dependencies...</p>
+              ) : dependencyPreparationDiagnosis.status === 'failed' ? (
+                <p role="alert">
+                  {dependencyPreparationDiagnosis.failure_message
+                    ?? 'I could not read the check environment diagnosis. Try again.'}
+                </p>
+              ) : dependencyPreparationDiagnosisFacts === null ? null : (
+                dependencyPreparationDiagnosisFacts.map((fact) => (
+                  <p key={fact}>{fact}</p>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="cf-builder-review-actions" data-builder-dependency-preparation-actions="true">
+        {checkRunOperation === 'failed' ? (
+          <p className="cf-builder-review-note" role="alert">
+            {dependencyPreparationDecisionFailureMessage}
+          </p>
+        ) : null}
+        {typeof onDiagnoseCheckEnvironment === 'function' ? (
+          <button
+            className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            data-builder-diagnose-check-environment="true"
+            disabled={dependencyPreparationDiagnosis?.status === 'loading'}
+            onClick={() => {
+              void onDiagnoseCheckEnvironment(dependencyPreparationProfile);
+            }}
+            type="button"
+          >
+            <ShieldCheck className="size-3.5" aria-hidden="true" />
+            {dependencyPreparationDiagnosis?.status === 'loading' ? 'Checking...' : 'Diagnose'}
+          </button>
+        ) : null}
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-deny-dependency-preparation="true"
+          disabled={checkRunOperation === 'preparing_dependencies'}
+          onClick={() => {
+            void onDecideCheckDependencyPreparation?.('deny', dependencyPreparationProfile);
+          }}
+          type="button"
+        >
+          Not now
+        </button>
+        <button
+          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-allow-dependency-preparation="true"
+          disabled={checkRunOperation === 'preparing_dependencies'}
+          onClick={() => {
+            void onDecideCheckDependencyPreparation?.('allow_once', dependencyPreparationProfile);
+          }}
+          type="button"
+        >
+          {checkRunOperation === 'preparing_dependencies' ? 'Preparing...' : 'Prepare once'}
+        </button>
+      </div>
+    </section>
+  );
   const planSourceReadApprovalCard = planSourceReadApproval === null ? null : (
     <section
       aria-label="Project read approval"
@@ -3828,60 +6876,129 @@ export function BuilderPage({
     </section>
   );
 
-  const composer = (
-    <BuilderComposer
-      activeRunFollowupQueued={activeRunFollowupQueued}
-      approvalMode={approvalMode}
-      busy={busy}
-      canAddContext={canAddContext}
-      canAllowCurrentProjectApproval={saved !== null || workingProject !== null}
-      canCancel={canCancel}
-      canEditInstruction={canEditInstruction}
-      canProposePlan={canProposePlan}
-      canSubmitComposer={canSubmitComposer}
-      catalogBusy={catalogBusy}
-      catalogProjects={catalogProjects}
-      catalogWorkspaceProjects={catalogWorkspaceProjects}
-      composerContextStatus={viewingHistory ? null : composerContextStatus}
-      providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
-      composerMode={composerMode}
-      composerRouteDecision={composerRouteDecision}
-      hasUnsavedDraft={hasUnsavedDraft}
-      instruction={instruction}
-      onCancel={onCancel}
-      onClearComposerMode={onClearComposerMode}
-      onClearWorkspaceSelection={onClearWorkspaceSelection}
-      onCreateProject={onCreateProject}
-      onDismissWorkspacePicker={onDismissWorkspacePicker}
-      onFocusDraftReview={focusDraftReview}
-      onInstructionChange={onInstructionChange}
-      onOpenProject={onOpenProject}
-      onSelectApprovalMode={onSelectApprovalMode}
-      onSelectComposerMode={onSelectComposerMode}
-      onSelectPlanMode={onSelectPlanMode}
-      onSubmitInstruction={onSubmitInstruction}
-      savedProject={saved === null
-        ? null
-        : {
-          revisionNumber: saved.target.revision_number,
-          title: saved.target.title,
-        }}
-      status={status}
-      viewingHistory={viewingHistory}
-      workingProject={workingProject}
-      workspaceNewProjectRequest={workspaceNewProjectRequest}
-      workspacePickerRequest={workspacePickerRequest}
-    />
+  const commandApprovalCard = commandApproval === null ? null : (
+    <section
+      aria-label="Command execution approval"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface cf-builder-command-approval"
+      data-builder-command-approval="true"
+      data-builder-command-approval-state={commandApproval.state}
+    >
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <SquareTerminal className="size-4" />
+        </div>
+        <div className="cf-builder-review-copy-body">
+          <h2 className="cf-builder-review-title">允许运行这条命令？</h2>
+          <code className="cf-builder-command-approval-command">
+            {commandApproval.request.command_display}
+          </code>
+          <p className="cf-builder-review-summary">
+            {commandApproval.request.description}
+          </p>
+          <p className="cf-builder-review-note">
+            此项目脚本可能修改文件或访问网络。授权仅对本次命令有效。
+          </p>
+        </div>
+      </div>
+      <div className="cf-builder-review-actions" data-builder-command-approval-actions="true">
+        {commandApproval.state === 'failed' ? (
+          <p className="cf-builder-review-note" role="alert">
+            无法记录这次决定，或请求已经过期。请重试任务。
+          </p>
+        ) : null}
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-deny-command="true"
+          disabled={commandApproval.state === 'deciding'}
+          onClick={() => { void onDecideCommandApproval?.('deny'); }}
+          type="button"
+        >
+          拒绝
+        </button>
+        <button
+          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-allow-command-once="true"
+          disabled={commandApproval.state === 'deciding'}
+          onClick={() => { void onDecideCommandApproval?.('allow_once'); }}
+          type="button"
+        >
+          {commandApproval.state === 'deciding' ? '正在记录...' : '仅允许这一次'}
+        </button>
+      </div>
+    </section>
   );
 
-  const showArtifactSummary = hasUnsavedDraft && (showResultFlow || hasContent);
-  const artifactSummary = showArtifactSummary ? (
-    <BuilderArtifactSummary
-      changes={changes}
-      hasContent={hasContent}
-      preview={preview}
+  const discardDraftLabel = status === 'rejecting' ? 'Discarding...' : 'Discard draft';
+  const saveVersionLabel = status === 'saving'
+    ? 'Saving...'
+    : status === 'save_unknown'
+      ? 'Try Save again'
+      : 'Save version';
+  const versionDecisionCard = showVersionDecision ? (
+    <BuilderComposerVersionDecisionCard
+      blockedMessage={null}
+      canReject={canReject}
+      canSave={canSave}
+      discardLabel={discardDraftLabel}
+      onRejectDraft={onRejectDraft}
+      onSave={onSave}
+      saveLabel={saveVersionLabel}
     />
   ) : null;
+  const composer = (
+    <div
+      className="cf-builder-composer-stack"
+      data-builder-composer-stack="true"
+      ref={composerStackRef}
+    >
+      {versionDecisionCard}
+      <BuilderComposer
+        activeRunFollowupQueued={activeRunFollowupQueued}
+        approvalMode={approvalMode}
+        busy={composerBusy}
+        canAddContext={canAddContext}
+        canAllowCurrentProjectApproval={saved !== null || workingProject !== null}
+        canCancel={canCancel}
+        canEditInstruction={canEditInstruction}
+        canProposePlan={canProposePlan}
+        canSubmitComposer={canSubmitComposer}
+        catalogBusy={catalogBusy}
+        catalogProjects={catalogProjects}
+        catalogWorkspaceProjects={catalogWorkspaceProjects}
+        composerContextStatus={viewingHistory ? null : composerContextStatus}
+        providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
+        composerMode={composerMode}
+        composerRouteDecision={composerRouteDecision}
+        hasUnsavedDraft={hasUnsavedDraft}
+        instruction={instruction}
+        onCancel={onCancel}
+        onClearComposerMode={onClearComposerMode}
+        onClearWorkspaceSelection={onClearWorkspaceSelection}
+        onCreateProject={onCreateProject}
+        onDismissWorkspacePicker={onDismissWorkspacePicker}
+        onInstructionChange={onInstructionChange}
+        onOpenProject={onOpenProject}
+        onSelectApprovalMode={onSelectApprovalMode}
+        onSelectComposerMode={onSelectComposerMode}
+        onSelectPlanMode={onSelectPlanMode}
+        onSubmitInstruction={onSubmitInstruction}
+        savedProject={saved === null
+          ? null
+          : {
+            revisionNumber: saved.target.revision_number,
+            title: saved.target.title,
+          }}
+        showWorkspaceContext={!showingAgentWorkbench}
+        surfaceKind={showingAgentWorkbench ? 'workbench' : 'task'}
+        status={status}
+        viewingHistory={viewingHistory}
+        workingProject={workingProject}
+        workspaceNewProjectRequest={workspaceNewProjectRequest}
+        workspacePickerRequest={workspacePickerRequest}
+      />
+    </div>
+  );
+
   const workspaceControls = openLocationProjectId !== null || hasArtifactControls || hasUnsavedDraft ? (
     <div
       aria-label="Workspace artifact controls"
@@ -3891,31 +7008,61 @@ export function BuilderPage({
       role="group"
     >
       {hasUnsavedDraft ? (
-        <BuilderDraftWorkspaceActions
-          canReject={canReject}
-          canSave={canSave}
-          discardLabel={status === 'rejecting' ? 'Discarding...' : 'Discard draft'}
-          onRejectDraft={onRejectDraft}
-          onSave={onSave}
-          reviewState={reviewState}
-          saveLabel={status === 'saving'
-            ? 'Saving...'
-            : status === 'save_unknown'
-              ? 'Try Save again'
-              : 'Save version'}
+        <BuilderDraftCheckStatus
+          checkRunOperation={checkRunOperation}
+          checkRunOutcome={checkRunOutcome}
+          checkRunProfiles={checkRunProfiles}
+          checkRunStatus={checkRunStatus}
+          presentation="compact"
         />
+      ) : null}
+      {openLocationProjectId !== null
+      && artifactTabs.includes('preview')
+      && typeof onRequestLivePreview === 'function' ? (
+        <>
+          <button
+            aria-label={livePreviewStatus?.status === 'ready' ? 'Open running project' : 'Run project'}
+            className="cf-builder-workspace-control-button"
+            data-builder-control-presentation="compact"
+            data-builder-run-project="true"
+            disabled={
+              livePreviewOperation !== null
+              || (livePreviewStatus?.can_start !== true && livePreviewStatus?.status !== 'ready')
+            }
+            onClick={runProjectPreview}
+            title={livePreviewStatus?.status === 'ready' ? 'Open running project' : 'Run project'}
+            type="button"
+          >
+            <Play aria-hidden="true" className="size-3.5" />
+            <span className="cf-builder-visually-hidden">Run</span>
+          </button>
+          <button
+            aria-label="Stop project"
+            className="cf-builder-workspace-control-button"
+            data-builder-stop-project="true"
+            disabled={
+              livePreviewOperation !== null
+              || typeof onStopLivePreview !== 'function'
+              || livePreviewStatus?.can_stop !== true
+            }
+            onClick={stopProjectPreview}
+            title="Stop project"
+            type="button"
+          >
+            <StopCircle aria-hidden="true" className="size-3.5" />
+          </button>
+        </>
       ) : null}
       {openLocationProjectId !== null ? (
         <button
-          aria-label="Open location"
+          aria-label="Open project folder"
           className="cf-builder-workspace-control-button cf-builder-workspace-location-button"
           data-builder-open-project-location="true"
           onClick={openProjectLocation}
-          title="Open location"
+          title="Open project folder"
           type="button"
         >
           <FolderOpen aria-hidden="true" className="size-3.5" />
-          <span>Open location</span>
         </button>
       ) : null}
       {hasArtifactControls ? (
@@ -3933,7 +7080,6 @@ export function BuilderPage({
               type="button"
             >
               <Menu aria-hidden="true" className="size-3.5" />
-              <span>{activeWorkspaceMenuLabel}</span>
               <ChevronDown aria-hidden="true" className="size-3" />
             </button>
             {workspaceMenuVisible ? (
@@ -3990,46 +7136,127 @@ export function BuilderPage({
       ) : null}
     </div>
   ) : null;
+  const taskMonitorControl = taskMonitorAvailable ? (
+    <button
+      aria-label={showTaskMonitor ? 'Hide tasks' : 'Show tasks'}
+      aria-pressed={showTaskMonitor}
+      className="cf-builder-workspace-control-button cf-builder-task-monitor-toggle"
+      data-builder-task-monitor-toggle="true"
+      onClick={() => setTaskMonitorCollapsed((currentValue) => !currentValue)}
+      title={showTaskMonitor ? 'Hide tasks' : 'Show tasks'}
+      type="button"
+    >
+      {showTaskMonitor ? (
+        <PanelRightClose aria-hidden="true" className="size-3.5" />
+      ) : (
+        <PanelRightOpen aria-hidden="true" className="size-3.5" />
+      )}
+      <span>{taskMonitorTasks.length}</span>
+    </button>
+  ) : null;
+  const inspectRevisionFromWorkspace = (
+    projectId: string,
+    revisionReceiptDigest: string,
+  ): Promise<unknown> | void => {
+    const nextIdentity = `${artifactWorkspaceIdentity}|${revisionReceiptDigest}`;
+    setArtifactPanelState((previous) => ({
+      active: 'preview',
+      identity: nextIdentity,
+      openTabs: previous.openTabs.includes('preview')
+        ? previous.openTabs
+        : [...previous.openTabs, 'preview'],
+      observedCommandIdentity: commandOutputIdentity,
+    }));
+    return onInspectRevision?.(projectId, revisionReceiptDigest);
+  };
+  const artifactOnExpandPreview = useLatestCallback(openExpandedPreview);
+  const artifactOnApproveProviderContextDisclosure = useLatestOptionalCallback(
+    onApproveProviderContextDisclosure,
+  );
+  const artifactOnInspectRevision = useLatestCallback(inspectRevisionFromWorkspace);
+  const artifactOnOpenFile = useLatestCallback(openChangedFile);
+  const artifactOnRefreshHistory = useLatestOptionalCallback(onRefreshHistory);
+  const artifactOnReloadLivePreview = useLatestOptionalCallback(onReloadLivePreview);
+  const artifactOnDecideLivePreviewDevServerApproval = useLatestOptionalCallback(
+    onDecideLivePreviewDevServerApproval,
+  );
+  const artifactOnResizeKeyDown = useLatestCallback(resizeArtifactWithKeyboard);
+  const artifactOnRestoreRevisionAsDraft = useLatestOptionalCallback(onRestoreRevisionAsDraft);
+  const artifactOnUndoDraft = useLatestOptionalCallback(onUndoDraft);
+  const artifactOnSelectArtifactTab = useLatestCallback(openArtifactTab);
+  const artifactOnCloseArtifactTab = useLatestCallback(closeArtifactTab);
+  const artifactOnOpenWorkspaceTab = useLatestCallback(openSideWorkspaceTab);
+  const artifactOnRequestLivePreview = useLatestOptionalCallback(onRequestLivePreview);
+  const artifactOnResizeStart = useLatestCallback(startArtifactResize);
+  const artifactOnSelectFile = useLatestOptionalCallback(onSelectFile);
+  const artifactOnSourceOpenChange = useLatestCallback(setSourceDisclosureOpen);
+  const artifactOnSelectSideWorkspaceFile = useLatestOptionalCallback(onSelectSideWorkspaceFile);
+  const artifactOnStopLivePreview = useLatestOptionalCallback(onStopLivePreview);
+  const artifactOnNavigateUserWeb = useLatestOptionalCallback(onNavigateUserWeb);
+  const artifactOnGoBackUserWeb = useLatestOptionalCallback(onGoBackUserWeb);
+  const artifactOnGoForwardUserWeb = useLatestOptionalCallback(onGoForwardUserWeb);
+  const artifactOnReloadUserWeb = useLatestOptionalCallback(onReloadUserWeb);
+  const artifactOnStopUserWeb = useLatestOptionalCallback(onStopUserWeb);
+  const activityOnLiveOutputFrame = useLatestCallback(followVisibleLiveOutput);
+  const activityOnOpenCheckCommand = useLatestCallback(openCheckCommand);
+  const activityOnOpenRuntimeToolBrowser = useLatestCallback(openRuntimeToolBrowser);
+  const activityOnOpenRuntimeToolCommand = useLatestCallback(openRuntimeToolCommand);
+  const activityOnOpenRuntimeToolFile = useLatestCallback(openRuntimeToolFile);
+  const activityOnOpenHistory = useLatestCallback(openHistoryWorkspace);
+  const activityOnRefresh = useLatestOptionalCallback(onRefreshConversation);
+  const activityOnReviewPlan = useLatestOptionalCallback(onReviewPlan);
   const artifactSidebar = showArtifactSidebar && activeArtifactTab !== null ? (
     <BuilderArtifactSidebar
       activeTab={activeArtifactTab}
+      activeFile={activeFile}
+      agentTestBrowserActive={agentTestBrowserActive}
       approvalMode={approvalMode}
       artifactTabs={openArtifactTabs}
       availableArtifactTabs={artifactTabs}
+      canUndo={canUndo}
       changes={changes}
       changesOpen={activeArtifactTab === 'changes' || changesPanelOpen}
+      draftCheckpointStatus={draftCheckpointStatus}
+      draftCheckpointTimeline={draftCheckpointTimeline}
+      checkRunProfile={checkRunProfile}
+      checkRunStatus={displayedCheckRunStatus}
       currentProjectWriteApproval={currentProjectWriteApproval}
       files={files}
       hasSavedProject={saved !== null}
       hasUnsavedDraft={hasUnsavedDraft}
       history={history}
       inspectedRevisionReceiptDigest={inspected?.target.revision_receipt_digest ?? null}
-      liveOutput={visibleLiveOutput}
       livePreviewOperation={livePreviewOperation}
       livePreviewStatus={livePreviewStatus}
-      onExpandPreview={openExpandedPreview}
-      onApproveProviderContextDisclosure={onApproveProviderContextDisclosure}
-      onCloseArtifactTab={closeArtifactTab}
-      onInspectRevision={onInspectRevision}
-      onOpenFile={openChangedFile}
-      onOpenWorkspaceTab={openSideWorkspaceTab}
-      onRefreshHistory={onRefreshHistory}
-      onReloadLivePreview={onReloadLivePreview}
-      onResizeKeyDown={resizeArtifactWithKeyboard}
-      onResizeStart={startArtifactResize}
-      onRestoreRevisionAsDraft={onRestoreRevisionAsDraft}
-      onRequestLivePreview={onRequestLivePreview}
+      userWebOperation={userWebOperation}
+      userWebStatus={userWebStatus}
+      userWebSurfaceRef={userWebSurfaceRef}
+      onExpandPreview={artifactOnExpandPreview}
+      onApproveProviderContextDisclosure={artifactOnApproveProviderContextDisclosure}
+      onCloseArtifactTab={artifactOnCloseArtifactTab}
+      onInspectRevision={artifactOnInspectRevision}
+      onOpenFile={artifactOnOpenFile}
+      onOpenWorkspaceTab={artifactOnOpenWorkspaceTab}
+      onRefreshHistory={artifactOnRefreshHistory}
+      onReloadLivePreview={artifactOnReloadLivePreview}
+      onDecideLivePreviewDevServerApproval={artifactOnDecideLivePreviewDevServerApproval}
+      onResizeKeyDown={artifactOnResizeKeyDown}
+      onResizeStart={artifactOnResizeStart}
+      onRestoreRevisionAsDraft={artifactOnRestoreRevisionAsDraft}
+      onUndoDraft={artifactOnUndoDraft}
+      onRequestLivePreview={artifactOnRequestLivePreview}
       resizing={artifactResizing}
-      onSelectArtifactTab={openArtifactTab}
-      onSelectFile={onSelectFile}
-      onSourceOpenChange={setSourceDisclosureOpen}
+      commandOutput={commandOutput}
+      runtimeCommand={runtimeCommand}
+      onSelectArtifactTab={artifactOnSelectArtifactTab}
+      onSelectFile={artifactOnSelectFile}
+      onSourceOpenChange={artifactOnSourceOpenChange}
       planSourceReadApproval={planSourceReadApproval}
       providerContextDisclosureApprovalState={providerContextDisclosureApprovalState}
       providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
       preview={preview}
-      previewPanelRef={resultFlowRef}
+      previewPanelRef={previewExpandedVisible ? undefined : artifactPreviewRef}
       sidebarRef={artifactSidebarRef}
-      snapshot={activity}
       sourceDisclosureOpen={sourceDisclosureOpen}
       sourceDisclosureRef={sourceDisclosureRef}
       sourceFile={sourceFile}
@@ -4039,8 +7266,13 @@ export function BuilderPage({
       sideWorkspaceFileTreeStatus={sideWorkspaceFileTreeStatus}
       width={artifactWidth}
       widthMaximum={artifactWidthMaximum}
-      onSelectSideWorkspaceFile={onSelectSideWorkspaceFile}
-      onStopLivePreview={onStopLivePreview}
+      onSelectSideWorkspaceFile={artifactOnSelectSideWorkspaceFile}
+      onStopLivePreview={artifactOnStopLivePreview}
+      onNavigateUserWeb={artifactOnNavigateUserWeb}
+      onGoBackUserWeb={artifactOnGoBackUserWeb}
+      onGoForwardUserWeb={artifactOnGoForwardUserWeb}
+      onReloadUserWeb={artifactOnReloadUserWeb}
+      onStopUserWeb={artifactOnStopUserWeb}
       workingProject={workingProject}
     />
   ) : null;
@@ -4068,7 +7300,11 @@ export function BuilderPage({
             <X aria-hidden="true" className="size-4" />
           </button>
         </header>
-        <div className="cf-builder-preview-expanded-body">
+        <div
+          className="cf-builder-preview-expanded-body"
+          data-builder-expanded-preview-content="true"
+          ref={expandedPreviewRef}
+        >
           <BuilderResultPanel placement="expanded" projection={preview} />
         </div>
       </div>
@@ -4077,6 +7313,7 @@ export function BuilderPage({
 
   return (
     <div
+      aria-busy={status === 'opening'}
       className="cf-builder-page bg-background text-foreground"
       data-builder-page="true"
       data-builder-project-status={status}
@@ -4087,40 +7324,28 @@ export function BuilderPage({
     >
       <header className="cf-builder-surface-toolbar">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">Project</p>
-          <h1 className="truncate text-base font-semibold">{title}</h1>
+          {showingAgentWorkbench ? (
+            <p className="text-xs font-medium text-muted-foreground">Agent</p>
+          ) : null}
+          <h1 className="truncate text-base font-semibold">
+            {showingAgentWorkbench ? 'Builder' : title}
+          </h1>
         </div>
         <div className="cf-builder-toolbar-actions">
+          {status === 'opening' ? (
+            <span className="cf-builder-status-pill" data-builder-project-opening="true">
+              Opening project...
+            </span>
+          ) : null}
           {hasUnsavedDraft ? (
-            <>
-              <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
-                Unsaved draft
-              </span>
-              {draftCheckpointStatus?.status === 'ready' ? (
-                <span
-                  className="cf-builder-status-pill"
-                  data-builder-draft-checkpoint-status="ready"
-                  title={draftCheckpointStatus.next_action_hint}
-                >
-                  {draftCheckpointStatus.label} · {draftCheckpointStatus.changed_file_count}{' '}
-                  {draftCheckpointStatus.changed_file_count === 1 ? 'file' : 'files'}
-                </span>
-              ) : null}
-              {version === null ? null : (
-                <span className="text-xs text-muted-foreground" data-builder-current-version="true">
-                  Version {version}
-                </span>
-              )}
-            </>
+            <span className="cf-builder-status-pill" data-builder-unsaved-draft="true">
+              Unsaved draft
+            </span>
           ) : viewingHistory ? (
             <span className="cf-builder-status-pill" data-builder-history-preview="true">
               Viewing Version {inspected.target.revision_number}
             </span>
-          ) : version === null ? null : (
-            <span className="text-xs text-muted-foreground" data-builder-current-version="true">
-              Version {version}
-            </span>
-          )}
+          ) : null}
           {viewingHistory ? (
             <button
               className="cf-builder-secondary-button inline-flex min-h-9 items-center justify-center gap-2 px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
@@ -4132,6 +7357,7 @@ export function BuilderPage({
                   active: currentTab,
                   openTabs: [currentTab],
                   identity: currentArtifactPanelIdentity,
+                  observedCommandIdentity: commandOutputIdentity,
                 });
                 void onShowCurrentRevision?.();
               }}
@@ -4142,6 +7368,7 @@ export function BuilderPage({
             </button>
           ) : null}
           {workspaceControls}
+          {taskMonitorControl}
         </div>
       </header>
 
@@ -4149,8 +7376,9 @@ export function BuilderPage({
         <section
           aria-label="Project conversation workspace"
           className="cf-builder-chat-shell"
-          data-builder-artifact-sidebar-visible={showArtifactSidebar ? 'true' : 'false'}
+          data-builder-artifact-sidebar-visible={showRightSidebar ? 'true' : 'false'}
           data-builder-chat-workspace="true"
+          inert={status === 'opening' ? true : undefined}
           ref={chatShellRef}
           style={artifactShellStyle}
         >
@@ -4158,51 +7386,93 @@ export function BuilderPage({
             <div
               className="cf-builder-chat-scroll"
               data-builder-chat-scroll="true"
+              onKeyDownCapture={markChatKeyboardScrollIntent}
               onScroll={updateChatFollowState}
+              onTouchMoveCapture={markChatReaderScrollIntent}
+              onWheelCapture={markChatReaderScrollIntent}
               ref={chatScrollRef}
             >
-              {showActivity ? (
+              <div
+                className="cf-builder-chat-flow-column"
+                data-builder-chat-flow-column="true"
+                ref={chatFlowColumnRef}
+              >
+                {showingAgentWorkbench ? (
+                  <AgentWorkbenchPanel
+                  actionsDisabled={composerSubmitLocked}
+                  liveOutput={visibleLiveOutput}
+                  liveOutputStore={liveOutputStore}
+                  onLiveOutputFrame={followVisibleLiveOutput}
+                  onRefresh={onRefreshAgentWorkbench}
+                  onUpdateMessageState={onUpdateAgentWorkbenchMessageState}
+                  onDecideTaskProposal={onDecideAgentTaskProposal}
+                  onCreateProjectForTaskProposal={onCreateProjectForAgentTaskProposal}
+                  onOpenTaskProposal={onOpenAgentTaskProposal}
+                  projectCatalogSnapshot={projectCatalogSnapshot}
+                  snapshot={agentWorkbenchSnapshot}
+                />
+              ) : showTaskConversationSeed ? (
+                <TaskConversationSeedPanel task={taskConversationSeed} />
+              ) : showActivity ? (
                 <ActivityPanel
                   canReviewPlan={canReviewPlan}
+                  canUndoDraft={canUndo}
+                  candidateChanges={changes.files}
+                  checkRunProfile={checkRunProfile}
+                  checkRunStatus={displayedCheckRunStatus}
+                  currentDraftId={draft?.draft_id ?? null}
                   hasUnsavedDraft={hasUnsavedDraft}
                   liveOutput={visibleLiveOutput}
-                  onRefresh={onRefreshConversation}
-                  onReviewPlan={onReviewPlan}
+                  liveOutputStore={liveOutputStore}
+                  onLiveOutputFrame={activityOnLiveOutputFrame}
+                  onOpenCandidateChange={artifactOnOpenFile}
+                  onOpenCheckCommand={activityOnOpenCheckCommand}
+                  onOpenRuntimeToolBrowser={activityOnOpenRuntimeToolBrowser}
+                  onOpenRuntimeToolCommand={activityOnOpenRuntimeToolCommand}
+                  onOpenRuntimeToolFile={activityOnOpenRuntimeToolFile}
+                  onOpenHistory={activityOnOpenHistory}
+                  onRefresh={activityOnRefresh}
+                  onReviewPlan={activityOnReviewPlan}
+                  onUndoDraft={artifactOnUndoDraft}
                   planReviewBusy={planReviewBusy}
                   planReviewFailed={planReviewFailed}
                   planReviewRecorded={planReviewRecordedForTarget}
+                  pendingUserMessages={pendingUserMessages}
                   pendingPlanReview={planReviewTarget}
                   savingVersion={status === 'saving'}
                   snapshot={activity}
                 />
-              ) : null}
-              {planSourceReadApprovalCard}
-              {currentProjectWriteApprovalCard}
+                ) : null}
+                {planSourceReadApprovalCard}
+                {currentProjectWriteApprovalCard}
+                {commandApprovalCard}
+                {dependencyPreparationCard}
 
-              {hasUnsavedDraft ? (
+                {conversationNotice}
                 <div
-                  className="cf-builder-draft-landing"
-                  data-builder-draft-landing="true"
-                  ref={draftLandingRef}
-                >
-                  {draftReview}
-                  {artifactSummary}
-                </div>
-              ) : null}
-
-              {conversationNotice}
-              <div
-                aria-hidden="true"
-                className="cf-builder-chat-tail"
-                data-builder-chat-tail="true"
-                ref={chatTailRef}
-              />
+                  aria-hidden="true"
+                  className="cf-builder-chat-tail"
+                  data-builder-chat-tail="true"
+                  ref={chatTailRef}
+                />
+              </div>
             </div>
 
             {composer}
           </div>
 
-          {artifactSidebar}
+          {showTaskMonitor ? (
+            <AgentTaskMonitorPanel
+              actionsDisabled={composerSubmitLocked}
+              onCollapse={() => setTaskMonitorCollapsed(true)}
+              onArchiveTask={onArchiveAgentTask}
+              onControlTask={onControlAgentTask}
+              onOpenTask={onOpenAgentTaskProposal}
+              onRenameTask={onRenameAgentTask}
+              projectCatalogSnapshot={projectCatalogSnapshot}
+              snapshot={agentWorkbenchSnapshot}
+            />
+          ) : artifactSidebar}
         </section>
       </div>
       {expandedPreviewOverlay}

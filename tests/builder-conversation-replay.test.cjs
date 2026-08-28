@@ -43,8 +43,12 @@ const {
   createBuilderAgentStepProgressConversationAdmission,
 } = require('../electron/builder-agent-step-progress-conversation-admission.cjs');
 const {
+  createBuilderRunContextSnapshot,
+} = require('../electron/builder-run-context-snapshot.cjs');
+const {
   CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
+  createBuilderConversationReplayAccumulator,
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
 
@@ -586,6 +590,19 @@ test('replays command events into a fresh frozen project-local task stream', () 
   assert.notEqual(replay.turns[0].messages, events[0].payload.message);
 });
 
+test('appends a verified suffix through the same replay transitions as a full replay', () => {
+  const events = completeHistory();
+  const accumulator = createBuilderConversationReplayAccumulator(events.slice(0, 5));
+  assert.deepEqual(accumulator.snapshot(), replayBuilderConversation(events.slice(0, 5)));
+  const appended = accumulator.append(events.slice(5));
+  assert.deepEqual(appended, replayBuilderConversation(events));
+  assert.deepEqual(accumulator.snapshot(), appended);
+  assert.throws(
+    () => accumulator.append([events.at(-1)]),
+    (error) => error instanceof BuilderConversationReplayError,
+  );
+});
+
 test('keeps an active turn reconstructible before terminal events arrive', () => {
   const partial = completeHistory().slice(0, 5);
   const replay = replayBuilderConversation(partial);
@@ -862,6 +879,103 @@ test('replays fixed run progress only in order while the run is active', () => {
     run_id: id('run', 10),
     stage: 'provider_response_received',
   }, 20)), assertReplayError);
+});
+
+test('replays recovery action phases only inside a snapshotted active run', () => {
+  let events = [];
+  const turnId = id('turn', 1);
+  const taskId = id('task', 1);
+  const runId = id('run', 1);
+  const messageId = id('message', 1);
+  events = append(events, 'turn_submitted', {
+    message: { message_id: messageId, text: 'Undo the latest AI change.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Restore project work' },
+    base_revision: BASE_REVISION,
+  });
+  events = append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: RESULT_A,
+  });
+  events = append(events, 'run_context_snapshot_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    snapshot: createBuilderRunContextSnapshot({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: turnId,
+      run_id: runId,
+      task_id: taskId,
+      message_id: messageId,
+      route_decision: events[0].payload.route_decision,
+      latest_task_capsule: null,
+      working_context_state: null,
+      project_understanding: null,
+      context_assembly: null,
+      provider_context_projection: null,
+      provider_context_prompt_egress_gate: null,
+      base_revision: BASE_REVISION,
+      created_at_ms: 3,
+    }),
+  });
+  const beforeRecovery = events;
+  events = append(events, 'recovery_action_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_checkpoint',
+    phase: 'requested',
+  });
+  const requestedOnly = events;
+  events = append(events, 'checkpoint_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    status: 'created',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  });
+  events = append(events, 'checkpoint_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    status: 'updated',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  });
+  events = append(events, 'recovery_action_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_checkpoint',
+    phase: 'completed',
+  });
+
+  const replay = replayBuilderConversation(events);
+  assert.equal(Object.hasOwn(replay.turns[0].runs[0], 'checkpoint_fact'), false);
+  assert.equal(Object.hasOwn(replay.turns[0].runs[0], 'recovery_action'), false);
+  assert.throws(() => replayBuilderConversation(append(events, 'checkpoint_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    status: 'created',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  })), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(beforeRecovery, 'recovery_action_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_checkpoint',
+    phase: 'completed',
+  })), assertReplayError);
+  assert.throws(() => replayBuilderConversation(append(requestedOnly, 'run_completed', {
+    turn_id: turnId,
+    run_id: runId,
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: RESULT_A,
+    assistant_message: { message_id: id('message', 2), text: 'Restored.' },
+  })), assertReplayError);
 });
 
 test('replays Agent step progress only from admitted active work runs', () => {
@@ -1545,5 +1659,6 @@ test('contains all transition rules in replay and none in the SQLite persistence
   assert.match(replaySource, /builder-tool-session-state-gate\.cjs/u);
   assert.match(replaySource, /admitBuilderToolCallSessionState/u);
   assert.match(replaySource, /admitBuilderToolResultSessionState/u);
-  assert.match(databaseSource, /replayBuilderConversation/u);
+  assert.match(databaseSource, /createBuilderConversationReplayAccumulator/u);
+  assert.doesNotMatch(databaseSource, /const TRANSITIONS/u);
 });

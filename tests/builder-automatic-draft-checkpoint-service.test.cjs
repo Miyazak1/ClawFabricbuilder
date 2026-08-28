@@ -36,7 +36,7 @@ const {
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174800';
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174801';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174802';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174803';
+const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174800:123e4567-e89b-42d3-a456-426614174803';
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174805';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174806';
 const BASE_OID = '3'.repeat(40);
@@ -54,7 +54,7 @@ function temporaryStores() {
   };
 }
 
-function candidateReceipt(index, { firstDraft = false } = {}) {
+function candidateReceipt(index, { firstDraft = false, treeDigestCharacter = null } = {}) {
   const character = index.toString(16);
   const seed = {
     receipt_version: BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
@@ -67,7 +67,7 @@ function candidateReceipt(index, { firstDraft = false } = {}) {
     request_id: `builder-git-request:123e4567-e89b-42d3-a456-${(920 + index).toString().padStart(12, '0')}`,
     candidate_id: `builder-code-change-candidate:${character.repeat(64).slice(0, 64)}`,
     candidate_digest: digest(character),
-    resulting_tree_digest: digest((index + 1).toString(16)),
+    resulting_tree_digest: digest(treeDigestCharacter ?? (index + 1).toString(16)),
     semantic_identity_digest: digest((index + 2).toString(16)),
     verification_receipt_digest: digest((index + 3).toString(16)),
     object_format: BUILDER_GIT_RECEIPT_OBJECT_FORMAT,
@@ -144,15 +144,19 @@ function setup(t) {
   return { service, checkpointStore };
 }
 
-function recordRequest(index, { firstDraft = false } = {}) {
-  const receipt = candidateReceipt(index, { firstDraft });
+function recordRequest(index, {
+  firstDraft = false,
+  summary = `Automatic checkpoint ${index}`,
+  treeDigestCharacter = null,
+} = {}) {
+  const receipt = candidateReceipt(index, { firstDraft, treeDigestCharacter });
   return {
     candidate_receipt: receipt,
     candidate_verification: createBuilderGitCandidateVerificationReceipt(receipt),
     base_revision_ref: firstDraft
       ? { revision_receipt_digest: null, commit_oid: null }
       : { revision_receipt_digest: digest('f'), commit_oid: BASE_OID },
-    summary: `Automatic checkpoint ${index}`,
+    summary,
     changed_file_count: index,
     edit_attempt_ref: {
       edit_attempt_id: `builder-edit-attempt:${'6'.repeat(64)}`,
@@ -238,4 +242,130 @@ test('projects status only for the current candidate and fails closed without an
     () => service.record_verified_candidate_checkpoint({ ...request, changed_file_count: 0 }),
     BuilderAutomaticDraftCheckpointServiceError,
   );
+});
+
+test('projects a bounded checkpoint timeline only for the current candidate', (t) => {
+  const { service } = setup(t);
+  const first = recordRequest(1);
+  const second = recordRequest(2);
+  service.record_verified_candidate_checkpoint(first);
+  service.record_verified_candidate_checkpoint(second);
+
+  const result = service.read_current_checkpoint_timeline({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: second.candidate_receipt.candidate_id,
+  });
+  assert.equal(result.operation, 'current_draft_checkpoint_timeline_read');
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(
+    result.draft_checkpoint_timeline_projection.entries.map((entry) => ({
+      sequence: entry.checkpoint_sequence,
+      current: entry.is_current,
+    })),
+    [{ sequence: 2, current: true }, { sequence: 1, current: false }],
+  );
+  assert.equal(result.draft_checkpoint_timeline_projection.authority.restore_authority, false);
+  assert.doesNotMatch(
+    JSON.stringify(result.draft_checkpoint_timeline_projection),
+    /builder-code-change-candidate:|builder-draft-checkpoint:|sha256:|commit_oid|tree_oid|candidate_digest|database_id/iu,
+  );
+
+  const stale = service.read_current_checkpoint_timeline({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: first.candidate_receipt.candidate_id,
+  });
+  assert.equal(stale.status, 'absent');
+  assert.equal(stale.draft_checkpoint_timeline_projection, null);
+});
+
+test('prepares the previous logical checkpoint and walks backward across restored checkpoints', (t) => {
+  const { service } = setup(t);
+  const first = recordRequest(1);
+  const second = recordRequest(2);
+  const third = recordRequest(3);
+  service.record_verified_candidate_checkpoint(first);
+  service.record_verified_candidate_checkpoint(second);
+  service.record_verified_candidate_checkpoint(third);
+
+  const previous = service.prepare_previous_checkpoint_restore({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: third.candidate_receipt.candidate_id,
+  });
+  assert.equal(previous.status, 'ready');
+  assert.equal(
+    previous.target_checkpoint.candidate_ref.candidate_id,
+    second.candidate_receipt.candidate_id,
+  );
+
+  const restoredSecond = recordRequest(4, {
+    summary: `Restored earlier draft checkpoint ${previous.target_checkpoint.checkpoint_id}.`,
+    treeDigestCharacter: '3',
+  });
+  service.record_verified_candidate_checkpoint(restoredSecond);
+  const beforeSecond = service.prepare_previous_checkpoint_restore({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: restoredSecond.candidate_receipt.candidate_id,
+  });
+  assert.equal(beforeSecond.status, 'ready');
+  assert.equal(
+    beforeSecond.target_checkpoint.candidate_ref.candidate_id,
+    first.candidate_receipt.candidate_id,
+  );
+});
+
+test('prepares an explicitly selected earlier checkpoint by public sequence', (t) => {
+  const { service } = setup(t);
+  const first = recordRequest(1);
+  const second = recordRequest(2);
+  const third = recordRequest(3);
+  service.record_verified_candidate_checkpoint(first);
+  service.record_verified_candidate_checkpoint(second);
+  service.record_verified_candidate_checkpoint(third);
+
+  const prepared = service.prepare_checkpoint_sequence_restore({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: third.candidate_receipt.candidate_id,
+    checkpoint_sequence: 1,
+  });
+  assert.equal(prepared.operation, 'selected_checkpoint_restore_prepared');
+  assert.equal(prepared.status, 'ready');
+  assert.equal(prepared.target_checkpoint.checkpoint_sequence, 1);
+  assert.equal(
+    prepared.target_checkpoint.candidate_ref.candidate_id,
+    first.candidate_receipt.candidate_id,
+  );
+
+  for (const checkpointSequence of [0, 3, 4]) {
+    assert.throws(() => service.prepare_checkpoint_sequence_restore({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      candidate_id: third.candidate_receipt.candidate_id,
+      checkpoint_sequence: checkpointSequence,
+    }), BuilderAutomaticDraftCheckpointServiceError);
+  }
+  assert.throws(() => service.prepare_checkpoint_sequence_restore({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: second.candidate_receipt.candidate_id,
+    checkpoint_sequence: 1,
+  }), BuilderAutomaticDraftCheckpointServiceError);
+});
+
+test('prepares the project baseline at the beginning of the logical history', (t) => {
+  const { service } = setup(t);
+  const first = recordRequest(1);
+  service.record_verified_candidate_checkpoint(first);
+  const result = service.prepare_previous_checkpoint_restore({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    candidate_id: first.candidate_receipt.candidate_id,
+  });
+  assert.equal(result.operation, 'draft_baseline_restore_prepared');
+  assert.equal(result.status, 'baseline');
+  assert.equal(result.target_checkpoint, null);
 });

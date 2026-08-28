@@ -48,17 +48,17 @@ describe('routeBuilderComposerIntent', () => {
     '帮我出一个 README 重构方案',
     'Create an implementation plan for this site.',
     'Draft a redesign proposal for the portfolio.',
-  ])('marks %s as requiring semantic plan/build classification', (instruction) => {
-    expect(isBuilderComposerPlanBuildConflictIntent(instruction)).toBe(true);
+  ])('routes clear plan deliverable %s to plan without waiting for semantic classification', (instruction) => {
+    expect(isBuilderComposerPlanBuildConflictIntent(instruction)).toBe(false);
     expect(decideBuilderComposerIntent(instruction, {
       hasWorkspace: true,
       hasWritePermission: true,
     })).toMatchObject({
-      route: 'clarify',
-      dispatch: 'reply',
-      matchedSignals: ['plan_build_conflict'],
-      downgradedFrom: 'build',
-      downgradeReason: 'ambiguous_build_intent',
+      route: 'plan',
+      dispatch: 'plan',
+      matchedSignals: ['clear_plan_deliverable'],
+      downgradedFrom: null,
+      downgradeReason: null,
       requiredPermissions: [],
       permissionResult: 'not_required',
     });
@@ -153,9 +153,23 @@ describe('routeBuilderComposerIntent', () => {
     '优化一下',
     '继续优化标题和说明，不要保存版本',
     'Make it better',
+    'Continue improving the focus timer heading and subtitle.',
+    'Continue from this restored checkpoint and complete the focus timer copy.',
   ])('routes %s to build when a current draft is already being reviewed', (instruction) => {
     expect(routeBuilderComposerIntent(instruction, { hasPriorBuildContext: true, hasWorkspace: true }))
       .toBe('build');
+  });
+
+  it.each([
+    'Continue improving the focus timer heading and subtitle.',
+    'Continue from this restored checkpoint and complete the focus timer copy.',
+  ])('does not admit current-draft continuation %s without prior build context', (instruction) => {
+    expect(decideBuilderComposerIntent(instruction, { hasWorkspace: true })).toMatchObject({
+      route: 'clarify',
+      matchedSignals: ['current_draft_continuation'],
+      downgradedFrom: 'build',
+      downgradeReason: 'missing_prior_build_context',
+    });
   });
 
   it.each([
@@ -245,6 +259,9 @@ describe('routeBuilderComposerIntent', () => {
     '请先不要写代码，列步骤',
     '先给我一个方案',
     '制定方案',
+    '帮我做一个静态技术博客实施计划',
+    '给当前文件夹做一个优化方案',
+    '帮我出一个 README 重构方案',
     'Plan this first.',
     'Give me a plan for this page.',
     'Plan first',

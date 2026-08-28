@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
+const { stageBuilderHarnessRuntime } = require('./stage-builder-harness-runtime.cjs');
 
 const root = path.resolve(__dirname, '..');
 const releaseDirectory = path.join(root, 'release');
@@ -103,6 +104,8 @@ async function main() {
   if (process.platform !== 'win32') {
     throw new Error('Windows release packaging must run on Windows.');
   }
+
+  await stageBuilderHarnessRuntime();
 
   let lastOutputDirectory = null;
   for (let attempt = 1; attempt <= BUILDER_ATTEMPTS; attempt += 1) {

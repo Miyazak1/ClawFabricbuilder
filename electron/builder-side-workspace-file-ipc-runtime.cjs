@@ -5,6 +5,7 @@ const { types: utilTypes } = require('node:util');
 const {
   READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
   READ_CURRENT_DRAFT_FILE_TREE_CHANNEL,
+  READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
   createBuilderSideWorkspaceFileIpcAdapter,
 } = require('./builder-side-workspace-file-ipc-adapter.cjs');
 
@@ -17,6 +18,7 @@ const SERVICE_KEYS = Object.freeze([
   'service_version',
   'read_current_draft_file_tree',
   'read_current_draft_file_content',
+  'read_runtime_tool_file_tree',
 ]);
 const ERROR_MESSAGES = Object.freeze({
   builder_side_workspace_file_ipc_runtime_unavailable: 'Files are unavailable.',
@@ -131,6 +133,7 @@ function createUnavailableBuilderSideWorkspaceFileService() {
     service_version: BUILDER_SIDE_WORKSPACE_FILE_UNAVAILABLE_SERVICE_VERSION,
     read_current_draft_file_tree: unavailable,
     read_current_draft_file_content: unavailable,
+    read_runtime_tool_file_tree: unavailable,
   });
 }
 
@@ -141,6 +144,7 @@ function createBuilderSideWorkspaceFileIpcRuntime(rawOptions) {
     adapter = createBuilderSideWorkspaceFileIpcAdapter({
       readCurrentDraftFileTree: options.fileService.read_current_draft_file_tree,
       readCurrentDraftFileContent: options.fileService.read_current_draft_file_content,
+      readRuntimeToolFileTree: options.fileService.read_runtime_tool_file_tree,
       mainWindowRef: options.mainWindowRef,
     });
   } catch {
@@ -155,6 +159,10 @@ function createBuilderSideWorkspaceFileIpcRuntime(rawOptions) {
     Object.freeze({
       channel: READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
       invoke: adapter.channels.readCurrentDraftFileContent.invoke,
+    }),
+    Object.freeze({
+      channel: READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
+      invoke: adapter.channels.readRuntimeToolFileTree.invoke,
     }),
   ]);
   const installed = [];

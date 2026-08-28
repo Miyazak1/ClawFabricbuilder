@@ -29,6 +29,9 @@ const {
   BuilderCheckWorkspaceMaterializerError,
   createBuilderCheckWorkspaceMaterializer,
 } = require('../electron/builder-check-workspace-materializer.cjs');
+const {
+  createBuilderCheckDependencyPreparer,
+} = require('../electron/builder-check-dependency-preparer.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
@@ -169,6 +172,201 @@ test('materializes a candidate into a unique trusted workspace and verifies pers
   assert.equal(path.relative(fs.realpathSync.native(checksRoot), firstPath).startsWith('..'), false);
   assert.notEqual(firstPath, secondPath);
   assert.equal(fs.readFileSync(path.join(firstPath, 'src', 'index.js'), 'utf8'), tree.files[1].content);
+});
+
+test('reports check workspace readiness without disclosing the workspace path', (t) => {
+  const { checksRoot } = fixture(t);
+  const tree = sourceTree([
+    { path: 'package.json', content: '{"scripts":{"test":"vite --version"},"devDependencies":{"vite":"^5.0.0"}}\n' },
+    { path: 'package-lock.json', content: '{"lockfileVersion":3}\n' },
+  ]);
+  const check_run_admission = checkRunAdmission(tree);
+  assert.equal(check_run_admission.package_manager, 'npm');
+  const materializer = createBuilderCheckWorkspaceMaterializer({ checks_root: checksRoot });
+  const workspace_admission = materializer.materialize_candidate({
+    check_run_admission,
+    source_tree: tree,
+  });
+  const readiness = materializer.read_workspace_readiness_snapshot({
+    check_run_admission,
+    workspace_admission,
+    project_root_path: null,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'not_requested',
+    updated_at_ms: 123,
+  });
+
+  assert.equal(readiness.package_manifest, 'present');
+  assert.equal(readiness.lockfile, 'package-lock.json');
+  assert.equal(readiness.project_dependency_state, 'not_admitted');
+  assert.equal(readiness.check_workspace_dependency_state, 'install_missing');
+  assert.equal(readiness.dependency_strategy, 'needs_prepared_dependency_workspace');
+  assert.equal(readiness.authority.path_disclosure, 'redacted_status_only');
+  assert.doesNotMatch(JSON.stringify(readiness), /candidate-[0-9a-f]|checks|node_modules/iu);
+});
+
+test('allows main-owned npm dependency artifacts in the trusted check workspace', (t) => {
+  const { checksRoot } = fixture(t);
+  const tree = sourceTree([
+    {
+      path: 'package.json',
+      content: '{"scripts":{"test":"clawfabric-local-check-tool --version"},"devDependencies":{"clawfabric-local-check-tool":"file:./tools/clawfabric-local-check-tool"}}\n',
+    },
+    {
+      path: 'tools/clawfabric-local-check-tool/package.json',
+      content: '{"name":"clawfabric-local-check-tool","version":"1.0.0","bin":{"clawfabric-local-check-tool":"bin/check-tool.js"}}\n',
+    },
+    {
+      path: 'tools/clawfabric-local-check-tool/bin/check-tool.js',
+      content: "console.log('clawfabric-local-check-tool 1.0.0');\n",
+    },
+  ]);
+  const check_run_admission = checkRunAdmission(tree);
+  const materializer = createBuilderCheckWorkspaceMaterializer({ checks_root: checksRoot });
+  const workspace_admission = materializer.materialize_candidate({
+    check_run_admission,
+    source_tree: tree,
+  });
+  const workspacePath = materializer.read_workspace_path(workspace_admission);
+  fs.mkdirSync(path.join(workspacePath, 'node_modules', '.bin'), { recursive: true });
+  fs.mkdirSync(path.join(workspacePath, '.npm-cache'), { recursive: true });
+  fs.mkdirSync(path.join(workspacePath, 'node-compile-cache', 'v22-test'), { recursive: true });
+  fs.writeFileSync(path.join(workspacePath, 'node_modules', '.package-lock.json'), '{}\n');
+  fs.writeFileSync(path.join(workspacePath, 'node_modules', '.bin', 'clawfabric-local-check-tool.cmd'), '@echo off\r\n');
+  fs.writeFileSync(path.join(workspacePath, 'node-compile-cache', 'v22-test', 'cache-entry'), 'cached\n');
+  fs.writeFileSync(path.join(workspacePath, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  const packageTarget = path.join(workspacePath, 'tools', 'clawfabric-local-check-tool');
+  const packageLink = path.join(workspacePath, 'node_modules', 'clawfabric-local-check-tool');
+  try {
+    fs.symlinkSync(packageTarget, packageLink, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch {
+    fs.mkdirSync(packageLink);
+  }
+
+  const readiness = materializer.read_workspace_readiness_snapshot({
+    check_run_admission,
+    workspace_admission,
+    project_root_path: null,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'approved_once',
+    updated_at_ms: 124,
+  });
+
+  assert.equal(readiness.check_workspace_dependency_state, 'install_present');
+  assert.equal(readiness.dependency_strategy, 'can_run_without_install');
+  assert.deepEqual(materializer.cleanup(workspace_admission), { cleaned: true, reason: 'removed' });
+  assert.equal(fs.existsSync(packageTarget), false);
+});
+
+test('keeps a real npm file dependency install readable for approved check readiness', async (t) => {
+  const childProcess = require('node:child_process');
+  const { checksRoot } = fixture(t);
+  const tree = sourceTree([
+    {
+      path: 'package.json',
+      content: `${JSON.stringify({
+        name: 'clawfabric-local-install-readiness',
+        private: true,
+        scripts: { test: 'clawfabric-local-check-tool --version' },
+        devDependencies: {
+          'clawfabric-local-check-tool': 'file:./tools/clawfabric-local-check-tool',
+        },
+      }, null, 2)}\n`,
+    },
+    {
+      path: 'tools/clawfabric-local-check-tool/package.json',
+      content: `${JSON.stringify({
+        name: 'clawfabric-local-check-tool',
+        version: '1.0.0',
+        bin: { 'clawfabric-local-check-tool': 'bin/check-tool.js' },
+      }, null, 2)}\n`,
+    },
+    {
+      path: 'tools/clawfabric-local-check-tool/bin/check-tool.js',
+      content: "#!/usr/bin/env node\n'use strict';\nconsole.log('clawfabric-local-check-tool 1.0.0');\n",
+    },
+  ]);
+  const check_run_admission = checkRunAdmission(tree);
+  const materializer = createBuilderCheckWorkspaceMaterializer({ checks_root: checksRoot });
+  const workspace_admission = materializer.materialize_candidate({
+    check_run_admission,
+    source_tree: tree,
+  });
+  const preparer = createBuilderCheckDependencyPreparer({
+    spawn_process: childProcess.spawn,
+    terminate_process_tree() { return true; },
+    workspace_materializer: materializer,
+    clock: {
+      now_ms() { return Date.now(); },
+      set_timeout: setTimeout,
+      clear_timeout: clearTimeout,
+    },
+  });
+  const receipt = await preparer.prepare_dependencies({
+    check_run_admission,
+    workspace_admission,
+    package_manager: 'npm',
+  });
+
+  assert.equal(receipt.status, 'prepared');
+  const readiness = materializer.read_workspace_readiness_snapshot({
+    check_run_admission,
+    workspace_admission,
+    project_root_path: null,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'approved_once',
+    updated_at_ms: Date.now(),
+  });
+  assert.equal(readiness.check_workspace_dependency_state, 'install_present');
+  assert.equal(readiness.dependency_strategy, 'can_run_without_install');
+  assert.deepEqual(materializer.cleanup(workspace_admission), { cleaned: true, reason: 'removed' });
+});
+
+test('rejects non-dependency artifacts added after materialization', (t) => {
+  const { checksRoot } = fixture(t);
+  const tree = sourceTree();
+  const materializer = createBuilderCheckWorkspaceMaterializer({ checks_root: checksRoot });
+  const admission = materializer.materialize_candidate(request(tree));
+  const workspacePath = materializer.read_workspace_path(admission);
+  fs.writeFileSync(path.join(workspacePath, 'unexpected.txt'), 'not admitted\n');
+
+  assert.throws(
+    () => materializer.read_workspace_path(admission),
+    assertMaterializerError,
+  );
+});
+
+test('uses admitted project dependency facts without disclosing the project path', (t) => {
+  const { outerRoot, checksRoot } = fixture(t);
+  const projectRoot = path.join(outerRoot, 'project');
+  fs.mkdirSync(path.join(projectRoot, 'node_modules'), { recursive: true });
+  const tree = sourceTree([
+    { path: 'package.json', content: '{"scripts":{"test":"vite --version"},"devDependencies":{"vite":"^5.0.0"}}\n' },
+    { path: 'package-lock.json', content: '{"lockfileVersion":3}\n' },
+  ]);
+  const check_run_admission = checkRunAdmission(tree);
+  const materializer = createBuilderCheckWorkspaceMaterializer({ checks_root: checksRoot });
+  const workspace_admission = materializer.materialize_candidate({
+    check_run_admission,
+    source_tree: tree,
+  });
+  const readiness = materializer.read_workspace_readiness_snapshot({
+    check_run_admission,
+    workspace_admission,
+    project_root_path: projectRoot,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'not_requested',
+    updated_at_ms: 123,
+  });
+
+  assert.equal(readiness.project_dependency_state, 'install_present');
+  assert.equal(readiness.check_workspace_dependency_state, 'install_missing');
+  assert.equal(readiness.dependency_strategy, 'needs_prepared_dependency_workspace');
+  assert.doesNotMatch(JSON.stringify(readiness), /node_modules|candidate-[0-9a-f]|cfb-check-workspace/iu);
 });
 
 test('rejects forged admission, tree identity, protected Git, and exact-object drift', (t) => {
@@ -326,6 +524,7 @@ test('source is main-only filesystem materialization without IPC, provider, Git,
     'node:util',
     './builder-project-source-tree.cjs',
     './builder-check-run-admission.cjs',
+    './builder-runtime-readiness-snapshot.cjs',
   ]);
   assert.match(source, /sanitizeBuilderProjectSourceTree/u);
   assert.match(source, /sanitizeBuilderCheckRunAdmission/u);
@@ -334,6 +533,7 @@ test('source is main-only filesystem materialization without IPC, provider, Git,
   assert.match(source, /openSync\(targetPath, 'wx'/u);
   assert.match(source, /isSymbolicLink\(\)/u);
   assert.match(source, /realpathSync\.native/u);
+  assert.match(source, /read_workspace_readiness_snapshot/u);
   assert.doesNotMatch(
     source,
     /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|WebContentsView|builder-provider|builder-product-metadata|node:sqlite|DatabaseSync|node:child_process|execFile|spawn\s*\(|fetch\s*\(|https?:\/\//iu,

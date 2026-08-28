@@ -6,6 +6,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 
 const {
+  LIVE_PREVIEW_UPDATE_INSTRUCTION,
   RESULT_VERSION,
   createLivePreviewCanaryProviderServer,
 } = require('../scripts/verify-packaged-live-preview-canary.cjs');
@@ -14,7 +15,7 @@ const root = path.resolve(__dirname, '..');
 const SOURCE_PATH = path.join(root, 'scripts', 'verify-packaged-live-preview-canary.cjs');
 const PACKAGE_PATH = path.join(root, 'package.json');
 
-async function request(server, marker, stream = false) {
+async function request(server, marker, stream = false, instruction = marker) {
   const response = await fetch(`${server.baseUrl}/chat/completions`, {
     body: JSON.stringify({
       messages: [
@@ -22,7 +23,7 @@ async function request(server, marker, stream = false) {
         {
           role: 'user',
           content: JSON.stringify({
-            instruction: marker,
+            instruction,
             output_contract: { kind: marker },
           }),
         },
@@ -55,6 +56,30 @@ test('live preview canary provider returns local canvas and module source', asyn
   assert.equal(server.snapshot().some((item) => item.response_kind === 'builder_code_change_operations'), true);
 });
 
+test('live preview canary provider selects the update fixture from instruction semantics', async (t) => {
+  const server = await createLivePreviewCanaryProviderServer();
+  t.after(async () => {
+    await server.close();
+  });
+  const first = JSON.parse(JSON.parse(
+    await request(server, 'builder_code_change_operations'),
+  ).choices[0].message.content);
+  const repeatedBaseline = JSON.parse(JSON.parse(
+    await request(server, 'builder_code_change_operations'),
+  ).choices[0].message.content);
+  const update = JSON.parse(JSON.parse(await request(
+    server,
+    'builder_code_change_operations',
+    false,
+    LIVE_PREVIEW_UPDATE_INSTRUCTION,
+  )).choices[0].message.content);
+
+  assert.equal(first.operations[0].content.includes('<title>Canvas Canary</title>'), true);
+  assert.equal(repeatedBaseline.operations[0].content, first.operations[0].content);
+  assert.equal(update.operations[0].content.includes('<title>Canvas Canary Updated</title>'), true);
+  assert.notEqual(update.operations[0].content, first.operations[0].content);
+});
+
 test('live preview canary script is independent from release and verifies browser evidence', () => {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(PACKAGE_PATH, 'utf8'));
@@ -67,7 +92,9 @@ test('live preview canary script is independent from release and verifies browse
     /verify:packaged-live-preview/u,
   );
   assert.match(source, new RegExp(RESULT_VERSION.replaceAll('.', String.raw`\.`), 'u'));
-  assert.match(source, /app\.evaluate\(async \(\{ webContents \}\)/u);
+  assert.match(source, /app\.evaluate\(async \(\{ BrowserWindow, webContents \}\)/u);
+  assert.match(source, /contentView\?\.children/u);
+  assert.match(source, /attached_views/u);
   assert.match(source, /webContents\.getAllWebContents\(\)/u);
   assert.match(source, /executeJavaScript/u);
   assert.match(source, /preview_url_loopback_digest/u);
@@ -92,7 +119,13 @@ test('live preview canary script is independent from release and verifies browse
   assert.match(source, /app_restart_reopened_with_same_user_data:\s*true/u);
   assert.match(source, /live_preview_app_restart_leaked_webcontents/u);
   assert.match(source, /live_preview_restart_cleanup_precondition_failed/u);
+  assert.match(source, /BUILDER_PROGRAMMING_RUNTIME:\s*['"]disabled['"]/u);
+  assert.equal(
+    source.match(/env:\s*livePreviewCanaryLaunchEnvironment\(userDataPath, projectRootPath\)/gu)?.length,
+    2,
+  );
   assert.doesNotMatch(source, /SELECTORS\.saveVersion\)\.waitFor\(\{ state: 'visible'/u);
+  assert.doesNotMatch(source, /SELECTORS\.reviewCheckpoint\)\.waitFor/u);
   assert.match(source, /data-builder-live-preview-blocked-count/u);
   assert.match(source, /renderer_blocked_request_count_minimum/u);
   assert.match(source, /renderer_block_count_visible:\s*true/u);

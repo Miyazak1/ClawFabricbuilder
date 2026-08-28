@@ -66,11 +66,38 @@ function createBuilderPackagedCheckRuntimeResolver(rawOptions) {
   const options = exactObject(rawOptions, CREATE_KEYS);
   const registry = options.runtime_registry.value;
   const registerRuntime = registry?.register_runtime;
+  const registerRuntimeAsync = registry?.register_runtime_async;
   const clock = options.clock.value;
   const nowMs = clock?.now_ms;
-  if (typeof registerRuntime !== 'function' || typeof nowMs !== 'function') fail();
+  if (
+    typeof registerRuntime !== 'function'
+    || (registerRuntimeAsync !== undefined && typeof registerRuntimeAsync !== 'function')
+    || typeof nowMs !== 'function'
+  ) fail();
   const launcherPath = safeAbsolutePath(options.launcher_path.value);
   const workerPath = safeAbsolutePath(options.worker_path.value);
+  let cachedIdentity = null;
+  let pendingIdentity = null;
+
+  function registration(resolvedAtMs) {
+    return {
+      package_manager: 'npm',
+      launcher_path: launcherPath,
+      cli_entry_path: workerPath,
+      package_manager_version: PACKAGED_NPM_SCRIPT_RUNTIME_VERSION,
+      resolution_source: 'packaged_runtime',
+      resolved_at_ms: resolvedAtMs,
+      expires_at_ms: resolvedAtMs + MAX_RUNTIME_IDENTITY_LIFETIME_MS,
+    };
+  }
+
+  function reusableIdentity(resolvedAtMs) {
+    return cachedIdentity !== null
+      && resolvedAtMs >= cachedIdentity.resolved_at_ms
+      && resolvedAtMs < cachedIdentity.expires_at_ms
+      ? cachedIdentity
+      : null;
+  }
 
   return Object.freeze({
     resolver_version: BUILDER_PACKAGED_CHECK_RUNTIME_RESOLVER_VERSION,
@@ -78,15 +105,34 @@ function createBuilderPackagedCheckRuntimeResolver(rawOptions) {
       try {
         const resolvedAtMs = nowMs.call(clock);
         if (!Number.isSafeInteger(resolvedAtMs) || resolvedAtMs < 0) fail();
-        return registerRuntime.call(registry, {
-          package_manager: 'npm',
-          launcher_path: launcherPath,
-          cli_entry_path: workerPath,
-          package_manager_version: PACKAGED_NPM_SCRIPT_RUNTIME_VERSION,
-          resolution_source: 'packaged_runtime',
-          resolved_at_ms: resolvedAtMs,
-          expires_at_ms: resolvedAtMs + MAX_RUNTIME_IDENTITY_LIFETIME_MS,
+        const reusable = reusableIdentity(resolvedAtMs);
+        if (reusable !== null) return reusable;
+        cachedIdentity = registerRuntime.call(registry, registration(resolvedAtMs));
+        return cachedIdentity;
+      } catch (error) {
+        if (error instanceof BuilderPackagedCheckRuntimeResolverError) throw error;
+        fail();
+      }
+    },
+    async resolve_npm_runtime_async() {
+      try {
+        const resolvedAtMs = nowMs.call(clock);
+        if (!Number.isSafeInteger(resolvedAtMs) || resolvedAtMs < 0) fail();
+        const reusable = reusableIdentity(resolvedAtMs);
+        if (reusable !== null) return reusable;
+        if (pendingIdentity !== null) return await pendingIdentity;
+        const register = registerRuntimeAsync ?? registerRuntime;
+        pendingIdentity = Promise.resolve(
+          register.call(registry, registration(resolvedAtMs)),
+        ).then((identity) => {
+          cachedIdentity = identity;
+          return identity;
         });
+        try {
+          return await pendingIdentity;
+        } finally {
+          pendingIdentity = null;
+        }
       } catch (error) {
         if (error instanceof BuilderPackagedCheckRuntimeResolverError) throw error;
         fail();

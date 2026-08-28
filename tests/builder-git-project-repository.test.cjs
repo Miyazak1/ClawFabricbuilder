@@ -436,6 +436,33 @@ test('persist_candidate_commit creates immutable candidate and request refs with
   }
 });
 
+test('preserves a nonempty local workspace as the recoverable base before Version 1', async () => {
+  const value = fixture();
+  try {
+    const base = createBuilderProjectSourceTree({ files: [
+      { path: 'index.html', content: '<main>Existing local project</main>\n' },
+      { path: 'package.json', content: '{"private":true}\n' },
+    ] });
+    const change = candidate({
+      index: 14,
+      base,
+      operations: [
+        { operation: 'upsert', path: 'index.html', content: '<main>AI update</main>\n' },
+      ],
+    });
+    const receipt = await value.repository.persist_candidate_commit(request(change, 14));
+    const restored = await value.repository.read_verified_candidate_base(receipt);
+    const restarted = await value.restart().read_verified_candidate_base(receipt);
+
+    assert.equal(receipt.expected_base_oid, null);
+    assert.equal(restored.base_source_tree_digest, base.source_tree_digest);
+    assert.deepEqual(restored.source_tree, base);
+    assert.deepEqual(restarted.source_tree, base);
+  } finally {
+    fs.rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
 test('read_verified_candidate returns a fresh verified Git tree for initial, update, and restart', async () => {
   const value = fixture();
   try {
@@ -463,6 +490,18 @@ test('read_verified_candidate returns a fresh verified Git tree for initial, upd
     assert.equal(Object.isFrozen(firstRead.candidate_receipt), true);
     assert.equal(Object.isFrozen(firstRead.verification_receipt), true);
     assert.equal(Object.isFrozen(firstRead.source_tree), true);
+    const firstBaseRead = await value.repository.read_verified_candidate_base(firstReceipt);
+    assert.equal(
+      firstBaseRead.result_version,
+      'builder-git-verified-candidate-base-read-result.v1',
+    );
+    assert.equal(firstBaseRead.code_authority, 'git_candidate_base_tree');
+    assert.equal(firstBaseRead.read_admission, 'verified');
+    assert.equal(
+      firstBaseRead.base_source_tree_digest,
+      firstChange.base_source_tree.source_tree_digest,
+    );
+    assert.deepEqual(firstBaseRead.source_tree, firstChange.base_source_tree);
     assert.deepEqual(
       await value.repository.read_candidate_workspace_base(firstReceipt),
       {
@@ -483,6 +522,11 @@ test('read_verified_candidate returns a fresh verified Git tree for initial, upd
     assert.equal(restartedRead.candidate_receipt.commit_oid, secondReceipt.commit_oid);
     assert.equal(restartedRead.candidate_receipt.parent_oid, firstReceipt.commit_oid);
     assert.deepEqual(restartedRead.source_tree, secondChange.resulting_source_tree);
+    assert.deepEqual(
+      (await value.restart().read_verified_candidate_base(structuredClone(secondReceipt)))
+        .source_tree,
+      secondChange.base_source_tree,
+    );
     assert.equal(
       (await value.restart().read_candidate_workspace_base(structuredClone(secondReceipt)))
         .base_source_tree_digest,
@@ -1060,6 +1104,7 @@ test('source boundary is main-only candidate Git authority with no current, IPC,
   assert.match(source, /prepare_change/u);
   assert.match(source, /persist_candidate_commit/u);
   assert.match(source, /read_verified_candidate/u);
+  assert.match(source, /read_verified_candidate_base/u);
   assert.match(source, /verify_candidate_receipt/u);
   assert.match(source, /code_authority:\s*'git_commit_tree'/u);
   assert.match(source, /read_admission:\s*'verified'/u);

@@ -333,8 +333,10 @@ function refNames(requestHash, semanticHash = '0'.repeat(64)) {
   const safeRequest = safeRequestHash(requestHash);
   const safeSemantic = safeRequestHash(semanticHash);
   return {
+    pendingBase: `refs/clawfabric/pending/bases/${safeSemantic}`,
     pendingCandidate: `refs/clawfabric/pending/candidates/${safeSemantic}`,
     pendingRequest: `refs/clawfabric/pending/requests/${safeRequest}`,
+    base: `refs/clawfabric/bases/${safeSemantic}`,
     candidate: `refs/clawfabric/candidates/${safeSemantic}`,
     request: `refs/clawfabric/requests/${safeRequest}`,
   };
@@ -412,8 +414,10 @@ function commandFor(operation, rawRequest) {
         indexPath: valueAt(rawRequest, 'index_path'),
       };
     }
+    case 'read_pending_base':
     case 'read_pending_candidate':
     case 'read_pending_request':
+    case 'read_base':
     case 'read_candidate':
     case 'read_request': {
       assertExactObject(rawRequest, ['object_format', 'request_hash', 'semantic_hash']);
@@ -423,8 +427,10 @@ function commandFor(operation, rawRequest) {
         valueAt(rawRequest, 'semantic_hash'),
       );
       const ref = {
+        read_pending_base: refs.pendingBase,
         read_pending_candidate: refs.pendingCandidate,
         read_pending_request: refs.pendingRequest,
+        read_base: refs.base,
         read_candidate: refs.candidate,
         read_request: refs.request,
       }[operation];
@@ -480,7 +486,8 @@ function commandFor(operation, rawRequest) {
     }
     case 'create_pending_refs': {
       assertExactObject(rawRequest, [
-        'object_format', 'request_hash', 'semantic_hash', 'tree_oid', 'semantic_blob_oid',
+        'object_format', 'request_hash', 'semantic_hash', 'base_tree_oid', 'tree_oid',
+        'semantic_blob_oid',
       ]);
       const objectFormat = safeObjectFormat(valueAt(rawRequest, 'object_format'));
       const refs = refNames(
@@ -488,6 +495,7 @@ function commandFor(operation, rawRequest) {
         valueAt(rawRequest, 'semantic_hash'),
       );
       const treeOid = safeOid(valueAt(rawRequest, 'tree_oid'), objectFormat);
+      const baseTreeOid = safeOid(valueAt(rawRequest, 'base_tree_oid'), objectFormat);
       const semanticBlobOid = safeOid(
         valueAt(rawRequest, 'semantic_blob_oid'),
         objectFormat,
@@ -496,6 +504,7 @@ function commandFor(operation, rawRequest) {
         args: ['update-ref', '--stdin'],
         stdin: [
           'start',
+          `create ${refs.pendingBase} ${baseTreeOid}`,
           `create ${refs.pendingCandidate} ${treeOid}`,
           `create ${refs.pendingRequest} ${semanticBlobOid}`,
           'prepare',
@@ -564,6 +573,7 @@ function commandFor(operation, rawRequest) {
         'request_hash',
         'semantic_hash',
         'commit_oid',
+        'base_tree_oid',
         'tree_oid',
         'semantic_blob_oid',
       ]);
@@ -573,6 +583,7 @@ function commandFor(operation, rawRequest) {
         valueAt(rawRequest, 'semantic_hash'),
       );
       const commitOid = safeOid(valueAt(rawRequest, 'commit_oid'), objectFormat);
+      const baseTreeOid = safeOid(valueAt(rawRequest, 'base_tree_oid'), objectFormat);
       const treeOid = safeOid(valueAt(rawRequest, 'tree_oid'), objectFormat);
       const semanticBlobOid = safeOid(
         valueAt(rawRequest, 'semantic_blob_oid'),
@@ -582,8 +593,10 @@ function commandFor(operation, rawRequest) {
         args: ['update-ref', '--stdin'],
         stdin: [
           'start',
+          `create ${refs.base} ${baseTreeOid}`,
           `create ${refs.candidate} ${commitOid}`,
           `create ${refs.request} ${commitOid}`,
+          `delete ${refs.pendingBase} ${baseTreeOid}`,
           `delete ${refs.pendingCandidate} ${treeOid}`,
           `delete ${refs.pendingRequest} ${semanticBlobOid}`,
           'prepare',

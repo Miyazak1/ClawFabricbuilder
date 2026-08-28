@@ -14,8 +14,10 @@ const {
   replayBuilderConversation,
 } = require('../electron/builder-conversation-replay.cjs');
 const {
+  BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION,
   BUILDER_CONVERSATION_EXPORT_VERSION,
   BuilderConversationExportError,
+  createBuilderConversationCompactionProjection,
   createBuilderConversationExport,
 } = require('../electron/builder-conversation-export.cjs');
 
@@ -294,6 +296,28 @@ test('keeps conversation exports deterministic and read-only', () => {
   assert.equal(first.lifecycle.export_materialization, 'not_performed');
   assert.equal(first.lifecycle.renderer_authority, 'not_present');
   assert.equal(first.lifecycle.provider_dispatch, 'not_performed');
+});
+
+test('creates a deterministic bounded compaction projection without receipt authority', () => {
+  const input = { loaded_conversation: loadedConversation() };
+  const first = createBuilderConversationCompactionProjection(input);
+  const second = createBuilderConversationCompactionProjection(structuredClone(input));
+
+  assert.deepEqual(second, first);
+  assert.equal(first.projection_version, BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION);
+  assert.match(
+    first.projection_id,
+    /^builder-conversation-compaction-projection:[0-9a-f]{64}$/u,
+  );
+  assert.equal(first.source.event_count, 8);
+  assert.equal(first.source.current_event_id, eventHead(conversationEvents().at(-1)).event_id);
+  assert.equal(first.public_entry_count >= first.recent_public_entries.length, true);
+  assert.equal(first.recent_public_entries.length <= 32, true);
+  assert.equal(first.public_text_byte_length > 0, true);
+  assert.doesNotMatch(
+    JSON.stringify(first),
+    /git_candidate_receipt|commit_oid|tree_oid|candidate_digest|verification_receipt|provider_payload|credential|source_tree/iu,
+  );
 });
 
 test('fails closed on malformed exports, proxies, accessors, and replay drift', () => {

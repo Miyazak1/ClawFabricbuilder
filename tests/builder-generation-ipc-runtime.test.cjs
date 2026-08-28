@@ -10,6 +10,7 @@ const vm = require('node:vm');
 
 const {
   ANSWER_CHANNEL,
+  ANSWER_PLAN_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
   AVAILABILITY_CHANNEL,
   APPROVE_CURRENT_PROJECT_WRITE_CHANNEL,
@@ -17,6 +18,7 @@ const {
   CANCEL_CHANNEL,
   CLASSIFY_INTENT_CHANNEL,
   CONTINUE_DRAFT_CHANNEL,
+  DECIDE_COMMAND_APPROVAL_CHANNEL,
   GENERATE_APPROVED_PLAN_CHANNEL,
   GENERATE_CHANNEL,
   GENERATE_RESULT_VERSION,
@@ -28,6 +30,7 @@ const {
   QUEUE_FOLLOWUP_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
+  RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   STEER_CHANNEL,
@@ -52,8 +55,25 @@ const {
   REVIEW_PLAN_CHANNEL,
 } = require('../electron/builder-plan-review-ipc-adapter.cjs');
 const {
+  ARCHIVE_AGENT_PROJECT_CHANNEL,
+  ARCHIVE_AGENT_TASK_CHANNEL,
+  READ_AGENT_PROJECT_TREE_CHANNEL,
+  RENAME_AGENT_PROJECT_CHANNEL,
+  RENAME_AGENT_TASK_CHANNEL,
+} = require('../electron/builder-agent-project-tree-ipc-adapter.cjs');
+const {
+  READ_AGENT_WORKBENCH_CHANNEL,
+  UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
+  CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+  DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+  CONTROL_WORKBENCH_TASK_CHANNEL,
+  WORKBENCH_CHANGED_CHANNEL,
+} = require('../electron/builder-workbench-ipc-adapter.cjs');
+const {
   BuilderGenerationIpcRuntimeError,
+  bundledHarnessRuntimeRoot,
   createBuilderGenerationIpcRuntime,
+  mainOwnedProgrammingRuntimeFeatureFlag,
   packagedCheckWorkerPath,
 } = require('../electron/builder-generation-ipc-runtime.cjs');
 const {
@@ -62,6 +82,9 @@ const {
 const {
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
+const {
+  DEFAULT_BUILDER_AGENT_ID,
+} = require('../electron/builder-default-agent-bootstrap.cjs');
 
 function temporaryUserData(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-generation-runtime-'));
@@ -81,7 +104,19 @@ function digest(value) {
 }
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
+const SECOND_TASK_ADDRESS_ID = 'builder-task-address:223e4567-e89b-42d3-a456-426614174001';
+const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000:123e4567-e89b-42d3-a456-426614174002';
 const CANDIDATE_ID = `builder-code-change-candidate:${'a'.repeat(64)}`;
+
+test('enables the bundled programming runtime by default with an explicit safe override', () => {
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag(undefined), 'enabled');
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag('enabled'), 'enabled');
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag('shadow'), 'shadow');
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag('disabled'), 'disabled');
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag('unexpected'), 'disabled');
+  assert.equal(mainOwnedProgrammingRuntimeFeatureFlag(''), 'disabled');
+});
 
 test('resolves the packaged check worker from the physical ASAR unpack directory', () => {
   const resources = path.resolve('release', 'win-unpacked', 'resources');
@@ -100,11 +135,25 @@ test('resolves the packaged check worker from the physical ASAR unpack directory
   );
 });
 
+test('discovers only the packaged Harness ASAR in the supplied resources directory', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-packaged-harness-root-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.equal(bundledHarnessRuntimeRoot(root), null);
+  const archive = path.join(root, 'harness-runtime.asar');
+  fs.writeFileSync(archive, 'fixture');
+  assert.equal(bundledHarnessRuntimeRoot(root), archive);
+  fs.rmSync(archive);
+  fs.mkdirSync(archive);
+  assert.equal(bundledHarnessRuntimeRoot(root), archive);
+  assert.equal(bundledHarnessRuntimeRoot('relative'), null);
+});
+
 function hostRequestDigest(instruction = 'Make a timer.', existingProjectId = null) {
   return digest({
-    version: 'builder-generation-request.v2',
+    version: 'builder-generation-request.v3',
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: null,
   });
 }
 
@@ -182,6 +231,7 @@ function runtimeWithService(service, probes = {}) {
           ANSWER_CHANNEL,
           ANSWER_DRAFT_CHANNEL,
           CONTINUE_DRAFT_CHANNEL,
+          DECIDE_COMMAND_APPROVAL_CHANNEL,
           CLASSIFY_INTENT_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
@@ -198,6 +248,7 @@ function runtimeWithService(service, probes = {}) {
           QUEUE_FOLLOWUP_CHANNEL,
           AVAILABILITY_CHANNEL,
           RESTORE_DRAFT_CHANNEL,
+          RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
           RESTORE_REVISION_AS_DRAFT_CHANNEL,
           REJECT_DRAFT_CHANNEL,
           RETRY_GENERATE_CHANNEL,
@@ -224,13 +275,264 @@ function runtimeWithService(service, probes = {}) {
               answerDraft: { invoke: (_event, body) => options.answerDraft(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
               restoreRevisionAsDraft: { invoke: (_event, body) => options.restoreRevisionAsDraft(body) },
+              restorePreviousCheckpointAsDraft: {
+                invoke: (_event, body) => options.restorePreviousCheckpointAsDraft(body),
+              },
               rejectDraft: { invoke: (_event, body) => options.rejectDraft(body) },
               cancel: { invoke: (_event, body) => options.cancel(body) },
               steer: { invoke: (_event, body) => options.steer(body) },
               queueFollowup: { invoke: (_event, body) => options.queueFollowup(body) },
               availability: { invoke: () => options.availability() },
+              decideCommandApproval: {
+                invoke: (_event, body) => options.decideCommandApproval(body),
+              },
             },
           }),
+        };
+      }
+      if (specifier === './builder-workbench-message-store.cjs') {
+        return {
+          createBuilderWorkbenchMessageStore: (databasePath) => {
+            probes.workbenchMessageDatabasePath = databasePath;
+            context.__workbenchMessageStore = {
+              closed: false,
+              update_message_state(request) {
+                probes.workbenchMessageStateRequests ??= [];
+                probes.workbenchMessageStateRequests.push(request);
+                return { operation: 'message_state_updated' };
+              },
+              close() {
+                this.closed = true;
+                return true;
+              },
+            };
+            return context.__workbenchMessageStore;
+          },
+        };
+      }
+      if (specifier === './builder-agent-conversation-workbench-recording-service.cjs') {
+        return {
+          createBuilderAgentConversationWorkbenchRecordingService: (options) => {
+            probes.workbenchRecordingOptions = options;
+            context.__workbenchRecordingService = {
+              sync_agent_conversation_stream(stream) {
+                probes.workbenchSynchronizedStreams ??= [];
+                probes.workbenchSynchronizedStreams.push(stream);
+                return { operation: 'conversation_synchronized', recorded_count: 0 };
+              },
+            };
+            return context.__workbenchRecordingService;
+          },
+        };
+      }
+      if (specifier === './builder-workbench-task-monitor-projection.cjs') {
+        return {
+          createBuilderWorkbenchTaskMonitorProjection: (options) => {
+            probes.workbenchTaskMonitorOptions = options;
+            context.__workbenchTaskMonitorProjection = {
+              invalidate_monitor(request) {
+                probes.workbenchTaskMonitorInvalidations ??= [];
+                probes.workbenchTaskMonitorInvalidations.push(request);
+                return { operation: 'task_monitor_invalidated' };
+              },
+              read_monitor(request) {
+                probes.workbenchTaskMonitorRequests ??= [];
+                probes.workbenchTaskMonitorRequests.push(request);
+                return {
+                  projection_version: 'builder-workbench-task-monitor.v2',
+                  agent_id: request.agent_id,
+                  tasks: [],
+                  counts: { active: 0, attention: 0, recent: 0 },
+                  authority: {},
+                };
+              },
+            };
+            return context.__workbenchTaskMonitorProjection;
+          },
+        };
+      }
+      if (specifier === './builder-task-workbench-result-recording-service.cjs') {
+        return {
+          createBuilderTaskWorkbenchResultRecordingService: (options) => {
+            probes.workbenchTaskResultRecordingOptions = options;
+            context.__workbenchTaskResultRecordingService = {
+              sync_task_monitor(monitor) {
+                probes.workbenchSynchronizedTaskMonitors ??= [];
+                probes.workbenchSynchronizedTaskMonitors.push(monitor);
+                return { operation: 'task_results_synchronized', recorded_count: 0 };
+              },
+            };
+            return context.__workbenchTaskResultRecordingService;
+          },
+        };
+      }
+      if (specifier === './builder-workbench-task-proposal-store.cjs') {
+        return {
+          createBuilderWorkbenchTaskProposalStore: (databasePath) => {
+            probes.workbenchTaskProposalDatabasePath = databasePath;
+            context.__workbenchTaskProposalStore = {
+              close() { return true; },
+            };
+            return context.__workbenchTaskProposalStore;
+          },
+        };
+      }
+      if (specifier === './builder-task-attention-store.cjs') {
+        return {
+          createBuilderTaskAttentionStore: (databasePath) => {
+            probes.taskAttentionDatabasePath = databasePath;
+            const latest = new Map();
+            context.__taskAttentionStore = {
+              closed: false,
+              records: [],
+              record_task_attention(request) {
+                probes.onRecordTaskAttention?.(request.attention);
+                this.records.push(request.attention);
+                latest.set(request.attention.task_address_id, request.attention);
+                return { status: 'recorded', attention: request.attention };
+              },
+              read_task_attention(request) {
+                const attention = latest.get(request.task_address_id) ?? null;
+                return { status: attention === null ? 'absent' : 'ready', attention };
+              },
+              close() { this.closed = true; return true; },
+            };
+            return context.__taskAttentionStore;
+          },
+        };
+      }
+      if (specifier === './builder-project-task-lease-coordinator.cjs') {
+        return {
+          createBuilderProjectTaskLeaseCoordinator: () => {
+            const leases = new Map();
+            let leaseIndex = 0;
+            return {
+              acquire(request) {
+                const current = leases.get(request.project_id) ?? null;
+                if (current !== null) {
+                  return {
+                    status: 'busy',
+                    project_id: request.project_id,
+                    owner_task_address_id: current.task_address_id,
+                    lease: null,
+                  };
+                }
+                leaseIndex += 1;
+                const lease = {
+                  lease_id: `builder-project-task-lease:${String(leaseIndex).padStart(8, '0')}-0000-4000-8000-000000000001`,
+                  project_id: request.project_id,
+                  task_address_id: request.task_address_id,
+                  request_id: request.request_id,
+                };
+                leases.set(request.project_id, lease);
+                return { status: 'acquired', project_id: request.project_id, lease };
+              },
+              release(request) {
+                const current = leases.get(request.project_id);
+                assert.equal(current?.lease_id, request.lease_id);
+                assert.equal(current?.request_id, request.request_id);
+                leases.delete(request.project_id);
+                return { status: 'released', project_id: request.project_id };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-workbench-task-incubation-service.cjs') {
+        return {
+          createBuilderWorkbenchTaskIncubationService: (options) => {
+            probes.workbenchTaskIncubationOptions = options;
+            return {
+              create_proposal(request) { return { operation: 'proposal_created', request }; },
+              async decide_proposal(request) {
+                return { operation: 'proposal_rejected', request, materialization: null };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-workbench-timeline-projection.cjs') {
+        return {
+          createBuilderWorkbenchTimelineProjection: (options) => {
+            probes.workbenchProjectionOptions = options;
+            return {
+              read_workbench(request) {
+                probes.workbenchReadRequests ??= [];
+                probes.workbenchReadRequests.push(request);
+                return {
+                  projection_version: 'builder-agent-workbench-projection.v2',
+                  agent_id: request.agent_id,
+                  stream: {
+                    items: [],
+                    after_cursor: request.after_cursor,
+                    next_cursor: null,
+                    has_more: false,
+                  },
+                  task_monitor: options.task_monitor_projection.read_monitor({
+                    agent_id: request.agent_id,
+                  }),
+                  inbox: {
+                    unread_count: 0,
+                    action_required_count: 0,
+                    mention_count: 0,
+                    active_task_count: 0,
+                  },
+                  authority: {},
+                };
+              },
+            };
+          },
+        };
+      }
+      if (specifier === './builder-workbench-ipc-adapter.cjs') {
+        return {
+          READ_AGENT_WORKBENCH_CHANNEL,
+          UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
+          CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+          DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+          CONTROL_WORKBENCH_TASK_CHANNEL,
+          WORKBENCH_CHANGED_CHANNEL,
+          createBuilderWorkbenchIpcAdapter: (options) => ({
+            channels: {
+              read: { invoke: (_event, body) => options.readWorkbench(body) },
+              updateMessageState: {
+                invoke: (_event, body) => options.updateMessageState(body),
+              },
+              createTaskProposal: {
+                invoke: (_event, body) => options.createTaskProposal(body),
+              },
+              decideTaskProposal: {
+                invoke: (_event, body) => options.decideTaskProposal(body),
+              },
+              controlTask: {
+                invoke: (_event, body) => options.controlTask(body),
+              },
+            },
+          }),
+        };
+      }
+      if (specifier === './builder-runtime-workspace-snapshot-store.cjs') {
+        return {
+          createBuilderRuntimeWorkspaceSnapshotStore: (options) => {
+            probes.runtimeWorkspaceSnapshotOptions = options;
+            context.__runtimeWorkspaceSnapshotStore = {
+              record_source_tree(request) { probes.runtimeSourceTreeRecords ??= []; probes.runtimeSourceTreeRecords.push(request); },
+              bind_tool_file(request) { probes.runtimeFileBindings ??= []; probes.runtimeFileBindings.push(request); },
+              read_tool_file(request) {
+                probes.runtimeToolReadRequests ??= [];
+                probes.runtimeToolReadRequests.push(request);
+                if (probes.runtimeToolRecord === undefined) throw new Error('runtime tool file absent');
+                return probes.runtimeToolRecord;
+              },
+              read_source_tree(request) {
+                probes.runtimeSourceReadRequests ??= [];
+                probes.runtimeSourceReadRequests.push(request);
+                if (probes.runtimeSourceRecord === undefined) throw new Error('runtime source tree absent');
+                return probes.runtimeSourceRecord;
+              },
+            };
+            return context.__runtimeWorkspaceSnapshotStore;
+          },
         };
       }
       if (specifier === './builder-generation-main-service.cjs') {
@@ -243,6 +545,10 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.projectReadAuthority.load_revision, context.__projectMainAuthority.project_read_authority.load_revision);
             assert.equal(options.conversationService, context.__conversationService);
             assert.equal(options.gitAuthority, context.__projectMainAuthority.git_authority);
+            assert.equal(
+              options.currentProjection,
+              context.__projectMainAuthority.git_current_projection,
+            );
             assert.equal(options.sourceContextCollector.collector_version, 'builder-tool-source-context-collector.v1');
             assert.equal(options.taskCapsuleStore, context.__taskCapsuleStore);
             assert.equal(options.taskCapsuleRecordingService, context.__taskCapsuleRecordingService);
@@ -258,6 +564,10 @@ function runtimeWithService(service, probes = {}) {
               options.providerContextDisclosureStatusService,
               context.__providerContextDisclosureStatusService,
             );
+            assert.equal(typeof options.runtimeWorkspaceSnapshotService.recordRuntimeSourceTree, 'function');
+            assert.equal(typeof options.runtimeWorkspaceSnapshotService.bindToolFile, 'function');
+            assert.equal(typeof options.runtimeWorkspaceSnapshotService.readRuntimeToolFile, 'function');
+            assert.equal(typeof options.runtimeWorkspaceSnapshotService.readRuntimeSourceTree, 'function');
             assert.equal(typeof options.onGenerationStarted, 'function');
             assert.equal(typeof options.onProviderOutputDelta, 'function');
             return service;
@@ -364,6 +674,21 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-context-compaction-recording-service.cjs') {
+        return {
+          createBuilderContextCompactionRecordingService: (options) => {
+            probes.contextCompactionRecordingOptions = options;
+            assert.equal(options.context_compaction_summary_store, context.__contextCompactionSummaryStore);
+            assert.equal(options.session_task_address_store, context.__sessionTaskAddressStore);
+            assert.equal(typeof options.now_ms, 'function');
+            context.__contextCompactionRecordingService = {
+              service_version: 'builder-context-compaction-recording-service.v1',
+              record_committed_conversation_compaction() {},
+            };
+            return context.__contextCompactionRecordingService;
+          },
+        };
+      }
       if (specifier === './builder-handoff-packet-store.cjs') {
         return {
           createBuilderHandoffPacketStore: (databasePath) => {
@@ -393,8 +718,16 @@ function runtimeWithService(service, probes = {}) {
               record_session_address() {},
               record_task_address() {},
               read_session_address() {},
-              read_task_address() {},
+              read_task_address(request) {
+                probes.taskAddressReadRequests ??= [];
+                probes.taskAddressReadRequests.push(request);
+                const taskAddress = probes.taskAddresses?.get(request.task_address_id) ?? probes.taskAddress;
+                return taskAddress === undefined
+                  ? { status: 'absent', task_address: null }
+                  : { status: 'ready', task_address: { task_address: taskAddress } };
+              },
               read_current_session_task_for_conversation() {},
+              list_task_addresses_for_agent() { return { status: 'ready', task_addresses: [] }; },
               close() {
                 this.closed = true;
                 return true;
@@ -402,6 +735,74 @@ function runtimeWithService(service, probes = {}) {
             };
             return context.__sessionTaskAddressStore;
           },
+        };
+      }
+      if (specifier === './builder-agent-definition-store.cjs') {
+        return {
+          createBuilderAgentDefinitionStore: (databasePath) => {
+            probes.agentDefinitionDatabasePath = databasePath;
+            context.__agentDefinitionStore = {
+              closed: false,
+              store_version: 'builder-agent-definition-store.v1',
+              record_definition() {},
+              record_version() {},
+              record_lifecycle() {},
+              read_agent() {},
+              close() { this.closed = true; return true; },
+            };
+            return context.__agentDefinitionStore;
+          },
+        };
+      }
+      if (specifier === './builder-default-agent-bootstrap.cjs') {
+        return {
+          DEFAULT_BUILDER_AGENT_ID: 'builder-agent:123e4567-e89b-42d3-a456-426614174002',
+          createBuilderDefaultAgentBootstrap: (options) => {
+            assert.equal(options.agent_store, context.__agentDefinitionStore);
+            assert.equal(options.owner_id, 'builder-user:00000000-0000-4000-8000-000000000001');
+            return { operation: 'default_agent_ready' };
+          },
+        };
+      }
+      if (specifier === './builder-agent-project-tree-projection.cjs') {
+        return {
+          createBuilderAgentProjectTreeProjection: (options) => {
+            assert.equal(options.agent_store, context.__agentDefinitionStore);
+            assert.equal(options.address_store, context.__sessionTaskAddressStore);
+            assert.equal(typeof options.list_current_projects, 'function');
+            assert.equal(typeof options.list_project_workspaces, 'function');
+            return { read_tree: async () => ({ projection_version: 'agent-project-tree-projection.v1' }) };
+          },
+        };
+      }
+      if (specifier === './builder-agent-project-tree-ipc-adapter.cjs') {
+        return {
+          ARCHIVE_AGENT_PROJECT_CHANNEL,
+          ARCHIVE_AGENT_TASK_CHANNEL,
+          READ_AGENT_PROJECT_TREE_CHANNEL,
+          RENAME_AGENT_PROJECT_CHANNEL,
+          RENAME_AGENT_TASK_CHANNEL,
+          createBuilderAgentProjectTreeIpcAdapter: (options) => ({
+            invoke: (_event, body) => options.readTree(body),
+            channels: {
+              renameProject: {
+                channel: RENAME_AGENT_PROJECT_CHANNEL,
+                invoke: (_event, body) => options.renameProject(body),
+              },
+              archiveProject: {
+                channel: ARCHIVE_AGENT_PROJECT_CHANNEL,
+                invoke: (_event, body) => options.archiveProject(body),
+              },
+              renameTask: {
+                channel: RENAME_AGENT_TASK_CHANNEL,
+                invoke: (_event, body) => options.renameTask(body),
+              },
+              archiveTask: {
+                channel: ARCHIVE_AGENT_TASK_CHANNEL,
+                invoke: (_event, body) => options.archiveTask(body),
+              },
+            },
+          }),
         };
       }
       if (specifier === './builder-session-task-address-binding-service.cjs') {
@@ -418,6 +819,33 @@ function runtimeWithService(service, probes = {}) {
               bind_draft_continuation_to_current_task_address() {},
             };
             return context.__sessionTaskAddressBindingService;
+          },
+        };
+      }
+      if (specifier === './builder-session-task-target-service.cjs') {
+        return {
+          createBuilderSessionTaskTargetService: (options) => {
+            assert.equal(options.address_store, context.__sessionTaskAddressStore);
+            assert.equal(typeof options.create_uuid, 'function');
+            context.__sessionTaskTargetService = {
+              service_version: 'builder-session-task-target-service.v1',
+              resolve_target(request) {
+                const projectUuid = request.project_id.slice('builder-project:'.length);
+                return {
+                  result_version: 'builder-session-task-target-result.v1',
+                  operation: request.task_address_id === null
+                    ? 'new_task_target_allocated'
+                    : 'existing_task_target_resolved',
+                  project_id: request.project_id,
+                  task_address_id: request.task_address_id,
+                  conversation_id: `builder-conversation:${projectUuid}`,
+                  agent_id: options.agent_id,
+                  should_record_task_address: request.task_address_id === null,
+                  authority: 'main_owned_task_target_resolution',
+                };
+              },
+            };
+            return context.__sessionTaskTargetService;
           },
         };
       }
@@ -583,6 +1011,12 @@ function runtimeWithService(service, probes = {}) {
               path.join(path.dirname(runtimePath), 'builder-packaged-check-script-worker.cjs'),
             );
             assert.equal(options.process_adapter, context.__checkRunProcessAdapter);
+            assert.equal(typeof options.toolchain_probe_spawn_process, 'function');
+            assert.equal(typeof options.dependency_prepare_spawn_process, 'function');
+            assert.equal(
+              options.project_workspace_path_service.service_version,
+              'builder-project-workspace-path-service.v1',
+            );
             assert.equal(options.conversation_service, context.__conversationService);
             assert.equal(options.git_authority, context.__projectMainAuthority.git_authority);
             assert.equal(
@@ -601,10 +1035,52 @@ function runtimeWithService(service, probes = {}) {
               list_available_checks() {},
               run_selected_check() {},
             };
+            context.__checkRunSkipCurrentDraftService = {
+              service_version: 'builder-check-skip-current-draft-service.v1',
+              skip_current_draft_check() {},
+            };
             return {
               composition_version: 'builder-check-run-runtime-composition.v1',
               current_draft_service: context.__checkRunCurrentDraftService,
+              current_draft_skip_service: context.__checkRunSkipCurrentDraftService,
             };
+          },
+        };
+      }
+      if (specifier === './builder-project-environment-diagnosis.cjs') {
+        return {
+          createBuilderProjectEnvironmentDiagnosisService: (options) => {
+            probes.projectEnvironmentDiagnosisOptions = options;
+            assert.equal(options.project_workspace_path_service.service_version,
+              'builder-project-workspace-path-service.v1');
+            assert.equal(options.project_read_authority.authority_version,
+              'builder-project-read-authority.v1');
+            assert.equal(typeof options.spawn_process, 'function');
+            assert.equal(typeof options.terminate_process_tree, 'function');
+            assert.equal(options.clock.clock_version, 'builder-clock.v1');
+            context.__projectEnvironmentDiagnosisService = {
+              service_version: 'builder-project-environment-diagnosis-service.v1',
+              diagnose_project_environment() {},
+            };
+            return context.__projectEnvironmentDiagnosisService;
+          },
+        };
+      }
+      if (specifier === './builder-conversation-transcript-archive.cjs') {
+        return {
+          createBuilderConversationTranscriptArchive: (options) => {
+            probes.conversationTranscriptArchiveOptions = options;
+            assert.equal(
+              options.root_path,
+              path.join(context.__userDataPath, 'builder-transcripts-v1'),
+            );
+            context.__conversationTranscriptArchive = {
+              archive_version: 'builder-conversation-transcript-archive.v1',
+              record_committed_conversation() {},
+              repair_conversation() {},
+              read_latest() {},
+            };
+            return context.__conversationTranscriptArchive;
           },
         };
       }
@@ -625,6 +1101,11 @@ function runtimeWithService(service, probes = {}) {
             assert.equal(options.automaticDraftCheckpointService, context.__automaticDraftCheckpointService);
             assert.equal(options.checkRunStatusService, context.__checkRunStatusService);
             assert.equal(options.checkRunActivityRegistry, context.__checkRunActivityRegistry);
+            assert.equal(options.transcriptArchive, context.__conversationTranscriptArchive);
+            assert.equal(
+              options.contextCompactionRecordingService,
+              context.__contextCompactionRecordingService,
+            );
             context.__conversationService = {
               begin_work() {},
               begin_queued_followup_work() {},
@@ -886,6 +1367,7 @@ function runtimeWithService(service, probes = {}) {
             return actual.createBuilderGenerationRequest({
               instruction: body.instruction,
               existing_project_id: body.existing_project_id,
+              task_address_id: body.task_address_id,
             });
           },
         };
@@ -1016,6 +1498,7 @@ function runtimeWithService(service, probes = {}) {
                 record_project_revision_receipt() {},
               },
               project_read_authority: {
+                authority_version: 'builder-project-read-authority.v1',
                 load_current(body) {
                   probes.loadCurrentRequests ??= [];
                   probes.loadCurrentRequests.push({ project_id: body.project_id });
@@ -1133,14 +1616,17 @@ test('registers exactly the controlled generation channels and keeps provider st
     CLASSIFY_INTENT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     ANSWER_CHANNEL,
+    ANSWER_PLAN_CHANNEL,
     ANSWER_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
     RESTORE_REVISION_AS_DRAFT_CHANNEL,
+    RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
     REJECT_DRAFT_CHANNEL,
     CANCEL_CHANNEL,
     STEER_CHANNEL,
     QUEUE_FOLLOWUP_CHANNEL,
     AVAILABILITY_CHANNEL,
+    DECIDE_COMMAND_APPROVAL_CHANNEL,
     OPEN_PROJECT_CHANNEL,
     OPEN_PROJECT_LOCATION_CHANNEL,
     CREATE_LOCAL_PROJECT_CHANNEL,
@@ -1151,6 +1637,16 @@ test('registers exactly the controlled generation channels and keeps provider st
     LIST_WORKSPACES_CHANNEL,
     LIST_HISTORY_CHANNEL,
     READ_TASK_STREAM_CHANNEL,
+    READ_AGENT_PROJECT_TREE_CHANNEL,
+    RENAME_AGENT_PROJECT_CHANNEL,
+    ARCHIVE_AGENT_PROJECT_CHANNEL,
+    RENAME_AGENT_TASK_CHANNEL,
+    ARCHIVE_AGENT_TASK_CHANNEL,
+    READ_AGENT_WORKBENCH_CHANNEL,
+    UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
+    CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+    DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+    CONTROL_WORKBENCH_TASK_CHANNEL,
     REVIEW_PLAN_CHANNEL,
   ]);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-project-revisions-v1')), false);
@@ -1161,9 +1657,14 @@ test('registers exactly the controlled generation channels and keeps provider st
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-permissions-v1', 'permissions.sqlite')), true);
   assert.equal(fs.existsSync(path.join(userDataPath, 'builder-task-capsules-v1', 'task-capsules.sqlite')), true);
   assert.equal(
-    fs.existsSync(path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite')),
+    fs.existsSync(path.join(userDataPath, 'builder-session-task-addresses-v2', 'session-task-addresses.sqlite')),
     true,
   );
+  assert.equal(
+    fs.existsSync(path.join(userDataPath, 'builder-project-lifecycle-v1', 'project-lifecycle.sqlite')),
+    true,
+  );
+  assert.equal(fs.existsSync(path.join(userDataPath, 'builder-session-task-addresses-v1')), false);
   assert.equal(
     fs.existsSync(path.join(userDataPath, 'builder-draft-checkpoints-v1', 'draft-checkpoints.sqlite')),
     true,
@@ -1177,8 +1678,24 @@ test('registers exactly the controlled generation channels and keeps provider st
     true,
   );
   assert.equal(
+    fs.existsSync(path.join(
+      userDataPath,
+      'builder-agent-workbench-messages-v1',
+      'workbench-messages.sqlite',
+    )),
+    true,
+  );
+  assert.equal(
     runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime().service_version,
     'builder-check-run-current-draft-service.v1',
+  );
+  assert.equal(
+    runtime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime().service_version,
+    'builder-project-environment-diagnosis-service.v1',
+  );
+  assert.equal(
+    runtime.readProjectWorkspacePathServiceForMainOnlyRuntime().service_version,
+    'builder-project-workspace-path-service.v1',
   );
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
@@ -1200,6 +1717,209 @@ test('registers exactly the controlled generation channels and keeps provider st
     code: 'builder_generation_ipc_runtime_unavailable',
   });
   runtime.dispose();
+});
+
+test('exposes structured runtime workspace snapshots when Harness composition is unavailable', async (t) => {
+  const runtimeToolRecord = { source: 'structured_tool_snapshot' };
+  const runtimeSourceRecord = { source: 'structured_source_snapshot' };
+  const probes = { runtimeToolRecord, runtimeSourceRecord };
+  const runtimeModule = runtimeWithService({
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  }, probes);
+  const mainWindow = activeWindow();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain: fakeIpcMain(),
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const sourceService = runtime.readRuntimeWorkspaceSourceServiceForMainOnlyRuntime();
+  const toolRequest = { selector: 'tool' };
+  const sourceRequest = { selector: 'source' };
+
+  assert.equal(await sourceService.resolve_runtime_tool_source(toolRequest), runtimeToolRecord);
+  assert.equal(await sourceService.resolve_runtime_snapshot_source(sourceRequest), runtimeSourceRecord);
+  assert.deepEqual(probes.runtimeToolReadRequests, [toolRequest]);
+  assert.deepEqual(probes.runtimeSourceReadRequests, [sourceRequest]);
+  assert.equal(runtime.dispose(), true);
+});
+
+test('persists projectless Agent chat without creating Project or Task Address fallback facts', async (t) => {
+  const userDataPath = temporaryUserData(t);
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath,
+  });
+  runtime.register();
+
+  const answerEnvelope = await ipcMain.handlers.get(ANSWER_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { instruction: 'hi', task_address_id: null },
+  );
+  assert.equal(answerEnvelope.ok, true);
+  const answer = answerEnvelope.result;
+  assert.equal(answer.result_kind, 'explanation');
+  assert.equal(answer.project_id, null);
+  assert.equal(answer.existing_project_id, null);
+
+  const stream = await ipcMain.handlers.get(READ_TASK_STREAM_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID },
+  );
+  assert.equal(stream.project_id, null);
+  assert.equal(stream.agent_id, DEFAULT_BUILDER_AGENT_ID);
+  assert.match(stream.conversation.conversation_id, /^builder-agent-conversation:/u);
+  assert.deepEqual(
+    Array.from(stream.conversation.items, (item) => [item.role, item.message.text]),
+    [
+      ['user', 'hi'],
+      ['assistant', answer.explanation],
+    ],
+  );
+  const workbench = await ipcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  assert.deepEqual(
+    Array.from(
+      workbench.stream.items,
+      (item) => [item.presentation.body_kind, item.presentation.body_text],
+    ),
+    [
+      ['plain_text', 'hi'],
+      ['markdown', answer.explanation],
+    ],
+  );
+  assert.equal(workbench.authority.plugin_payload_exposure, 'not_exposed');
+  assert.equal(
+    mainWindow.webContents.sent.some(({ channel }) => channel === WORKBENCH_CHANGED_CHANNEL),
+    true,
+  );
+
+  const tree = await ipcMain.handlers.get(READ_AGENT_PROJECT_TREE_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID },
+  );
+  assert.equal(tree.projects.length, 0);
+  assert.equal(tree.orphaned_tasks.length, 0);
+  runtime.dispose();
+
+  const restartedWindow = activeWindow();
+  const restartedIpcMain = fakeIpcMain();
+  const restarted = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain: restartedIpcMain,
+    mainWindowRef: () => restartedWindow,
+    userDataPath,
+  });
+  restarted.register();
+  const restored = await restartedIpcMain.handlers.get(READ_TASK_STREAM_CHANNEL)(
+    { sender: restartedWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID },
+  );
+  assert.deepEqual(restored, stream);
+  const restoredWorkbench = await restartedIpcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: restartedWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  assert.deepEqual(restoredWorkbench, workbench);
+  restarted.dispose();
+});
+
+test('incubates an Agent task proposal, requires approval, and restores the materialized task', async (t) => {
+  const userDataPath = temporaryUserData(t);
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-incubated-project-'));
+  const selectedProjectRootPath = fs.realpathSync.native(projectRoot);
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath,
+    showOpenDialog: async () => ({ canceled: false, filePaths: [selectedProjectRootPath] }),
+  });
+  runtime.register();
+  const project = await ipcMain.handlers.get(CREATE_LOCAL_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { project_id: null, project_title: 'Focus tools' },
+  );
+  const created = await ipcMain.handlers.get(CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    {
+      request_id: 'builder-workbench-request:323e4567-e89b-42d3-a456-426614174000',
+      agent_id: DEFAULT_BUILDER_AGENT_ID,
+      objective: 'Build a compact focus timer.',
+      requested_outcome: 'build',
+      execution_mode: 'foreground',
+      reason: 'Project scope is required.',
+    },
+  );
+  assert.equal(created.operation, 'proposal_created');
+  let workbench = await ipcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  let action = workbench.stream.items.flatMap((item) => item.actions)[0];
+  assert.equal(action.status, 'pending');
+  assert.equal(workbench.inbox.active_task_count, 0);
+
+  const decided = await ipcMain.handlers.get(DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    {
+      agent_id: DEFAULT_BUILDER_AGENT_ID,
+      proposal_id: created.proposal.proposal_id,
+      operation: 'approve_existing_project',
+      project_id: project.project_id,
+    },
+  );
+  assert.equal(decided.operation, 'task_materialized');
+  workbench = await ipcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  action = workbench.stream.items.flatMap((item) => item.actions)[0];
+  assert.equal(action.status, 'materialized');
+  assert.equal(action.task_address_id, decided.materialization.task_address_id);
+  assert.equal(workbench.inbox.active_task_count, 1);
+  runtime.dispose();
+
+  const restartedWindow = activeWindow();
+  const restartedIpcMain = fakeIpcMain();
+  const restarted = createBuilderGenerationIpcRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain: restartedIpcMain,
+    mainWindowRef: () => restartedWindow,
+    userDataPath,
+  });
+  restarted.register();
+  const restoredTree = await restartedIpcMain.handlers.get(READ_AGENT_PROJECT_TREE_CHANNEL)(
+    { sender: restartedWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID },
+  );
+  assert.equal(restoredTree.projects[0].tasks[0].task_address_id, decided.materialization.task_address_id);
+  const restoredWorkbench = await restartedIpcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: restartedWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  assert.equal(
+    restoredWorkbench.stream.items.flatMap((item) => item.actions)[0].status,
+    'materialized',
+  );
+  restarted.dispose();
 });
 
 test('binds one selected empty folder as the main-owned local project workspace', async (t) => {
@@ -2105,6 +2825,11 @@ test('requires explicit current-project write approval before build-side generat
     },
   };
   const probes = {
+    taskAddress: {
+      task_address_id: TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    },
     permissionDecision(request) {
       if (request.action !== 'project.edit') return 'allowed';
       return grantCalls.length > 0 ? 'allowed' : 'denied';
@@ -2145,7 +2870,10 @@ test('requires explicit current-project write approval before build-side generat
     { sender: mainWindow.webContents },
     vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
   );
-  const approvalRequest = vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context);
+  const approvalRequest = vm.runInContext(`({
+    project_id: "${PROJECT_ID}",
+    task_address_id: "${TASK_ADDRESS_ID}"
+  })`, harness.context);
   const status = await ipcMain.handlers.get(PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL)(
     { sender: mainWindow.webContents },
     approvalRequest,
@@ -2157,6 +2885,10 @@ test('requires explicit current-project write approval before build-side generat
     approval_scope: 'current_project_write',
     authority: 'main_selected_project_project_edit_v1',
   });
+  assert.equal(harness.context.__taskAttentionStore.records.length, 1);
+  assert.equal(harness.context.__taskAttentionStore.records[0].state, 'waiting_permission');
+  assert.equal(harness.context.__taskAttentionStore.records[0].reason_code, 'current_project_write');
+  assert.equal(harness.context.__taskAttentionStore.records[0].revision, 1);
   await assert.rejects(
     async () => ipcMain.handlers.get(SUBMIT_CHANNEL)(
       { sender: mainWindow.webContents },
@@ -2183,6 +2915,10 @@ test('requires explicit current-project write approval before build-side generat
     approval_scope: 'current_project_write',
     authority: 'main_selected_project_project_edit_v1',
   });
+  assert.equal(harness.context.__taskAttentionStore.records.length, 2);
+  assert.equal(harness.context.__taskAttentionStore.records[1].state, 'ready');
+  assert.equal(harness.context.__taskAttentionStore.records[1].reason_code, 'resolved');
+  assert.equal(harness.context.__taskAttentionStore.records[1].revision, 2);
   assert.doesNotMatch(JSON.stringify(approved), /permission_id|source_tree|credential|provider/iu);
 
   await ipcMain.handlers.get(SUBMIT_CHANNEL)(
@@ -2191,6 +2927,275 @@ test('requires explicit current-project write approval before build-side generat
   );
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0].existing_project_id, PROJECT_ID);
+  runtime.dispose();
+});
+
+test('serializes same-project task writers and clears durable resource attention after retry', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const submitted = [];
+  let releaseFirst;
+  const firstCompletion = new Promise((resolve) => { releaseFirst = resolve; });
+  const service = {
+    submit(body) {
+      submitted.push(body);
+      return submitted.length === 1
+        ? firstCompletion.then(() => ({ request_id: body.request_digest }))
+        : Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const taskAddresses = new Map([
+    [TASK_ADDRESS_ID, {
+      task_address_id: TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }],
+    [SECOND_TASK_ADDRESS_ID, {
+      task_address_id: SECOND_TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }],
+  ]);
+  const harness = runtimeWithService(service, {
+    taskAddresses,
+    permissionDecision: () => 'allowed',
+  });
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+
+  const first = ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ instruction: "First change", task_address_id: "${TASK_ADDRESS_ID}" })`, harness.context),
+  );
+  await waitForProbe(() => submitted.length === 1);
+  await assert.rejects(
+    () => ipcMain.handlers.get(SUBMIT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({ instruction: "Second change", task_address_id: "${SECOND_TASK_ADDRESS_ID}" })`, harness.context),
+    ),
+    { code: 'builder_generation_project_busy', retryable: true },
+  );
+  assert.equal(submitted.length, 1);
+  assert.equal(harness.context.__taskAttentionStore.records.at(-1).state, 'waiting_resource');
+  assert.equal(harness.context.__taskAttentionStore.records.at(-1).reason_code, 'project_busy');
+
+  releaseFirst();
+  await first;
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ instruction: "Second change", task_address_id: "${SECOND_TASK_ADDRESS_ID}" })`, harness.context),
+  );
+  assert.equal(submitted.length, 2);
+  assert.equal(harness.context.__taskAttentionStore.records.at(-1).state, 'ready');
+  assert.equal(harness.context.__taskAttentionStore.records.at(-1).reason_code, 'resolved');
+  runtime.dispose();
+});
+
+test('binds Workbench task cancellation to the Main-owned active request', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const submitted = [];
+  const cancelled = [];
+  let releaseRun;
+  const completion = new Promise((resolve) => { releaseRun = resolve; });
+  const service = {
+    submit(body) {
+      submitted.push(body);
+      return completion.then(() => ({ request_id: body.request_digest }));
+    },
+    cancel(body) {
+      cancelled.push(body);
+      return { request_id: body.request_id, cancelled: cancelled.length > 1 };
+    },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const probes = {
+    taskAddress: {
+      task_address_id: TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      agent_id: DEFAULT_BUILDER_AGENT_ID,
+    },
+    permissionDecision: () => 'allowed',
+  };
+  const harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+
+  const running = ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ instruction: "Long change", task_address_id: "${TASK_ADDRESS_ID}" })`, harness.context),
+  );
+  await waitForProbe(() => submitted.length === 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(probes.workbenchTaskMonitorOptions.read_task_controls({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    }))),
+    ['cancel_task'],
+  );
+  assert.throws(
+    () => ipcMain.handlers.get(ANSWER_CHANNEL)(
+      { sender: mainWindow.webContents },
+      vm.runInContext(`({ instruction: "Duplicate turn", task_address_id: "${TASK_ADDRESS_ID}" })`, harness.context),
+    ),
+    { code: 'builder_generation_project_busy', retryable: true },
+  );
+  assert.equal(harness.context.__taskAttentionStore.records.at(-1).reason_code, 'concurrency_limit');
+
+  const rejected = await ipcMain.handlers.get(CONTROL_WORKBENCH_TASK_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      agent_id: "${DEFAULT_BUILDER_AGENT_ID}",
+      project_id: "${PROJECT_ID}",
+      task_address_id: "${TASK_ADDRESS_ID}",
+      operation: "cancel_task"
+    })`, harness.context),
+  );
+  assert.equal(rejected.operation, 'task_not_active');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(probes.workbenchTaskMonitorOptions.read_task_controls({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    }))),
+    ['cancel_task'],
+  );
+
+  const result = await ipcMain.handlers.get(CONTROL_WORKBENCH_TASK_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({
+      agent_id: "${DEFAULT_BUILDER_AGENT_ID}",
+      project_id: "${PROJECT_ID}",
+      task_address_id: "${TASK_ADDRESS_ID}",
+      operation: "cancel_task"
+    })`, harness.context),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    result_version: 'builder-workbench-task-control-result.v1',
+    operation: 'cancel_requested',
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(cancelled)), [
+    { request_id: submitted[0].request_digest },
+    { request_id: submitted[0].request_digest },
+  ]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(probes.workbenchTaskMonitorOptions.read_task_controls({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    }))),
+    [],
+  );
+
+  releaseRun();
+  await running;
+  runtime.dispose();
+});
+
+test('releases active task authority and the project lease when terminal attention projection fails', async (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const submitted = [];
+  let failTerminalAttention = false;
+  let releaseFirst;
+  const firstCompletion = new Promise((resolve) => { releaseFirst = resolve; });
+  const service = {
+    submit(body) {
+      submitted.push(body);
+      return submitted.length === 1
+        ? firstCompletion.then(() => ({ request_id: body.request_digest }))
+        : Promise.resolve({ request_id: body.request_digest });
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  };
+  const taskAddresses = new Map([
+    [TASK_ADDRESS_ID, {
+      task_address_id: TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }],
+    [SECOND_TASK_ADDRESS_ID, {
+      task_address_id: SECOND_TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }],
+  ]);
+  const probes = {
+    permissionDecision: () => 'allowed',
+    taskAddresses,
+    onRecordTaskAttention(attention) {
+      if (failTerminalAttention && attention.state === 'ready') {
+        throw new Error('projection unavailable');
+      }
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindowRef: () => mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ project_id: "${PROJECT_ID}" })`, harness.context),
+  );
+
+  const first = ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ instruction: "First change", task_address_id: "${TASK_ADDRESS_ID}" })`, harness.context),
+  );
+  await waitForProbe(() => submitted.length === 1);
+  failTerminalAttention = true;
+  releaseFirst();
+  await first;
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(probes.workbenchTaskMonitorOptions.read_task_controls({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    }))),
+    [],
+  );
+
+  failTerminalAttention = false;
+  await ipcMain.handlers.get(SUBMIT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    vm.runInContext(`({ instruction: "Second change", task_address_id: "${SECOND_TASK_ADDRESS_ID}" })`, harness.context),
+  );
+  assert.equal(submitted.length, 2);
   runtime.dispose();
 });
 
@@ -2248,7 +3253,7 @@ test('carries queued follow-up references through selected-project submit IPC', 
   runtime.dispose();
 });
 
-test('publishes project-id-only task stream change events to the active renderer', async (t) => {
+test('publishes typed durable task stream change events to the active renderer', async (t) => {
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
   const probes = {};
@@ -2256,8 +3261,22 @@ test('publishes project-id-only task stream change events to the active renderer
     generate() { throw new Error('unexpected generate'); },
     async submit() {
       probes.conversationOptions.onTaskStreamChanged(Object.assign(Object.create(null), {
-        event_version: 'builder-task-stream-changed.v1',
+        event_version: 'builder-task-stream-changed.v2',
         project_id: PROJECT_ID,
+        change_kind: 'live_only',
+        cursor: 11,
+      }));
+      probes.conversationOptions.onTaskStreamChanged(Object.assign(Object.create(null), {
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: PROJECT_ID,
+        change_kind: 'runtime_append',
+        cursor: 12,
+      }));
+      probes.conversationOptions.onTaskStreamChanged(Object.assign(Object.create(null), {
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: PROJECT_ID,
+        change_kind: 'durable_append',
+        cursor: 13,
       }));
       return { ok: true };
     },
@@ -2294,17 +3313,47 @@ test('publishes project-id-only task stream change events to the active renderer
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
   );
 
-  assert.equal(mainWindow.webContents.sent.length, 1);
-  assert.equal(mainWindow.webContents.sent[0].channel, TASK_STREAM_CHANGED_CHANNEL);
-  assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[0].payload), [
+  assert.equal(mainWindow.webContents.sent.length, 4);
+  const taskStreamChangedEvents = mainWindow.webContents.sent.filter(
+    (event) => event.channel === TASK_STREAM_CHANGED_CHANNEL,
+  );
+  assert.equal(taskStreamChangedEvents.length, 3);
+  assert.equal(taskStreamChangedEvents[0].payload.change_kind, 'live_only');
+  assert.equal(taskStreamChangedEvents[0].payload.cursor, 11);
+  assert.equal(taskStreamChangedEvents[1].payload.change_kind, 'runtime_append');
+  assert.equal(taskStreamChangedEvents[1].payload.cursor, 12);
+  const taskStreamChanged = taskStreamChangedEvents[2];
+  const workbenchChanged = mainWindow.webContents.sent.find(
+    (event) => event.channel === WORKBENCH_CHANGED_CHANNEL,
+  );
+  assert.deepEqual(Reflect.ownKeys(taskStreamChanged.payload), [
     'event_version',
     'project_id',
+    'change_kind',
+    'cursor',
   ]);
   assert.equal(
-    mainWindow.webContents.sent[0].payload.event_version,
-    'builder-task-stream-changed.v1',
+    taskStreamChanged.payload.event_version,
+    'builder-task-stream-changed.v2',
   );
-  assert.equal(mainWindow.webContents.sent[0].payload.project_id, PROJECT_ID);
+  assert.equal(taskStreamChanged.payload.project_id, PROJECT_ID);
+  assert.equal(taskStreamChanged.payload.change_kind, 'durable_append');
+  assert.equal(taskStreamChanged.payload.cursor, 13);
+  assert.deepEqual(Reflect.ownKeys(workbenchChanged.payload), ['event_version', 'agent_id']);
+  assert.equal(workbenchChanged.payload.event_version, 'builder-agent-workbench-changed.v1');
+  assert.equal(workbenchChanged.payload.agent_id, DEFAULT_BUILDER_AGENT_ID);
+  assert.equal(
+    mainWindow.webContents.sent.filter((event) => event.channel === WORKBENCH_CHANGED_CHANNEL).length,
+    1,
+  );
+  assert.deepEqual({ ...probes.workbenchTaskMonitorRequests.at(-1) }, {
+    agent_id: DEFAULT_BUILDER_AGENT_ID,
+    project_id: PROJECT_ID,
+  });
+  assert.deepEqual({ ...probes.workbenchTaskMonitorInvalidations.at(-1) }, {
+    agent_id: DEFAULT_BUILDER_AGENT_ID,
+    project_id: PROJECT_ID,
+  });
   runtime.dispose();
 });
 
@@ -2391,6 +3440,16 @@ test('publishes display-safe generation output deltas without exposing provider 
         run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
         display_delta_text: 'A quiet timer',
       }));
+      probes.serviceOptions.onProviderOutputDelta(Object.assign(Object.create(null), {
+        event_version: 'builder-generation-output-reset.v1',
+        request_id: requestId,
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+        task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174002',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+        retain_text_bytes: 0,
+      }));
       return { ok: true };
     },
     retry_generate() { throw new Error('unexpected retry'); },
@@ -2426,7 +3485,7 @@ test('publishes display-safe generation output deltas without exposing provider 
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
   );
 
-  assert.equal(mainWindow.webContents.sent.length, 1);
+  assert.equal(mainWindow.webContents.sent.length, 2);
   assert.equal(mainWindow.webContents.sent[0].channel, GENERATION_OUTPUT_CHANNEL);
   assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[0].payload), [
     'event_version',
@@ -2440,6 +3499,14 @@ test('publishes display-safe generation output deltas without exposing provider 
   ]);
   assert.equal(mainWindow.webContents.sent[0].payload.event_version, 'builder-generation-output.v1');
   assert.equal(mainWindow.webContents.sent[0].payload.display_delta_text, 'A quiet timer');
+  assert.equal(mainWindow.webContents.sent[1].channel, GENERATION_OUTPUT_CHANNEL);
+  assert.equal(
+    mainWindow.webContents.sent[1].payload.event_version,
+    'builder-generation-output-reset.v1',
+  );
+  assert.equal(mainWindow.webContents.sent[1].payload.request_id, requestId);
+  assert.equal(mainWindow.webContents.sent[1].payload.project_id, PROJECT_ID);
+  assert.equal(mainWindow.webContents.sent[1].payload.retain_text_bytes, 0);
   assert.doesNotMatch(
     JSON.stringify(mainWindow.webContents.sent[0].payload),
     /credential|provider|source_tree|commit_oid|tree_oid|receipt|operations|index\.html/iu,
@@ -2465,6 +3532,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.deepEqual([...ipcMain.handlers.keys()], []);
   assert.deepEqual(ipcMain.removed, [
     REJECT_DRAFT_CHANNEL,
+    RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
     RESTORE_REVISION_AS_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
     ANSWER_DRAFT_CHANNEL,
@@ -2507,6 +3575,7 @@ test('rolls back partial registration and rejects malformed runtime authority', 
   assert.equal(removalFailure.handlers.has(ANSWER_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(RESTORE_REVISION_AS_DRAFT_CHANNEL), false);
+  assert.equal(removalFailure.handlers.has(RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL), false);
   assert.equal(removalFailure.handlers.has(REJECT_DRAFT_CHANNEL), false);
   assert.throws(() => cleanupRuntime.dispose(), {
     code: 'builder_generation_ipc_runtime_unavailable',
@@ -2632,7 +3701,7 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.equal(probes.projectUnderstandingDatabasePath,
     path.join(userDataPath, 'builder-project-understandings-v1', 'understanding.sqlite'));
   assert.equal(probes.sessionTaskAddressDatabasePath,
-    path.join(userDataPath, 'builder-session-task-addresses-v1', 'session-task-addresses.sqlite'));
+    path.join(userDataPath, 'builder-session-task-addresses-v2', 'session-task-addresses.sqlite'));
   assert.equal(probes.contextCompactionSummaryDatabasePath,
     path.join(userDataPath, 'builder-context-compaction-summaries-v1', 'context-compaction-summaries.sqlite'));
   assert.equal(probes.handoffPacketDatabasePath,
@@ -2651,6 +3720,10 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtimeModule.context.__contextCompactionSummaryStore);
   assert.equal(probes.workingContextStateOptions.handoff_packet_store,
     runtimeModule.context.__handoffPacketStore);
+  assert.equal(probes.contextCompactionRecordingOptions.context_compaction_summary_store,
+    runtimeModule.context.__contextCompactionSummaryStore);
+  assert.equal(probes.contextCompactionRecordingOptions.session_task_address_store,
+    runtimeModule.context.__sessionTaskAddressStore);
   assert.notEqual(probes.serviceOptions.projectReadAuthority,
     runtimeModule.context.__projectMainAuthority.project_read_authority);
   assert.equal(typeof probes.serviceOptions.projectReadAuthority.load_current, 'function');
@@ -2683,6 +3756,12 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
     runtimeModule.context.__checkRunCurrentDraftService,
   );
+  assert.equal(
+    runtime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime(),
+    runtimeModule.context.__projectEnvironmentDiagnosisService,
+  );
+  assert.equal(probes.projectEnvironmentDiagnosisOptions.project_read_authority.authority_version,
+    'builder-project-read-authority.v1');
   assert.equal(probes.checkRunCompositionOptions.user_data_path, userDataPath);
   assert.equal(probes.checkRunCompositionOptions.conversation_service,
     runtimeModule.context.__conversationService);
@@ -2734,6 +3813,10 @@ test('composes project main authority and closes it on dispose', (t) => {
   assert.equal(runtime.dispose(), false);
   assert.throws(
     () => runtime.readCheckRunCurrentDraftServiceForMainOnlyApprovalRuntime(),
+    { code: 'builder_generation_ipc_runtime_unavailable' },
+  );
+  assert.throws(
+    () => runtime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime(),
     { code: 'builder_generation_ipc_runtime_unavailable' },
   );
   assert.equal(runtimeModule.context.__handoffPacketStore.closed, true);
@@ -3048,6 +4131,70 @@ test('restores a saved revision as a draft only for the selected project workspa
   runtime.dispose();
 });
 
+test('restores the previous checkpoint from a draft id while main supplies the selected project', async (t) => {
+  const restoreRequests = [];
+  const runtimeModule = runtimeWithService({
+    generate() { throw new Error('unexpected generate'); },
+    restore_previous_checkpoint_as_draft(body) {
+      restoreRequests.push({ ...body });
+      return {
+        result_version: 'builder-generation-draft-undo-result.v1',
+        operation: 'draft_baseline_restored',
+        draft_id: body.draft_id,
+        project_id: body.project_id,
+        pending_draft_released: true,
+        conversation_event_admission: 'sqlite_recorded',
+      };
+    },
+    cancel() { return { cancelled: false }; },
+    availability() {
+      return { version: 'builder-generation-availability.v1', available: true, reason: 'ready', supports_cancel: true };
+    },
+  });
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const runtime = runtimeModule.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+  const draftId = `builder-generation-draft:${'c'.repeat(64)}`;
+  const body = (source) => vm.runInContext(source, runtimeModule.context);
+
+  await assert.rejects(
+    async () => ipcMain.handlers.get(RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      body(`({ draft_id: ${JSON.stringify(draftId)} })`),
+    ),
+    { code: 'builder_generation_project_workspace_required' },
+  );
+  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    body(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`),
+  );
+  const restored = await ipcMain.handlers.get(RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL)(
+    { sender: mainWindow.webContents },
+    body(`({ draft_id: ${JSON.stringify(draftId)} })`),
+  );
+
+  assert.equal(restored.operation, 'draft_baseline_restored');
+  assert.deepEqual(restoreRequests, [{ draft_id: draftId, project_id: PROJECT_ID }]);
+  assert.equal(Object.hasOwn(restoreRequests[0], 'source_tree'), false);
+  assert.equal(Object.hasOwn(restoreRequests[0], 'checkpoint_id'), false);
+  await assert.rejects(
+    async () => ipcMain.handlers.get(RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL)(
+      { sender: mainWindow.webContents },
+      body(`({ draft_id: ${JSON.stringify(draftId)}, project_id: ${JSON.stringify(PROJECT_ID)} })`),
+    ),
+    { code: 'builder_generation_request_invalid' },
+  );
+  assert.equal(restoreRequests.length, 1);
+  runtime.dispose();
+});
+
 test('registers a draft rejection channel backed by generation service', async (t) => {
   const rejectRequests = [];
   const runtimeModule = runtimeWithService({
@@ -3235,7 +4382,12 @@ test('keeps selected project identity in main and accepts only instruction over 
   assert.equal(classified.length, 1);
   assert.equal(classified[0].instruction, '帮我做一个静态技术博客实施计划');
   assert.equal(classified[0].existing_project_id, PROJECT_ID);
-  assert.deepEqual(Object.keys(classified[0]).sort(), ['existing_project_id', 'instruction']);
+  assert.equal(classified[0].task_address_id, null);
+  assert.deepEqual(Object.keys(classified[0]).sort(), [
+    'existing_project_id',
+    'instruction',
+    'task_address_id',
+  ]);
   await assert.rejects(
     async () => ipcMain.handlers.get(CLASSIFY_INTENT_CHANNEL)(
       { sender: mainWindow.webContents },
@@ -3395,10 +4547,10 @@ test('keeps selected project identity in main and accepts only instruction over 
     { sender: mainWindow.webContents },
     vm.runInContext('({ instruction: "Keep discussing before choosing a folder." })', runtimeModule.context),
   );
-  assert.equal(answered[2].existing_project_id, PROJECT_ID);
+  assert.equal(answered[2].existing_project_id, null);
   assert.equal(
     answered[2].request_digest,
-    hostRequestDigest('Keep discussing before choosing a folder.', PROJECT_ID),
+    hostRequestDigest('Keep discussing before choosing a folder.', null),
   );
   await assert.rejects(
     async () => ipcMain.handlers.get(GENERATE_APPROVED_PLAN_CHANNEL)(
@@ -3632,6 +4784,12 @@ test('ignores stale Open and Save completions when a newer project selection win
 });
 
 test('cancels every accepted generation, submit, retry, or answer before removing its cancel channel', async (t) => {
+  const projectIds = {
+    generate: PROJECT_ID,
+    submit: 'builder-project:123e4567-e89b-42d3-a456-426614174001',
+    retry: 'builder-project:123e4567-e89b-42d3-a456-426614174002',
+    answer: 'builder-project:123e4567-e89b-42d3-a456-426614174003',
+  };
   let rejectGeneration;
   let rejectSubmit;
   let rejectRetry;
@@ -3654,10 +4812,10 @@ test('cancels every accepted generation, submit, retry, or answer before removin
       cancelRequests.push(body);
       const error = new Error('private provider request');
       error.code = 'builder_generation_cancelled';
-      if (body.request_id === hostRequestDigest('Make a timer.', PROJECT_ID)) rejectGeneration(error);
-      if (body.request_id === hostRequestDigest('Continue the timer.', PROJECT_ID)) rejectSubmit(error);
-      if (body.request_id === hostRequestDigest('Retry the timer.', PROJECT_ID)) rejectRetry(error);
-      if (body.request_id === hostRequestDigest('Explain the timer.', PROJECT_ID)) rejectAnswer(error);
+      if (body.request_id === hostRequestDigest('Make a timer.', projectIds.generate)) rejectGeneration(error);
+      if (body.request_id === hostRequestDigest('Continue the timer.', projectIds.submit)) rejectSubmit(error);
+      if (body.request_id === hostRequestDigest('Retry the timer.', projectIds.retry)) rejectRetry(error);
+      if (body.request_id === hostRequestDigest('Explain the timer.', projectIds.answer)) rejectAnswer(error);
       return { request_id: body.request_id, cancelled: true };
     },
     availability() {
@@ -3675,18 +4833,26 @@ test('cancels every accepted generation, submit, retry, or answer before removin
     userDataPath: temporaryUserData(t),
   });
   runtime.register();
-  await ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
+  const openProject = (projectId) => ipcMain.handlers.get(OPEN_PROJECT_CHANNEL)(
     { sender: mainWindow.webContents },
-    vm.runInContext(`({ project_id: ${JSON.stringify(PROJECT_ID)} })`, runtimeModule.context),
+    vm.runInContext(`({ project_id: ${JSON.stringify(projectId)} })`, runtimeModule.context),
   );
   const generateBody = vm.runInContext('({ instruction: "Make a timer." })', runtimeModule.context);
   const submitBody = vm.runInContext('({ instruction: "Continue the timer." })', runtimeModule.context);
   const retryBody = vm.runInContext('({ instruction: "Retry the timer." })', runtimeModule.context);
   const answerBody = vm.runInContext('({ instruction: "Explain the timer." })', runtimeModule.context);
+  await openProject(projectIds.generate);
   const generation = ipcMain.handlers.get(GENERATE_CHANNEL)({ sender: mainWindow.webContents }, generateBody);
+  await waitForProbe(() => typeof rejectGeneration === 'function');
+  await openProject(projectIds.submit);
   const submission = ipcMain.handlers.get(SUBMIT_CHANNEL)({ sender: mainWindow.webContents }, submitBody);
+  await waitForProbe(() => typeof rejectSubmit === 'function');
+  await openProject(projectIds.retry);
   const retry = ipcMain.handlers.get(RETRY_GENERATE_CHANNEL)({ sender: mainWindow.webContents }, retryBody);
+  await waitForProbe(() => typeof rejectRetry === 'function');
+  await openProject(projectIds.answer);
   const answer = ipcMain.handlers.get(ANSWER_CHANNEL)({ sender: mainWindow.webContents }, answerBody);
+  await waitForProbe(() => typeof rejectAnswer === 'function');
   const cancelledGeneration = assert.rejects(generation, { code: 'builder_generation_cancelled' });
   const cancelledSubmission = assert.rejects(submission, { code: 'builder_generation_cancelled' });
   const cancelledRetry = assert.rejects(retry, { code: 'builder_generation_cancelled' });
@@ -3694,10 +4860,10 @@ test('cancels every accepted generation, submit, retry, or answer before removin
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runtime.dispose(), true);
   assert.deepEqual(cancelRequests.map((request) => request.request_id).sort(), [
-    hostRequestDigest('Make a timer.', PROJECT_ID),
-    hostRequestDigest('Continue the timer.', PROJECT_ID),
-    hostRequestDigest('Retry the timer.', PROJECT_ID),
-    hostRequestDigest('Explain the timer.', PROJECT_ID),
+    hostRequestDigest('Make a timer.', projectIds.generate),
+    hostRequestDigest('Continue the timer.', projectIds.submit),
+    hostRequestDigest('Retry the timer.', projectIds.retry),
+    hostRequestDigest('Explain the timer.', projectIds.answer),
   ].sort());
   await cancelledGeneration;
   await cancelledSubmission;

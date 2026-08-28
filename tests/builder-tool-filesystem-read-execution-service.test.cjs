@@ -37,6 +37,7 @@ const {
 
 const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
+const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 const ACTOR_ID = 'builder-user:123e4567-e89b-42d3-a456-426614174001';
 const PERMISSION_ID = `builder-permission:${'a'.repeat(64)}`;
@@ -96,6 +97,7 @@ function fixture() {
 function begin(conversation) {
   return conversation.begin_work({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     instruction: 'Read the app source before making a plan.',
     request_digest: REQUEST_DIGEST,
     base_revision: null,
@@ -198,7 +200,7 @@ test('executes a bounded project file read and records only a fixed public resul
     assert.equal(result.authority.raw_output_storage, 'not_durable');
     assert.equal(result.authority.conversation_event, 'fixed_result_summary_only');
 
-    const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
+    const stream = item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
     assert.equal(stream.conversation.head_sequence, 4);
     assert.equal(stream.conversation.items[2].item_kind, 'tool_call_requested');
     assert.equal(stream.conversation.items[3].item_kind, 'tool_call_result_recorded');
@@ -233,7 +235,7 @@ test('records a fixed failed result when the private read is unavailable', async
     assert.equal(result.private_filesystem_read_output_record, null);
     assert.equal(result.tool_result_record.result.status, 'failed');
     assert.equal(result.tool_result_record.result.summary_code, 'adapter_unavailable');
-    const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
+    const stream = item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
     assert.equal(stream.conversation.head_sequence, 4);
     assert.equal(stream.conversation.items[3].result.status, 'failed');
     assert.equal(stream.conversation.items[3].result.summary_code, 'adapter_unavailable');
@@ -257,7 +259,7 @@ test('rejects unrequested, mismatched, hostile, and malformed execution requests
       }),
       assertExecutionError,
     );
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
 
     const requestedContext = item.conversation.record_tool_call_request({
       context,
@@ -271,7 +273,7 @@ test('rejects unrequested, mismatched, hostile, and malformed execution requests
       }),
       assertExecutionError,
     );
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 3);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 3);
 
     let getterCalls = 0;
     const accessorRequest = { context: requestedContext };
@@ -294,7 +296,7 @@ test('rejects unrequested, mismatched, hostile, and malformed execution requests
       assertExecutionError,
     );
     assert.equal(getterCalls, 0);
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 3);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 3);
   } finally {
     item.close();
   }

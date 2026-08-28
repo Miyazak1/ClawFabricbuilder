@@ -14,9 +14,13 @@ const {
   BuilderLivePreviewWebContentsViewRuntimeError,
   createBuilderLivePreviewWebContentsViewRuntime,
 } = require('../electron/builder-live-preview-webcontents-view-runtime.cjs');
+const {
+  createBuilderBrowserSessionRegistry,
+} = require('../electron/builder-browser-session-registry.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
-const CONVERSATION_ID = 'builder-conversation:22222222-2222-4222-8222-222222222222';
+const CONVERSATION_ID =
+  'builder-conversation:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222';
 const TASK_ID = 'builder-task:33333333-3333-4333-8333-333333333333';
 const RUN_ID = 'builder-run:44444444-4444-4444-8444-444444444444';
 const SOURCE_TREE_DIGEST = `sha256:${'a'.repeat(64)}`;
@@ -29,6 +33,7 @@ function admission(overrides = {}) {
     task_id: TASK_ID,
     run_id: RUN_ID,
     draft_checkpoint_id: null,
+    revision_receipt_digest: null,
     source_tree_digest: SOURCE_TREE_DIGEST,
     selected_entry_path: 'index.html',
     preview_kind: 'live_static_web',
@@ -132,9 +137,14 @@ function electronHarness({ loadFailure = false, clearFailure = false, clearNever
 }
 
 function runtimeFor(harness, now = 2_000) {
+  const browserSessionRegistry = createBuilderBrowserSessionRegistry({
+    session: harness.session,
+    now_ms: () => now,
+    cleanup_timeout_ms: 10,
+  });
   return createBuilderLivePreviewWebContentsViewRuntime({
     WebContentsView: harness.WebContentsView,
-    session: harness.session,
+    browserSessionRegistry,
     nowMs: () => now,
   });
 }
@@ -209,6 +219,7 @@ test('creates a dedicated non-persistent WebContentsView with safe web preferenc
     started_at_ms: 2_000,
     stopped_at_ms: null,
     authority: {
+      browser_policy_version: 'builder-browser-preview-policy.v1',
       live_preview_authority: 'main_webcontents_view_runtime_v1',
       electron_view_creation: 'performed_by_preview_runtime',
       renderer_authority: 'not_present',
@@ -308,9 +319,14 @@ test('reload and stop stay main-owned and clean up view, session, and static ser
   const server = staticServer(previewAdmission);
   const harness = electronHarness();
   let now = 2_000;
+  const browserSessionRegistry = createBuilderBrowserSessionRegistry({
+    session: harness.session,
+    now_ms: () => now,
+    cleanup_timeout_ms: 10,
+  });
   const runtime = createBuilderLivePreviewWebContentsViewRuntime({
     WebContentsView: harness.WebContentsView,
-    session: harness.session,
+    browserSessionRegistry,
     nowMs: () => now,
   });
   const handle = await runtime.start({ admission: previewAdmission, static_server: server });
@@ -392,7 +408,10 @@ test('rejects malformed options, proxies, and accessors without leaking hostile 
   assertFixedError(
     () => createBuilderLivePreviewWebContentsViewRuntime({
       WebContentsView: harness.WebContentsView,
-      session: harness.session,
+      browserSessionRegistry: createBuilderBrowserSessionRegistry({
+        session: harness.session,
+        now_ms: () => 1,
+      }),
       nowMs: () => 1,
       extra: true,
     }),
@@ -415,7 +434,10 @@ test('rejects malformed options, proxies, and accessors without leaking hostile 
   let getterCalls = 0;
   const accessorOptions = {
     WebContentsView: harness.WebContentsView,
-    session: harness.session,
+    browserSessionRegistry: createBuilderBrowserSessionRegistry({
+      session: harness.session,
+      now_ms: () => 1,
+    }),
   };
   Object.defineProperty(accessorOptions, 'nowMs', {
     enumerable: true,

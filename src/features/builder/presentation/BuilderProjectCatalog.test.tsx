@@ -33,6 +33,25 @@ function click(container: HTMLElement, label: string): void {
   act(() => button?.click());
 }
 
+function clickSelector(container: HTMLElement, selector: string): void {
+  const button = container.querySelector<HTMLButtonElement>(selector);
+  expect(button).not.toBeNull();
+  act(() => button?.click());
+}
+
+function changeInput(container: HTMLElement, selector: string, value: string): void {
+  const input = container.querySelector<HTMLInputElement>(selector);
+  expect(input).not.toBeNull();
+  act(() => {
+    if (input) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        ?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+}
+
 describe('BuilderProjectCatalog v2', () => {
   it('renders only safe project summaries and explicit commands', async () => {
     const controller = createBuilderProjectCatalogController({
@@ -59,6 +78,34 @@ describe('BuilderProjectCatalog v2', () => {
     click(container, 'Hello project');
     expect(onCreateProject).toHaveBeenCalledOnce();
     expect(onOpenProject).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it('keeps project lifecycle actions explicit and callback-owned', async () => {
+    const controller = createBuilderProjectCatalogController({
+      listCurrent: async () => createCatalogWire(),
+      listWorkspaces: async () => createWorkspaceCatalogWire(),
+    });
+    const snapshot = await controller.load();
+    const onArchiveProject = vi.fn();
+    const onRenameProject = vi.fn();
+    const container = render(
+      <BuilderProjectCatalog
+        onArchiveProject={onArchiveProject}
+        onRenameProject={onRenameProject}
+        snapshot={snapshot}
+      />,
+    );
+
+    clickSelector(container, `[data-builder-project-actions="${PROJECT_ID}"]`);
+    expect(container.querySelector(`[data-builder-project-action-menu="${PROJECT_ID}"]`)).not.toBeNull();
+    clickSelector(container, `[data-builder-project-rename="${PROJECT_ID}"]`);
+    changeInput(container, `[data-builder-project-rename-input="${PROJECT_ID}"]`, 'Renamed project');
+    clickSelector(container, `[data-builder-project-rename-save="${PROJECT_ID}"]`);
+    expect(onRenameProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID, 'Renamed project');
+
+    clickSelector(container, `[data-builder-project-actions="${PROJECT_ID}"]`);
+    clickSelector(container, `[data-builder-project-archive="${PROJECT_ID}"]`);
+    expect(onArchiveProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
   });
 
   it('renders the verified empty state', async () => {

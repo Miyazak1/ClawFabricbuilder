@@ -17,7 +17,10 @@ const BUILDER_LIVE_PREVIEW_DEV_SERVER_ADMISSION_VERSION =
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_SOURCE}:${UUID_SOURCE}$`,
+  'u',
+);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SOURCE_ADMISSION_ID_PATTERN = /^builder-live-preview-source-admission:[0-9a-f]{64}$/u;
 const DEV_PROFILE_ID_PATTERN = /^builder-live-preview-dev-server-command-profile:[0-9a-f]{32}$/u;
@@ -390,7 +393,7 @@ function safeProjectId(value) {
 }
 
 function safeConversationId(value) {
-  return safePattern(value, CONVERSATION_ID_PATTERN, 57);
+  return safePattern(value, CONVERSATION_ID_PATTERN, 96);
 }
 
 function safeDigest(value) {

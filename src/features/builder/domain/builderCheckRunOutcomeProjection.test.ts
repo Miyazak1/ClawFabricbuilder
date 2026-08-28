@@ -11,6 +11,7 @@ function unavailable() {
     status: 'unavailable',
     label: 'Check status unavailable',
     summary: 'Builder could not verify the check status for this draft.',
+    environment_reason: 'none',
     completed_at_ms: null,
     authority: {
       projection_authority: 'main_owned_check_run_outcome_projection_v1',
@@ -38,6 +39,26 @@ describe('sanitizeBuilderCheckRunOutcomeProjectionWire', () => {
       status: 'failed',
       label: 'Check failed',
       summary: 'The project check found a problem that needs review.',
+      completed_at_ms: 100,
+      authority: {
+        ...unavailable().authority,
+        fact_source: 'verified_current_candidate_check_run',
+      },
+    };
+    expect(sanitizeBuilderCheckRunOutcomeProjectionWire(value)).toBe(value);
+  });
+
+  it('accepts redacted environment readiness reasons on completed checks', () => {
+    const value = {
+      ...unavailable(),
+      state: 'completed',
+      command_kind: 'test',
+      command_label: 'Tests',
+      status: 'incomplete',
+      label: 'Check unavailable',
+      summary:
+        'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+      environment_reason: 'dependency_workspace_missing',
       completed_at_ms: 100,
       authority: {
         ...unavailable().authority,

@@ -11,7 +11,8 @@ import {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 
 type MutableMessage = {
   message_id: string;
@@ -24,6 +25,7 @@ type MutableCandidate = {
   summary: string;
   candidate_state: string;
   source_availability: string;
+  workspace_materialization: { status: string; label?: string; detail?: string };
 };
 
 type MutableConversationItem = {
@@ -32,7 +34,9 @@ type MutableConversationItem = {
   turn_id: string;
   message?: MutableMessage;
   message_id?: string;
+  role?: string;
   message_kind?: string;
+  recovery_admission?: string;
   mode?: string | null;
   task?: { task_id: string; title: string } | null;
   consumed_by?: { turn_id: string; message_id: string };
@@ -60,9 +64,42 @@ type MutableConversationItem = {
   recorded_state?: string;
   stage?: string;
   action?: string;
+  status?: string;
+  changed_file_count?: number;
+  verification_status?: string;
   step_id?: string;
   tool_call_id?: string;
   tool_label?: string;
+  tool_kind?: string;
+  state?: string;
+  active_label?: string;
+  completed_label?: string;
+  target_label?: string | null;
+  presentation?: string;
+  status_label?: string | null;
+  duration_ms?: number | null;
+  failure_class?: string | null;
+  result_ref?: string | null;
+  presentation_detail?: {
+    detail_kind: string;
+    status?: string;
+    command?: string;
+    exit_code?: number | null;
+    duration_ms?: number;
+    truncated?: boolean;
+  } | null;
+  file_change?: {
+    change_ref: string;
+    change_kind: string;
+    added_lines: number;
+    deleted_lines: number;
+  } | null;
+  check_result?: {
+    command_ref: string;
+    status: string;
+    duration_ms: number;
+    summary: string;
+  } | null;
   resource?: { resource_kind: string; resource_id?: string };
   result?: {
     status: string;
@@ -84,7 +121,7 @@ type MutableConversationItem = {
   summary?: {
     status: string;
     display_summary: string;
-  };
+  } | string | null;
   terminal_status?: string;
   result_kind?: string;
   failure_phase?: string;
@@ -113,6 +150,12 @@ type MutableWire = {
     created_at_ms: number;
     head_sequence: number;
     recorded_active_turn_id: string | null;
+    source?: string;
+    recovery?: {
+      recovery_kind: string;
+      latest_source_sequence: number;
+      authority: string;
+    };
     window: {
       first_sequence: number;
       last_sequence: number;
@@ -139,6 +182,7 @@ function checkRunOutcomeProjection(
     status: 'unavailable',
     label: 'Check status unavailable',
     summary: 'Builder could not verify the check status for this draft.',
+    environment_reason: 'none',
     completed_at_ms: null,
     authority: {
       projection_authority: 'main_owned_check_run_outcome_projection_v1',
@@ -334,6 +378,7 @@ function candidateWire(): MutableWire {
             summary: 'A focused timer draft.',
             candidate_state: 'proposed',
             source_availability: 'not_loaded',
+            workspace_materialization: { status: 'materialized' },
           },
         },
         {
@@ -751,6 +796,7 @@ function successfulToolCandidateWire(): MutableWire {
         summary: 'A draft prepared after checking the project file.',
         candidate_state: 'proposed',
         source_availability: 'not_loaded',
+        workspace_materialization: { status: 'materialized' },
       },
     },
     {
@@ -761,6 +807,98 @@ function successfulToolCandidateWire(): MutableWire {
       outcome: 'candidate_ready',
     },
   );
+  return wire;
+}
+
+function successfulRuntimeToolCandidateWire(): MutableWire {
+  const wire = candidateWire();
+  const baseActivity = {
+    item_kind: 'programming_runtime_tool_activity',
+    turn_id: id('turn', 1),
+    run_id: id('run', 3),
+    step_id: id('run-step', 7),
+    tool_call_id: id('tool-call', 8),
+    tool_kind: 'edit',
+    active_label: 'Editing index.html',
+    completed_label: 'Edited index.html',
+    target_label: 'index.html',
+    presentation: 'changes',
+    status_label: null,
+    failure_class: null,
+    check_result: null,
+  };
+  const fileChange = {
+    change_ref: `builder-runtime-file-change:${'a'.repeat(64)}`,
+    change_kind: 'edited',
+    added_lines: 4,
+    deleted_lines: 1,
+  };
+  wire.conversation.head_sequence = 7;
+  wire.conversation.window.last_sequence = 7;
+  wire.conversation.items = [
+    ...wire.conversation.items.slice(0, 2),
+    {
+      ...baseActivity,
+      sequence: 3,
+      state: 'running',
+      duration_ms: null,
+      summary: null,
+      result_ref: null,
+      file_change: null,
+    },
+    {
+      ...baseActivity,
+      sequence: 4,
+      state: 'running',
+      duration_ms: null,
+      summary: null,
+      result_ref: null,
+      file_change: fileChange,
+    },
+    {
+      ...baseActivity,
+      sequence: 5,
+      state: 'completed',
+      duration_ms: 12,
+      summary: 'Edited index.html.',
+      result_ref: `builder-runtime-tool-result:${'b'.repeat(64)}`,
+      file_change: fileChange,
+    },
+    { ...wire.conversation.items[2]!, sequence: 6 },
+    { ...wire.conversation.items[3]!, sequence: 7 },
+  ];
+  return wire;
+}
+
+function successfulRuntimeCommandCandidateWire(): MutableWire {
+  const wire = successfulRuntimeToolCandidateWire();
+  wire.conversation.items = wire.conversation.items.map((item) => {
+    if (item.item_kind !== 'programming_runtime_tool_activity') return item;
+    const completed = item.state === 'completed';
+    return {
+      ...item,
+      tool_kind: 'command',
+      active_label: 'Running npm run build',
+      completed_label: 'Ran npm run build',
+      target_label: 'npm run build',
+      presentation: 'terminal',
+      presentation_detail: completed ? {
+        detail_kind: 'command',
+        status: 'passed',
+        command: 'npm run build',
+        exit_code: 0,
+        duration_ms: 639,
+        truncated: true,
+      } : null,
+      file_change: null,
+      check_result: completed ? {
+        command_ref: `builder-runtime-command-result:${'c'.repeat(64)}`,
+        status: 'passed',
+        duration_ms: 639,
+        summary: 'npm run build passed.',
+      } : null,
+    };
+  });
   return wire;
 }
 
@@ -817,14 +955,14 @@ function completedTurnItems(
 function truncatedWire(): MutableWire {
   const wire = candidateWire();
   wire.conversation.items = Array.from(
-    { length: 32 },
+    { length: 128 },
     (_, index) => completedTurnItems(index + 1, 5 + index * 4),
   ).flat();
-  wire.conversation.head_sequence = 132;
+  wire.conversation.head_sequence = 516;
   wire.conversation.recorded_active_turn_id = null;
   wire.conversation.window = {
     first_sequence: 5,
-    last_sequence: 132,
+    last_sequence: 516,
     has_earlier: true,
   };
   return wire;
@@ -873,6 +1011,7 @@ describe('Builder conversation snapshot', () => {
       candidate: {
         candidate_state: 'proposed',
         source_availability: 'not_loaded',
+        workspace_materialization: { status: 'materialized' },
       },
     });
     expect(snapshot).not.toBe(wire);
@@ -882,6 +1021,60 @@ describe('Builder conversation snapshot', () => {
     expect(Object.isFrozen(snapshot.conversation)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items)).toBe(true);
     expect(Object.isFrozen(snapshot.conversation.items[2])).toBe(true);
+  });
+
+  it('sanitizes a read-only transcript-restored conversation without requiring replay items', () => {
+    const wire = candidateWire();
+    wire.conversation.head_sequence = 2;
+    wire.conversation.source = 'sqlite_derived_public_transcript';
+    wire.conversation.recovery = {
+      recovery_kind: 'transcript_restored',
+      latest_source_sequence: 4,
+      authority: 'sqlite_derived_non_authoritative_transcript',
+    };
+    wire.conversation.window = {
+      first_sequence: 1,
+      last_sequence: 2,
+      has_earlier: false,
+    };
+    wire.conversation.items = [
+      {
+        item_kind: 'transcript_message',
+        sequence: 1,
+        turn_id: id('turn', 1),
+        message: {
+          message_id: id('message', 4),
+          text: 'What did we change?',
+        },
+        role: 'user',
+        message_kind: 'submitted',
+        recovery_admission: 'sqlite_derived_public_transcript_only',
+      },
+      {
+        item_kind: 'transcript_message',
+        sequence: 2,
+        turn_id: id('turn', 1),
+        message: {
+          message_id: id('message', 5),
+          text: 'We restored public chat history.',
+        },
+        role: 'assistant',
+        message_kind: 'run_result',
+        recovery_admission: 'sqlite_derived_public_transcript_only',
+      },
+    ];
+    wire.authority.conversation = 'sqlite_derived_public_transcript_restore';
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.authority.conversation).toBe('sqlite_derived_public_transcript_restore');
+    expect(snapshot.conversation.source).toBe('sqlite_derived_public_transcript');
+    expect(snapshot.conversation.items.map((item) => item.item_kind)).toEqual([
+      'transcript_message',
+      'transcript_message',
+    ]);
   });
 
   it('restores a renderer-safe CheckRun outcome and rejects forged save authority', () => {
@@ -1244,6 +1437,45 @@ describe('Builder conversation snapshot', () => {
     );
   });
 
+  it('accepts checkpoint updates after a created checkpoint in the same active run', () => {
+    const wire = routeDowngradeWire();
+    wire.conversation.head_sequence = 5;
+    wire.conversation.window.last_sequence = 5;
+    wire.conversation.items.push({
+      item_kind: 'checkpoint_recorded',
+      sequence: 4,
+      turn_id: id('turn', 31),
+      run_id: id('run', 32),
+      status: 'created',
+      changed_file_count: 4,
+      verification_status: 'candidate_verified',
+    }, {
+      item_kind: 'checkpoint_recorded',
+      sequence: 5,
+      turn_id: id('turn', 31),
+      run_id: id('run', 32),
+      status: 'updated',
+      changed_file_count: 1,
+      verification_status: 'candidate_verified',
+    });
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items.slice(-2).map((item) => (
+      item.item_kind === 'checkpoint_recorded' ? item.status : null
+    ))).toEqual(['created', 'updated']);
+
+    const duplicateCreated = structuredClone(wire);
+    duplicateCreated.conversation.head_sequence = 6;
+    duplicateCreated.conversation.window.last_sequence = 6;
+    duplicateCreated.conversation.items.push({
+      ...duplicateCreated.conversation.items[3]!,
+      sequence: 6,
+    });
+    expectUnavailable(duplicateCreated);
+  });
+
   it('accepts fixed failed-run phases only when they match visible progress', () => {
     const wire = progressWire();
     wire.conversation.items[4] = {
@@ -1510,8 +1742,110 @@ describe('Builder conversation snapshot', () => {
         draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
         candidate_state: 'proposed',
         source_availability: 'not_loaded',
+        workspace_materialization: { status: 'materialized' },
       },
     });
+  });
+
+  it('accepts main-owned runtime tool activity as an in-place action history', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(successfulRuntimeToolCandidateWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    const runtimeItems = snapshot.conversation.items.filter(
+      (item) => item.item_kind === 'programming_runtime_tool_activity',
+    );
+    expect(runtimeItems).toHaveLength(3);
+    expect(runtimeItems.at(-1)).toMatchObject({
+      item_kind: 'programming_runtime_tool_activity',
+      tool_kind: 'edit',
+      state: 'completed',
+      active_label: 'Editing index.html',
+      completed_label: 'Edited index.html',
+      target_label: 'index.html',
+      duration_ms: 12,
+      summary: 'Edited index.html.',
+      file_change: {
+        added_lines: 4,
+        deleted_lines: 1,
+      },
+    });
+  });
+
+  it('accepts a bounded completed command presentation from the packaged Harness', () => {
+    const snapshot = sanitizeBuilderConversationSnapshot(successfulRuntimeCommandCandidateWire());
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    const completedCommand = snapshot.conversation.items.find((item) => (
+      item.item_kind === 'programming_runtime_tool_activity'
+      && item.tool_kind === 'command'
+      && item.state === 'completed'
+    ));
+    expect(completedCommand).toMatchObject({
+      target_label: 'npm run build',
+      presentation_detail: {
+        detail_kind: 'command',
+        status: 'passed',
+        exit_code: 0,
+        truncated: true,
+      },
+      check_result: {
+        status: 'passed',
+        summary: 'npm run build passed.',
+      },
+    });
+  });
+
+  it('rejects inconsistent or cross-kind command presentation evidence', () => {
+    const inconsistentExit = successfulRuntimeCommandCandidateWire();
+    const completed = inconsistentExit.conversation.items.find((item) => (
+      item.item_kind === 'programming_runtime_tool_activity' && item.state === 'completed'
+    ));
+    if (completed?.presentation_detail?.detail_kind !== 'command') {
+      throw new Error('expected command detail');
+    }
+    completed.presentation_detail.exit_code = 1;
+    expect(() => sanitizeBuilderConversationSnapshot(inconsistentExit)).toThrow();
+
+    const crossKind = successfulRuntimeCommandCandidateWire();
+    const crossKindCompleted = crossKind.conversation.items.find((item) => (
+      item.item_kind === 'programming_runtime_tool_activity' && item.state === 'completed'
+    ));
+    if (crossKindCompleted === undefined) throw new Error('expected completed command');
+    crossKindCompleted.tool_kind = 'edit';
+    expect(() => sanitizeBuilderConversationSnapshot(crossKind)).toThrow();
+  });
+
+  it('accepts hidden main-only runtime events after the last visible activity item', () => {
+    const wire = successfulRuntimeToolCandidateWire();
+    wire.conversation.head_sequence = 9;
+    wire.conversation.window.last_sequence = 9;
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.head_sequence).toBe(9);
+    expect(snapshot.conversation.items.at(-1)?.sequence).toBe(7);
+  });
+
+  it('accepts hidden main-only runtime events between visible activity items', () => {
+    const wire = successfulRuntimeToolCandidateWire();
+    const visibleSequences = [1, 2, 4, 6, 7, 9, 10];
+    wire.conversation.items = wire.conversation.items.map((item, index) => ({
+      ...item,
+      sequence: visibleSequences[index]!,
+    }));
+    wire.conversation.head_sequence = 12;
+    wire.conversation.window.last_sequence = 12;
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items.map((item) => item.sequence)).toEqual(visibleSequences);
+    expect(snapshot.conversation.head_sequence).toBe(12);
   });
 
   it('accepts a successful run after a recorded failed tool step', () => {
@@ -1792,10 +2126,10 @@ describe('Builder conversation snapshot', () => {
     const snapshot = sanitizeBuilderConversationSnapshot(wire);
     expect(snapshot.state).toBe('ready');
     if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
-    expect(snapshot.conversation.items).toHaveLength(128);
+    expect(snapshot.conversation.items).toHaveLength(512);
     expect(snapshot.conversation.window).toEqual({
       first_sequence: 5,
-      last_sequence: 132,
+      last_sequence: 516,
       has_earlier: true,
     });
   });
@@ -1843,12 +2177,12 @@ describe('Builder conversation snapshot', () => {
         outcome: 'cancelled',
       },
       ...Array.from(
-        { length: 31 },
+        { length: 127 },
         (_, index) => completedTurnItems(index + 40, 7 + index * 4),
       ).flat(),
       {
         ...firstTurn[0],
-        sequence: 131,
+        sequence: 515,
         turn_id: lastTurnId,
         message: {
           message_id: id('message', 996),
@@ -1861,7 +2195,7 @@ describe('Builder conversation snapshot', () => {
       },
       {
         ...firstTurn[1],
-        sequence: 132,
+        sequence: 516,
         turn_id: lastTurnId,
         run_id: lastRunId,
         task_id: lastTaskId,
@@ -1952,12 +2286,12 @@ describe('Builder conversation snapshot', () => {
       },
       ...completedTurnItems(800, 10),
       ...Array.from(
-        { length: 29 },
+        { length: 125 },
         (_, index) => completedTurnItems(index + 900, 14 + index * 4),
       ).flat(),
       {
         item_kind: 'user_message',
-        sequence: 130,
+        sequence: 514,
         turn_id: tailTurnId,
         message: {
           message_id: id('message', 12004),
@@ -1972,7 +2306,7 @@ describe('Builder conversation snapshot', () => {
       },
       {
         item_kind: 'run_started',
-        sequence: 131,
+        sequence: 515,
         turn_id: tailTurnId,
         run_id: tailRunId,
         task_id: tailTaskId,
@@ -1982,7 +2316,7 @@ describe('Builder conversation snapshot', () => {
       },
       {
         item_kind: 'tool_call_requested',
-        sequence: 132,
+        sequence: 516,
         turn_id: tailTurnId,
         run_id: tailRunId,
         step_id: id('run-step', 12005),
@@ -2000,11 +2334,11 @@ describe('Builder conversation snapshot', () => {
         },
         recorded_state: 'requested',
       },
-    ].slice(0, 128);
-    wire.conversation.head_sequence = 132;
+    ].slice(0, 512);
+    wire.conversation.head_sequence = 516;
     wire.conversation.window = {
       first_sequence: 5,
-      last_sequence: 132,
+      last_sequence: 516,
       has_earlier: true,
     };
     wire.conversation.recorded_active_turn_id = tailTurnId;
@@ -2074,12 +2408,12 @@ describe('Builder conversation snapshot', () => {
         outcome: 'failed',
       },
       ...Array.from(
-        { length: 31 },
+        { length: 127 },
         (_, index) => completedTurnItems(index + 1300, 8 + index * 4),
       ).flat(),
       {
         item_kind: 'user_message',
-        sequence: 132,
+        sequence: 516,
         turn_id: tailTurnId,
         message: {
           message_id: id('message', 24003),
@@ -2093,10 +2427,10 @@ describe('Builder conversation snapshot', () => {
         },
       },
     ];
-    wire.conversation.head_sequence = 132;
+    wire.conversation.head_sequence = 516;
     wire.conversation.window = {
       first_sequence: 5,
-      last_sequence: 132,
+      last_sequence: 516,
       has_earlier: true,
     };
     wire.conversation.recorded_active_turn_id = tailTurnId;
@@ -2121,7 +2455,7 @@ describe('Builder conversation snapshot', () => {
       ...wire.conversation.items,
       {
         item_kind: 'candidate_reviewed',
-        sequence: 133,
+        sequence: 517,
         turn_id: omittedTurnId,
         run_id: omittedRunId,
         draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
@@ -2130,10 +2464,10 @@ describe('Builder conversation snapshot', () => {
         saved_revision: null,
       },
     ].slice(1);
-    wire.conversation.head_sequence = 133;
+    wire.conversation.head_sequence = 517;
     wire.conversation.window = {
       first_sequence: 6,
-      last_sequence: 133,
+      last_sequence: 517,
       has_earlier: true,
     };
 
@@ -2142,7 +2476,7 @@ describe('Builder conversation snapshot', () => {
     if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
     expect(snapshot.conversation.items.at(-1)).toEqual({
       item_kind: 'candidate_reviewed',
-      sequence: 133,
+      sequence: 517,
       turn_id: omittedTurnId,
       run_id: omittedRunId,
       draft_id: `builder-generation-draft:${'8'.repeat(64)}`,
@@ -2182,7 +2516,7 @@ describe('Builder conversation snapshot', () => {
       },
       {
         item_kind: 'user_message',
-        sequence: 132,
+        sequence: 516,
         turn_id: lastTurn.turn_id,
         message: {
           message_id: id('message', 995),
@@ -2202,7 +2536,7 @@ describe('Builder conversation snapshot', () => {
 
     const prefixQuestionCandidate = truncatedWire();
     const prefixTurn = completedTurnItems(500, 5);
-    const activeTurn = completedTurnItems(900, 132)[0]!;
+    const activeTurn = completedTurnItems(900, 516)[0]!;
     prefixQuestionCandidate.conversation.items = [
       {
         ...prefixTurn[1],
@@ -2402,7 +2736,7 @@ describe('Builder conversation snapshot', () => {
     const values: unknown[] = [];
     const crossProject = candidateWire();
     crossProject.conversation.conversation_id =
-      'builder-conversation:223e4567-e89b-42d3-a456-426614174000';
+      'builder-conversation:323e4567-e89b-42d3-a456-426614174000:423e4567-e89b-42d3-a456-426614174000';
     values.push(crossProject);
     const badAuthority = candidateWire();
     badAuthority.authority.project_revision = 'saved';
@@ -2467,12 +2801,12 @@ describe('Builder conversation snapshot', () => {
     sequenceOverflow.conversation.items =
       sequenceOverflow.conversation.items.map((item) => ({
         ...item,
-        sequence: item.sequence + 893,
+        sequence: item.sequence + 3581,
       }));
-    sequenceOverflow.conversation.head_sequence = 1025;
+    sequenceOverflow.conversation.head_sequence = 4097;
     sequenceOverflow.conversation.window = {
-      first_sequence: 898,
-      last_sequence: 1025,
+      first_sequence: 3586,
+      last_sequence: 4097,
       has_earlier: true,
     };
 
@@ -2486,6 +2820,60 @@ describe('Builder conversation snapshot', () => {
     ]) {
       expectUnavailable(value);
     }
+  });
+
+  it('accepts the canonical projectless Agent conversation projection', () => {
+    const agentId = `builder-agent:${UUID}`;
+    const result = sanitizeBuilderConversationSnapshot({
+      stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+      scope_kind: 'agent_conversation',
+      agent_id: agentId,
+      project_id: null,
+      conversation: {
+        conversation_id: `builder-agent-conversation:${UUID}`,
+        created_at_ms: 1,
+        head_sequence: 2,
+        recorded_active_turn_id: null,
+        source: 'sqlite_canonical_agent_conversation',
+        window: { first_sequence: 1, last_sequence: 2, has_earlier: false },
+        items: [
+          {
+            item_kind: 'transcript_message',
+            sequence: 1,
+            turn_id: `builder-turn:${UUID}`,
+            message: { message_id: `builder-message:${UUID}`, text: 'Hello Builder.' },
+            role: 'user',
+            message_kind: 'submitted',
+            context_route: 'update_brief',
+            recovery_admission: 'sqlite_derived_public_transcript_only',
+          },
+          {
+            item_kind: 'transcript_message',
+            sequence: 2,
+            turn_id: `builder-turn:${UUID}`,
+            message: {
+              message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174001',
+              text: 'Hello.',
+            },
+            role: 'assistant',
+            message_kind: 'run_result',
+            recovery_admission: 'sqlite_derived_public_transcript_only',
+          },
+        ],
+      },
+      authority: {
+        conversation: 'sqlite_canonical_agent_conversation',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    });
+
+    expect(result.project_id).toBeNull();
+    expect(result.agent_id).toBe(agentId);
+    expect(result.state).toBe('ready');
+    if (result.state !== 'ready') throw new Error('expected ready Agent conversation');
+    expect(result.conversation.items[0]).toMatchObject({ context_route: 'update_brief' });
   });
 
   it('does not import React, host bridges, storage, Git, SQLite, or legacy Chat', () => {

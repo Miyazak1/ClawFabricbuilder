@@ -129,6 +129,38 @@ test('projects a matching explicit skip when no CheckRun exists', () => {
   });
 });
 
+test('projects a main-owned no-checks skip when no CheckRun exists', () => {
+  const selected = admittedCheck();
+  const candidate = selected.admission;
+  const decision = createBuilderCheckSkipDecision({
+    project_id: candidate.project_id,
+    conversation_id: candidate.conversation_id,
+    turn_id: candidate.turn_id,
+    task_id: candidate.task_id,
+    run_id: candidate.run_id,
+    draft_id: candidate.draft_id,
+    draft_checkpoint_id: candidate.draft_checkpoint_id,
+    draft_checkpoint_sequence: candidate.draft_checkpoint_sequence,
+    candidate_id: candidate.candidate_id,
+    candidate_digest: candidate.candidate_digest,
+    resulting_tree_digest: candidate.resulting_tree_digest,
+    reason_code: 'no_project_checks_detected',
+    decided_at_ms: 300,
+  });
+  const result = serviceFor(
+    storeResult('absent', null),
+    [],
+    skipStoreResult('ready', decision),
+  ).read_current_check_run_status({
+    project_id: candidate.project_id,
+    candidate_id: candidate.candidate_id,
+  });
+  assert.deepEqual(result, {
+    check_run_state: 'skipped',
+    check_run_status_projection: null,
+  });
+});
+
 test('fails closed on store drift, cross-candidate results, proxies, and extras', () => {
   const run = checkRun();
   assertServiceError(() => serviceFor(storeResult('ready', run)).read_current_check_run_status({

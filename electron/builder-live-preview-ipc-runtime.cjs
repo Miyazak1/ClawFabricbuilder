@@ -7,6 +7,8 @@ const {
   RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL,
   REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL,
   STOP_CURRENT_LIVE_PREVIEW_CHANNEL,
+  UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
+  DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
   createBuilderLivePreviewIpcAdapter,
 } = require('./builder-live-preview-ipc-adapter.cjs');
 
@@ -17,9 +19,11 @@ const OPTION_KEYS = Object.freeze(['ipcMain', 'mainWindowRef', 'livePreviewServi
 const SERVICE_KEYS = Object.freeze([
   'service_version',
   'request_current_draft_live_preview',
+  'decide_current_live_preview_dev_server',
   'reload_current_live_preview',
   'stop_current_live_preview',
   'read_current_live_preview_status',
+  'update_current_live_preview_layout',
   'shutdown',
 ]);
 const ERROR_MESSAGES = Object.freeze({
@@ -153,6 +157,7 @@ function unavailableStatus(request, status = 'unavailable') {
     project_id: request.project_id,
     conversation_id: request.conversation_id,
     preview_kind: 'live_static_web',
+    entry_url: null,
     status,
     can_start: false,
     can_reload: false,
@@ -166,6 +171,7 @@ function unavailableStatus(request, status = 'unavailable') {
     message: status === 'stopped'
       ? 'Live preview is stopped.'
       : 'Live preview is unavailable until a main-owned preview source resolver is connected.',
+    dev_server_approval: null,
     unavailable_reason: status === 'stopped' ? null : 'preview_source_resolver_not_connected',
     updated_at_ms: Date.now(),
     authority: AUTHORITY,
@@ -178,6 +184,9 @@ function createUnavailableBuilderLivePreviewService() {
     request_current_draft_live_preview(request) {
       return Promise.resolve(unavailableStatus(request));
     },
+    decide_current_live_preview_dev_server(request) {
+      return Promise.resolve(unavailableStatus(request));
+    },
     reload_current_live_preview(request) {
       return Promise.resolve(unavailableStatus(request));
     },
@@ -185,6 +194,9 @@ function createUnavailableBuilderLivePreviewService() {
       return Promise.resolve(unavailableStatus(request, 'stopped'));
     },
     read_current_live_preview_status(request) {
+      return Promise.resolve(unavailableStatus(request));
+    },
+    update_current_live_preview_layout(request) {
       return Promise.resolve(unavailableStatus(request));
     },
     shutdown() {
@@ -200,9 +212,12 @@ function createBuilderLivePreviewIpcRuntime(rawOptions) {
     adapter = createBuilderLivePreviewIpcAdapter({
       requestCurrentDraftLivePreview:
         options.livePreviewService.request_current_draft_live_preview,
+      decideDevServerApproval:
+        options.livePreviewService.decide_current_live_preview_dev_server,
       reloadCurrentLivePreview: options.livePreviewService.reload_current_live_preview,
       stopCurrentLivePreview: options.livePreviewService.stop_current_live_preview,
       readCurrentLivePreviewStatus: options.livePreviewService.read_current_live_preview_status,
+      updateCurrentLivePreviewLayout: options.livePreviewService.update_current_live_preview_layout,
       mainWindowRef: options.mainWindowRef,
     });
   } catch {
@@ -225,6 +240,14 @@ function createBuilderLivePreviewIpcRuntime(rawOptions) {
     Object.freeze({
       channel: READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL,
       invoke: adapter.channels.readCurrentPreviewStatus.invoke,
+    }),
+    Object.freeze({
+      channel: UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
+      invoke: adapter.channels.updateCurrentPreviewLayout.invoke,
+    }),
+    Object.freeze({
+      channel: DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
+      invoke: adapter.channels.decideDevServerApproval.invoke,
     }),
   ]);
   const installed = [];

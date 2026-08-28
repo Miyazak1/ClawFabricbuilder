@@ -40,15 +40,23 @@ class FakeLocator {
   async textContent() {
     return this.page.textBySelector.get(this.selector) ?? '';
   }
+
+  async count() {
+    return this.page.absentSelectors.has(this.selector) ? 0 : 1;
+  }
 }
 
 class FakePage {
   constructor() {
     this.missingSelectors = new Set();
+    this.absentSelectors = new Set([
+      SELECTORS.workspaceChip,
+      '[data-builder-workbench-context="true"]',
+    ]);
     this.waitedSelectors = [];
     this.textBySelector = new Map([
-      [SELECTORS.workspaceChip, 'Choose project Chat only until you choose a folder'],
-      ['[data-builder-rail-item="projects"]', 'Projects'],
+      ['[data-builder-rail-item="agents"]', 'Agents'],
+      ['[data-builder-agent-id]', 'Builder Active'],
       ['[data-builder-rail-item="settings"]', 'Settings'],
     ]);
   }
@@ -59,7 +67,9 @@ class FakePage {
 
   async evaluate() {
     return {
-      bridgeVersion: 'builder-preload.v27',
+      bridgeVersion: 'builder-preload.v35',
+      agentProjectTree: 'function',
+      agentWorkbench: 'function',
       checkRun: 'function',
       codeGenerator: 'function',
       livePreview: 'function',
@@ -130,11 +140,13 @@ test('launches the packaged app with guarded canary paths and no provider input'
   for (const selector of REQUIRED_SELECTORS) {
     assert.equal(page.waitedSelectors.includes(selector), true, selector);
   }
+  assert.equal(page.absentSelectors.has('[data-builder-workbench-context="true"]'), true);
+  assert.equal(page.absentSelectors.has(SELECTORS.workspaceChip), true);
 });
 
 test('normalizes UI failures and still cleans the isolated user data directory', async (t) => {
   const page = new FakePage();
-  page.missingSelectors.add(SELECTORS.workspaceChip);
+  page.missingSelectors.add('[data-builder-agent-workbench-stream="true"]');
   const electron = fakeElectron(page);
   const executablePath = makeExistingExecutable(t);
   await assert.rejects(

@@ -441,6 +441,19 @@ test('creates a digest-only private source context record bound to supervised ad
   assert.notEqual(changedHead.context_binding.head_digest, record.context_binding.head_digest);
 });
 
+test('accepts a Harness-detailed private source context beyond the legacy 64-event limit', () => {
+  const record = createBuilderAgentPrivateSourceContextRecord(recordInput({
+    source_context_result: {
+      context: {
+        events: Array.from({ length: 65 }, (_, index) => ({ sequence: index + 1 })),
+      },
+    },
+  }));
+
+  assert.equal(record.context_binding.head_sequence, 6);
+  assert.equal(record.record_kind, BUILDER_AGENT_PRIVATE_SOURCE_CONTEXT_RECORD_KIND);
+});
+
 test('records partial and failed source context summaries without raw source content', () => {
   const partialFile = privateFiles([{ path: 'src/app.tsx', content: 'export const answer = 42;\n' }]);
   const partial = createBuilderAgentPrivateSourceContextRecord(recordInput({
@@ -571,7 +584,7 @@ test('rejects admission drift, source context drift, forged reads, and hostile s
       ...valid,
       source_context_result: sourceContextResult(undefined, {
         context: {
-          events: Array.from({ length: 65 }, (_, index) => ({
+          events: Array.from({ length: 4_097 }, (_, index) => ({
             event_id: `builder-conversation-event:${index.toString(16).padStart(64, '0')}`,
           })),
         },

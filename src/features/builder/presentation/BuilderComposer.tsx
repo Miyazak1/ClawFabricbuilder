@@ -46,6 +46,7 @@ export type BuilderComposerWorkingBrief = Readonly<{
 }>;
 
 export type BuilderComposerMode = 'ask' | 'plan' | 'build';
+export type BuilderComposerSurfaceKind = 'task' | 'workbench';
 
 export type BuilderComposerProps = Readonly<{
   activeRunFollowupQueued?: boolean;
@@ -71,7 +72,6 @@ export type BuilderComposerProps = Readonly<{
   onClearComposerMode?: () => void;
   onClearWorkspaceSelection?: () => void;
   onDismissWorkspacePicker?: () => void;
-  onFocusDraftReview?: () => void;
   onInstructionChange?: (value: string) => void;
   onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
@@ -79,6 +79,8 @@ export type BuilderComposerProps = Readonly<{
   onSelectPlanMode?: () => void;
   onSubmitInstruction?: () => void;
   savedProject: SavedComposerProject | null;
+  showWorkspaceContext?: boolean;
+  surfaceKind?: BuilderComposerSurfaceKind;
   status: BuilderProjectControllerStatus;
   viewingHistory: boolean;
   workingProject: BuilderWorkingProject | null;
@@ -112,8 +114,11 @@ function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
   return 'Ask before write';
 }
 
-function composerModeLabel(mode: BuilderComposerMode): string {
-  if (mode === 'ask') return 'Ask mode';
+function composerModeLabel(
+  mode: BuilderComposerMode,
+  surfaceKind: BuilderComposerSurfaceKind = 'task',
+): string {
+  if (mode === 'ask') return surfaceKind === 'workbench' ? 'Chat mode' : 'Ask mode';
   if (mode === 'build') return 'Build mode';
   return 'Plan mode';
 }
@@ -158,7 +163,6 @@ export function BuilderComposer({
   onClearWorkspaceSelection,
   onCreateProject,
   onDismissWorkspacePicker,
-  onFocusDraftReview,
   onInstructionChange,
   onOpenProject,
   onSelectApprovalMode,
@@ -166,6 +170,8 @@ export function BuilderComposer({
   onSelectPlanMode,
   onSubmitInstruction,
   savedProject,
+  showWorkspaceContext = true,
+  surfaceKind = 'task',
   status,
   workingProject,
   workspaceNewProjectRequest = 0,
@@ -221,12 +227,14 @@ export function BuilderComposer({
   const workspaceOriginLabel = hasWorkspaceSelection ? 'Local' : null;
   const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
   const providerContextStatusLabel = providerContextDisclosureStatus?.label ?? null;
-  const visibleContextStatusLabel = providerContextStatusLabel ?? contextStatusLabel;
+  const visibleContextStatusLabel = providerContextStatusLabel
+    ?? (composerContextStatus === 'ready_to_execute' ? null : contextStatusLabel);
   const canClearWorkspaceSelection = hasWorkspaceSelection
     && !hasUnsavedDraft
     && typeof onClearWorkspaceSelection === 'function';
   const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
+    if (surfaceKind === 'workbench') return 'Message Builder...';
     if (hasUnsavedDraft) return 'Ask about this draft, or describe the next change...';
     if (canAddContext) return 'Add context for the current work...';
     if (busy) return 'Working on your request...';
@@ -540,6 +548,7 @@ export function BuilderComposer({
       data-builder-route={composerRouteDecision?.route}
     >
       <div className="cf-builder-composer-shell">
+        {showWorkspaceContext || workspacePickerOpen ? (
         <div className="cf-builder-composer-context-bar" data-builder-composer-context-bar="true">
           <button
             aria-expanded={workspacePickerOpen}
@@ -593,6 +602,7 @@ export function BuilderComposer({
             </button>
           ) : null}
         </div>
+        ) : null}
         <textarea
           aria-label="Ask a question, or describe what to build or change"
           className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
@@ -637,15 +647,17 @@ export function BuilderComposer({
                   data-builder-composer-add-menu="true"
                   role="menu"
                 >
-                  <button
-                    data-builder-composer-add-files="true"
-                    onClick={openFilesAndFoldersFromAddMenu}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <FolderOpen aria-hidden="true" className="size-3.5" />
-                    Files and folders
-                  </button>
+                  {surfaceKind === 'task' ? (
+                    <button
+                      data-builder-composer-add-files="true"
+                      onClick={openFilesAndFoldersFromAddMenu}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <FolderOpen aria-hidden="true" className="size-3.5" />
+                      Files and folders
+                    </button>
+                  ) : null}
                   <button
                     data-builder-composer-add-ask-mode="true"
                     onClick={() => selectComposerMode('ask')}
@@ -653,7 +665,7 @@ export function BuilderComposer({
                     type="button"
                   >
                     <Bot aria-hidden="true" className="size-3.5" />
-                    Ask mode
+                    {surfaceKind === 'workbench' ? 'Chat mode' : 'Ask mode'}
                   </button>
                   <button
                     data-builder-composer-add-plan-mode="true"
@@ -665,19 +677,22 @@ export function BuilderComposer({
                     <ListChecks aria-hidden="true" className="size-3.5" />
                     Plan mode
                   </button>
-                  <button
-                    data-builder-composer-add-build-mode="true"
-                    onClick={() => selectComposerMode('build')}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Hammer aria-hidden="true" className="size-3.5" />
-                    Build mode
-                  </button>
+                  {surfaceKind === 'task' ? (
+                    <button
+                      data-builder-composer-add-build-mode="true"
+                      onClick={() => selectComposerMode('build')}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Hammer aria-hidden="true" className="size-3.5" />
+                      Build mode
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
-            <div className="cf-builder-composer-approval-wrap">
+            {surfaceKind === 'task' ? (
+              <div className="cf-builder-composer-approval-wrap">
               <button
                 aria-expanded={approvalMenuOpen}
                 aria-haspopup="menu"
@@ -736,19 +751,20 @@ export function BuilderComposer({
                   </button>
                 </div>
               ) : null}
-            </div>
+              </div>
+            ) : null}
             {composerMode !== null ? (
               <span className="cf-builder-composer-mode-chip" data-builder-composer-mode-chip={composerMode}>
                 {composerMode === 'ask' ? <Bot aria-hidden="true" className="size-3.5" /> : null}
                 {composerMode === 'plan' ? <ListChecks aria-hidden="true" className="size-3.5" /> : null}
                 {composerMode === 'build' ? <Hammer aria-hidden="true" className="size-3.5" /> : null}
-                {composerModeLabel(composerMode)}
+                {composerModeLabel(composerMode, surfaceKind)}
                 {typeof onClearComposerMode === 'function' ? (
                   <button
-                    aria-label={`Remove ${composerModeLabel(composerMode)}`}
+                    aria-label={`Remove ${composerModeLabel(composerMode, surfaceKind)}`}
                     data-builder-clear-composer-mode="true"
                     onClick={onClearComposerMode}
-                    title={`Remove ${composerModeLabel(composerMode)}`}
+                    title={`Remove ${composerModeLabel(composerMode, surfaceKind)}`}
                     type="button"
                   >
                     <X aria-hidden="true" className="size-3" />
@@ -804,24 +820,6 @@ export function BuilderComposer({
             ) : null}
           </div>
         </footer>
-        {hasUnsavedDraft ? (
-          <div
-            className="cf-builder-composer-review-gate"
-            data-builder-composer-review-gate="true"
-            role="status"
-          >
-            <span>Keep revising here, or review and save this version when ready.</span>
-            <button
-              className="cf-builder-composer-review-link"
-              data-builder-composer-review-focus="true"
-              onClick={onFocusDraftReview}
-              type="button"
-            >
-              <GitCompareArrows aria-hidden="true" className="size-3.5" />
-              Review draft
-            </button>
-          </div>
-        ) : null}
         {workspacePickerOpen ? (
           <BuilderWorkspacePicker
             buildPrompt={workspacePickerBuildPrompt}

@@ -3,7 +3,7 @@ import {
   type BuilderProjectSourceTree,
 } from '../domain/builderProjectSnapshot';
 
-export const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v2' as const;
+export const BUILDER_GENERATION_REQUEST_PROTOCOL = 'builder-generation-request.v3' as const;
 export const BUILDER_GENERATION_RESULT_PROTOCOL = 'builder-generation-result.v2' as const;
 const MAX_PLAN_STEP_COUNT = 12;
 const MAX_PLAN_TITLE_CODE_POINTS = 120;
@@ -15,6 +15,7 @@ export type BuilderGenerationRequest = Readonly<{
   version: typeof BUILDER_GENERATION_REQUEST_PROTOCOL;
   instruction: string;
   existing_project_id: string | null;
+  task_address_id: string | null;
   request_digest: string;
 }>;
 
@@ -74,7 +75,7 @@ export type BuilderGenerationAnswer = Readonly<{
   title: string;
   summary: string;
   explanation: string;
-  project_id: string;
+  project_id: string | null;
   existing_project_id: string | null;
   admissions: Readonly<{
     conversation: 'sqlite_recorded';
@@ -146,6 +147,7 @@ const REQUEST_KEYS = Object.freeze([
   'version',
   'instruction',
   'existing_project_id',
+  'task_address_id',
   'request_digest',
 ]);
 const APPROVED_PLAN_GENERATION_REQUEST_KEYS = Object.freeze([
@@ -231,7 +233,9 @@ const ADMISSION_KEYS = Object.freeze([
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ADDRESS_ID_PATTERN =
+  /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
@@ -347,6 +351,11 @@ function safeProjectId(value: unknown, code: BuilderGenerationErrorCode): string
   return value;
 }
 
+function safeTaskAddressId(value: unknown, code: BuilderGenerationErrorCode): string {
+  if (typeof value !== 'string' || !TASK_ADDRESS_ID_PATTERN.test(value)) throw invalid(code);
+  return value;
+}
+
 function safeConversationId(value: unknown): string {
   if (typeof value !== 'string' || !CONVERSATION_ID_PATTERN.test(value)) {
     throw invalid('invalid_generation_request');
@@ -428,15 +437,21 @@ async function sha256Canonical(value: unknown): Promise<string> {
 export async function createBuilderGenerationRequest(
   instructionValue: unknown,
   existingProjectIdValue: unknown = null,
+  taskAddressIdValue: unknown = null,
 ): Promise<BuilderGenerationRequest> {
   const instruction = safeInstruction(instructionValue, 'invalid_instruction');
   const existingProjectId = existingProjectIdValue === null
     ? null
     : safeProjectId(existingProjectIdValue, 'invalid_generation_request');
+  const taskAddressId = taskAddressIdValue === null
+    ? null
+    : safeTaskAddressId(taskAddressIdValue, 'invalid_generation_request');
+  if (existingProjectId === null && taskAddressId !== null) throw invalid('invalid_generation_request');
   const unsigned = {
     version: BUILDER_GENERATION_REQUEST_PROTOCOL,
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: taskAddressId,
   };
   return deepFreeze({
     ...unsigned,
@@ -455,10 +470,15 @@ export async function sanitizeBuilderGenerationRequest(
   const existingProjectId = source.existing_project_id === null
     ? null
     : safeProjectId(source.existing_project_id, 'invalid_generation_request');
+  const taskAddressId = source.task_address_id === null
+    ? null
+    : safeTaskAddressId(source.task_address_id, 'invalid_generation_request');
+  if (existingProjectId === null && taskAddressId !== null) throw invalid('invalid_generation_request');
   const unsigned = {
     version: BUILDER_GENERATION_REQUEST_PROTOCOL,
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: taskAddressId,
   };
   const requestDigest = source.request_digest;
   if (
@@ -494,10 +514,6 @@ export function sanitizeBuilderApprovedPlanGenerationRequest(
   );
   const projectId = safeProjectId(source.project_id, 'invalid_generation_request');
   const conversationId = safeConversationId(source.conversation_id);
-  if (
-    conversationId.slice('builder-conversation:'.length)
-      !== projectId.slice('builder-project:'.length)
-  ) throw invalid('invalid_generation_request');
   return deepFreeze({
     project_id: projectId,
     conversation_id: conversationId,
@@ -681,9 +697,10 @@ export async function sanitizeBuilderApprovedPlanGenerationDraft(
   }
 }
 
-export async function sanitizeBuilderRevisionRestoreGenerationDraft(
+async function sanitizeBuilderRestoreGenerationDraft(
   value: unknown,
   expectedProjectIdValue: unknown,
+  allowUnversionedBase: boolean,
 ): Promise<BuilderGenerationDraft> {
   try {
     const expectedProjectId = safeProjectId(expectedProjectIdValue, 'invalid_generation_request');
@@ -730,11 +747,9 @@ export async function sanitizeBuilderRevisionRestoreGenerationDraft(
         candidate_digest: candidateDigest,
         resulting_tree_digest: resultingTreeDigest,
       },
-      base_revision_evidence: sanitizeBaseEvidence(
-        source.base_revision_evidence,
-        expectedProjectId,
-        true,
-      ),
+      base_revision_evidence: source.base_revision_evidence === null && allowUnversionedBase
+        ? null
+        : sanitizeBaseEvidence(source.base_revision_evidence, expectedProjectId, true),
       source_tree: sourceTree,
       admissions: {
         conversation: 'sqlite_recorded',
@@ -751,6 +766,20 @@ export async function sanitizeBuilderRevisionRestoreGenerationDraft(
   }
 }
 
+export function sanitizeBuilderRevisionRestoreGenerationDraft(
+  value: unknown,
+  expectedProjectIdValue: unknown,
+): Promise<BuilderGenerationDraft> {
+  return sanitizeBuilderRestoreGenerationDraft(value, expectedProjectIdValue, false);
+}
+
+export function sanitizeBuilderCheckpointRestoreGenerationDraft(
+  value: unknown,
+  expectedProjectIdValue: unknown,
+): Promise<BuilderGenerationDraft> {
+  return sanitizeBuilderRestoreGenerationDraft(value, expectedProjectIdValue, true);
+}
+
 export async function sanitizeBuilderGenerationAnswer(
   value: unknown,
   expectedRequest: BuilderGenerationRequest,
@@ -763,13 +792,15 @@ export async function sanitizeBuilderGenerationAnswer(
       || source.result_kind !== 'explanation'
       || source.request_id !== request.request_digest
     ) throw invalid('invalid_generated_answer');
-    const projectId = safeProjectId(source.project_id, 'invalid_generated_answer');
+    const projectId = source.project_id === null
+      ? null
+      : safeProjectId(source.project_id, 'invalid_generated_answer');
     const existingProjectId = source.existing_project_id === null
       ? null
       : safeProjectId(source.existing_project_id, 'invalid_generated_answer');
     if (
       existingProjectId !== request.existing_project_id
-      || (existingProjectId !== null && projectId !== existingProjectId)
+      || projectId !== existingProjectId
     ) throw invalid('invalid_generated_answer');
     const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_answer');
     if (
@@ -787,6 +818,51 @@ export async function sanitizeBuilderGenerationAnswer(
       explanation: safeDisplayText(source.explanation, 4000, 'invalid_generated_answer'),
       project_id: projectId,
       existing_project_id: existingProjectId,
+      admissions: {
+        conversation: 'sqlite_recorded',
+        draft: 'not_created',
+        save: 'not_performed',
+        preview: 'not_applicable',
+        execution: 'not_evaluated',
+      },
+    });
+  } catch (error) {
+    if (error instanceof BuilderGenerationError) throw error;
+    throw invalid('invalid_generated_answer');
+  }
+}
+
+export async function sanitizeBuilderApprovedPlanGenerationAnswer(
+  value: unknown,
+  expectedRequest: BuilderApprovedPlanGenerationRequest,
+): Promise<BuilderGenerationAnswer> {
+  try {
+    const request = sanitizeBuilderApprovedPlanGenerationRequest(expectedRequest);
+    const source = exactRecord(value, ANSWER_KEYS, 'invalid_generated_answer');
+    if (
+      source.version !== BUILDER_GENERATION_RESULT_PROTOCOL
+      || source.result_kind !== 'explanation'
+      || typeof source.request_id !== 'string'
+      || !DIGEST_PATTERN.test(source.request_id)
+      || source.project_id !== request.project_id
+      || source.existing_project_id !== request.project_id
+    ) throw invalid('invalid_generated_answer');
+    const admissions = exactRecord(source.admissions, ADMISSION_KEYS, 'invalid_generated_answer');
+    if (
+      admissions.conversation !== 'sqlite_recorded'
+      || admissions.draft !== 'not_created'
+      || admissions.save !== 'not_performed'
+      || admissions.preview !== 'not_applicable'
+      || admissions.execution !== 'not_evaluated'
+    ) throw invalid('invalid_generated_answer');
+    return deepFreeze({
+      version: BUILDER_GENERATION_RESULT_PROTOCOL,
+      result_kind: 'explanation',
+      title: safeDisplayText(source.title, 80, 'invalid_generated_answer'),
+      summary: safeDisplayText(source.summary, 400, 'invalid_generated_answer'),
+      explanation: safeDisplayText(source.explanation, 4000, 'invalid_generated_answer'),
+      project_id: request.project_id,
+      existing_project_id: request.project_id,
       admissions: {
         conversation: 'sqlite_recorded',
         draft: 'not_created',

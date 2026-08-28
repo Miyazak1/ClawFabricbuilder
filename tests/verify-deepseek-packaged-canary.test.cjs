@@ -168,6 +168,17 @@ test('builds a first-config packaged canary input for official DeepSeek V4 only'
   assert.deepEqual(DEEPSEEK_V4_MODELS, ['deepseek-v4-flash', 'deepseek-v4-pro']);
 });
 
+test('accepts one leading BOM from Windows PowerShell stdin', () => {
+  const parsed = parseDeepSeekCanaryInput(`\uFEFF${input()}`);
+
+  assert.equal(parsed.mode, 'first_config');
+  assert.equal(parsed.model, 'deepseek-v4-flash');
+  assert.throws(
+    () => parseDeepSeekCanaryInput(`\uFEFF\uFEFF${input()}`),
+    (error) => error.code === 'canary_input_invalid',
+  );
+});
+
 test('builds a saved-profile packaged canary input after verifying stored DeepSeek V4 config', (t) => {
   const sourceRoot = savedProfileRoot(t, {
     base_url: 'https://api.deepseek.com',

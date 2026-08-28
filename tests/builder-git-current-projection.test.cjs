@@ -315,6 +315,42 @@ test('projects a verified candidate to Git main and refuses to overwrite later w
   assert.equal(fs.existsSync(path.join(value.projectRoot, 'node_modules', 'local-only', 'index.js')), true);
 });
 
+test('advances Git main when the verified candidate is already materialized in the worktree', async (t) => {
+  const value = fixture(t);
+  const first = candidate({
+    index: 11,
+    operations: [
+      { operation: 'upsert', path: 'index.html', content: '<main>Already materialized</main>\n' },
+      { operation: 'upsert', path: 'src/app.js', content: 'document.title = "Ready";\n' },
+    ],
+  });
+  const receipt = await value.repository.persist_candidate_commit(request(first, 11));
+  for (const file of first.resulting_source_tree.files) {
+    const target = path.join(value.projectRoot, ...file.path.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, file.content);
+  }
+
+  const projected = await value.projection.project_current({
+    candidate_receipt: receipt,
+    expected_workspace_source_tree_digest: first.resulting_tree_digest,
+    projection_mode: 'base_cas',
+  });
+
+  assert.equal(projected.main_ref, 'updated');
+  assert.equal(projected.previous_main_oid, null);
+  assert.equal(projected.commit_oid, receipt.commit_oid);
+  assert.equal(
+    (await value.runner.run('read_main_ref', value.projectRoot, { object_format: 'sha1' }))
+      .stdout.trim(),
+    receipt.commit_oid,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(value.projectRoot, 'index.html'), 'utf8'),
+    '<main>Already materialized</main>\n',
+  );
+});
+
 test('projects a verified candidate into the selected source folder from project identity', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-current-projection-selected-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

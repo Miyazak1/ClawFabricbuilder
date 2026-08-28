@@ -63,6 +63,7 @@ function request(overrides = {}) {
   return createBuilderGenerationRequest({
     instruction: 'Build from the approved plan.',
     existing_project_id: PROJECT_ID,
+    task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174002',
     ...overrides,
   });
 }

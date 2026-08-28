@@ -13,6 +13,9 @@ const {
   admitBuilderToolCallSessionState,
   admitBuilderToolResultSessionState,
 } = require('./builder-tool-session-state-gate.cjs');
+const {
+  admitBuilderProgrammingRuntimeEventContinuation,
+} = require('./builder-programming-runtime-events.cjs');
 
 const CONVERSATION_REPLAY_VERSION = 'builder-conversation-replay.v2';
 const RUN_PROGRESS_ORDER = Object.freeze([
@@ -235,10 +238,48 @@ function applyRunStarted(state, payload) {
     programming_run_admission: null,
     tool_calls: [],
     progress_stages: [],
+    checkpoint_fact: null,
+    recovery_action: null,
     interrupt_request_id: null,
     cancel_request_id: null,
     agent_step_progress: [],
+    runtime_events: [],
   });
+}
+
+function applyCheckpointRecorded(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  if (
+    run === null
+    || run.run_id !== payload.run_id
+    || run.status !== 'running'
+    || run.context_snapshot === null
+    || (run.checkpoint_fact !== null && payload.status !== 'updated')
+    || run.cancel_request_id !== null
+  ) fail();
+  run.checkpoint_fact = {
+    status: payload.status,
+    changed_file_count: payload.changed_file_count,
+    verification_status: payload.verification_status,
+  };
+}
+
+function applyRecoveryActionRecorded(state, payload) {
+  const turn = requireActiveTurn(state, payload.turn_id);
+  const run = turn.runs.at(-1) ?? null;
+  if (run === null || run.run_id !== payload.run_id || run.status !== 'running') fail();
+  if (payload.phase === 'requested') {
+    if (run.context_snapshot === null || run.recovery_action !== null) fail();
+    run.recovery_action = { action: payload.action, phase: payload.phase };
+    return;
+  }
+  if (
+    run.recovery_action === null
+    || run.recovery_action.action !== payload.action
+    || run.recovery_action.phase !== 'requested'
+  ) fail();
+  run.recovery_action = { action: payload.action, phase: payload.phase };
 }
 
 function applyRunContextSnapshotRecorded(state, payload) {
@@ -328,6 +369,29 @@ function applyRunProgressRecorded(state, payload) {
     || stageIndex !== expectedIndex
   ) fail();
   run.progress_stages.push(payload.stage);
+}
+
+function applyProgrammingRuntimeEventRecorded(state, payload) {
+  const runtimeEvent = payload.runtime_event;
+  const turn = requireActiveTurn(state, runtimeEvent.turn_id ?? state.activeTurnId);
+  const run = turn.runs.at(-1) ?? null;
+  const previous = run?.runtime_events.at(-1) ?? null;
+  if (
+    run === null
+    || run.run_id !== runtimeEvent.run_id
+    || run.status !== 'running'
+    || runtimeEvent.project_id !== state.projectId
+    || runtimeEvent.conversation_id !== state.conversationId
+    || (runtimeEvent.turn_id !== null && runtimeEvent.turn_id !== turn.turn_id)
+    || run.runtime_events.length >= 4_096
+  ) fail();
+  let admitted;
+  try {
+    admitted = admitBuilderProgrammingRuntimeEventContinuation(previous, runtimeEvent);
+  } catch {
+    fail();
+  }
+  run.runtime_events.push(admitted);
 }
 
 function applyToolCallRequested(state, payload) {
@@ -567,6 +631,7 @@ function applyRunCompleted(state, payload) {
   if (run === null || run.run_id !== payload.run_id || run.status !== 'running') fail();
   const interrupted = run.interrupt_request_id !== null;
   const cancelled = run.cancel_request_id !== null;
+  if (run.recovery_action?.phase === 'requested') fail();
   if ((payload.terminal_status === 'interrupted' && !interrupted)
     || (payload.terminal_status === 'cancelled' && !cancelled)
     || (interrupted && payload.terminal_status !== 'interrupted')
@@ -591,6 +656,9 @@ function applyRunCompleted(state, payload) {
     title: payload.candidate_result.title,
     summary: payload.candidate_result.summary,
     git_candidate_receipt: { ...payload.candidate_result.git_candidate_receipt },
+    current_materialization: payload.candidate_result.current_materialization === undefined
+      ? { status: 'not_recorded' }
+      : { ...payload.candidate_result.current_materialization },
   };
   if (payload.assistant_message !== null) {
     turn.messages.push(addMessage(state, payload.assistant_message, 'assistant', 'run_result'));
@@ -654,6 +722,9 @@ const TRANSITIONS = Object.freeze({
   run_context_snapshot_recorded: applyRunContextSnapshotRecorded,
   programming_run_admitted: applyProgrammingRunAdmitted,
   run_progress_recorded: applyRunProgressRecorded,
+  checkpoint_recorded: applyCheckpointRecorded,
+  recovery_action_recorded: applyRecoveryActionRecorded,
+  programming_runtime_event_recorded: applyProgrammingRuntimeEventRecorded,
   run_interrupt_requested: applyRunInterruptRequested,
   run_cancel_requested: applyRunCancelRequested,
   tool_call_requested: applyToolCallRequested,
@@ -674,6 +745,8 @@ function publicTurn(turn) {
     runs: turn.runs.map((run) => {
       const publicRun = { ...run };
       delete publicRun.agent_step_progress;
+      delete publicRun.checkpoint_fact;
+      delete publicRun.recovery_action;
       return {
         ...publicRun,
         context_snapshot: run.context_snapshot === null ? null : {
@@ -715,6 +788,11 @@ function publicTurn(turn) {
           authority: { ...run.programming_run_admission.authority },
         },
         progress_stages: [...run.progress_stages],
+        runtime_events: run.runtime_events.map((event) => ({
+          ...event,
+          previous_event: event.previous_event === null ? null : { ...event.previous_event },
+          payload: { ...event.payload },
+        })),
         tool_calls: run.tool_calls.map((toolCall) => ({
           ...toolCall,
           resource: { ...toolCall.resource },
@@ -728,6 +806,7 @@ function publicTurn(turn) {
         candidate_result: run.candidate_result === null ? null : {
           ...run.candidate_result,
           git_candidate_receipt: { ...run.candidate_result.git_candidate_receipt },
+          current_materialization: { ...run.candidate_result.current_materialization },
         },
         candidate_review: run.candidate_review === null ? null : {
           ...run.candidate_review,
@@ -742,19 +821,8 @@ function publicTurn(turn) {
   };
 }
 
-function replayBuilderConversation(rawEvents) {
-  assertDenseArray(rawEvents);
-  const events = rawEvents.map((raw) => {
-    try { return sanitizeBuilderConversationEvent(raw); } catch (error) {
-      if (error instanceof BuilderConversationRecordError) fail();
-      throw error;
-    }
-  });
-  const first = events[0];
-  if (first.sequence !== 1 || first.event_type !== 'turn_submitted'
-    || first.previous_event !== null) fail();
-
-  const state = {
+function createReplayState(first) {
+  return {
     projectId: first.project_id,
     conversationId: first.conversation_id,
     eventIds: new Set(),
@@ -776,33 +844,15 @@ function replayBuilderConversation(rawEvents) {
     latestTaskCapsule: null,
     priorHead: null,
   };
+}
 
-  let previous = null;
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index];
-    if (event.project_id !== state.projectId || event.conversation_id !== state.conversationId
-      || event.sequence !== index + 1 || !samePrevious(event, previous)
-      || state.eventIds.has(event.event_id)) fail();
-    const priorCommandDigest = state.commandIds.get(event.command_id);
-    if (priorCommandDigest !== undefined) fail();
-    state.eventIds.add(event.event_id);
-    state.commandIds.set(event.command_id, event.command_digest);
-    const transition = TRANSITIONS[event.event_type];
-    if (typeof transition !== 'function') fail();
-    state.priorHead = previous === null ? null : {
-      sequence: previous.sequence,
-      event_id: previous.event_id,
-      event_digest: previous.event_digest,
-    };
-    transition(state, event.payload);
-    previous = event;
-  }
-
+function publicReplaySnapshot(state, previous, eventCount) {
+  if (state === null || previous === null || eventCount < 1) fail();
   return freezeDeep({
     replay_version: CONVERSATION_REPLAY_VERSION,
     project_id: state.projectId,
     conversation_id: state.conversationId,
-    event_count: events.length,
+    event_count: eventCount,
     head: {
       sequence: previous.sequence,
       event_id: previous.event_id,
@@ -812,6 +862,71 @@ function replayBuilderConversation(rawEvents) {
     turns: state.turnOrder.map((turnId) => publicTurn(state.turns.get(turnId))),
     authority: { ...CONVERSATION_AUTHORITY },
   });
+}
+
+function createReplayAccumulator() {
+  let state = null;
+  let previous = null;
+  let eventCount = 0;
+
+  function append(rawEvents) {
+    assertDenseArray(rawEvents);
+    const events = rawEvents.map((raw) => {
+      try { return sanitizeBuilderConversationEvent(raw); } catch (error) {
+        if (error instanceof BuilderConversationRecordError) fail();
+        throw error;
+      }
+    });
+    if (state === null) {
+      const first = events[0];
+      if (first.sequence !== 1 || first.event_type !== 'turn_submitted'
+        || first.previous_event !== null) fail();
+      state = createReplayState(first);
+    }
+
+    for (const event of events) {
+      if (event.project_id !== state.projectId || event.conversation_id !== state.conversationId
+        || event.sequence !== eventCount + 1 || !samePrevious(event, previous)
+        || state.eventIds.has(event.event_id)) fail();
+      const priorCommandDigest = state.commandIds.get(event.command_id);
+      if (priorCommandDigest !== undefined) fail();
+      state.eventIds.add(event.event_id);
+      state.commandIds.set(event.command_id, event.command_digest);
+      const transition = TRANSITIONS[event.event_type];
+      if (typeof transition !== 'function') fail();
+      state.priorHead = previous === null ? null : {
+        sequence: previous.sequence,
+        event_id: previous.event_id,
+        event_digest: previous.event_digest,
+      };
+      transition(state, event.payload);
+      previous = event;
+      eventCount += 1;
+    }
+    return publicReplaySnapshot(state, previous, eventCount);
+  }
+
+  return Object.freeze({
+    append,
+    snapshot() {
+      return publicReplaySnapshot(state, previous, eventCount);
+    },
+  });
+}
+
+function createBuilderConversationReplayAccumulator(rawEvents) {
+  const accumulator = createReplayAccumulator();
+  try {
+    accumulator.append(rawEvents);
+    return accumulator;
+  } catch (error) {
+    if (error instanceof BuilderConversationReplayError) throw error;
+    fail();
+  }
+}
+
+function replayBuilderConversation(rawEvents) {
+  return createBuilderConversationReplayAccumulator(rawEvents).snapshot();
 }
 
 function safeReplay(rawEvents) {
@@ -824,5 +939,6 @@ function safeReplay(rawEvents) {
 module.exports = Object.freeze({
   CONVERSATION_REPLAY_VERSION,
   BuilderConversationReplayError,
+  createBuilderConversationReplayAccumulator,
   replayBuilderConversation: safeReplay,
 });

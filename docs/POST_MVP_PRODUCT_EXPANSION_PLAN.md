@@ -16,7 +16,7 @@ select project
 -> approved bounded edits
 -> automatic draft checkpoint
 -> diff, preview, and basic check evidence
--> explicit save version
+-> continue, undo, or optionally mark a milestone
 -> packaged restart recovery
 ```
 
@@ -34,8 +34,9 @@ Future features must grow from Builder's trusted work facts:
 - Working Context State;
 - ProgrammingRun, ToolAction, CheckRun, PreviewRun, and ChangeExplanation facts.
 
-No future feature may bypass project selection, permission, review, checkpoint,
-save version, restart recovery, or provenance boundaries.
+No future feature may bypass project selection, permission, checkpoint,
+conflict detection, restart recovery, optional milestone integrity, or
+provenance boundaries.
 
 ## Future Tracks
 
@@ -54,7 +55,7 @@ Local Work Capsule Manifest
 
 Start only after:
 
-- Save Version is restart-safe;
+- automatic checkpoint, undo, and optional milestone creation are restart-safe;
 - Review Workspace can show diff, preview, check evidence, and change
   explanation;
 - local Artifact and Revision references are stable.
@@ -194,7 +195,7 @@ local Space organization
 
 Start only after:
 
-- local Review and Save Version are stable;
+- local Review, checkpoint restore, and optional milestone creation are stable;
 - external input can enter as Contribution without direct mutation;
 - identity, roles, and lifecycle rules are defined.
 

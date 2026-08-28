@@ -98,7 +98,8 @@ test('projects active build phases into plain user-facing work status', () => {
 
   const editing = projectBuilderAgentActivity(input());
   assert.equal(editing.current.phase, 'editing');
-  assert.equal(editing.current.label, 'Changing files');
+  assert.equal(editing.current.label, 'Preparing changes');
+  assert.equal(editing.current.summary, 'Building and validating the project changes.');
   assert.equal(editing.authority.consumer_role, 'read_only');
   assert.equal(editing.authority.side_effect_authority, 'none');
 });
@@ -240,6 +241,50 @@ test('keeps a retryable failed run blocked while its turn remains active', () =>
   assert.equal(projection.current.phase, 'blocked');
   assert.equal(projection.current.status, 'blocked');
   assert.equal(projection.current.turn_id, TURN_ID);
+});
+
+test('accepts the boundary between a successful run and its turn completion', () => {
+  const projection = projectBuilderAgentActivity(input({
+    latest_run: latestRun({
+      status: 'completed',
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      latest_progress_stage: 'result_preparing',
+    }),
+  }));
+
+  assert.equal(projection.current.phase, 'preparing_review');
+  assert.equal(projection.current.status, 'active');
+});
+
+test('projects a new active run ahead of an earlier draft review state', () => {
+  const projection = projectBuilderAgentActivity(input({
+    latest_run: latestRun({ active_tool_action: 'filesystem.write' }),
+    review_state_projection: reviewState(),
+  }));
+
+  assert.equal(projection.current.phase, 'editing');
+  assert.equal(projection.current.label, 'Preparing changes');
+  assert.equal(projection.authority.fact_source, 'recorded_activity_and_review');
+});
+
+test('keeps an earlier draft review visible after a completed explanation run', () => {
+  const projection = projectBuilderAgentActivity(input({
+    active_turn_id: null,
+    latest_run: latestRun({
+      status: 'completed',
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      route: 'answer',
+      dispatch: 'reply',
+      programming_run_admitted: false,
+      latest_progress_stage: 'result_preparing',
+    }),
+    review_state_projection: reviewState(),
+  }));
+
+  assert.equal(projection.current.phase, 'ready_for_review');
+  assert.equal(projection.current.summary, reviewState().summary);
 });
 
 test('projects an active candidate check ahead of ready review state', () => {

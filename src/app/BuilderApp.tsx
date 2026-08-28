@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
+  Bot,
   Compass,
   Copy,
-  FolderOpen,
   History,
   LayoutTemplate,
   MessageSquare,
   Minus,
   Rocket,
   Settings,
+  ShieldCheck,
   Square,
   UsersRound,
   X,
@@ -24,18 +25,29 @@ import {
 } from './builderDesktopBridgeRoot';
 import type {
   BuilderCodeGeneratorPort,
+  BuilderAgentWorkbenchPort,
+  BuilderAgentProjectTreePort,
   BuilderCheckRunAvailableResult,
   BuilderCheckRunApproveRequest,
-  BuilderCheckRunCompletedResult,
+  BuilderCheckRunEnvironmentDiagnosis,
+  BuilderCheckRunDependencyPreparationDecision,
+  BuilderCheckRunDependencyPreparationRequest,
   BuilderCheckRunPort,
   BuilderCheckRunProfile,
   BuilderCheckRunReadRequest,
+  BuilderProjectEnvironmentDiagnosis,
+  BuilderCommandApprovalRequest,
+  BuilderCommandOutputEvent,
   BuilderCurrentProjectWriteApprovalStatus,
   BuilderGenerationOutputEvent,
   BuilderGenerationStartedEvent,
+  BuilderAgentTestBrowserPort,
   BuilderLivePreviewPort,
   BuilderLivePreviewRequest,
   BuilderLivePreviewStatusProjection,
+  BuilderLivePreviewViewBounds,
+  BuilderUserWebPort,
+  BuilderUserWebStatusProjection,
   BuilderPlanReviewPort,
   BuilderPlanReviewRequest,
   BuilderTaskStreamChangedEvent,
@@ -47,10 +59,16 @@ import type {
   BuilderSideWorkspaceFileContentRequest,
   BuilderSideWorkspaceFileRef,
   BuilderSideWorkspaceFileRequest,
+  BuilderSideWorkspaceRuntimeToolFileRequest,
   BuilderSideWorkspaceFileTreeProjection,
 } from '../features/builder/application/builderPorts';
 import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
+import { BuilderDesktopAgentProjectTreePortError, createBuilderDesktopAgentProjectTreePort } from '../features/builder/infrastructure/builderDesktopAgentProjectTreePort';
+import {
+  BuilderDesktopAgentWorkbenchPortError,
+  createBuilderDesktopAgentWorkbenchPort,
+} from '../features/builder/infrastructure/builderDesktopAgentWorkbenchPort';
 import {
   BuilderDesktopCheckRunPortError,
   createBuilderDesktopCheckRunPort,
@@ -72,12 +90,26 @@ import {
   createBuilderDesktopLivePreviewPort,
 } from '../features/builder/infrastructure/builderDesktopLivePreviewPort';
 import {
+  BuilderDesktopUserWebPortError,
+  createBuilderDesktopUserWebPort,
+} from '../features/builder/infrastructure/builderDesktopUserWebPort';
+import {
+  BuilderDesktopAgentTestBrowserPortError,
+  createBuilderDesktopAgentTestBrowserPort,
+} from '../features/builder/infrastructure/builderDesktopAgentTestBrowserPort';
+import {
   BuilderDesktopSideWorkspaceFilesPortError,
   createBuilderDesktopSideWorkspaceFilesPort,
 } from '../features/builder/infrastructure/builderDesktopSideWorkspaceFilesPort';
 import {
   type BuilderConversationControllerSnapshot,
 } from '../features/builder/application/builderConversationController';
+import {
+  createBuilderLiveOutputStore,
+  type BuilderLiveOutputSnapshot,
+} from '../features/builder/application/builderLiveOutputStore';
+import { createBuilderCommandOutputStore } from '../features/builder/application/builderCommandOutputStore';
+import { incrementBuilderPerformance } from '../features/builder/application/builderPerformanceTrace';
 import {
   createBuilderComposerRouteDecisionEvidence,
   decideBuilderComposerIntent,
@@ -90,22 +122,41 @@ import {
 } from '../features/builder/application/builderComposerIntent';
 import { useBuilderConversationController } from '../features/builder/hooks/useBuilderConversationController';
 import { useBuilderProjectCatalogController } from '../features/builder/hooks/useBuilderProjectCatalogController';
+import { useBuilderAgentProjectTreeController } from '../features/builder/hooks/useBuilderAgentProjectTreeController';
+import { useBuilderAgentWorkbenchController } from '../features/builder/hooks/useBuilderAgentWorkbenchController';
 import { useBuilderProjectController } from '../features/builder/hooks/useBuilderProjectController';
 import { useBuilderProjectHistoryController } from '../features/builder/hooks/useBuilderProjectHistoryController';
+import { DEFAULT_BUILDER_AGENT_ID } from '../features/builder/domain/builderAgentProjectTreeProjection';
 import {
   BuilderPage,
+  type BuilderCheckEnvironmentDiagnosisView,
+  type BuilderCheckRunOperationFailureCode,
+  type BuilderCommandApprovalPrompt,
   type BuilderFileName,
   type BuilderPlanReviewInFlight,
   type BuilderPlanSourceReadApprovalPrompt,
+  type BuilderTaskConversationSeed,
 } from '../features/builder/presentation/BuilderPage';
+import {
+  builderDurableUserMessage,
+  builderPendingUserMessageMatchesDurable,
+  type BuilderPendingUserMessage,
+} from '../features/builder/presentation/builderUserMessageReconciliation';
 import type {
   BuilderComposerContextStatus,
   BuilderComposerMode,
   BuilderComposerWorkingBrief,
 } from '../features/builder/presentation/BuilderComposer';
 import { composerStatusFromContextProjection } from '../features/builder/domain/builderContextStatusProjection';
+import type {
+  BuilderAgentProjectTreeProjection,
+  BuilderAgentTaskNode,
+} from '../features/builder/domain/builderAgentProjectTreeProjection';
+import type { BuilderAgentTaskMonitorItem } from '../features/builder/domain/builderAgentTaskMonitorProjection';
+import type { BuilderAgentWorkbenchTaskProposalAction } from '../features/builder/domain/builderAgentWorkbenchProjection';
 import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../features/builder/domain/builderProviderContextDisclosureStatusProjection';
-import { BuilderProjectCatalog } from '../features/builder/presentation/BuilderProjectCatalog';
+import { BuilderAgentSidebar } from '../features/builder/presentation/BuilderAgentSidebar';
+import { BuilderAgentRoster } from '../features/builder/presentation/BuilderAgentRoster';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
 const BUILDER_APP_ICON_SRC = 'app-icon.ico';
@@ -116,7 +167,7 @@ export type BuilderAppProps = Readonly<{
 
 type BuilderAppView = 'project' | 'settings';
 type BuilderRailArea =
-  | 'projects'
+  | 'agents'
   | 'runs'
   | 'templates'
   | 'community'
@@ -134,7 +185,7 @@ type BuilderRailItem = Readonly<{
 }>;
 
 const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
-  { Icon: FolderOpen, enabled: true, id: 'projects', label: 'Projects', view: 'project' },
+  { Icon: Bot, enabled: true, id: 'agents', label: 'Agents', view: 'project' },
   { Icon: History, enabled: false, id: 'runs', label: 'Runs', view: null },
   { Icon: LayoutTemplate, enabled: false, id: 'templates', label: 'Templates', view: null },
   { Icon: Compass, enabled: false, id: 'community', label: 'Explore', view: null },
@@ -144,21 +195,351 @@ const BUILDER_RAIL_ITEMS: readonly BuilderRailItem[] = Object.freeze([
   { Icon: MessageSquare, enabled: false, id: 'contacts', label: 'Contacts', view: null },
   { Icon: Settings, enabled: true, id: 'settings', label: 'Settings', view: 'settings' },
 ]);
-const MAX_LIVE_OUTPUT_TEXT_BYTES = 16 * 1024;
-const LIVE_OUTPUT_ENCODER = new TextEncoder();
-const APPROVED_PLAN_WAITING_TEXT = 'Applying the approved plan...';
 
-export type BuilderLiveOutputSnapshot = Readonly<{
-  state: 'streaming';
-  request_id: string;
-  project_id: string;
-  text: string;
-  chunk_count: number;
-  waiting_text?: string;
+type BuilderEnvironmentDiagnosisSettingsCardProps = Readonly<{
+  currentDraftId: string | null;
+  diagnosis: BuilderCheckEnvironmentDiagnosisView | null;
+  projectDiagnosis: BuilderProjectEnvironmentDiagnosisView | null;
+  projectId: string | null;
+  operation: 'loading' | 'running' | 'preparing_dependencies' | 'skipping' | 'failed' | null;
+  operationFailureCode: BuilderCheckRunOperationFailureCode | null;
+  profile: BuilderCheckRunProfile | null;
+  onDiagnose: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
+  onDiagnoseProject: (projectId: string) => Promise<unknown> | void;
+  onPrepareDependencies: (
+    decision: BuilderCheckRunDependencyPreparationDecision,
+    profile: BuilderCheckRunProfile,
+  ) => Promise<unknown> | void;
 }>;
+
+type BuilderProjectEnvironmentDiagnosisView = Readonly<{
+  project_id: string;
+  status: 'loading' | 'ready' | 'failed';
+  diagnosis?: BuilderProjectEnvironmentDiagnosis;
+  failure_message?: string;
+}>;
+
+type BuilderEnvironmentDiagnosisSettingsRow = Readonly<{
+  key: string;
+  label: string;
+  value: string;
+}>;
+
+type BuilderEnvironmentDiagnosisSettingsSection = Readonly<{
+  key: string;
+  title: string;
+  rows: readonly BuilderEnvironmentDiagnosisSettingsRow[];
+}>;
+
+function formatDiagnosisValue(value: string): string {
+  if (value === 'npm' || value === 'pnpm' || value === 'yarn' || value === 'bun') return value;
+  if (value === 'package-lock.json' || value === 'pnpm-lock.yaml' || value === 'yarn.lock'
+    || value === 'bun.lock' || value === 'bun.lockb') return value;
+  return value
+    .split('_')
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function formatToolchainValue(
+  toolchain: BuilderProjectEnvironmentDiagnosis['toolchains']['node'],
+): string {
+  const label = formatDiagnosisValue(toolchain.state);
+  return toolchain.version === null ? label : `${label} ${toolchain.version}`;
+}
+
+function diagnosisSections(
+  diagnosis: BuilderCheckRunEnvironmentDiagnosis,
+): readonly BuilderEnvironmentDiagnosisSettingsSection[] {
+  return Object.freeze([
+    {
+      key: 'readiness',
+      title: 'Readiness',
+      rows: [
+        { key: 'summary', label: 'Status', value: diagnosis.safe_summary },
+        { key: 'primary_action', label: 'Next action', value: formatDiagnosisValue(diagnosis.primary_action) },
+      ],
+    },
+    {
+      key: 'toolchain',
+      title: 'Host toolchain',
+      rows: [
+        { key: 'host_toolchain_state', label: 'Visibility', value: formatDiagnosisValue(diagnosis.host_toolchain_state) },
+        { key: 'node', label: 'Node', value: diagnosis.host_node_version ?? formatDiagnosisValue(diagnosis.host_toolchain_state) },
+        {
+          key: 'package_manager',
+          label: 'Package manager',
+          value: diagnosis.host_package_manager_version === null
+            ? diagnosis.package_manager
+            : `${diagnosis.package_manager} ${diagnosis.host_package_manager_version}`,
+        },
+      ],
+    },
+    {
+      key: 'project_dependencies',
+      title: 'Project dependencies',
+      rows: [
+        { key: 'manifest', label: 'Manifest', value: formatDiagnosisValue(diagnosis.package_manifest) },
+        { key: 'dependency_manifest', label: 'Declared dependencies', value: formatDiagnosisValue(diagnosis.dependency_manifest) },
+        { key: 'lockfile', label: 'Lockfile', value: formatDiagnosisValue(diagnosis.lockfile) },
+        { key: 'project_dependency_state', label: 'Project folder', value: formatDiagnosisValue(diagnosis.project_dependency_state) },
+      ],
+    },
+    {
+      key: 'check_workspace',
+      title: 'Check workspace',
+      rows: [
+        {
+          key: 'check_workspace_dependency_state',
+          label: 'Isolated dependencies',
+          value: formatDiagnosisValue(diagnosis.check_workspace_dependency_state),
+        },
+        { key: 'install_permission', label: 'Install permission', value: formatDiagnosisValue(diagnosis.install_permission) },
+        { key: 'dependency_strategy', label: 'Strategy', value: formatDiagnosisValue(diagnosis.dependency_strategy) },
+      ],
+    },
+  ]);
+}
+
+function projectDiagnosisSections(
+  diagnosis: BuilderProjectEnvironmentDiagnosis,
+): readonly BuilderEnvironmentDiagnosisSettingsSection[] {
+  return Object.freeze([
+    {
+      key: 'readiness',
+      title: 'Readiness',
+      rows: [
+        { key: 'summary', label: 'Status', value: diagnosis.safe_summary },
+        { key: 'primary_action', label: 'Next action', value: formatDiagnosisValue(diagnosis.primary_action) },
+      ],
+    },
+    {
+      key: 'toolchain',
+      title: 'Host toolchain',
+      rows: [
+        { key: 'node', label: 'Node', value: formatToolchainValue(diagnosis.toolchains.node) },
+        { key: 'npm', label: 'npm', value: formatToolchainValue(diagnosis.toolchains.npm) },
+        { key: 'pnpm', label: 'pnpm', value: formatToolchainValue(diagnosis.toolchains.pnpm) },
+        { key: 'yarn', label: 'Yarn', value: formatToolchainValue(diagnosis.toolchains.yarn) },
+        { key: 'git', label: 'Git', value: formatToolchainValue(diagnosis.toolchains.git) },
+      ],
+    },
+    {
+      key: 'project_dependencies',
+      title: 'Project dependencies',
+      rows: [
+        { key: 'package_manager', label: 'Package manager', value: formatDiagnosisValue(diagnosis.package_manager) },
+        { key: 'manifest', label: 'Manifest', value: formatDiagnosisValue(diagnosis.package_manifest) },
+        { key: 'dependency_manifest', label: 'Declared dependencies', value: formatDiagnosisValue(diagnosis.dependency_manifest) },
+        { key: 'lockfile', label: 'Lockfile', value: formatDiagnosisValue(diagnosis.lockfile) },
+        { key: 'project_dependency_state', label: 'Project folder', value: formatDiagnosisValue(diagnosis.project_dependency_state) },
+      ],
+    },
+  ]);
+}
+
+function settingsDiagnosisUnavailableMessage(
+  currentDraftId: string | null,
+  profile: BuilderCheckRunProfile | null,
+  operation: BuilderEnvironmentDiagnosisSettingsCardProps['operation'],
+  operationFailureCode: BuilderCheckRunOperationFailureCode | null,
+): string | null {
+  if (currentDraftId === null) {
+    return 'No current draft is available. Diagnose reads the current project environment without preparing dependencies or running checks.';
+  }
+  if (operation === 'loading') {
+    return 'Builder is discovering approved check commands for this draft.';
+  }
+  if (operation === 'failed' && profile === null) {
+    return operationFailureCode === 'stale_draft'
+      ? 'This draft changed before Builder could discover check commands. Return to the project and refresh the current draft.'
+      : operationFailureCode === 'forbidden'
+        ? 'The check discovery request did not come from the active Builder window.'
+        : operationFailureCode === 'invalid_request'
+          ? 'Builder could not verify the current draft check discovery request.'
+          : operationFailureCode === 'busy'
+            ? 'A project check is already running. Try diagnosis after it finishes.'
+            : 'Builder could not discover approved check commands for this draft.';
+  }
+  if (profile === null) return 'No approved check command is available for the current draft.';
+  return null;
+}
+
+function BuilderEnvironmentDiagnosisSettingsCard({
+  currentDraftId,
+  diagnosis,
+  projectDiagnosis,
+  projectId,
+  operation,
+  operationFailureCode,
+  profile,
+  onDiagnose,
+  onDiagnoseProject,
+  onPrepareDependencies,
+}: BuilderEnvironmentDiagnosisSettingsCardProps) {
+  const visibleDiagnosis = profile !== null
+    && diagnosis?.command_profile_id === profile.command_profile_id
+    ? diagnosis
+    : null;
+  const visibleProjectDiagnosis = projectId !== null
+    && projectDiagnosis?.project_id === projectId
+    ? projectDiagnosis
+    : null;
+  const usesProjectDiagnosis = currentDraftId === null;
+  const disabled = usesProjectDiagnosis
+    ? projectId === null || visibleProjectDiagnosis?.status === 'loading'
+    : profile === null || visibleDiagnosis?.status === 'loading';
+  const unavailableMessage = settingsDiagnosisUnavailableMessage(
+    currentDraftId,
+    profile,
+    operation,
+    operationFailureCode,
+  );
+  const sections = usesProjectDiagnosis
+    ? visibleProjectDiagnosis?.diagnosis === undefined
+      ? null
+      : projectDiagnosisSections(visibleProjectDiagnosis.diagnosis)
+    : visibleDiagnosis?.diagnosis === undefined
+      ? null
+      : diagnosisSections(visibleDiagnosis.diagnosis);
+  const diagnosisFailed = usesProjectDiagnosis
+    ? visibleProjectDiagnosis?.status === 'failed'
+    : visibleDiagnosis?.status === 'failed';
+  const diagnosisFailureMessage = usesProjectDiagnosis
+    ? visibleProjectDiagnosis?.failure_message
+    : visibleDiagnosis?.failure_message;
+  const diagnosisStatus = usesProjectDiagnosis
+    ? visibleProjectDiagnosis?.status
+    : visibleDiagnosis?.status;
+  const canPrepareFromCurrentDraftDiagnosis = !usesProjectDiagnosis
+    && profile !== null
+    && visibleDiagnosis?.status === 'ready'
+    && visibleDiagnosis.diagnosis?.primary_action === 'prepare_once';
+
+  return (
+    <section
+      aria-labelledby="builder-environment-diagnosis-settings-title"
+      className="cf-builder-panel cf-builder-settings-card border"
+      data-builder-environment-diagnosis-settings="true"
+    >
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">Environment</p>
+          <h2 className="text-sm font-semibold" id="builder-environment-diagnosis-settings-title">
+            Dependencies and checks
+          </h2>
+        </div>
+        <button
+          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          data-builder-settings-diagnose-environment="true"
+          disabled={disabled}
+          onClick={() => {
+            if (usesProjectDiagnosis) {
+              if (projectId !== null) void onDiagnoseProject(projectId);
+              return;
+            }
+            if (profile !== null) void onDiagnose(profile);
+          }}
+          type="button"
+        >
+          <ShieldCheck aria-hidden="true" className="size-3.5" />
+          {diagnosisStatus === 'loading' ? 'Checking...' : 'Diagnose'}
+        </button>
+      </header>
+      <div className="cf-builder-settings-sections">
+        <section>
+          <h3 className="text-xs font-semibold">Current check</h3>
+          <p className="text-sm text-muted-foreground">
+            {usesProjectDiagnosis
+              ? 'Project environment'
+              : profile === null ? 'No check selected.' : profile.command_display}
+          </p>
+        </section>
+        {unavailableMessage === null ? null : (
+          <p className="text-sm text-muted-foreground" data-builder-settings-environment-unavailable="true">
+            {unavailableMessage}
+          </p>
+        )}
+        {diagnosisFailed ? (
+          <p
+            className="cf-builder-alert cf-builder-alert-danger text-sm"
+            data-builder-settings-environment-diagnosis-failed="true"
+            role="alert"
+          >
+            {diagnosisFailureMessage ?? 'I could not read the environment diagnosis. Try again.'}
+          </p>
+        ) : null}
+        {sections === null ? null : (
+          <div
+            className="grid gap-3 text-sm"
+            data-builder-settings-environment-diagnosis={diagnosisStatus}
+            data-builder-settings-environment-primary-action={usesProjectDiagnosis
+              ? visibleProjectDiagnosis?.diagnosis?.primary_action
+              : visibleDiagnosis?.diagnosis?.primary_action}
+          >
+            {sections.map((section) => (
+              <section
+                className="grid gap-2 rounded-md border border-border/70 p-3"
+                data-builder-settings-environment-section={section.key}
+                key={section.key}
+              >
+                <h3 className="text-xs font-semibold">{section.title}</h3>
+                <dl className="grid gap-1.5">
+                  {section.rows.map((row) => (
+                    <div
+                      className="grid grid-cols-[minmax(8rem,12rem)_minmax(0,1fr)] gap-2"
+                      data-builder-settings-environment-row={row.key}
+                      key={row.key}
+                    >
+                      <dt className="text-xs font-medium text-muted-foreground">{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </div>
+        )}
+        {usesProjectDiagnosis
+        && visibleProjectDiagnosis?.status === 'ready'
+        && visibleProjectDiagnosis.diagnosis?.primary_action === 'show_project_dependency_setup' ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-builder-settings-project-dependency-setup-read-only="true"
+          >
+            Project dependency setup is diagnostic-only in this phase. Builder will not install into the project folder from Settings.
+          </p>
+        ) : null}
+        {canPrepareFromCurrentDraftDiagnosis ? (
+          <div className="flex justify-end">
+            <button
+              className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-settings-prepare-dependencies="true"
+              disabled={operation === 'preparing_dependencies'}
+              onClick={() => {
+                void onPrepareDependencies('allow_once', profile);
+              }}
+              type="button"
+            >
+              {operation === 'preparing_dependencies' ? 'Preparing...' : 'Prepare once'}
+            </button>
+          </div>
+        ) : null}
+        <p className="text-xs text-muted-foreground">
+          {canPrepareFromCurrentDraftDiagnosis
+            ? 'Prepare once installs only in the isolated check workspace, then reruns the selected check.'
+            : 'Diagnosis is read-only. Dependency installation still requires the one-shot Prepare once approval.'}
+        </p>
+      </div>
+    </section>
+  );
+}
 
 const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   bridgeVersion: 'builder-preload.v0',
+  agentProjectTree: null,
+  agentWorkbench: null,
   codeGenerator: null,
   projectWorkspace: null,
   providerSettings: null,
@@ -167,6 +548,8 @@ const UNAVAILABLE_ROOT: BuilderDesktopBridgeRoot = Object.freeze({
   providerContextDisclosureApproval: null,
   checkRun: null,
   livePreview: null,
+  agentTestBrowser: null,
+  userWeb: null,
   sideWorkspaceFiles: null,
   taskStream: null,
   windowControls: null,
@@ -285,6 +668,55 @@ const UNAVAILABLE_WORKSPACE: BuilderProjectWorkspacePort = Object.freeze({
   },
 });
 
+const UNAVAILABLE_AGENT_PROJECT_TREE: BuilderAgentProjectTreePort = Object.freeze({
+  read(request: Parameters<BuilderAgentProjectTreePort['read']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
+  renameProject(request: Parameters<BuilderAgentProjectTreePort['renameProject']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
+  archiveProject(request: Parameters<BuilderAgentProjectTreePort['archiveProject']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
+  renameTask(request: Parameters<BuilderAgentProjectTreePort['renameTask']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
+  archiveTask(request: Parameters<BuilderAgentProjectTreePort['archiveTask']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
+});
+
+const UNAVAILABLE_AGENT_WORKBENCH: BuilderAgentWorkbenchPort = Object.freeze({
+  read(request: Parameters<BuilderAgentWorkbenchPort['read']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  updateMessageState(request: Parameters<BuilderAgentWorkbenchPort['updateMessageState']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  createTaskProposal(request: Parameters<BuilderAgentWorkbenchPort['createTaskProposal']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  decideTaskProposal(request: Parameters<BuilderAgentWorkbenchPort['decideTaskProposal']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  controlTask(request: Parameters<BuilderAgentWorkbenchPort['controlTask']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  subscribeChanged() {
+    return () => undefined;
+  },
+});
+
 const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
   submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
     void request;
@@ -334,6 +766,10 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
+  answerPlan(request: Parameters<NonNullable<BuilderCodeGeneratorPort['answerPlan']>>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
   answerDraft(request: Parameters<BuilderCodeGeneratorPort['answerDraft']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
@@ -343,6 +779,12 @@ const UNAVAILABLE_GENERATOR: BuilderCodeGeneratorPort = Object.freeze({
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
   restoreRevisionAsDraft(request: Parameters<BuilderCodeGeneratorPort['restoreRevisionAsDraft']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+  },
+  restorePreviousCheckpointAsDraft(
+    request: Parameters<NonNullable<BuilderCodeGeneratorPort['restorePreviousCheckpointAsDraft']>>[0],
+  ) {
     void request;
     return Promise.reject(new BuilderDesktopCodeGeneratorPortError());
   },
@@ -407,6 +849,41 @@ const UNAVAILABLE_LIVE_PREVIEW: BuilderLivePreviewPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopLivePreviewPortError());
   },
+  decideDevServerApproval(request: Parameters<BuilderLivePreviewPort['decideDevServerApproval']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+  updateCurrentPreviewLayout(request: Parameters<BuilderLivePreviewPort['updateCurrentPreviewLayout']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopLivePreviewPortError());
+  },
+});
+
+const UNAVAILABLE_USER_WEB: BuilderUserWebPort = Object.freeze({
+  navigate(request: Parameters<BuilderUserWebPort['navigate']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopUserWebPortError());
+  },
+  goBack() { return Promise.reject(new BuilderDesktopUserWebPortError()); },
+  goForward() { return Promise.reject(new BuilderDesktopUserWebPortError()); },
+  reload() { return Promise.reject(new BuilderDesktopUserWebPortError()); },
+  stop() { return Promise.reject(new BuilderDesktopUserWebPortError()); },
+  readStatus() { return Promise.reject(new BuilderDesktopUserWebPortError()); },
+  updateLayout(request: Parameters<BuilderUserWebPort['updateLayout']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopUserWebPortError());
+  },
+});
+
+const UNAVAILABLE_AGENT_TEST_BROWSER: BuilderAgentTestBrowserPort = Object.freeze({
+  stop(request: Parameters<BuilderAgentTestBrowserPort['stop']>[0]) {
+    return Promise.resolve({ closed: false, owner_run_id: request.owner_run_id });
+  },
+  subscribeLifecycle() { return () => undefined; },
+  updateLayout(request: Parameters<BuilderAgentTestBrowserPort['updateLayout']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentTestBrowserPortError());
+  },
 });
 
 const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
@@ -418,11 +895,33 @@ const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCheckRunPortError());
   },
+  diagnoseCurrentDraftCheckEnvironment(request: BuilderCheckRunApproveRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
+  diagnoseProjectEnvironment(request: Readonly<{ project_id: string }>) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
+  decideCurrentDraftDependencyPreparation(request: BuilderCheckRunDependencyPreparationRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
   skipCurrentDraftCheck(request: BuilderCheckRunReadRequest) {
     void request;
     return Promise.reject(new BuilderDesktopCheckRunPortError());
   },
 });
+
+function classifyCheckRunOperationFailureCode(error: unknown): BuilderCheckRunOperationFailureCode {
+  if (error instanceof BuilderDesktopCheckRunPortError) {
+    if (error.code === 'builder_check_run_approval_busy') return 'busy';
+    if (error.code === 'builder_check_run_current_draft_failed') return 'stale_draft';
+    if (error.code === 'builder_check_run_approval_invalid') return 'invalid_request';
+    if (error.code === 'builder_check_run_approval_forbidden') return 'forbidden';
+  }
+  return 'unavailable';
+}
 
 const UNAVAILABLE_SIDE_WORKSPACE_FILES: BuilderSideWorkspaceFilesPort = Object.freeze({
   readCurrentDraftFileTree(request: BuilderSideWorkspaceFileRequest) {
@@ -430,6 +929,10 @@ const UNAVAILABLE_SIDE_WORKSPACE_FILES: BuilderSideWorkspaceFilesPort = Object.f
     return Promise.reject(new BuilderDesktopSideWorkspaceFilesPortError());
   },
   readCurrentDraftFileContent(request: BuilderSideWorkspaceFileContentRequest) {
+    void request;
+    return Promise.reject(new BuilderDesktopSideWorkspaceFilesPortError());
+  },
+  readRuntimeToolFileTree(request: BuilderSideWorkspaceRuntimeToolFileRequest) {
     void request;
     return Promise.reject(new BuilderDesktopSideWorkspaceFilesPortError());
   },
@@ -446,13 +949,27 @@ function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
 }
 
 function safePorts(root: BuilderDesktopBridgeRoot) {
+  let agentProjectTree = UNAVAILABLE_AGENT_PROJECT_TREE;
+  let agentWorkbench = UNAVAILABLE_AGENT_WORKBENCH;
   let workspace = UNAVAILABLE_WORKSPACE;
   let generator = UNAVAILABLE_GENERATOR;
   let taskStream = UNAVAILABLE_TASK_STREAM;
   let planReview = UNAVAILABLE_PLAN_REVIEW;
   let livePreview = UNAVAILABLE_LIVE_PREVIEW;
+  let agentTestBrowser = UNAVAILABLE_AGENT_TEST_BROWSER;
+  let userWeb = UNAVAILABLE_USER_WEB;
   let checkRun = UNAVAILABLE_CHECK_RUN;
   let sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
+  try {
+    agentProjectTree = createBuilderDesktopAgentProjectTreePort(root.agentProjectTree);
+  } catch {
+    agentProjectTree = UNAVAILABLE_AGENT_PROJECT_TREE;
+  }
+  try {
+    agentWorkbench = createBuilderDesktopAgentWorkbenchPort(root.agentWorkbench);
+  } catch {
+    agentWorkbench = UNAVAILABLE_AGENT_WORKBENCH;
+  }
   try {
     workspace = createBuilderDesktopProjectWorkspacePort(root.projectWorkspace);
   } catch {
@@ -479,6 +996,16 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
     livePreview = UNAVAILABLE_LIVE_PREVIEW;
   }
   try {
+    agentTestBrowser = createBuilderDesktopAgentTestBrowserPort(root.agentTestBrowser);
+  } catch {
+    agentTestBrowser = UNAVAILABLE_AGENT_TEST_BROWSER;
+  }
+  try {
+    userWeb = createBuilderDesktopUserWebPort(root.userWeb);
+  } catch {
+    userWeb = UNAVAILABLE_USER_WEB;
+  }
+  try {
     checkRun = createBuilderDesktopCheckRunPort(root.checkRun);
   } catch {
     checkRun = UNAVAILABLE_CHECK_RUN;
@@ -489,9 +1016,13 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
     sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
   }
   return Object.freeze({
+    agentProjectTree,
+    agentWorkbench,
+    agentTestBrowser,
     checkRun,
     generator,
     livePreview,
+    userWeb,
     planReview,
     sideWorkspaceFiles,
     taskStream,
@@ -518,6 +1049,48 @@ function visibleConversationProjectId(
     ?? null;
 }
 
+function firstTaskAddressForProject(
+  tree: ReturnType<typeof useBuilderAgentProjectTreeController>['snapshot']['tree'],
+  projectId: string,
+): string | null {
+  if (tree === null) return null;
+  return tree.projects.find((candidate) => candidate.project_id === projectId)
+    ?.tasks[0]?.task_address_id
+    ?? null;
+}
+
+function taskForAddress(
+  tree: BuilderAgentProjectTreeProjection | null,
+  taskAddressId: string | null,
+): BuilderAgentTaskNode | null {
+  if (tree === null || taskAddressId === null) return null;
+  for (const project of tree.projects) {
+    const task = project.tasks.find((candidate) => candidate.task_address_id === taskAddressId);
+    if (task !== undefined) return task;
+  }
+  return tree.orphaned_tasks.find(
+    (candidate) => candidate.task_address_id === taskAddressId,
+  ) ?? null;
+}
+
+function taskConversationSeed(
+  task: BuilderAgentTaskNode | BuilderAgentTaskMonitorItem | null,
+): BuilderTaskConversationSeed | null {
+  if (task === null) return null;
+  return Object.freeze({
+    task_address_id: task.task_address_id,
+    conversation_id: task.conversation_id,
+    goal: task.goal,
+    waiting_to_start: 'status' in task ? task.status === 'draft' : task.state === 'draft',
+  });
+}
+
+function composerModeForAgentTaskProposal(
+  action: Pick<BuilderAgentWorkbenchTaskProposalAction, 'requested_outcome'>,
+): BuilderComposerMode | null {
+  return action.requested_outcome === 'plan' ? 'plan' : null;
+}
+
 function hasBuildWorkspace(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): boolean {
   return snapshot.savedProject !== null || snapshot.workingProjectId !== null;
 }
@@ -538,6 +1111,16 @@ type PendingBuildAfterWorkspace = Readonly<{
   queuedFollowup: BuilderQueuedFollowupReference | null;
 }>;
 
+type PendingAgentTaskHandoffStart = Readonly<{
+  autoApproveCurrentProjectWrite: boolean;
+  composerMode: BuilderComposerMode | null;
+  epoch: number;
+  instruction: string;
+  messageId: string;
+  projectId: string;
+  taskAddressId: string;
+}>;
+
 type QueuedActiveRunFollowup = Readonly<{
   epoch: number;
   instruction: string;
@@ -545,7 +1128,31 @@ type QueuedActiveRunFollowup = Readonly<{
   queuedFollowup: BuilderQueuedFollowupReference;
 }>;
 
-type RestorableDraftTarget = Readonly<{ draftId: string; restoreKey: string }>;
+type PendingUserMessageTarget = Readonly<{
+  epoch: number;
+  minimum_sequence: number;
+  projectId: string | null;
+  taskAddressId: string | null;
+}>;
+
+type PendingUserMessage = BuilderPendingUserMessage & PendingUserMessageTarget;
+
+function conversationHeadSequence(snapshot: BuilderConversationControllerSnapshot): number {
+  return snapshot.conversation?.state === 'ready'
+    ? snapshot.conversation.conversation.head_sequence
+    : -1;
+}
+
+type RestorableDraftTarget = Readonly<{
+  draftId: string;
+  projectId: string;
+  restoreKey: string;
+}>;
+
+type WorkbenchDraftReturnTarget = RestorableDraftTarget & Readonly<{
+  epoch: number;
+  taskAddressId: string;
+}>;
 
 type SubmitInstructionTextOptions = Readonly<{
   composerModeOverride?: BuilderComposerMode | null;
@@ -583,6 +1190,26 @@ type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
 
 const CHECK_RUN_DISCOVERY_MAX_ATTEMPTS = 12;
 const CHECK_RUN_DISCOVERY_RETRY_DELAY_MS = 100;
+const SIDE_WORKSPACE_FILE_DISCOVERY_MAX_ATTEMPTS = 20;
+const SIDE_WORKSPACE_FILE_DISCOVERY_RETRY_DELAY_MS = 250;
+const POST_TERMINAL_REFRESH_TIMEOUT_MS = 1_500;
+
+function boundedPostTerminalRefresh<T>(operation: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      resolve(value);
+    };
+    const timeoutId = window.setTimeout(
+      () => finish(fallback),
+      POST_TERMINAL_REFRESH_TIMEOUT_MS,
+    );
+    void operation.then(finish, () => finish(fallback));
+  });
+}
 
 function latestRestorableDraft(
   conversationSnapshot: BuilderVisibleConversationSnapshot,
@@ -617,12 +1244,16 @@ function latestRestorableDraftForProjectId(
       continue;
     }
     if (item.item_kind === 'run_completed' && item.candidate !== null) {
-      if (reviewedDraftIds.has(item.candidate.draft_id)) continue;
+      // Only the newest candidate-producing run can represent recoverable work.
+      // Once that candidate has a terminal review, older failed or superseded
+      // candidates must never be resurrected as the current draft.
+      if (reviewedDraftIds.has(item.candidate.draft_id)) return null;
       if (savedTarget !== null && item.turn_id === savedTarget.turn_id && item.run_id === savedTarget.run_id) {
-        continue;
+        return null;
       }
       return Object.freeze({
         draftId: item.candidate.draft_id,
+        projectId: visibleProjectId,
         restoreKey: [
           conversationSnapshot.project_id,
           conversationSnapshot.conversation.conversation.head_sequence,
@@ -711,14 +1342,33 @@ function hasPriorBuildContext(
 ): boolean {
   const visibleProjectId = visibleConversationProjectId(projectSnapshot);
   if (
-    visibleProjectId === null
-    || conversationSnapshot.status !== 'ready'
+    conversationSnapshot.status !== 'ready'
     || conversationSnapshot.conversation?.state !== 'ready'
-    || conversationSnapshot.project_id !== visibleProjectId
+    || (visibleProjectId === null
+      ? conversationSnapshot.project_id !== null
+        || conversationSnapshot.conversation.scope_kind !== 'agent_conversation'
+      : conversationSnapshot.project_id !== visibleProjectId)
   ) return false;
 
   let hasContext = false;
+  const agentContextTurns = new Set<string>();
   for (const item of conversationSnapshot.conversation.conversation.items) {
+    if (item.item_kind === 'transcript_message') {
+      if (
+        item.role === 'user'
+        && item.message_kind === 'submitted'
+        && item.context_route === 'update_brief'
+      ) {
+        agentContextTurns.add(item.turn_id);
+      } else if (
+        item.role === 'assistant'
+        && item.message_kind === 'run_result'
+        && agentContextTurns.has(item.turn_id)
+      ) {
+        hasContext = true;
+      }
+      continue;
+    }
     if (item.item_kind === 'task_brief_updated') {
       hasContext = item.brief.contextual_build_ready;
       continue;
@@ -801,11 +1451,46 @@ function composerWorkingBrief(
 ): BuilderComposerWorkingBrief | null {
   const visibleProjectId = visibleConversationProjectId(projectSnapshot);
   if (
-    visibleProjectId === null
-    || conversationSnapshot.status !== 'ready'
+    conversationSnapshot.status !== 'ready'
     || conversationSnapshot.conversation?.state !== 'ready'
-    || conversationSnapshot.project_id !== visibleProjectId
   ) return null;
+
+  if (visibleProjectId === null) {
+    if (
+      conversationSnapshot.project_id !== null
+      || conversationSnapshot.conversation.scope_kind !== 'agent_conversation'
+    ) return null;
+    const contextTurns = new Set<string>();
+    let latestAgentBrief: Readonly<{ sequence: number; text: string }> | null = null;
+    for (const item of conversationSnapshot.conversation.conversation.items) {
+      if (item.item_kind !== 'transcript_message') continue;
+      if (
+        item.role === 'user'
+        && item.message_kind === 'submitted'
+        && item.context_route === 'update_brief'
+      ) {
+        contextTurns.add(item.turn_id);
+        continue;
+      }
+      if (
+        item.role === 'assistant'
+        && item.message_kind === 'run_result'
+        && contextTurns.has(item.turn_id)
+      ) {
+        const text = compactComposerBriefText(item.message.text);
+        if (text !== null) latestAgentBrief = Object.freeze({ sequence: item.sequence, text });
+      }
+    }
+    if (latestAgentBrief === null) return null;
+    return Object.freeze({
+      key: `${conversationSnapshot.agent_id}:discussed-direction:${latestAgentBrief.sequence}`,
+      label: 'Discussed direction',
+      summary: latestAgentBrief.text,
+      taskId: null,
+    });
+  }
+
+  if (conversationSnapshot.project_id !== visibleProjectId) return null;
 
   const planTextsByRun = new Map<string, Readonly<{
     sequence: number;
@@ -999,6 +1684,7 @@ const DIRECT_CURRENT_DRAFT_BUILD_SIGNALS = new Set([
   'contextual_build_phrase',
   'current_artifact_defect',
   'current_artifact_direct_change',
+  'current_draft_continuation',
   'vague_change',
 ]);
 
@@ -1070,14 +1756,34 @@ const PLAN_PROPOSAL_READY_STATUSES = new Set([
   'generation_failed',
 ]);
 
-function appendLiveOutputText(current: string, delta: string): string | null {
-  const next = `${current}${delta}`;
-  if (LIVE_OUTPUT_ENCODER.encode(next).byteLength > MAX_LIVE_OUTPUT_TEXT_BYTES) return null;
-  return next;
-}
-
 function liveOutputProjectId(value: BuilderLiveOutputSnapshot | null): string | null {
   return value?.project_id ?? null;
+}
+
+function activeRunWaitsForUserAnswer(
+  snapshot: BuilderConversationControllerSnapshot,
+): boolean {
+  const stream = snapshot.conversation;
+  if (stream === null || stream.state !== 'ready') return false;
+  const activeTurnId = stream.conversation.recorded_active_turn_id;
+  if (activeTurnId === null) return false;
+  for (let index = stream.conversation.items.length - 1; index >= 0; index -= 1) {
+    const item = stream.conversation.items[index];
+    if (item.turn_id !== activeTurnId) continue;
+    if (
+      item.item_kind === 'programming_runtime_tool_activity'
+      && item.tool_kind === 'question'
+      && item.state === 'running'
+    ) return true;
+    if (item.item_kind === 'programming_runtime_status') {
+      return item.status_kind === 'attention' && item.attention_class === 'user_input_required';
+    }
+    if (
+      item.item_kind === 'programming_runtime_assistant_message'
+      || item.item_kind === 'programming_runtime_tool_activity'
+    ) return false;
+  }
+  return false;
 }
 
 function hasRecordedSuccessfulAnswerAfterHead(
@@ -1093,26 +1799,35 @@ function hasRecordedSuccessfulAnswerAfterHead(
   let matchedTurnId: string | null = null;
   let matchedUserSequence = 0;
   for (const item of items) {
-    if (
-      item.item_kind === 'user_message'
-      && item.sequence > afterHeadSequence
+    if (item.sequence <= afterHeadSequence) continue;
+    const matchesProjectQuestion = item.item_kind === 'user_message'
       && item.message_kind === 'submitted'
       && item.mode === 'question'
-      && item.message.text.trim() === expectedInstruction
-    ) {
+      && item.message.text.trim() === expectedInstruction;
+    const matchesAgentQuestion = item.item_kind === 'transcript_message'
+      && item.role === 'user'
+      && item.message_kind === 'submitted'
+      && item.message.text.trim() === expectedInstruction;
+    if (matchesProjectQuestion || matchesAgentQuestion) {
       matchedTurnId = item.turn_id;
       matchedUserSequence = item.sequence;
     }
   }
   if (matchedTurnId === null) return false;
   return items.some((item) => (
-    item.item_kind === 'run_completed'
-    && item.sequence > matchedUserSequence
+    item.sequence > matchedUserSequence
     && item.turn_id === matchedTurnId
-    && item.terminal_status === 'succeeded'
-    && item.result_kind === 'explanation'
-    && item.assistant_message !== null
-    && item.assistant_message.text.trim().length > 0
+    && (
+      item.item_kind === 'run_completed'
+        ? item.terminal_status === 'succeeded'
+          && item.result_kind === 'explanation'
+          && item.assistant_message !== null
+          && item.assistant_message.text.trim().length > 0
+        : item.item_kind === 'transcript_message'
+          && item.role === 'assistant'
+          && item.message_kind === 'run_result'
+          && item.message.text.trim().length > 0
+    )
   ));
 }
 
@@ -1127,14 +1842,20 @@ function planReviewInFlightKey(value: BuilderPlanReviewInFlight): string {
 
 function sideWorkspaceFileRefKey(fileRef: BuilderSideWorkspaceFileRef | null): string {
   if (fileRef === null) return 'none';
-  return `${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
+  return `${fileRef.source_kind}:${fileRef.source_tree_digest}:${fileRef.path}:${fileRef.content_digest}`;
 }
 
 function sideWorkspaceFilesRequestKey(
   draftId: string | null,
+  sourceTreeDigest: string | null,
   request: BuilderSideWorkspaceFileRequest,
 ): string {
-  return `${draftId ?? 'none'}:${request.project_id}:${request.conversation_id}`;
+  return [
+    draftId ?? 'none',
+    sourceTreeDigest ?? 'none',
+    request.project_id,
+    request.conversation_id,
+  ].join(':');
 }
 
 function firstSideWorkspaceTextFileRef(
@@ -1145,7 +1866,21 @@ function firstSideWorkspaceTextFileRef(
     ?? null;
 }
 
+function sideWorkspaceTextFileRefForPath(
+  projection: BuilderSideWorkspaceFileTreeProjection,
+  path: BuilderFileName | null,
+): BuilderSideWorkspaceFileRef | null {
+  if (path === null) return null;
+  const entry = projection.entries.find((candidate) => (
+    candidate.entry_kind === 'text_file' && candidate.path === path
+  ));
+  return entry?.entry_kind === 'text_file' ? entry.file_ref : null;
+}
+
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
+  useLayoutEffect(() => {
+    incrementBuilderPerformance('renderer.builder_app.commit_count');
+  });
   const root = useMemo(() => safeRoot(bridgeRoot), [bridgeRoot]);
   const ports = useMemo(() => safePorts(root), [root]);
   const windowControls = useMemo(() => safeWindowControls(root.windowControls), [root]);
@@ -1154,8 +1889,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     [root],
   );
   const catalog = useBuilderProjectCatalogController(ports.workspace);
+  const agentProjectTree = useBuilderAgentProjectTreeController(ports.agentProjectTree);
+  const agentWorkbench = useBuilderAgentWorkbenchController(ports.agentWorkbench);
   const [view, setView] = useState<BuilderAppView>('project');
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [projectId, setProjectId] = useState<string | undefined>();
+  const [agentWorkbenchSelected, setAgentWorkbenchSelected] = useState(true);
+  const [taskAddressId, setTaskAddressId] = useState<string | null>(null);
+  const [retainedTaskConversationSeed, setRetainedTaskConversationSeed] =
+    useState<BuilderTaskConversationSeed | null>(null);
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [idea, setIdea] = useState('');
   const [activeFile, setActiveFile] = useState<BuilderFileName | null>(null);
@@ -1168,6 +1910,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<LockedComposerSubmit | null>(null);
   const [queuedActiveRunFollowup, setQueuedActiveRunFollowup] =
     useState<QueuedActiveRunFollowup | null>(null);
+  const [pendingUserMessages, setPendingUserMessages] =
+    useState<readonly PendingUserMessage[]>([]);
+  const liveOutputStore = useMemo(() => createBuilderLiveOutputStore(), []);
+  const commandOutputStore = useMemo(() => createBuilderCommandOutputStore(), []);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [answerFailureRecordedSuccess, setAnswerFailureRecordedSuccess] = useState(false);
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
@@ -1182,6 +1928,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [currentProjectWriteApproval, setCurrentProjectWriteApproval] =
     useState<BuilderCurrentProjectWriteApprovalPrompt | null>(null);
+  const [commandApproval, setCommandApproval] = useState<BuilderCommandApprovalPrompt | null>(null);
   const [currentProjectWriteApprovalStatus, setCurrentProjectWriteApprovalStatus] =
     useState<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const [providerContextDisclosureApprovalState, setProviderContextDisclosureApprovalState] =
@@ -1190,6 +1937,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderLivePreviewStatusProjection | null>(null);
   const [livePreviewOperation, setLivePreviewOperation] =
     useState<'starting' | 'reloading' | 'stopping' | null>(null);
+  const [userWebStatus, setUserWebStatus] =
+    useState<BuilderUserWebStatusProjection | null>(null);
+  const [userWebOperation, setUserWebOperation] =
+    useState<'navigating' | 'reloading' | 'stopping' | null>(null);
   const [sideWorkspaceFileTreeKey, setSideWorkspaceFileTreeKey] = useState<string | null>(null);
   const [sideWorkspaceFileTree, setSideWorkspaceFileTree] =
     useState<BuilderSideWorkspaceFileTreeProjection | null>(null);
@@ -1204,24 +1955,45 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderSideWorkspaceFileRef | null>(null);
   const [checkRunAvailable, setCheckRunAvailable] =
     useState<BuilderCheckRunAvailableResult | null>(null);
-  const [checkRunCompleted, setCheckRunCompleted] =
-    useState<BuilderCheckRunCompletedResult | null>(null);
+  const [checkEnvironmentDiagnosis, setCheckEnvironmentDiagnosis] =
+    useState<BuilderCheckEnvironmentDiagnosisView | null>(null);
+  const [projectEnvironmentDiagnosis, setProjectEnvironmentDiagnosis] =
+    useState<BuilderProjectEnvironmentDiagnosisView | null>(null);
   const [checkRunOperation, setCheckRunOperation] =
-    useState<'loading' | 'running' | 'skipping' | 'failed' | null>(null);
+    useState<'loading' | 'running' | 'preparing_dependencies' | 'skipping' | 'failed' | null>(null);
+  const [checkRunOperationFailureCode, setCheckRunOperationFailureCode] =
+    useState<BuilderCheckRunOperationFailureCode | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
+  const projectCount = agentProjectTree.snapshot.tree?.projects.length ?? 0;
+  const hasProjects = projectCount > 0;
+  const projectsExpanded = hasProjects && !projectsCollapsed;
+  const projectsVisibility = projectsExpanded
+    ? 'expanded'
+    : (hasProjects ? 'collapsed' : 'absent');
+  const previousProjectCountRef = useRef(projectCount);
   const workspaceEpochRef = useRef(0);
+  const activeFileRef = useRef<BuilderFileName | null>(null);
   const initialWorkspaceAutoOpenRef = useRef(false);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
   const composerModeRef = useRef<BuilderComposerMode | null>(null);
   const approvalModeRef = useRef<BuilderComposerApprovalMode>('ask_before_write');
   const composerRouteDecisionSequenceRef = useRef(0);
-  const approvedPlanWaitingProjectRef = useRef<string | null>(null);
   const planReviewInFlightRef = useRef<BuilderPlanReviewInFlight | null>(null);
   const planSourceReadApprovalRef = useRef<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const currentProjectWriteApprovalRef = useRef<BuilderCurrentProjectWriteApprovalPrompt | null>(null);
+  const commandApprovalRef = useRef<BuilderCommandApprovalPrompt | null>(null);
   const currentProjectWriteApprovalStatusRef =
     useRef<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
+  const dependencyPreparationInFlightRef = useRef<string | null>(null);
+  const pendingAgentTaskHandoffStartRef = useRef<PendingAgentTaskHandoffStart | null>(null);
+  const agentTaskProposalProjectCreationInFlightRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    const previousProjectCount = previousProjectCountRef.current;
+    previousProjectCountRef.current = projectCount;
+    if (previousProjectCount === 0 && projectCount > 0) setProjectsCollapsed(false);
+  }, [projectCount]);
   const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
   const queuedActiveRunFollowupRef = useRef<QueuedActiveRunFollowup | null>(null);
   const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
@@ -1230,17 +2002,24 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const activityRestoreLoadAttemptsRef = useRef(new Map<string, number>());
   const activityRestoreLoadsInFlightRef = useRef(new Set<string>());
   const activityRestoreProbeKeysRef = useRef(new Set<string>());
+  const lifecycleRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const lifecycleRefreshQueuedRef = useRef(false);
+  const lifecycleRefreshNeedsWorkbenchRef = useRef(false);
+  const automaticDraftRestoreSuppressedProjectIdsRef = useRef(new Set<string>());
   const pendingProjectActivityRestoreRef = useRef<Readonly<{ epoch: number; projectId: string }> | null>(null);
   const restorePendingDraftFromActivityRef =
     useRef<((visibleProjectId: string, commandEpoch: number) => void) | null>(null);
+  const workbenchDraftReturnRef = useRef<WorkbenchDraftReturnTarget | null>(null);
   const submitInFlightRef = useRef(false);
   const submitInFlightInstructionRef = useRef<string | null>(null);
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
   const checkRunRequestSequenceRef = useRef(0);
-  const automaticCheckRunKeyRef = useRef<string | null>(null);
+  const pendingUserMessageSequenceRef = useRef(0);
   const sideWorkspaceFileTreeSequenceRef = useRef(0);
   const sideWorkspaceFileContentSequenceRef = useRef(0);
+  const sideWorkspaceFileContentMountedRef = useRef(false);
   const sideWorkspaceFileTreeKeyRef = useRef<string | null>(null);
+  const sideWorkspaceFileContentKeyRef = useRef<string | null>(null);
   const publishSubmitInFlight = useCallback((inFlight: boolean) => {
     submitInFlightRef.current = inFlight;
     setSubmitInFlight(inFlight);
@@ -1253,6 +2032,61 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     queuedActiveRunFollowupRef.current = queued;
     setQueuedActiveRunFollowup(queued);
   }, []);
+  const publishPendingUserMessage = useCallback((
+    text: string,
+    messageKind: BuilderPendingUserMessage['message_kind'],
+    identity: Readonly<{ message_id?: string | null; turn_id?: string | null }> = {},
+  ) => {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return null;
+    const sequence = pendingUserMessageSequenceRef.current + 1;
+    pendingUserMessageSequenceRef.current = sequence;
+    const message = Object.freeze({
+      client_id: `builder-pending-user-message:${sequence}`,
+      epoch: workspaceEpochRef.current,
+      message_id: identity.message_id ?? null,
+      minimum_sequence: conversationHeadSequence(conversationSnapshotRef.current),
+      projectId: visibleConversationProjectId(projectSnapshotRef.current)
+        ?? conversationSnapshotRef.current.project_id
+        ?? null,
+      taskAddressId,
+      text: trimmed,
+      message_kind: messageKind,
+      turn_id: identity.turn_id ?? null,
+    });
+    setPendingUserMessages((current) => Object.freeze([...current, message]));
+    return message;
+  }, [taskAddressId]);
+  const bindPendingUserMessage = useCallback((
+    clientId: string | null,
+    identity: Readonly<{ message_id?: string | null; turn_id?: string | null }>,
+  ) => {
+    if (clientId === null) return;
+    setPendingUserMessages((current) => {
+      let changed = false;
+      const next = current.map((message) => {
+        if (message.client_id !== clientId) return message;
+        const messageId = identity.message_id ?? message.message_id ?? null;
+        const turnId = identity.turn_id ?? message.turn_id ?? null;
+        if (message.message_id === messageId && message.turn_id === turnId) return message;
+        changed = true;
+        return Object.freeze({
+          ...message,
+          message_id: messageId,
+          turn_id: turnId,
+        });
+      });
+      return changed ? Object.freeze(next) : current;
+    });
+  }, []);
+  const dismissPendingUserMessage = useCallback((clientId: string | null) => {
+    if (clientId === null) return;
+    setPendingUserMessages((current) => {
+      const next = current.filter((message) => message.client_id !== clientId);
+      return next.length === current.length ? current : Object.freeze(next);
+    });
+  }, []);
+
   const createComposerRouteEvidence = useCallback((
     decision: BuilderComposerRouteDecision,
     projectSnapshot: BuilderVisibleProjectSnapshot,
@@ -1310,6 +2144,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
         return ports.generator.answer(request);
       },
+      answerPlan(request: Parameters<NonNullable<BuilderCodeGeneratorPort['answerPlan']>>[0]) {
+        return ports.generator.answerPlan?.(request) ?? ports.generator.answer(request);
+      },
       answerDraft(request: Parameters<BuilderCodeGeneratorPort['answerDraft']>[0]) {
         return ports.generator.answerDraft(request);
       },
@@ -1318,6 +2155,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       },
       restoreRevisionAsDraft(request: Parameters<BuilderCodeGeneratorPort['restoreRevisionAsDraft']>[0]) {
         return ports.generator.restoreRevisionAsDraft(request);
+      },
+      restorePreviousCheckpointAsDraft(
+        request: Parameters<NonNullable<BuilderCodeGeneratorPort['restorePreviousCheckpointAsDraft']>>[0],
+      ) {
+        return ports.generator.restorePreviousCheckpointAsDraft?.(request)
+          ?? Promise.reject(new BuilderDesktopCodeGeneratorPortError());
       },
       rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
         return ports.generator.rejectDraft(request);
@@ -1337,6 +2180,25 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       subscribeOutput(listener: (event: BuilderGenerationOutputEvent) => void) {
         return ports.generator.subscribeOutput?.(listener) ?? (() => undefined);
       },
+      ...(ports.generator.decideCommandApproval === undefined ? {} : {
+        decideCommandApproval(
+          request: Parameters<NonNullable<BuilderCodeGeneratorPort['decideCommandApproval']>>[0],
+        ) {
+          return ports.generator.decideCommandApproval!(request);
+        },
+      }),
+      ...(ports.generator.subscribeCommandApproval === undefined ? {} : {
+        subscribeCommandApproval(listener: (event: BuilderCommandApprovalRequest) => void) {
+          return ports.generator.subscribeCommandApproval!(listener);
+        },
+      }),
+      ...(ports.generator.subscribeCommandOutput === undefined ? {} : {
+        subscribeCommandOutput(
+          listener: Parameters<NonNullable<BuilderCodeGeneratorPort['subscribeCommandOutput']>>[0],
+        ) {
+          return ports.generator.subscribeCommandOutput!(listener);
+        },
+      }),
     });
     const workspace: BuilderProjectWorkspacePort = Object.freeze({
       open(request: Parameters<BuilderProjectWorkspacePort['open']>[0]) {
@@ -1368,12 +2230,36 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const project = useBuilderProjectController({
     generator: workspacePorts.generator,
     workspace: workspacePorts.workspace,
+    preserveSelectionWhenProjectIdUndefined: agentWorkbenchSelected,
     projectId,
+    taskAddressId,
   });
   const conversation = useBuilderConversationController(
     ports.taskStream,
-    visibleConversationProjectId(project.snapshot),
+    agentWorkbenchSelected ? null : visibleConversationProjectId(project.snapshot),
+    taskAddressId,
+    agentProjectTree.snapshot.tree?.agent_id ?? null,
   );
+  const liveSelectedTask = useMemo(() => taskConversationSeed(taskForAddress(
+    agentProjectTree.snapshot.tree,
+    agentWorkbenchSelected ? null : taskAddressId,
+  )), [agentProjectTree.snapshot.tree, agentWorkbenchSelected, taskAddressId]);
+  const monitoredSelectedTask = useMemo(() => taskConversationSeed(
+    agentWorkbenchSelected
+      ? null
+      : (agentWorkbench.snapshot.projection?.task_monitor.tasks.find(
+          (task) => task.task_address_id === taskAddressId,
+        ) ?? null),
+  ), [agentWorkbench.snapshot.projection, agentWorkbenchSelected, taskAddressId]);
+  const retainedSelectedTask = (
+    !agentWorkbenchSelected
+    && taskAddressId !== null
+    && retainedTaskConversationSeed !== null
+    && retainedTaskConversationSeed.task_address_id === taskAddressId
+      ? retainedTaskConversationSeed
+      : null
+  );
+  const selectedTask = liveSelectedTask ?? monitoredSelectedTask ?? retainedSelectedTask;
   const history = useBuilderProjectHistoryController(
     ports.workspace,
     visibleHistoryProjectId(project.snapshot),
@@ -1390,7 +2276,45 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     conversationSnapshotRef.current = conversation.snapshot;
   }, [conversation.snapshot]);
 
+  useEffect(() => {
+    if (pendingUserMessages.length === 0) return;
+    const snapshot = conversation.snapshot;
+    if (snapshot.conversation?.state !== 'ready') return;
+    const durableMessages = snapshot.conversation.conversation.items
+      .map(builderDurableUserMessage)
+      .filter((message) => message !== null);
+    setPendingUserMessages((current) => {
+      const next = current.filter((message) => (
+        message.epoch === workspaceEpochRef.current
+        && message.projectId === (snapshot.project_id ?? null)
+        && message.taskAddressId === snapshot.task_address_id
+        && !durableMessages.some((durable) => (
+          builderPendingUserMessageMatchesDurable(message, durable)
+        ))
+      ));
+      return next.length === current.length ? current : Object.freeze(next);
+    });
+  }, [conversation.snapshot, pendingUserMessages.length]);
+
+  useEffect(() => {
+    if (pendingUserMessages.length === 0) return;
+    setPendingUserMessages((current) => (
+      current.length === 0
+        ? current
+        : Object.freeze(current.filter((message) => (
+          message.epoch === workspaceEpoch
+          && message.projectId === (projectId ?? conversation.snapshot.project_id ?? null)
+          && message.taskAddressId === taskAddressId
+        )))
+    ));
+  }, [conversation.snapshot.project_id, pendingUserMessages.length, projectId, taskAddressId, workspaceEpoch]);
+
+  useLayoutEffect(() => {
+    activeFileRef.current = activeFile;
+  }, [activeFile]);
+
   const currentDraftId = project.snapshot.draft?.draft_id ?? null;
+  const currentDraftSourceTreeDigest = project.snapshot.draft?.source_tree.source_tree_digest ?? null;
   const currentSideWorkspaceFilesRequestKey = useMemo(() => {
     if (
       currentDraftId === null
@@ -1398,11 +2322,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       || conversation.snapshot.conversation === null
       || conversation.snapshot.conversation.state !== 'ready'
     ) return null;
-    return sideWorkspaceFilesRequestKey(currentDraftId, {
+    return sideWorkspaceFilesRequestKey(currentDraftId, currentDraftSourceTreeDigest, {
       project_id: conversation.snapshot.project_id,
       conversation_id: conversation.snapshot.conversation.conversation.conversation_id,
     });
-  }, [conversation.snapshot, currentDraftId]);
+  }, [conversation.snapshot, currentDraftId, currentDraftSourceTreeDigest]);
 
   const sideWorkspaceFilesRequest = useCallback((): BuilderSideWorkspaceFileRequest | null => {
     const conversationSnapshot = conversationSnapshotRef.current;
@@ -1418,11 +2342,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     });
   }, []);
 
+  const conversationFilesRequest = useCallback((): BuilderSideWorkspaceFileRequest | null => {
+    const conversationSnapshot = conversationSnapshotRef.current;
+    if (
+      conversationSnapshot.project_id === null
+      || conversationSnapshot.conversation === null
+      || conversationSnapshot.conversation.state !== 'ready'
+    ) return null;
+    return Object.freeze({
+      project_id: conversationSnapshot.project_id,
+      conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+    });
+  }, []);
+
   const requestSideWorkspaceFiles = useCallback(async () => {
     const request = sideWorkspaceFilesRequest();
-    if (request === null) return;
-    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
-    const requestKey = sideWorkspaceFilesRequestKey(draftId, request);
+    if (request === null || currentDraftId === null) return;
+    const requestKey = sideWorkspaceFilesRequestKey(
+      currentDraftId,
+      currentDraftSourceTreeDigest,
+      request,
+    );
     if (
       sideWorkspaceFileTreeKeyRef.current === requestKey
       && (sideWorkspaceFileTreeStatus === 'loading' || sideWorkspaceFileTreeStatus === 'ready')
@@ -1430,69 +2370,181 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     sideWorkspaceFileTreeKeyRef.current = requestKey;
     const sequence = sideWorkspaceFileTreeSequenceRef.current + 1;
     sideWorkspaceFileTreeSequenceRef.current = sequence;
+    sideWorkspaceFileContentSequenceRef.current += 1;
     setSideWorkspaceFileTreeKey(requestKey);
     setSideWorkspaceFileTreeStatus('loading');
     setSideWorkspaceFileTree(null);
+    sideWorkspaceFileContentKeyRef.current = null;
     setSideWorkspaceFileContentKey(null);
     setSideWorkspaceFileContent(null);
     setSideWorkspaceFileContentStatus('idle');
     setSideWorkspaceSelectedFileRef(null);
-    try {
-      const projection = await ports.sideWorkspaceFiles.readCurrentDraftFileTree(request);
-      if (
-        sideWorkspaceFileTreeSequenceRef.current !== sequence
-        || projectSnapshotRef.current.draft?.draft_id !== draftId
-      ) return;
-      setSideWorkspaceFileTree(projection);
-      setSideWorkspaceFileTreeStatus('ready');
-      setSideWorkspaceSelectedFileRef(firstSideWorkspaceTextFileRef(projection));
-    } catch {
+    const releaseStaleRequest = () => {
       if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
-      setSideWorkspaceFileTreeKey(requestKey);
+      sideWorkspaceFileTreeKeyRef.current = null;
+      setSideWorkspaceFileTreeKey(null);
       setSideWorkspaceFileTree(null);
-      setSideWorkspaceFileTreeStatus('failed');
+      setSideWorkspaceFileTreeStatus('idle');
+      sideWorkspaceFileContentKeyRef.current = null;
       setSideWorkspaceFileContentKey(null);
       setSideWorkspaceFileContent(null);
-      setSideWorkspaceFileContentStatus('failed');
+      setSideWorkspaceFileContentStatus('idle');
       setSideWorkspaceSelectedFileRef(null);
+    };
+    for (let attempt = 1; attempt <= SIDE_WORKSPACE_FILE_DISCOVERY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const projection = await ports.sideWorkspaceFiles.readCurrentDraftFileTree(request);
+        if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
+        if (projectSnapshotRef.current.draft?.draft_id !== currentDraftId) {
+          releaseStaleRequest();
+          return;
+        }
+        setSideWorkspaceFileTree(projection);
+        setSideWorkspaceFileTreeStatus('ready');
+        setSideWorkspaceSelectedFileRef(
+          sideWorkspaceTextFileRefForPath(projection, activeFileRef.current)
+            ?? firstSideWorkspaceTextFileRef(projection),
+        );
+        return;
+      } catch {
+        if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
+        if (projectSnapshotRef.current.draft?.draft_id !== currentDraftId) {
+          releaseStaleRequest();
+          return;
+        }
+        if (attempt < SIDE_WORKSPACE_FILE_DISCOVERY_MAX_ATTEMPTS) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, SIDE_WORKSPACE_FILE_DISCOVERY_RETRY_DELAY_MS);
+          });
+          continue;
+        }
+        setSideWorkspaceFileTreeKey(requestKey);
+        setSideWorkspaceFileTree(null);
+        setSideWorkspaceFileTreeStatus('failed');
+        sideWorkspaceFileContentKeyRef.current = null;
+        setSideWorkspaceFileContentKey(null);
+        setSideWorkspaceFileContent(null);
+        setSideWorkspaceFileContentStatus('failed');
+        setSideWorkspaceSelectedFileRef(null);
+      }
     }
-  }, [ports.sideWorkspaceFiles, sideWorkspaceFileTreeStatus, sideWorkspaceFilesRequest]);
+  }, [
+    currentDraftId,
+    currentDraftSourceTreeDigest,
+    ports.sideWorkspaceFiles,
+    sideWorkspaceFileTreeStatus,
+    sideWorkspaceFilesRequest,
+  ]);
 
   const selectSideWorkspaceFile = useCallback((fileRef: BuilderSideWorkspaceFileRef) => {
     setActiveFile(fileRef.path);
     setSideWorkspaceSelectedFileRef(fileRef);
   }, []);
 
+  const selectActiveFile = useCallback((path: BuilderFileName) => {
+    setActiveFile(path);
+    if (sideWorkspaceFileTree === null) return;
+    const fileRef = sideWorkspaceTextFileRefForPath(sideWorkspaceFileTree, path);
+    if (fileRef !== null) setSideWorkspaceSelectedFileRef(fileRef);
+  }, [sideWorkspaceFileTree]);
+
+  const openRuntimeToolFile = useCallback(async (
+    request: Readonly<{ run_id: string; tool_call_id: string }>,
+  ): Promise<boolean> => {
+    const conversationRequest = conversationFilesRequest();
+    if (conversationRequest === null) return false;
+    const sequence = sideWorkspaceFileTreeSequenceRef.current + 1;
+    sideWorkspaceFileTreeSequenceRef.current = sequence;
+    sideWorkspaceFileContentSequenceRef.current += 1;
+    setSideWorkspaceFileTreeStatus('loading');
+    try {
+      const projection = await ports.sideWorkspaceFiles.readRuntimeToolFileTree({
+        ...conversationRequest,
+        run_id: request.run_id,
+        tool_call_id: request.tool_call_id,
+      });
+      if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return false;
+      const selectedFileRef = projection.selected_file_ref;
+      if (selectedFileRef === null) return false;
+      const content = await ports.sideWorkspaceFiles.readCurrentDraftFileContent({
+        ...conversationRequest,
+        file_ref: selectedFileRef,
+      });
+      if (
+        sideWorkspaceFileTreeSequenceRef.current !== sequence
+        || sideWorkspaceFileRefKey(content.file_ref) !== sideWorkspaceFileRefKey(selectedFileRef)
+      ) return false;
+      const requestKey = [
+        'runtime',
+        conversationRequest.project_id,
+        conversationRequest.conversation_id,
+        projection.source_tree_digest,
+      ].join(':');
+      const contentKey = `${conversationRequest.project_id}:${conversationRequest.conversation_id}:${sideWorkspaceFileRefKey(selectedFileRef)}`;
+      sideWorkspaceFileTreeKeyRef.current = requestKey;
+      sideWorkspaceFileContentKeyRef.current = contentKey;
+      setSideWorkspaceFileTreeKey(requestKey);
+      setSideWorkspaceFileTree(projection);
+      setSideWorkspaceFileTreeStatus('ready');
+      setSideWorkspaceSelectedFileRef(selectedFileRef);
+      setActiveFile(selectedFileRef.path);
+      setSideWorkspaceFileContentKey(contentKey);
+      setSideWorkspaceFileContent(content);
+      setSideWorkspaceFileContentStatus('ready');
+      return true;
+    } catch {
+      if (sideWorkspaceFileTreeSequenceRef.current === sequence) {
+        sideWorkspaceFileContentKeyRef.current = null;
+        setSideWorkspaceFileContentKey(null);
+        setSideWorkspaceFileContent(null);
+        setSideWorkspaceFileTreeStatus('failed');
+        setSideWorkspaceFileContentStatus('failed');
+      }
+      return false;
+    }
+  }, [conversationFilesRequest, ports.sideWorkspaceFiles]);
+
   useEffect(() => {
-    const sequence = sideWorkspaceFileContentSequenceRef.current + 1;
-    sideWorkspaceFileContentSequenceRef.current = sequence;
-    let active = true;
+    sideWorkspaceFileContentMountedRef.current = true;
+    return () => {
+      sideWorkspaceFileContentMountedRef.current = false;
+      sideWorkspaceFileContentSequenceRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
     const loadFileContent = async () => {
       await Promise.resolve();
-      if (!active || sideWorkspaceFileContentSequenceRef.current !== sequence) return;
-      const request = sideWorkspaceFilesRequest();
+      if (!sideWorkspaceFileContentMountedRef.current) return;
+      const request = conversationFilesRequest();
       const fileRef = sideWorkspaceSelectedFileRef;
       if (
         request === null
         || fileRef === null
         || sideWorkspaceFileTree === null
       ) {
+        sideWorkspaceFileContentSequenceRef.current += 1;
+        sideWorkspaceFileContentKeyRef.current = null;
         setSideWorkspaceFileContentKey(null);
         setSideWorkspaceFileContent(null);
         setSideWorkspaceFileContentStatus('idle');
         return;
       }
-      const requestKey = sideWorkspaceFilesRequestKey(projectSnapshotRef.current.draft?.draft_id ?? null, request);
-      const contentKey = `${requestKey}:${sideWorkspaceFileRefKey(fileRef)}`;
+      const contentKey = `${request.project_id}:${request.conversation_id}:${sideWorkspaceFileRefKey(fileRef)}`;
       if (
-        sideWorkspaceFileTreeKey !== requestKey
-        || fileRef.source_tree_digest !== sideWorkspaceFileTree.source_tree_digest
+        fileRef.source_tree_digest !== sideWorkspaceFileTree.source_tree_digest
       ) {
+        sideWorkspaceFileContentSequenceRef.current += 1;
+        sideWorkspaceFileContentKeyRef.current = contentKey;
         setSideWorkspaceFileContentKey(contentKey);
         setSideWorkspaceFileContent(null);
         setSideWorkspaceFileContentStatus('failed');
         return;
       }
+      if (sideWorkspaceFileContentKeyRef.current === contentKey) return;
+      const sequence = sideWorkspaceFileContentSequenceRef.current + 1;
+      sideWorkspaceFileContentSequenceRef.current = sequence;
+      sideWorkspaceFileContentKeyRef.current = contentKey;
       setSideWorkspaceFileContentKey(contentKey);
       setSideWorkspaceFileContentStatus('loading');
       setSideWorkspaceFileContent(null);
@@ -1502,25 +2554,26 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           file_ref: fileRef,
         });
         if (
-          !active
+          !sideWorkspaceFileContentMountedRef.current
           || sideWorkspaceFileContentSequenceRef.current !== sequence
           || sideWorkspaceFileRefKey(projection.file_ref) !== sideWorkspaceFileRefKey(fileRef)
         ) return;
         setSideWorkspaceFileContent(projection);
         setSideWorkspaceFileContentStatus('ready');
       } catch {
-        if (!active || sideWorkspaceFileContentSequenceRef.current !== sequence) return;
+        if (
+          !sideWorkspaceFileContentMountedRef.current
+          || sideWorkspaceFileContentSequenceRef.current !== sequence
+        ) return;
         setSideWorkspaceFileContent(null);
         setSideWorkspaceFileContentStatus('failed');
       }
     };
     void loadFileContent();
-    return () => { active = false; };
   }, [
     ports.sideWorkspaceFiles,
+    conversationFilesRequest,
     sideWorkspaceFileTree,
-    sideWorkspaceFileTreeKey,
-    sideWorkspaceFilesRequest,
     sideWorkspaceSelectedFileRef,
   ]);
 
@@ -1532,12 +2585,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       await Promise.resolve();
       if (!active || checkRunRequestSequenceRef.current !== requestSequence) return;
       setCheckRunAvailable(null);
-      setCheckRunCompleted(null);
+      setCheckEnvironmentDiagnosis(null);
       if (currentDraftId === null) {
         setCheckRunOperation(null);
+        setCheckRunOperationFailureCode(null);
         return;
       }
       setCheckRunOperation('loading');
+      setCheckRunOperationFailureCode(null);
       for (let attempt = 1; attempt <= CHECK_RUN_DISCOVERY_MAX_ATTEMPTS; attempt += 1) {
         try {
           const result = await ports.checkRun.readCurrentDraftAvailableChecks({ draft_id: currentDraftId });
@@ -1546,13 +2601,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
           setCheckRunAvailable(result);
           setCheckRunOperation(null);
+          setCheckRunOperationFailureCode(null);
           return;
-        } catch {
+        } catch (error) {
           if (!active
             || checkRunRequestSequenceRef.current !== requestSequence
             || projectSnapshotRef.current.draft?.draft_id !== currentDraftId) return;
           if (attempt === CHECK_RUN_DISCOVERY_MAX_ATTEMPTS) {
             setCheckRunOperation('failed');
+            setCheckRunOperationFailureCode(classifyCheckRunOperationFailureCode(error));
             return;
           }
           await new Promise<void>((resolve) => {
@@ -1567,53 +2624,112 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     };
   }, [currentDraftId, ports.checkRun]);
 
-  const runCheck = useCallback(async (profile: BuilderCheckRunProfile) => {
-    const draftId = projectSnapshotRef.current.draft?.draft_id ?? null;
-    const admittedProfile = checkRunAvailable?.draft_id === draftId
-      ? checkRunAvailable.available_checks.find(
-        (available) => available.command_profile_id === profile.command_profile_id,
-      ) ?? null
-      : null;
-    if (draftId === null || admittedProfile === null || checkRunOperation === 'running') return;
-    const requestSequence = checkRunRequestSequenceRef.current + 1;
-    checkRunRequestSequenceRef.current = requestSequence;
-    setCheckRunOperation('running');
-    try {
-      const result = await ports.checkRun.approveAndRunCurrentDraftCheck({
-        draft_id: draftId,
-        command_profile_id: admittedProfile.command_profile_id,
-      });
-      if (
-        checkRunRequestSequenceRef.current !== requestSequence
-        || projectSnapshotRef.current.draft?.draft_id !== draftId
-      ) return;
-      setCheckRunCompleted(result);
-      setCheckRunOperation(null);
-      await conversation.refresh();
-    } catch {
-      if (
-        checkRunRequestSequenceRef.current !== requestSequence
-        || projectSnapshotRef.current.draft?.draft_id !== draftId
-      ) return;
-      setCheckRunOperation('failed');
-    }
-  }, [checkRunAvailable, checkRunOperation, conversation, ports.checkRun]);
-
   useEffect(() => {
+    setProjectEnvironmentDiagnosis(null);
+  }, [projectId]);
+
+  const decideCheckDependencyPreparation = useCallback(async (
+    decision: BuilderCheckRunDependencyPreparationDecision,
+    profile: BuilderCheckRunProfile,
+  ) => {
     const draftId = currentDraftId;
-    if (
-      draftId === null
-      || checkRunAvailable?.draft_id !== draftId
-      || checkRunCompleted?.draft_id === draftId
-      || checkRunOperation !== null
-    ) return;
-    const profile = checkRunAvailable.available_checks[0] ?? null;
-    if (profile === null) return;
-    const automaticCheckRunKey = `${draftId}:${profile.command_profile_id}`;
-    if (automaticCheckRunKeyRef.current === automaticCheckRunKey) return;
-    automaticCheckRunKeyRef.current = automaticCheckRunKey;
-    void runCheck(profile);
-  }, [checkRunAvailable, checkRunCompleted, checkRunOperation, currentDraftId, runCheck]);
+    if (draftId === null) return;
+    if (dependencyPreparationInFlightRef.current === draftId) return;
+    dependencyPreparationInFlightRef.current = draftId;
+    setCheckRunOperation('preparing_dependencies');
+    setCheckRunOperationFailureCode(null);
+    try {
+      await ports.checkRun.decideCurrentDraftDependencyPreparation({
+        draft_id: draftId,
+        command_profile_id: profile.command_profile_id,
+        decision,
+      });
+      if (projectSnapshotRef.current.draft?.draft_id === draftId) {
+        await conversation.refresh();
+        if (projectSnapshotRef.current.draft?.draft_id === draftId) {
+          setCheckEnvironmentDiagnosis((current) => (
+            current?.command_profile_id === profile.command_profile_id ? null : current
+          ));
+          setCheckRunOperation(null);
+          setCheckRunOperationFailureCode(null);
+        }
+      }
+    } catch (error) {
+      if (projectSnapshotRef.current.draft?.draft_id === draftId) {
+        setCheckRunOperation('failed');
+        setCheckRunOperationFailureCode(classifyCheckRunOperationFailureCode(error));
+      }
+    } finally {
+      if (dependencyPreparationInFlightRef.current === draftId) {
+        dependencyPreparationInFlightRef.current = null;
+      }
+    }
+  }, [conversation, currentDraftId, ports.checkRun]);
+
+  const diagnoseCheckEnvironment = useCallback(async (profile: BuilderCheckRunProfile) => {
+    const draftId = currentDraftId;
+    if (draftId === null) return;
+    setCheckEnvironmentDiagnosis(Object.freeze({
+      command_profile_id: profile.command_profile_id,
+      status: 'loading',
+    }));
+    try {
+      const result = await ports.checkRun.diagnoseCurrentDraftCheckEnvironment({
+        draft_id: draftId,
+        command_profile_id: profile.command_profile_id,
+      });
+      if (projectSnapshotRef.current.draft?.draft_id !== draftId
+        || result.draft_id !== draftId
+        || result.environment_diagnosis.command_profile_id !== profile.command_profile_id) return;
+      setCheckEnvironmentDiagnosis(Object.freeze({
+        command_profile_id: profile.command_profile_id,
+        status: 'ready',
+        diagnosis: result.environment_diagnosis,
+      }));
+    } catch (error) {
+      if (projectSnapshotRef.current.draft?.draft_id !== draftId) return;
+      const failureCode = classifyCheckRunOperationFailureCode(error);
+      const failureMessage = failureCode === 'busy'
+        ? 'A project check is already running. Try again when it finishes.'
+        : failureCode === 'stale_draft'
+          ? 'This draft or check option changed. Refresh the current draft and try again.'
+          : failureCode === 'invalid_request'
+            ? 'Builder could not verify this diagnosis request. Refresh the draft and try again.'
+            : failureCode === 'forbidden'
+              ? 'The diagnosis request did not come from the active Builder window. Try again from this window.'
+              : 'I could not read the check environment diagnosis. Try again.';
+      setCheckEnvironmentDiagnosis(Object.freeze({
+        command_profile_id: profile.command_profile_id,
+        status: 'failed',
+        failure_message: failureMessage,
+      }));
+    }
+  }, [currentDraftId, ports.checkRun]);
+
+  const diagnoseProjectEnvironment = useCallback(async (targetProjectId: string) => {
+    setProjectEnvironmentDiagnosis(Object.freeze({
+      project_id: targetProjectId,
+      status: 'loading',
+    }));
+    try {
+      const result = await ports.checkRun.diagnoseProjectEnvironment({
+        project_id: targetProjectId,
+      });
+      if (projectId !== targetProjectId || result.project_id !== targetProjectId) return;
+      setProjectEnvironmentDiagnosis(Object.freeze({
+        project_id: targetProjectId,
+        status: 'ready',
+        diagnosis: result.environment_diagnosis,
+      }));
+    } catch {
+      if (projectId !== targetProjectId) return;
+      setProjectEnvironmentDiagnosis(Object.freeze({
+        project_id: targetProjectId,
+        status: 'failed',
+        failure_message: 'I could not read the project environment diagnosis. Try again.',
+      }));
+    }
+  }, [ports.checkRun, projectId]);
 
   useEffect(() => {
     if (queuedActiveRunFollowup === null) return undefined;
@@ -1663,7 +2779,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   useLayoutEffect(() => {
     liveOutputRef.current = liveOutput;
-  }, [liveOutput]);
+    if (liveOutput === null) liveOutputStore.clear();
+  }, [liveOutput, liveOutputStore]);
+
+  // StrictMode replays effect cleanup during development, so component cleanup
+  // must leave this memoized store reusable for the second setup pass.
+  useEffect(() => () => liveOutputStore.clear(), [liveOutputStore]);
+
+  useEffect(() => () => commandOutputStore.dispose(), [commandOutputStore]);
 
   useLayoutEffect(() => {
     composerModeRef.current = composerMode;
@@ -1682,6 +2805,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [currentProjectWriteApproval]);
 
   useLayoutEffect(() => {
+    commandApprovalRef.current = commandApproval;
+  }, [commandApproval]);
+
+  useLayoutEffect(() => {
     currentProjectWriteApprovalStatusRef.current = currentProjectWriteApprovalStatus;
   }, [currentProjectWriteApprovalStatus]);
 
@@ -1694,62 +2821,100 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   useEffect(() => (
     ports.generator.subscribeStarted?.((event) => {
+      commandApprovalRef.current = null;
+      setCommandApproval(null);
+      commandOutputStore.clear();
       const currentSnapshot = projectSnapshotRef.current;
       const visibleProjectId = visibleConversationProjectId(currentSnapshot);
       if (!currentSnapshot.busy) return;
       if (visibleProjectId !== null && visibleProjectId !== event.project_id) return;
-      retainConversationProject(event.project_id);
+      if (event.project_id !== null) retainConversationProject(event.project_id);
       const nextLiveOutput = Object.freeze({
         state: 'streaming',
         request_id: event.request_id,
         project_id: event.project_id,
         text: '',
         chunk_count: 0,
-        waiting_text: approvedPlanWaitingProjectRef.current === event.project_id
-          ? APPROVED_PLAN_WAITING_TEXT
-          : undefined,
       });
       liveOutputRef.current = nextLiveOutput;
+      liveOutputStore.start(nextLiveOutput);
       setLiveOutput(nextLiveOutput);
     }) ?? (() => undefined)
-  ), [ports.generator, retainConversationProject]);
+  ), [commandOutputStore, liveOutputStore, ports.generator, retainConversationProject]);
 
   useEffect(() => (
     ports.generator.subscribeOutput?.((event) => {
-      setLiveOutput((current) => {
-        const active = current !== null
-          && current.request_id === event.request_id
-          && current.project_id === event.project_id
-          ? current
-          : liveOutputRef.current !== null
-            && liveOutputRef.current.request_id === event.request_id
-            && liveOutputRef.current.project_id === event.project_id
-            ? liveOutputRef.current
-            : null;
-        if (active === null) return current;
-        const text = appendLiveOutputText(active.text, event.display_delta_text);
-        if (text === null) return current;
-        const nextLiveOutput = Object.freeze({
-          ...active,
-          text,
-          chunk_count: active.chunk_count + 1,
-        });
-        liveOutputRef.current = nextLiveOutput;
-        return nextLiveOutput;
-      });
+      liveOutputStore.append(event);
     }) ?? (() => undefined)
-  ), [ports.generator]);
+  ), [liveOutputStore, ports.generator]);
+
+  useEffect(() => (
+    ports.generator.subscribeCommandApproval?.((request) => {
+      const currentConversation = conversationSnapshotRef.current;
+      if (
+        !projectSnapshotRef.current.busy
+        || currentConversation.project_id !== request.project_id
+        || currentConversation.conversation?.state !== 'ready'
+        || currentConversation.conversation.conversation.conversation_id !== request.conversation_id
+      ) return;
+      const prompt = Object.freeze({ request, state: 'pending' as const });
+      commandApprovalRef.current = prompt;
+      setCommandApproval(prompt);
+      commandOutputStore.start(request);
+    }) ?? (() => undefined)
+  ), [commandOutputStore, ports.generator]);
+
+  useEffect(() => (
+    ports.generator.subscribeCommandOutput?.((event: BuilderCommandOutputEvent) => {
+      commandOutputStore.append(event);
+    }) ?? (() => undefined)
+  ), [commandOutputStore, ports.generator]);
+
+  useEffect(() => {
+    const commandOutput = commandOutputStore.getSnapshot();
+    const snapshot = conversation.snapshot;
+    if (
+      commandOutput === null
+      || snapshot.project_id !== commandOutput.project_id
+      || snapshot.conversation?.state !== 'ready'
+      || snapshot.conversation.conversation.conversation_id !== commandOutput.conversation_id
+    ) return;
+    const activity = [...snapshot.conversation.conversation.items].reverse().find((item) => (
+      item.item_kind === 'programming_runtime_tool_activity'
+      && item.tool_kind === 'command'
+      && item.run_id === commandOutput.run_id
+      && item.target_label === commandOutput.command_display
+      && item.state !== 'running'
+    ));
+    if (activity?.item_kind !== 'programming_runtime_tool_activity') return;
+    commandOutputStore.setState(
+      activity.state === 'completed' ? 'completed' : 'failed',
+      activity.check_result?.summary ?? activity.summary,
+      activity.presentation_detail?.detail_kind === 'command'
+        && activity.presentation_detail.truncated,
+    );
+  }, [commandOutputStore, conversation.snapshot]);
 
   const resetWorkspace = useCallback((
     nextProjectId: string | undefined,
-    options: Readonly<{ preserveIdea?: boolean }> = Object.freeze({}),
+    options: Readonly<{
+      agentWorkbench?: boolean;
+      preserveIdea?: boolean;
+      preserveWorkspaceController?: boolean;
+      taskAddressId?: string | null;
+    }> = Object.freeze({}),
   ) => {
-    const nextEpoch = workspaceEpochRef.current + 1;
-    workspaceEpochRef.current = nextEpoch;
+    const preserveWorkspaceController = options.preserveWorkspaceController === true;
+    const nextEpoch = preserveWorkspaceController
+      ? workspaceEpochRef.current
+      : workspaceEpochRef.current + 1;
+    if (!preserveWorkspaceController) workspaceEpochRef.current = nextEpoch;
     pendingBuildAfterWorkspaceRef.current = null;
-    approvedPlanWaitingProjectRef.current = null;
+    workbenchDraftReturnRef.current = null;
     planSourceReadApprovalRef.current = null;
     currentProjectWriteApprovalRef.current = null;
+    commandApprovalRef.current = null;
+    commandOutputStore.clear();
     currentProjectWriteApprovalStatusRef.current = null;
     submitInFlightInstructionRef.current = null;
     pendingProjectActivityRestoreRef.current = nextProjectId === undefined
@@ -1763,6 +2928,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setAnswerFailureRecordedSuccess(false);
     setPlanSourceReadApproval(null);
     setCurrentProjectWriteApproval(null);
+    setCommandApproval(null);
     setCurrentProjectWriteApprovalStatus(null);
     publishPlanReviewInFlight(null);
     restoreAttemptCountsRef.current.clear();
@@ -1770,9 +2936,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     activityRestoreLoadAttemptsRef.current.clear();
     activityRestoreLoadsInFlightRef.current.clear();
     activityRestoreProbeKeysRef.current.clear();
+    automaticDraftRestoreSuppressedProjectIdsRef.current.clear();
     publishSubmitInFlight(false);
-    setWorkspaceEpoch(workspaceEpochRef.current);
+    if (!preserveWorkspaceController) setWorkspaceEpoch(workspaceEpochRef.current);
+    setAgentWorkbenchSelected(options.agentWorkbench === true);
     setProjectId(nextProjectId);
+    setTaskAddressId(nextProjectId === undefined ? null : (options.taskAddressId ?? null));
+    composerModeRef.current = null;
+    setComposerMode(null);
     if (nextProjectId !== undefined) {
       globalThis.setTimeout(() => {
         if (workspaceEpochRef.current !== nextEpoch) return;
@@ -1780,10 +2951,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
     }
     if (options.preserveIdea !== true) setIdea('');
-    setActiveFile(null);
+    if (nextProjectId === undefined) setActiveFile(null);
     setLiveOutput(null);
     setView('project');
+    return nextEpoch;
   }, [
+    commandOutputStore,
     publishLockedComposerSubmit,
     publishPlanReviewInFlight,
     publishQueuedActiveRunFollowup,
@@ -1791,12 +2964,153 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ]);
 
   const openProject = useCallback((nextProjectId: string) => {
-    resetWorkspace(nextProjectId);
+    const selectedTaskAddressId = firstTaskAddressForProject(
+      agentProjectTree.snapshot.tree,
+      nextProjectId,
+    );
+    resetWorkspace(nextProjectId, { taskAddressId: selectedTaskAddressId });
+    setRetainedTaskConversationSeed(taskConversationSeed(taskForAddress(
+      agentProjectTree.snapshot.tree,
+      selectedTaskAddressId,
+    )));
+  }, [agentProjectTree.snapshot.tree, resetWorkspace]);
+
+  const openTask = useCallback((
+    nextProjectId: string,
+    nextTaskAddressId: string,
+    eventSeed: BuilderTaskConversationSeed | null = null,
+  ): number => {
+    const nextTaskConversationSeed = taskConversationSeed(taskForAddress(
+      agentProjectTree.snapshot.tree,
+      nextTaskAddressId,
+    )) ?? taskConversationSeed(
+      agentWorkbench.snapshot.projection?.task_monitor.tasks.find(
+        (task) => task.task_address_id === nextTaskAddressId,
+      ) ?? null,
+    ) ?? (eventSeed?.task_address_id === nextTaskAddressId ? eventSeed : null);
+    const retainedDraft = workbenchDraftReturnRef.current;
+    const returningToRetainedDraft = (
+      retainedDraft?.projectId === nextProjectId
+      && retainedDraft.taskAddressId === nextTaskAddressId
+    );
+    const nextEpoch = resetWorkspace(nextProjectId, {
+      preserveWorkspaceController: returningToRetainedDraft,
+      taskAddressId: nextTaskAddressId,
+    });
+    if (
+      retainedDraft?.projectId === nextProjectId
+      && retainedDraft.taskAddressId === nextTaskAddressId
+    ) {
+      workbenchDraftReturnRef.current = Object.freeze({ ...retainedDraft, epoch: nextEpoch });
+    }
+    setRetainedTaskConversationSeed(nextTaskConversationSeed);
+    return nextEpoch;
+  }, [agentProjectTree.snapshot.tree, agentWorkbench.snapshot.projection, resetWorkspace]);
+
+  const openAgentWorkbench = useCallback(() => {
+    const current = projectSnapshotRef.current;
+    const currentTaskAddressId = taskAddressId ?? (
+      conversationSnapshotRef.current.project_id === current.draft?.project_id
+        ? conversationSnapshotRef.current.task_address_id
+        : null
+    );
+    const retainedDraft = current.draft !== null && currentTaskAddressId !== null
+      ? Object.freeze({
+          draftId: current.draft.draft_id,
+          projectId: current.draft.project_id,
+          restoreKey: `workbench:${currentTaskAddressId}:${current.draft.draft_id}`,
+          taskAddressId: currentTaskAddressId,
+        })
+      : null;
+    const nextEpoch = resetWorkspace(undefined, {
+      agentWorkbench: true,
+      preserveWorkspaceController: true,
+    });
+    setRetainedTaskConversationSeed(null);
+    if (retainedDraft !== null) {
+      workbenchDraftReturnRef.current = Object.freeze({ ...retainedDraft, epoch: nextEpoch });
+    }
+  }, [resetWorkspace, taskAddressId]);
+
+  const decideAgentTaskProposal = useCallback(async (
+    proposalId: string,
+    operation: 'approve_existing_project' | 'reject',
+    targetProjectId: string | null,
+    options: Readonly<{ autoApproveCurrentProjectWrite?: boolean }> = Object.freeze({}),
+  ) => {
+    const next = await agentWorkbench.decideTaskProposal({
+      proposal_id: proposalId,
+      operation,
+      project_id: targetProjectId,
+    });
+    await Promise.all([
+      catalog.refresh().catch(() => undefined),
+      agentProjectTree.refresh().catch(() => undefined),
+    ]);
+    const action = next.projection?.stream.items
+      .flatMap((item) => item.actions)
+      .find((candidate) => candidate.proposal_id === proposalId);
+    if (action?.status === 'materialized' && action.project_id !== null && action.task_address_id !== null) {
+      const nextEpoch = openTask(action.project_id, action.task_address_id);
+      if (action.execution_mode === 'foreground' && action.requested_outcome !== 'discuss') {
+        pendingAgentTaskHandoffStartRef.current = Object.freeze({
+          autoApproveCurrentProjectWrite: options.autoApproveCurrentProjectWrite === true,
+          composerMode: composerModeForAgentTaskProposal(action),
+          epoch: nextEpoch,
+          instruction: action.objective,
+          messageId: `agent-task-proposal:${action.proposal_id}`,
+          projectId: action.project_id,
+          taskAddressId: action.task_address_id,
+        });
+      }
+    }
+  }, [agentProjectTree, agentWorkbench, catalog, openTask]);
+
+  const controlAgentTask = useCallback((
+    projectId: string,
+    nextTaskAddressId: string,
+    operation: 'cancel_task',
+  ) => agentWorkbench.controlTask({
+    project_id: projectId,
+    task_address_id: nextTaskAddressId,
+    operation,
+  }), [agentWorkbench]);
+
+  const createProjectForAgentTaskProposal = useCallback(async (
+    proposalId: string,
+    objective: string,
+  ) => {
+    if (agentTaskProposalProjectCreationInFlightRef.current.has(proposalId)) return;
+    agentTaskProposalProjectCreationInFlightRef.current.add(proposalId);
+    publishSubmitInFlight(true);
+    try {
+      const title = objective.split(/\r?\n/u, 1)[0].trim().slice(0, 80) || 'New project';
+      const created = await project.createNewLocalProject(title);
+      const createdProjectId = visibleConversationProjectId(created);
+      if (createdProjectId === null) return;
+      await decideAgentTaskProposal(
+        proposalId,
+        'approve_existing_project',
+        createdProjectId,
+        { autoApproveCurrentProjectWrite: true },
+      );
+    } finally {
+      agentTaskProposalProjectCreationInFlightRef.current.delete(proposalId);
+      publishSubmitInFlight(false);
+    }
+  }, [decideAgentTaskProposal, project, publishSubmitInFlight]);
+
+  const startNewTask = useCallback((nextProjectId: string) => {
+    resetWorkspace(nextProjectId, { taskAddressId: null });
   }, [resetWorkspace]);
 
   const openProjectFromComposer = useCallback((nextProjectId: string) => {
-    resetWorkspace(nextProjectId, { preserveIdea: true });
-  }, [resetWorkspace]);
+    const selectedTaskAddressId = firstTaskAddressForProject(
+      agentProjectTree.snapshot.tree,
+      nextProjectId,
+    );
+    resetWorkspace(nextProjectId, { preserveIdea: true, taskAddressId: selectedTaskAddressId });
+  }, [agentProjectTree.snapshot.tree, resetWorkspace]);
 
   const clearPendingProjectActivityRestore = useCallback(() => {
     pendingProjectActivityRestoreRef.current = null;
@@ -1826,7 +3140,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       .filter((candidate) => !savedProjectIds.has(candidate.project_id));
     if (catalog.snapshot.projects.length !== 0 || workspaceOnlyProjects.length !== 1) return;
     const workspaceProjectId = workspaceOnlyProjects[0].project_id;
+    const autoOpenEpoch = workspaceEpochRef.current;
     window.setTimeout(() => {
+      if (workspaceEpochRef.current !== autoOpenEpoch) return;
       if (projectSnapshotRef.current.status !== 'new') return;
       openProject(workspaceProjectId);
     });
@@ -1836,9 +3152,86 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     pendingBuildAfterWorkspaceRef.current = null;
   }, []);
 
+  const lifecycleAgentId = agentProjectTree.snapshot.tree?.agent_id ?? DEFAULT_BUILDER_AGENT_ID;
+  const refreshLifecycleViews = useCallback((
+    options: Readonly<{ agentWorkbench?: boolean }> = Object.freeze({ agentWorkbench: true }),
+  ): Promise<void> => {
+    lifecycleRefreshQueuedRef.current = true;
+    if (options.agentWorkbench !== false) lifecycleRefreshNeedsWorkbenchRef.current = true;
+    if (lifecycleRefreshInFlightRef.current !== null) return lifecycleRefreshInFlightRef.current;
+    const drainRefreshes = async () => {
+      while (lifecycleRefreshQueuedRef.current) {
+        const refreshWorkbench = lifecycleRefreshNeedsWorkbenchRef.current;
+        lifecycleRefreshQueuedRef.current = false;
+        lifecycleRefreshNeedsWorkbenchRef.current = false;
+        await Promise.all([
+          catalog.refresh().catch(() => undefined),
+          agentProjectTree.refresh().catch(() => undefined),
+          ...(refreshWorkbench
+            ? [agentWorkbench.refresh().catch(() => undefined)]
+            : []),
+        ]);
+      }
+    };
+    const running = drainRefreshes().finally(() => {
+      lifecycleRefreshInFlightRef.current = null;
+    });
+    lifecycleRefreshInFlightRef.current = running;
+    return running;
+  }, [agentProjectTree, agentWorkbench, catalog]);
+
   const refreshCatalog = useCallback(() => {
-    void catalog.refresh().catch(() => undefined);
-  }, [catalog]);
+    void refreshLifecycleViews({ agentWorkbench: false });
+  }, [refreshLifecycleViews]);
+
+  const renameAgentProject = useCallback(async (targetProjectId: string, title: string) => {
+    await ports.agentProjectTree.renameProject({
+      agent_id: lifecycleAgentId,
+      project_id: targetProjectId,
+      title,
+    });
+    await refreshLifecycleViews();
+  }, [lifecycleAgentId, ports.agentProjectTree, refreshLifecycleViews]);
+
+  const archiveAgentProject = useCallback(async (targetProjectId: string) => {
+    await ports.agentProjectTree.archiveProject({
+      agent_id: lifecycleAgentId,
+      project_id: targetProjectId,
+    });
+    if (targetProjectId === projectId) {
+      resetWorkspace(undefined, { taskAddressId: null });
+    }
+    await refreshLifecycleViews();
+  }, [lifecycleAgentId, ports.agentProjectTree, projectId, refreshLifecycleViews, resetWorkspace]);
+
+  const renameAgentTask = useCallback(async (
+    targetProjectId: string,
+    nextTaskAddressId: string,
+    title: string,
+  ) => {
+    await ports.agentProjectTree.renameTask({
+      agent_id: lifecycleAgentId,
+      project_id: targetProjectId,
+      task_address_id: nextTaskAddressId,
+      title,
+    });
+    await refreshLifecycleViews();
+  }, [lifecycleAgentId, ports.agentProjectTree, refreshLifecycleViews]);
+
+  const archiveAgentTask = useCallback(async (
+    targetProjectId: string,
+    nextTaskAddressId: string,
+  ) => {
+    await ports.agentProjectTree.archiveTask({
+      agent_id: lifecycleAgentId,
+      project_id: targetProjectId,
+      task_address_id: nextTaskAddressId,
+    });
+    if (nextTaskAddressId === taskAddressId) {
+      resetWorkspace(targetProjectId, { taskAddressId: null });
+    }
+    await refreshLifecycleViews();
+  }, [lifecycleAgentId, ports.agentProjectTree, refreshLifecycleViews, resetWorkspace, taskAddressId]);
 
   const openProjectLocation = useCallback(async (targetProjectId: string) => {
     await ports.workspace.openLocation({ project_id: targetProjectId }).catch(() => undefined);
@@ -1851,13 +3244,39 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ): Promise<BuilderConversationControllerSnapshot | null> => {
     if (workspaceEpochRef.current !== commandEpoch) return null;
     const conversationProjectId = visibleConversationProjectId(result) ?? fallbackProjectId;
-    if (conversationProjectId === null) return null;
-    if (conversation.snapshot.project_id === conversationProjectId) {
-      return await conversation.refresh().catch(() => null);
-    } else {
-      return await conversation.load(conversationProjectId).catch(() => null);
+    if (conversationProjectId === null) {
+      if (conversation.snapshot.agent_id === null) return null;
+      const [activity] = await Promise.all([
+        boundedPostTerminalRefresh(conversation.refresh(), null),
+        boundedPostTerminalRefresh(agentWorkbench.refresh(), null),
+      ]);
+      return activity;
     }
-  }, [conversation]);
+    const currentConversationTaskAddressId = conversation.snapshot.project_id === conversationProjectId
+      ? conversation.snapshot.task_address_id
+      : null;
+    let nextTaskAddressId = currentConversationTaskAddressId ?? taskAddressId;
+    if (taskAddressId === null && currentConversationTaskAddressId !== null) {
+      setTaskAddressId(currentConversationTaskAddressId);
+    }
+    if (nextTaskAddressId === null) {
+      const refreshedTree = await boundedPostTerminalRefresh(agentProjectTree.refresh(), null);
+      nextTaskAddressId = firstTaskAddressForProject(
+        refreshedTree?.tree ?? null,
+        conversationProjectId,
+      );
+      if (nextTaskAddressId === null) return conversation.snapshot;
+      setTaskAddressId(nextTaskAddressId);
+    }
+    const activity = conversation.snapshot.project_id === conversationProjectId
+      && conversation.snapshot.task_address_id === nextTaskAddressId
+      ? await boundedPostTerminalRefresh(conversation.refresh(), null)
+      : await boundedPostTerminalRefresh(
+        conversation.load(conversationProjectId, nextTaskAddressId),
+        null,
+      );
+    return activity;
+  }, [agentProjectTree, agentWorkbench, conversation, taskAddressId]);
 
   const runBuildInstruction = useCallback((
     instruction: string,
@@ -1887,7 +3306,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (workspaceReady) {
         setActiveFile(null);
         setLiveOutput(null);
-        await catalog.refresh().catch(() => undefined);
+        await Promise.all([
+          catalog.refresh().catch(() => undefined),
+          agentProjectTree.refresh().catch(() => undefined),
+        ]);
       }
       const pendingBuild = pendingBuildAfterWorkspaceRef.current;
       if (pendingBuild === null || pendingBuild.epoch !== commandEpoch) return;
@@ -1934,6 +3356,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       try {
         approval = await ports.generator.prepareCurrentProjectWriteApproval({
           project_id: visibleProjectId,
+          task_address_id: taskAddressId,
         });
       } catch {
         approval = Object.freeze({
@@ -2007,6 +3430,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       publishSubmitInFlight(false);
     }
   }, [
+    agentProjectTree,
     catalog,
     createComposerRouteEvidence,
     idea,
@@ -2015,6 +3439,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     publishSubmitInFlight,
     readActivityAfterTerminal,
     runBuildInstruction,
+    taskAddressId,
   ]);
 
   const refreshActiveConversation = useCallback(async (commandEpoch: number) => {
@@ -2022,18 +3447,23 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const live = liveOutputRef.current;
     const projectId = visibleConversationProjectId(projectSnapshotRef.current) ?? live?.project_id ?? null;
     if (projectId === null) return;
-    if (conversation.snapshot.project_id === projectId) {
+    if (taskAddressId === null) return;
+    if (
+      conversation.snapshot.project_id === projectId
+      && conversation.snapshot.task_address_id === taskAddressId
+    ) {
       await conversation.refresh().catch(() => undefined);
     } else {
-      await conversation.load(projectId).catch(() => undefined);
+      await conversation.load(projectId, taskAddressId).catch(() => undefined);
     }
-  }, [conversation]);
+  }, [conversation, taskAddressId]);
 
   const restorePendingDraftTarget = useCallback((
     target: RestorableDraftTarget,
     commandEpoch: number,
   ) => {
     const attemptKey = `${commandEpoch}:${target.restoreKey}`;
+    if (automaticDraftRestoreSuppressedProjectIdsRef.current.has(target.projectId)) return;
     if (restoreAttemptsInFlightRef.current.has(attemptKey)) return;
     const attemptRestore = () => {
       if (workspaceEpochRef.current !== commandEpoch) {
@@ -2041,6 +3471,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       if (restoreAttemptsInFlightRef.current.has(attemptKey)) return;
+      if (automaticDraftRestoreSuppressedProjectIdsRef.current.has(target.projectId)) {
+        restoreAttemptCountsRef.current.delete(attemptKey);
+        return;
+      }
       const attemptCount = restoreAttemptCountsRef.current.get(attemptKey) ?? 0;
       if (attemptCount >= MAX_PENDING_DRAFT_RESTORE_ATTEMPTS) return;
       restoreAttemptCountsRef.current.set(attemptKey, attemptCount + 1);
@@ -2073,10 +3507,33 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     globalThis.setTimeout(attemptRestore);
   }, [project, readActivityAfterTerminal]);
 
+  useEffect(() => {
+    const target = workbenchDraftReturnRef.current;
+    if (
+      target === null
+      || target.epoch !== workspaceEpochRef.current
+      || target.projectId !== projectId
+      || target.taskAddressId !== taskAddressId
+    ) return;
+    if (project.snapshot.draft?.draft_id === target.draftId) {
+      workbenchDraftReturnRef.current = null;
+      return;
+    }
+    if (
+      project.snapshot.busy
+      || project.snapshot.draft !== null
+      || project.snapshot.inspectedRevision !== null
+      || !['ready', 'generation_failed', 'preview_unavailable'].includes(project.snapshot.status)
+    ) return;
+    workbenchDraftReturnRef.current = null;
+    restorePendingDraftTarget(target, target.epoch);
+  }, [project.snapshot, projectId, restorePendingDraftTarget, taskAddressId]);
+
   const restorePendingDraftFromActivity = useCallback((
     visibleProjectId: string,
     commandEpoch: number,
   ) => {
+    if (taskAddressId === null) return;
     const loadKey = `${commandEpoch}:${visibleProjectId}`;
     if (activityRestoreLoadsInFlightRef.current.has(loadKey)) return;
     const retryLoad = () => {
@@ -2105,6 +3562,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       const currentConversation = conversationSnapshotRef.current;
+      if (
+        currentConversation.busy
+        && currentConversation.project_id === visibleProjectId
+        && currentConversation.task_address_id === taskAddressId
+      ) {
+        activityRestoreLoadAttemptsRef.current.set(loadKey, attemptCount + 1);
+        globalThis.setTimeout(retryLoad, PENDING_DRAFT_RESTORE_RETRY_DELAY_MS);
+        return;
+      }
       if (
         currentConversation.status === 'ready'
         && currentConversation.conversation?.state === 'ready'
@@ -2144,7 +3610,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       activityRestoreLoadAttemptsRef.current.set(loadKey, attemptCount + 1);
-      void conversation.load(visibleProjectId).then((loaded) => {
+      void conversation.probe(visibleProjectId, taskAddressId).then((loaded) => {
         if (workspaceEpochRef.current !== commandEpoch) return;
         if (
           loaded.status !== 'ready'
@@ -2189,7 +3655,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     };
     activityRestoreLoadsInFlightRef.current.add(loadKey);
     globalThis.setTimeout(retryLoad, 50);
-  }, [conversation, restorePendingDraftTarget]);
+  }, [conversation, restorePendingDraftTarget, taskAddressId]);
 
   useLayoutEffect(() => {
     restorePendingDraftFromActivityRef.current = restorePendingDraftFromActivity;
@@ -2261,18 +3727,30 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       setIdea(submittedIdea);
       return;
     }
+    publishPendingUserMessage(submittedIdea, 'steering');
     await refreshActiveConversation(commandEpoch);
-  }, [idea, project, refreshActiveConversation]);
+  }, [idea, project, publishPendingUserMessage, refreshActiveConversation]);
 
   const queueActiveRunFollowupInstruction = useCallback(async (
     submittedIdea: string,
     routeEvidence: BuilderComposerRouteDecisionEvidence,
   ) => {
     const commandEpoch = workspaceEpochRef.current;
+    const pendingMessage = publishPendingUserMessage(submittedIdea, 'queued_followup');
     const queued = await project.queueFollowup(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
-    if (queued === null) return;
-    if (queued.queued_followup === null) return;
+    if (queued === null) {
+      dismissPendingUserMessage(pendingMessage?.client_id ?? null);
+      return;
+    }
+    if (queued.queued_followup === null) {
+      dismissPendingUserMessage(pendingMessage?.client_id ?? null);
+      return;
+    }
+    bindPendingUserMessage(pendingMessage?.client_id ?? null, {
+      message_id: queued.queued_followup.message_id,
+      turn_id: queued.queued_followup.turn_id,
+    });
     await refreshActiveConversation(commandEpoch);
     if (workspaceEpochRef.current !== commandEpoch) return;
     publishQueuedActiveRunFollowup(Object.freeze({
@@ -2282,22 +3760,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       queuedFollowup: queued.queued_followup,
     }));
     setIdea('');
-  }, [project, publishQueuedActiveRunFollowup, refreshActiveConversation]);
+  }, [
+    bindPendingUserMessage,
+    dismissPendingUserMessage,
+    project,
+    publishPendingUserMessage,
+    publishQueuedActiveRunFollowup,
+    refreshActiveConversation,
+  ]);
 
   const continueApprovedPlanAfterWriteApproval = useCallback(async (
     continuation: BuilderApprovedPlanContinuation,
     commandEpoch: number,
   ) => {
     setLiveOutput(null);
-    approvedPlanWaitingProjectRef.current = continuation.project_id;
-    let result: Awaited<ReturnType<typeof project.generateApprovedPlan>>;
-    try {
-      result = await project.generateApprovedPlan(continuation);
-    } finally {
-      if (approvedPlanWaitingProjectRef.current === continuation.project_id) {
-        approvedPlanWaitingProjectRef.current = null;
-      }
-    }
+    const result = await project.generateApprovedPlan(continuation);
     if (workspaceEpochRef.current !== commandEpoch) return;
     setApprovedPlanContinuationFailure(result.status === 'generation_failed' ? continuation : null);
     await readActivityAfterTerminal(result, commandEpoch, continuation.project_id);
@@ -2337,7 +3814,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
     if (workspaceEpochRef.current !== commandEpoch) return;
-    await conversation.load(request.project_id).catch(() => undefined);
+    if (taskAddressId !== null) {
+      await conversation.load(request.project_id, taskAddressId).catch(() => undefined);
+    }
     if (!reviewed || request.decision !== 'approved') {
       setPlanReviewFailure(reviewFailed ? inFlight : null);
       if (
@@ -2353,6 +3832,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     try {
       approval = await ports.generator.prepareCurrentProjectWriteApproval({
         project_id: request.project_id,
+        task_address_id: taskAddressId,
       });
     } catch {
       approval = Object.freeze({
@@ -2414,6 +3894,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.generator,
     ports.planReview,
     publishPlanReviewInFlight,
+    taskAddressId,
   ]);
 
   const runPlanProposal = useCallback(async (
@@ -2426,8 +3907,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (result.status === 'submit_failed' || result.status === 'unavailable') {
       setIdea(submittedIdea);
     }
-    await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
     setLiveOutput(null);
+    await readActivityAfterTerminal(result, commandEpoch, fallbackProjectId);
   }, [project, readActivityAfterTerminal]);
 
   const submitPlanInstruction = useCallback(async (
@@ -2449,6 +3930,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     try {
       const approval = await ports.generator.preparePlanSourceReadApproval({
         project_id: fallbackProjectId,
+        task_address_id: taskAddressId,
       });
       if (workspaceEpochRef.current !== commandEpoch) return true;
       if (approval.state === 'approval_required') {
@@ -2488,7 +3970,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       return true;
     }
-  }, [ports.generator, runPlanProposal]);
+  }, [ports.generator, runPlanProposal, taskAddressId]);
 
   const submitInstructionText = useCallback<SubmitInstructionText>(async (
     submittedIdea,
@@ -2509,11 +3991,19 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     clearPendingProjectActivityRestore();
     publishQueuedActiveRunFollowup(null);
     setAnswerFailureRecordedSuccess(false);
+    if (options.queuedFollowup === null || options.queuedFollowup === undefined) {
+      publishPendingUserMessage(submittedIdea, 'submitted');
+    }
     const activeComposerMode = options.composerModeOverride ?? composerModeRef.current;
+    const submittingAgentWorkbench = conversationSnapshotRef.current.agent_id !== null
+      && conversationSnapshotRef.current.project_id === null;
+    const boundedComposerMode = submittingAgentWorkbench && activeComposerMode === 'build'
+      ? null
+      : activeComposerMode;
     const initialIntentContext = composerIntentContext(
       conversationSnapshotRef.current,
       projectSnapshotRef.current,
-      activeComposerMode,
+      boundedComposerMode,
       currentProjectWriteApprovalStatusRef.current,
       effectiveApprovalMode(
         approvalModeRef.current,
@@ -2531,8 +4021,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     );
     if (
       pendingPlan !== null
-      && activeComposerMode !== 'ask'
-      && activeComposerMode !== 'plan'
+      && boundedComposerMode !== 'ask'
+      && boundedComposerMode !== 'plan'
       && isBuilderComposerContextualBuildIntent(submittedIdea)
     ) {
       const pendingPlanWorkingBrief = composerWorkingBrief(
@@ -2561,7 +4051,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     let semanticClassification: BuilderSemanticRouteClassification | null = null;
     if (
-      activeComposerMode === null
+      boundedComposerMode === null
       && ports.generator.classifyIntent !== undefined
       && shouldRequestSemanticClassifier(decision, submittedIdea)
       && !shouldSkipSemanticClassifierForCurrentDraftBuild(decision, projectSnapshotRef.current, submittedIdea)
@@ -2572,6 +4062,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       try {
         const classification = await ports.generator.classifyIntent({
           instruction: submittedIdea,
+          task_address_id: taskAddressId,
         });
         if (workspaceEpochRef.current !== classificationEpoch) return;
         semanticClassification = classification;
@@ -2616,10 +4107,55 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     };
     setApprovedPlanContinuationFailure(null);
     pendingBuildAfterWorkspaceRef.current = null;
+    if (
+      submittingAgentWorkbench
+      && decision.dispatch === 'build'
+    ) {
+      publishRouteDecision(decision);
+      publishSubmitInFlight(true);
+      try {
+        const proposalSnapshot = await agentWorkbench.createTaskProposal({
+          request_id: `builder-workbench-request:${globalThis.crypto.randomUUID()}`,
+          objective: trimmedSubmittedIdea,
+          requested_outcome: decision.route === 'plan' ? 'plan' : 'build',
+          execution_mode: 'foreground',
+          reason: `Agent Workbench delegated the ${decision.route} request to a project Task.`,
+        });
+        if (proposalSnapshot.status === 'ready') setIdea('');
+      } finally {
+        publishSubmitInFlight(false);
+      }
+      return;
+    }
     if (decision.dispatch === 'ask_workspace') {
       const routeEvidence = publishRouteDecision(decision);
+      if (
+        conversationSnapshotRef.current.agent_id !== null
+        && conversationSnapshotRef.current.project_id === null
+      ) {
+        publishSubmitInFlight(true);
+        let proposalCreated = false;
+        try {
+          const proposalSnapshot = await agentWorkbench.createTaskProposal({
+            request_id: `builder-workbench-request:${globalThis.crypto.randomUUID()}`,
+            objective: trimmedSubmittedIdea,
+            requested_outcome: decision.route === 'plan'
+              ? 'plan'
+              : (decision.route === 'build' ? 'build' : 'discuss'),
+            execution_mode: 'foreground',
+            reason: semanticClassification === null
+              ? 'The request needs project scope before Builder work can start.'
+              : `Semantic routing selected ${decision.route} and requires project scope.`,
+          });
+          proposalCreated = proposalSnapshot.status === 'ready';
+          if (proposalCreated) setIdea('');
+        } finally {
+          publishSubmitInFlight(false);
+        }
+        if (proposalCreated) return;
+      }
       pendingBuildAfterWorkspaceRef.current = Object.freeze({
-        composerMode: activeComposerMode,
+        composerMode: boundedComposerMode,
         epoch: workspaceEpochRef.current,
         instruction: submittedIdea,
         messageId: routeEvidence.messageId,
@@ -2633,7 +4169,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       const projectId = visibleConversationProjectId(projectSnapshotRef.current);
       if (projectId !== null) {
         const prompt = Object.freeze({
-          composerMode: activeComposerMode,
+          composerMode: boundedComposerMode,
           project_id: projectId,
           instruction: submittedIdea,
           message_id: routeEvidence.messageId,
@@ -2651,14 +4187,23 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     submitInFlightInstructionRef.current = submittedIdea;
     publishSubmitInFlight(true);
     try {
-      if (activeComposerMode === 'plan' || decision.dispatch === 'plan') {
+      if (submittingAgentWorkbench && (boundedComposerMode === 'plan' || decision.dispatch === 'plan')) {
+        publishRouteDecision(decision);
+        setIdea('');
+        const result = await project.answer(submittedIdea, null, 'plan');
+        if (workspaceEpochRef.current !== commandEpoch) return;
+        await readActivityAfterTerminal(result, commandEpoch, null);
+        setLiveOutput(null);
+        return;
+      }
+      if (boundedComposerMode === 'plan' || decision.dispatch === 'plan') {
         publishRouteDecision(decision);
         const planned = await submitPlanInstruction(
           submittedIdea,
           commandEpoch,
           projectSnapshotRef.current,
         );
-        if (planned || activeComposerMode === 'plan') return;
+        if (planned || boundedComposerMode === 'plan') return;
       }
       if (decision.dispatch === 'build') {
         const projectId = visibleConversationProjectId(projectSnapshotRef.current);
@@ -2667,6 +4212,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         try {
           approval = await ports.generator.prepareCurrentProjectWriteApproval({
             project_id: projectId,
+            task_address_id: taskAddressId,
           });
         } catch {
           approval = Object.freeze({
@@ -2688,7 +4234,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           const nextIntentContext = composerIntentContext(
             conversationSnapshotRef.current,
             projectSnapshotRef.current,
-            activeComposerMode,
+            boundedComposerMode,
             nextPermissionStatus,
             effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
           );
@@ -2701,7 +4247,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
             routeTaskId,
           );
           const prompt = Object.freeze({
-            composerMode: activeComposerMode,
+            composerMode: boundedComposerMode,
             project_id: projectId,
             instruction: submittedIdea,
             message_id: routeEvidence.messageId,
@@ -2719,7 +4265,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         const nextIntentContext = composerIntentContext(
           conversationSnapshotRef.current,
           projectSnapshotRef.current,
-          activeComposerMode,
+          boundedComposerMode,
           nextPermissionStatus,
           effectiveApprovalMode(approvalModeRef.current, projectSnapshotRef.current, nextPermissionStatus),
         );
@@ -2742,7 +4288,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       const result = shouldSubmitToConversationWorkPath
         ? await runBuildInstruction(
           submittedIdea,
-          activeComposerMode,
+          boundedComposerMode,
           options.queuedFollowup ?? null,
         )
         : await project.answer(submittedIdea, options.queuedFollowup ?? null);
@@ -2770,28 +4316,103 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [
+    agentWorkbench,
     clearPendingProjectActivityRestore,
     project,
     ports.generator,
     createComposerRouteEvidence,
+    publishPendingUserMessage,
     publishQueuedActiveRunFollowup,
     publishLockedComposerSubmit,
     publishSubmitInFlight,
+    projectId,
     readActivityAfterTerminal,
     runBuildInstruction,
     reviewPlan,
     submitPlanInstruction,
+    taskAddressId,
   ]);
 
   useLayoutEffect(() => {
     submitInstructionTextRef.current = submitInstructionText;
   }, [submitInstructionText]);
 
+  useEffect(() => {
+    const pending = pendingAgentTaskHandoffStartRef.current;
+    if (
+      pending === null
+      || pending.epoch !== workspaceEpoch
+      || pending.projectId !== projectId
+      || pending.taskAddressId !== taskAddressId
+      || conversation.snapshot.project_id !== pending.projectId
+      || conversation.snapshot.task_address_id !== pending.taskAddressId
+      || submitInFlight
+      || project.snapshot.busy
+      || project.snapshot.draft !== null
+      || project.snapshot.inspectedRevision !== null
+      || !['ready', 'selected', 'new'].includes(project.snapshot.status)
+      || submitInstructionTextRef.current === null
+    ) return;
+    pendingAgentTaskHandoffStartRef.current = null;
+    const startMaterializedTask = async () => {
+      if (pending.autoApproveCurrentProjectWrite) {
+        publishSubmitInFlight(true);
+        try {
+          await ports.generator.approveCurrentProjectWrite({
+            project_id: pending.projectId,
+            task_address_id: pending.taskAddressId,
+          });
+          if (
+            workspaceEpochRef.current !== pending.epoch
+            || projectId !== pending.projectId
+            || taskAddressId !== pending.taskAddressId
+          ) return;
+          const allowed = Object.freeze({
+            project_id: pending.projectId,
+            state: 'ready' as const,
+          });
+          currentProjectWriteApprovalStatusRef.current = allowed;
+          setCurrentProjectWriteApprovalStatus(allowed);
+          currentProjectWriteApprovalRef.current = null;
+          setCurrentProjectWriteApproval(null);
+        } finally {
+          if (workspaceEpochRef.current === pending.epoch) {
+            publishSubmitInFlight(false);
+          }
+        }
+      }
+      if (
+        workspaceEpochRef.current !== pending.epoch
+        || projectId !== pending.projectId
+        || taskAddressId !== pending.taskAddressId
+      ) return;
+      await submitInstructionTextRef.current?.(pending.instruction, {
+        composerModeOverride: pending.composerMode,
+        existingMessageId: pending.messageId,
+        queuedFollowup: null,
+      });
+    };
+    void startMaterializedTask();
+  }, [
+    conversation.snapshot,
+    ports.generator,
+    project.snapshot,
+    projectId,
+    publishSubmitInFlight,
+    submitInFlight,
+    taskAddressId,
+    workspaceEpoch,
+  ]);
+
   const submitInstruction = useCallback(async () => {
     if (projectSnapshotRef.current.busy) {
       const currentSnapshot = projectSnapshotRef.current;
       const submittedIdea = idea;
       if (submittedIdea.trim().length === 0) return;
+      if (activeRunWaitsForUserAnswer(conversationSnapshotRef.current)) {
+        await steerInstruction();
+        return;
+      }
       const decision = decideBuilderComposerIntent(
         submittedIdea,
         {
@@ -2882,7 +4503,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     const projectId = visibleConversationProjectId(projectSnapshotRef.current);
     if (projectId === null) return;
     try {
-      await ports.generator.approveCurrentProjectWrite({ project_id: projectId });
+      await ports.generator.approveCurrentProjectWrite({
+        project_id: projectId,
+        task_address_id: taskAddressId,
+      });
       const allowed = Object.freeze({
         project_id: projectId,
         state: 'ready' as const,
@@ -2922,6 +4546,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     continueApprovedPlanAfterWriteApproval,
     ports.generator,
     publishSubmitInFlight,
+    taskAddressId,
   ]);
 
   const clearComposerMode = useCallback(() => {
@@ -2939,7 +4564,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setPlanSourceReadApproval(approving);
     setLiveOutput(null);
     try {
-      await ports.generator.approvePlanSourceRead({ project_id: prompt.project_id });
+      await ports.generator.approvePlanSourceRead({
+        project_id: prompt.project_id,
+        task_address_id: taskAddressId,
+      });
       if (workspaceEpochRef.current !== commandEpoch) return;
       planSourceReadApprovalRef.current = null;
       setPlanSourceReadApproval(null);
@@ -2955,7 +4583,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         publishSubmitInFlight(false);
       }
     }
-  }, [ports.generator, publishSubmitInFlight, runPlanProposal]);
+  }, [ports.generator, publishSubmitInFlight, runPlanProposal, taskAddressId]);
 
   const approveCurrentProjectWrite = useCallback(async () => {
     const prompt = currentProjectWriteApprovalRef.current;
@@ -2967,7 +4595,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setCurrentProjectWriteApproval(approving);
     setLiveOutput(null);
     try {
-      await ports.generator.approveCurrentProjectWrite({ project_id: prompt.project_id });
+      await ports.generator.approveCurrentProjectWrite({
+        project_id: prompt.project_id,
+        task_address_id: taskAddressId,
+      });
       if (workspaceEpochRef.current !== commandEpoch) return;
       const allowed = Object.freeze({
         project_id: prompt.project_id,
@@ -3034,6 +4665,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     publishSubmitInFlight,
     readActivityAfterTerminal,
     runBuildInstruction,
+    taskAddressId,
   ]);
 
   const dismissPlanSourceReadApproval = useCallback(() => {
@@ -3052,6 +4684,39 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
   }, []);
 
+  const decideCommandApproval = useCallback(async (decision: 'allow_once' | 'deny') => {
+    const prompt = commandApprovalRef.current;
+    if (prompt === null || prompt.state === 'deciding') return;
+    if (ports.generator.decideCommandApproval === undefined) {
+      const failed = Object.freeze({ ...prompt, state: 'failed' as const });
+      commandApprovalRef.current = failed;
+      setCommandApproval(failed);
+      return;
+    }
+    const deciding = Object.freeze({ ...prompt, state: 'deciding' as const });
+    commandApprovalRef.current = deciding;
+    setCommandApproval(deciding);
+    try {
+      commandOutputStore.setState(decision === 'allow_once' ? 'running' : 'denied');
+      await ports.generator.decideCommandApproval({
+        run_id: prompt.request.run_id,
+        approval_request_id: prompt.request.approval_request_id,
+        decision,
+      });
+      if (commandApprovalRef.current?.request.approval_request_id === prompt.request.approval_request_id) {
+        commandApprovalRef.current = null;
+        setCommandApproval(null);
+      }
+    } catch {
+      commandOutputStore.setState('failed', '无法记录命令授权决定。');
+      if (commandApprovalRef.current?.request.approval_request_id === prompt.request.approval_request_id) {
+        const failed = Object.freeze({ ...prompt, state: 'failed' as const });
+        commandApprovalRef.current = failed;
+        setCommandApproval(failed);
+      }
+    }
+  }, [commandOutputStore, ports.generator]);
+
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     setLiveOutput(null);
@@ -3065,18 +4730,37 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     setLiveOutput(null);
   }, [project, readActivityAfterTerminal]);
 
+  const [activeAgentTestBrowserRunId, setActiveAgentTestBrowserRunId] = useState<string | null>(null);
   const cancel = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
+    if (activeAgentTestBrowserRunId !== null) {
+      await ports.agentTestBrowser.stop({ owner_run_id: activeAgentTestBrowserRunId }).catch(() => undefined);
+    }
     const result = await project.cancel();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
     setLiveOutput(null);
-  }, [project, readActivityAfterTerminal]);
+  }, [activeAgentTestBrowserRunId, ports.agentTestBrowser, project, readActivityAfterTerminal]);
 
   const rejectDraft = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     const draftProjectId = project.snapshot.draft?.project_id ?? null;
+    if (draftProjectId !== null) {
+      automaticDraftRestoreSuppressedProjectIdsRef.current.add(draftProjectId);
+    }
     const result = await project.rejectDraft();
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    if (draftProjectId !== null && (result.draft !== null || result.error !== null)) {
+      automaticDraftRestoreSuppressedProjectIdsRef.current.delete(draftProjectId);
+    }
+    await readActivityAfterTerminal(result, commandEpoch, draftProjectId);
+    setLiveOutput(null);
+  }, [project, readActivityAfterTerminal]);
+
+  const undoDraft = useCallback(async () => {
+    const commandEpoch = workspaceEpochRef.current;
+    const draftProjectId = project.snapshot.draft?.project_id ?? null;
+    const result = await project.restorePreviousCheckpointAsDraft();
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch, draftProjectId);
     setLiveOutput(null);
@@ -3084,21 +4768,31 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const save = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
+    const draftProjectId = project.snapshot.draft?.project_id ?? null;
+    if (draftProjectId !== null) {
+      automaticDraftRestoreSuppressedProjectIdsRef.current.add(draftProjectId);
+    }
     const result = await project.save();
     if (workspaceEpochRef.current !== commandEpoch) return;
+    const savedProjectId = durableProjectId(result);
+    if (savedProjectId === null && draftProjectId !== null) {
+      automaticDraftRestoreSuppressedProjectIdsRef.current.delete(draftProjectId);
+    }
     await readActivityAfterTerminal(result, commandEpoch);
     setLiveOutput(null);
-    const savedProjectId = durableProjectId(result);
     if (savedProjectId !== null) {
       setProjectId(savedProjectId);
-      await catalog.refresh().catch(() => undefined);
+      await Promise.all([
+        catalog.refresh().catch(() => undefined),
+        agentProjectTree.refresh().catch(() => undefined),
+      ]);
       if (history.snapshot.project_id === savedProjectId) {
         await history.reload().catch(() => undefined);
       } else {
         await history.load(savedProjectId).catch(() => undefined);
       }
     }
-  }, [catalog, history, project, readActivityAfterTerminal]);
+  }, [agentProjectTree, catalog, history, project, readActivityAfterTerminal]);
   const inspectRevision = useCallback(async (targetProjectId: string, revisionReceiptDigest: string) => {
     setActiveFile(null);
     await project.inspectRevision(targetProjectId, revisionReceiptDigest);
@@ -3223,19 +4917,20 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     providerContextDisclosureApproval,
   ]);
 
+  const livePreviewProjectId = conversation.snapshot.project_id;
+  const livePreviewConversationId = conversation.snapshot.conversation?.state === 'ready'
+    ? conversation.snapshot.conversation.conversation.conversation_id
+    : null;
   const livePreviewRequest = useCallback((): BuilderLivePreviewRequest | null => {
-    const conversationSnapshot = conversation.snapshot;
     if (
-      currentDraftId === null
-      || conversationSnapshot.project_id === null
-      || conversationSnapshot.conversation === null
-      || conversationSnapshot.conversation.state !== 'ready'
+      livePreviewProjectId === null
+      || livePreviewConversationId === null
     ) return null;
     return Object.freeze({
-      project_id: conversationSnapshot.project_id,
-      conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+      project_id: livePreviewProjectId,
+      conversation_id: livePreviewConversationId,
     });
-  }, [conversation.snapshot, currentDraftId]);
+  }, [livePreviewConversationId, livePreviewProjectId]);
 
   const runLivePreviewOperation = useCallback(async (
     operation: 'starting' | 'reloading' | 'stopping',
@@ -3268,6 +4963,44 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     ports.livePreview.stopCurrentPreview,
   ), [ports.livePreview, runLivePreviewOperation]);
 
+  const decideLivePreviewDevServerApproval = useCallback(async (
+    decision: 'allow_once' | 'deny',
+  ) => {
+    const request = livePreviewRequest();
+    const approval = livePreviewStatus?.status === 'approval_required'
+      ? livePreviewStatus.dev_server_approval
+      : null;
+    if (
+      request === null
+      || approval === null
+      || approval.project_id !== request.project_id
+      || approval.conversation_id !== request.conversation_id
+    ) return;
+    setLivePreviewOperation(decision === 'allow_once' ? 'starting' : 'stopping');
+    try {
+      setLivePreviewStatus(await ports.livePreview.decideDevServerApproval({
+        ...request,
+        approval_request_id: approval.approval_request_id,
+        decision,
+      }));
+    } catch {
+      setLivePreviewStatus(null);
+    } finally {
+      setLivePreviewOperation(null);
+    }
+  }, [livePreviewRequest, livePreviewStatus, ports.livePreview]);
+
+  const updateLivePreviewLayout = useCallback((viewBounds: BuilderLivePreviewViewBounds | null) => {
+    const request = livePreviewRequest();
+    if (request === null) return;
+    void ports.livePreview.updateCurrentPreviewLayout({
+      ...request,
+      view_bounds: viewBounds,
+    }).catch(() => {
+      // Layout synchronization is best-effort; preview status remains authoritative.
+    });
+  }, [livePreviewRequest, ports.livePreview]);
+
   useEffect(() => {
     const request = livePreviewRequest();
     if (request === null) return;
@@ -3283,21 +5016,102 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       active = false;
     };
   }, [livePreviewRequest, ports.livePreview]);
-  const hasVisibleLivePreviewRequest = currentDraftId !== null
-    && conversation.snapshot.project_id !== null
+  const hasVisibleLivePreviewRequest = conversation.snapshot.project_id !== null
     && conversation.snapshot.conversation !== null
     && conversation.snapshot.conversation.state === 'ready';
   const visibleLivePreviewStatus = hasVisibleLivePreviewRequest ? livePreviewStatus : null;
-  const visibleSideWorkspaceFileTree = sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey
+
+  const runUserWebOperation = useCallback(async (
+    operation: 'navigating' | 'reloading' | 'stopping',
+    action: () => Promise<BuilderUserWebStatusProjection>,
+  ) => {
+    setUserWebOperation(operation);
+    try {
+      setUserWebStatus(await action());
+    } catch {
+      setUserWebStatus(null);
+    } finally {
+      setUserWebOperation(null);
+    }
+  }, []);
+
+  const navigateUserWeb = useCallback((url: string) => runUserWebOperation(
+    'navigating',
+    () => ports.userWeb.navigate({ url }),
+  ), [ports.userWeb, runUserWebOperation]);
+  const goBackUserWeb = useCallback(() => runUserWebOperation(
+    'navigating',
+    ports.userWeb.goBack,
+  ), [ports.userWeb, runUserWebOperation]);
+  const goForwardUserWeb = useCallback(() => runUserWebOperation(
+    'navigating',
+    ports.userWeb.goForward,
+  ), [ports.userWeb, runUserWebOperation]);
+  const reloadUserWeb = useCallback(() => runUserWebOperation(
+    'reloading',
+    ports.userWeb.reload,
+  ), [ports.userWeb, runUserWebOperation]);
+  const stopUserWeb = useCallback(() => runUserWebOperation(
+    'stopping',
+    ports.userWeb.stop,
+  ), [ports.userWeb, runUserWebOperation]);
+  const updateUserWebLayout = useCallback((viewBounds: BuilderLivePreviewViewBounds | null) => {
+    void ports.userWeb.updateLayout({ view_bounds: viewBounds }).catch(() => {
+      // Main remains authoritative; a later layout observation will retry.
+    });
+  }, [ports.userWeb]);
+  const updateAgentTestBrowserLayout = useCallback((
+    ownerRunId: string,
+    viewBounds: BuilderLivePreviewViewBounds | null,
+  ) => {
+    void ports.agentTestBrowser.updateLayout({
+      owner_run_id: ownerRunId,
+      view_bounds: viewBounds,
+    }).catch(() => {
+      // Main validates the active run; later geometry observations retry safely.
+    });
+  }, [ports.agentTestBrowser]);
+  useEffect(() => ports.agentTestBrowser.subscribeLifecycle((event) => {
+    setActiveAgentTestBrowserRunId((current) => (
+      event.lifecycle === 'opened'
+        ? event.owner_run_id
+        : current === event.owner_run_id
+          ? null
+          : current
+    ));
+  }), [ports.agentTestBrowser]);
+
+  useEffect(() => {
+    let active = true;
+    ports.userWeb.readStatus()
+      .then((status) => {
+        if (active) setUserWebStatus(status);
+      })
+      .catch(() => {
+        if (active) setUserWebStatus(null);
+      });
+    return () => { active = false; };
+  }, [ports.userWeb]);
+  const runtimeSideWorkspaceKeyPrefix = conversation.snapshot.project_id !== null
+    && conversation.snapshot.conversation?.state === 'ready'
+    ? `runtime:${conversation.snapshot.project_id}:${conversation.snapshot.conversation.conversation.conversation_id}:`
+    : null;
+  const runtimeSideWorkspaceVisible = runtimeSideWorkspaceKeyPrefix !== null
+    && sideWorkspaceFileTreeKey?.startsWith(runtimeSideWorkspaceKeyPrefix) === true;
+  const visibleSideWorkspaceFileTree = runtimeSideWorkspaceVisible
+    || sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey
     ? sideWorkspaceFileTree
     : null;
-  const visibleSideWorkspaceFileTreeStatus = currentSideWorkspaceFilesRequestKey !== null
-    && sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey
+  const visibleSideWorkspaceFileTreeStatus = runtimeSideWorkspaceVisible
+    || (currentSideWorkspaceFilesRequestKey !== null
+      && sideWorkspaceFileTreeKey === currentSideWorkspaceFilesRequestKey)
     ? sideWorkspaceFileTreeStatus
     : 'idle';
-  const visibleSideWorkspaceFileContentKey = currentSideWorkspaceFilesRequestKey !== null
+  const visibleSideWorkspaceFileContentKey = visibleSideWorkspaceFileTree !== null
     && sideWorkspaceSelectedFileRef !== null
-    ? `${currentSideWorkspaceFilesRequestKey}:${sideWorkspaceFileRefKey(sideWorkspaceSelectedFileRef)}`
+    && conversation.snapshot.project_id !== null
+    && conversation.snapshot.conversation?.state === 'ready'
+    ? `${conversation.snapshot.project_id}:${conversation.snapshot.conversation.conversation.conversation_id}:${sideWorkspaceFileRefKey(sideWorkspaceSelectedFileRef)}`
     : null;
   const visibleSideWorkspaceFileContent = sideWorkspaceFileContentKey === visibleSideWorkspaceFileContentKey
     ? sideWorkspaceFileContent
@@ -3306,6 +5120,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     && sideWorkspaceFileContentKey === visibleSideWorkspaceFileContentKey
     ? sideWorkspaceFileContentStatus
     : 'idle';
+  const currentDraftCheckProfiles = checkRunAvailable?.draft_id === currentDraftId
+    ? checkRunAvailable.available_checks
+    : [];
+  const settingsDiagnosisProfile = currentDraftCheckProfiles[0] ?? null;
 
   return (
     <main className="cf-builder-workbench cf-builder-desktop-shell min-h-screen text-foreground" data-builder-workbench="true">
@@ -3365,7 +5183,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         </div>
       </header>
 
-      <div className="cf-builder-shell">
+      <div
+        className="cf-builder-shell"
+        data-builder-projects={projectsVisibility}
+        data-builder-view={view}
+      >
         <aside className="cf-builder-rail" aria-label="Builder primary navigation" data-builder-workbench-rail="true">
           <nav className="cf-builder-rail-nav" aria-label="Builder views">
             {BUILDER_RAIL_ITEMS.filter((item) => item.enabled).map(({ Icon, id, label, view: targetView }) => (
@@ -3386,16 +5208,44 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           </nav>
         </aside>
 
-        <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
-          <div className="cf-builder-context-body">
-            <BuilderProjectCatalog
-              onCreateProject={startNewProjectFromCatalog}
-              onOpenProject={openProject}
-              onRefresh={refreshCatalog}
-              snapshot={catalog.snapshot}
-            />
-          </div>
+        <aside
+          aria-label="Agents"
+          className="cf-builder-agent-roster-column"
+          data-builder-workbench-agent-roster="true"
+        >
+          <BuilderAgentRoster
+            agentConversationSelected={agentWorkbenchSelected}
+            onCreateProject={startNewProjectFromCatalog}
+            onOpenAgent={openAgentWorkbench}
+            onToggleProjects={() => setProjectsCollapsed((current) => !current)}
+            projectCount={projectCount}
+            projectsExpanded={projectsExpanded}
+            snapshot={agentProjectTree.snapshot}
+          />
         </aside>
+
+        {projectsExpanded ? (
+          <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
+            <div className="cf-builder-context-body">
+              <BuilderAgentSidebar
+                onArchiveProject={archiveAgentProject}
+                onArchiveTask={archiveAgentTask}
+                onCollapse={() => setProjectsCollapsed(true)}
+                onCreateProject={startNewProjectFromCatalog}
+                onCreateTask={startNewTask}
+                onOpenProject={openProject}
+                onOpenTask={openTask}
+                onRefresh={refreshCatalog}
+                onRenameProject={renameAgentProject}
+                onRenameTask={renameAgentTask}
+                selectedProjectId={agentWorkbenchSelected ? null : visibleConversationProjectId(project.snapshot)}
+                selectedTaskAddressId={taskAddressId}
+                snapshot={agentProjectTree.snapshot}
+                taskMonitor={agentWorkbench.snapshot.projection?.task_monitor.tasks ?? []}
+              />
+            </div>
+          </aside>
+        ) : null}
 
         <section className="cf-builder-main-frame cf-builder-workbench-frame" aria-label="Builder workbench" data-builder-workbench-frame="true">
           {view === 'settings' ? (
@@ -3414,6 +5264,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
                 </button>
               </header>
               <div className="cf-builder-settings-body">
+                <BuilderEnvironmentDiagnosisSettingsCard
+                  currentDraftId={currentDraftId}
+                  diagnosis={checkEnvironmentDiagnosis}
+                  projectDiagnosis={projectEnvironmentDiagnosis}
+                  projectId={projectId ?? null}
+                  onDiagnose={diagnoseCheckEnvironment}
+                  onDiagnoseProject={diagnoseProjectEnvironment}
+                  onPrepareDependencies={decideCheckDependencyPreparation}
+                  operation={currentDraftId === null ? null : checkRunOperation}
+                  operationFailureCode={currentDraftId === null ? null : checkRunOperationFailureCode}
+                  profile={settingsDiagnosisProfile}
+                />
                 <BuilderProviderSettingsRouteAdapter providerSettingsBridge={root.providerSettings} />
               </div>
             </div>
@@ -3425,24 +5287,28 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               answerFailureRecordedSuccess={answerFailureRecordedSuccess}
               approvalMode={visibleApprovalMode}
               approvedPlanContinuationFailure={approvedPlanContinuationFailure}
+              checkEnvironmentDiagnosis={checkEnvironmentDiagnosis}
               checkRunOperation={currentDraftId === null ? null : checkRunOperation}
-              checkRunProfiles={checkRunAvailable?.draft_id === currentDraftId
-                ? checkRunAvailable.available_checks
-                : []}
-              checkRunStatus={checkRunCompleted?.draft_id === currentDraftId
-                ? checkRunCompleted.check_run_status_projection
-                : null}
+              checkRunOperationFailureCode={currentDraftId === null ? null : checkRunOperationFailureCode}
+              checkRunProfiles={currentDraftCheckProfiles}
+              checkRunStatus={null}
               composerContextStatus={composerContextStatus}
               providerContextDisclosureStatus={composerProviderContextStatus}
               providerContextDisclosureApprovalState={visibleProviderContextDisclosureApprovalState}
               composerMode={composerMode}
               composerRouteDecision={composerRouteDecision}
               composerSubmitLocked={submitInFlight}
+              commandApproval={commandApproval}
+              commandOutputStore={commandOutputStore}
               currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
               liveOutput={liveOutput}
+              liveOutputStore={liveOutputStore}
+              pendingUserMessages={pendingUserMessages}
               livePreviewOperation={livePreviewOperation}
               livePreviewStatus={visibleLivePreviewStatus}
+              userWebOperation={userWebOperation}
+              userWebStatus={userWebStatus}
               sideWorkspaceFileContent={visibleSideWorkspaceFileContent}
               sideWorkspaceFileContentStatus={visibleSideWorkspaceFileContentStatus}
               sideWorkspaceFileTree={visibleSideWorkspaceFileTree}
@@ -3454,6 +5320,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               workspaceNewProjectRequest={workspaceNewProjectRequest}
               workspacePickerRequest={workspacePickerRequest}
               onApproveCurrentProjectWrite={approveCurrentProjectWrite}
+              onDecideCommandApproval={decideCommandApproval}
+              onDecideCheckDependencyPreparation={decideCheckDependencyPreparation}
+              onDiagnoseCheckEnvironment={diagnoseCheckEnvironment}
               onApproveProviderContextDisclosure={approveProviderContextDisclosure}
               onApprovePlanSourceRead={approvePlanSourceRead}
               onCreateProject={createWorkspaceProject}
@@ -3472,6 +5341,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onOpenProjectLocation={openProjectLocation}
               onOpenSettings={() => setView('settings')}
               onReloadLivePreview={reloadLivePreview}
+              onDecideLivePreviewDevServerApproval={decideLivePreviewDevServerApproval}
+              onLivePreviewLayoutChange={updateLivePreviewLayout}
+              onAgentTestBrowserLayoutChange={updateAgentTestBrowserLayout}
+              activeAgentTestBrowserRunId={activeAgentTestBrowserRunId}
+              onNavigateUserWeb={navigateUserWeb}
+              onGoBackUserWeb={goBackUserWeb}
+              onGoForwardUserWeb={goForwardUserWeb}
+              onReloadUserWeb={reloadUserWeb}
+              onStopUserWeb={stopUserWeb}
+              onUserWebLayoutChange={updateUserWebLayout}
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
               onRequestLivePreview={requestLivePreview}
@@ -3479,14 +5358,26 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onCancel={cancel}
               onRejectDraft={rejectDraft}
               onSave={save}
+              onUndoDraft={undoDraft}
               onStopLivePreview={stopLivePreview}
-              onSelectFile={setActiveFile}
+              onSelectFile={selectActiveFile}
+              onOpenRuntimeToolFile={openRuntimeToolFile}
               onSelectSideWorkspaceFile={selectSideWorkspaceFile}
               onRefreshConversation={conversation.refresh}
               onRefreshHistory={history.refresh}
               onReviewPlan={reviewPlan}
               onShowCurrentRevision={showCurrentRevision}
               conversationSnapshot={conversation.snapshot}
+              taskConversationSeed={selectedTask}
+              agentWorkbenchSnapshot={agentWorkbench.snapshot}
+              onRefreshAgentWorkbench={agentWorkbench.refresh}
+              onUpdateAgentWorkbenchMessageState={agentWorkbench.updateMessageState}
+              onDecideAgentTaskProposal={decideAgentTaskProposal}
+              onCreateProjectForAgentTaskProposal={createProjectForAgentTaskProposal}
+              onArchiveAgentTask={archiveAgentTask}
+              onControlAgentTask={controlAgentTask}
+              onOpenAgentTaskProposal={openTask}
+              onRenameAgentTask={renameAgentTask}
               projectCatalogSnapshot={catalog.snapshot}
               historySnapshot={history.snapshot}
               snapshot={project.snapshot}

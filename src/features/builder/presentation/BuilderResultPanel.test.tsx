@@ -104,6 +104,7 @@ describe('BuilderResultPanel', () => {
           project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
           conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
           preview_kind: 'live_static_web',
+          entry_url: null,
           status: 'unavailable',
           can_start: false,
           can_reload: false,
@@ -116,6 +117,7 @@ describe('BuilderResultPanel', () => {
           window_open_block_count: 0,
           message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
           unavailable_reason: 'preview_source_resolver_not_connected',
+          dev_server_approval: null,
           updated_at_ms: 10,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -165,6 +167,7 @@ describe('BuilderResultPanel', () => {
           project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
           conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
           preview_kind: 'live_static_web',
+          entry_url: null,
           status: 'idle',
           can_start: true,
           can_reload: false,
@@ -177,6 +180,7 @@ describe('BuilderResultPanel', () => {
           window_open_block_count: 0,
           message: 'Browser preview is ready to start.',
           unavailable_reason: null,
+          dev_server_approval: null,
           updated_at_ms: 20,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -223,6 +227,7 @@ describe('BuilderResultPanel', () => {
           project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
           conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
           preview_kind: 'live_static_web',
+          entry_url: null,
           status: 'ready',
           can_start: false,
           can_reload: true,
@@ -235,6 +240,7 @@ describe('BuilderResultPanel', () => {
           window_open_block_count: 1,
           message: 'Live preview is ready.',
           unavailable_reason: null,
+          dev_server_approval: null,
           updated_at_ms: 30,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',

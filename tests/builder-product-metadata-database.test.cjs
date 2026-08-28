@@ -1500,6 +1500,8 @@ test('appends, replays, and restores one canonical conversation chain from SQLit
   assert.equal(appended.metadata_evidence.transaction,
     'conversation_expected_head_append_readback');
   assert.equal(Object.isFrozen(appended), true);
+  assert.equal(Object.isFrozen(appended.events), true);
+  assert.equal(appended.events.every((event) => Object.isFrozen(event)), true);
 
   const replayed = metadata.append_conversation_events(appendConversationRequest(initial));
   assert.equal(replayed.operation, 'events_replayed');

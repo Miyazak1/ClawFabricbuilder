@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderCheckRunAdmission,
 } = require('./builder-check-run-admission.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CHECK_RUN_ACTIVITY_REGISTRY_VERSION =
   'builder-check-run-activity-registry.v1';
@@ -29,7 +32,6 @@ const READ_KEYS = Object.freeze(['project_id', 'candidate_id']);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PATTERNS = Object.freeze({
   project_id: new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u'),
-  conversation_id: new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u'),
   turn_id: new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u'),
   task_id: new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u'),
   run_id: new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u'),
@@ -110,8 +112,15 @@ function safeCurrentCandidate(rawValue) {
     const selected = valueAt(value, key);
     if (key === 'draft_checkpoint_sequence') {
       if (!Number.isSafeInteger(selected) || selected < 1 || selected > 1_000_000) fail();
+    } else if (key === 'conversation_id') {
+      if (typeof selected !== 'string') fail();
     } else if (typeof selected !== 'string' || !PATTERNS[key].test(selected)) fail();
     normalized[key] = selected;
+  }
+  try {
+    sanitizeBuilderConversationAddress(normalized.project_id, normalized.conversation_id);
+  } catch {
+    fail();
   }
   return freezeDeep(normalized);
 }
@@ -231,6 +240,17 @@ function createBuilderCheckRunActivityRegistry(rawOptions) {
       ) fail();
       active.delete(admission.candidate_id);
       notify(existing.current_candidate, null);
+      return true;
+    },
+
+    notify_candidate_projection_changed(rawRequest) {
+      const request = safeReadRequest(rawRequest);
+      const existing = active.get(request.candidate_id) ?? null;
+      if (
+        existing !== null
+        && existing.current_candidate.project_id !== request.project_id
+      ) fail();
+      notify(request, existing?.kind === 'check_run' ? 'check_run' : null);
       return true;
     },
 

@@ -119,6 +119,7 @@ function admittedEvidence() {
     candidate,
     edit_intent_plan: plan,
     observed_workspace_source_tree: base,
+    expected_workspace_source_tree_digest: base.source_tree_digest,
     evaluated_at_ms: 200,
   });
   return { base, candidate, plan, report };

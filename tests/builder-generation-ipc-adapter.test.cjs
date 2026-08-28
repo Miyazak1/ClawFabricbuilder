@@ -18,13 +18,16 @@ const {
   CLASSIFY_INTENT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
+  ANSWER_PLAN_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
   CANCEL_CHANNEL,
   STEER_CHANNEL,
   QUEUE_FOLLOWUP_CHANNEL,
   AVAILABILITY_CHANNEL,
+  DECIDE_COMMAND_APPROVAL_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
+  RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,
@@ -35,6 +38,10 @@ function activeWindow() {
   const webContents = { isDestroyed: () => false };
   return { webContents, isDestroyed: () => false };
 }
+
+const COMMAND_APPROVAL_OPTION = Object.freeze({
+  decideCommandApproval: async () => ({ operation: 'command_approval_decided' }),
+});
 
 function adapter(overrides = {}) {
   const windowRef = activeWindow();
@@ -100,6 +107,10 @@ function adapter(overrides = {}) {
       calls.push(['restoreRevisionAsDraft', request]);
       return { result: 'restored-revision' };
     },
+    restorePreviousCheckpointAsDraft: async (request) => {
+      calls.push(['restorePreviousCheckpointAsDraft', request]);
+      return { result: 'restored-checkpoint' };
+    },
     rejectDraft: async (request) => {
       calls.push(['rejectDraft', request]);
       return { result: 'rejected' };
@@ -120,6 +131,10 @@ function adapter(overrides = {}) {
       calls.push(['availability']);
       return { available: true };
     },
+    decideCommandApproval: async (request) => {
+      calls.push(['decideCommandApproval', request]);
+      return { operation: 'command_approval_decided' };
+    },
     mainWindowRef: () => windowRef,
     ...overrides,
   });
@@ -132,6 +147,11 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   const cancellation = Object.freeze({ request_id: request.request_digest });
   const steering = Object.freeze({ request_id: request.request_digest, message: 'Keep going.' });
   const followup = Object.freeze({ request_id: request.request_digest, message: 'Run this next.' });
+  const commandApproval = Object.freeze({
+    run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
+    approval_request_id: 'builder-controlled-command-approval-request:123e4567-e89b-42d3-a456-426614174000',
+    decision: 'allow_once',
+  });
 
   assert.equal(value.adapter_id, 'builder_code_generation.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'builderCodeGenerator');
@@ -152,11 +172,13 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'answerDraft',
     'restoreDraft',
     'restoreRevisionAsDraft',
+    'restorePreviousCheckpointAsDraft',
     'rejectDraft',
     'cancel',
     'steer',
     'queueFollowup',
     'availability',
+    'decideCommandApproval',
   ]);
   assert.deepEqual(
     Object.values(value.channels).map(({ channel }) => channel),
@@ -173,14 +195,17 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       CLASSIFY_INTENT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
       ANSWER_CHANNEL,
+      ANSWER_PLAN_CHANNEL,
       ANSWER_DRAFT_CHANNEL,
       RESTORE_DRAFT_CHANNEL,
       RESTORE_REVISION_AS_DRAFT_CHANNEL,
+      RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
       REJECT_DRAFT_CHANNEL,
       CANCEL_CHANNEL,
       STEER_CHANNEL,
       QUEUE_FOLLOWUP_CHANNEL,
       AVAILABILITY_CHANNEL,
+      DECIDE_COMMAND_APPROVAL_CHANNEL,
     ],
   );
   assert.deepEqual(
@@ -315,6 +340,16 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     },
   );
   assert.deepEqual(
+    await value.channels.restorePreviousCheckpointAsDraft.invoke({ sender: windowRef.webContents }, {
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'restored-checkpoint' },
+    },
+  );
+  assert.deepEqual(
     await value.channels.rejectDraft.invoke({ sender: windowRef.webContents }, {
       draft_id: `builder-generation-draft:${'c'.repeat(64)}`,
     }),
@@ -339,6 +374,14 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
   assert.deepEqual(
     await value.channels.availability.invoke({ sender: windowRef.webContents }),
     { available: true },
+  );
+  assert.deepEqual(
+    await value.channels.decideCommandApproval.invoke({ sender: windowRef.webContents }, commandApproval),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { operation: 'command_approval_decided' },
+    },
   );
   assert.deepEqual(calls, [
     ['classifyIntent', request],
@@ -365,11 +408,15 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       revision_receipt_digest: `sha256:${'d'.repeat(64)}`,
     }],
+    ['restorePreviousCheckpointAsDraft', {
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+    }],
     ['rejectDraft', { draft_id: `builder-generation-draft:${'c'.repeat(64)}` }],
     ['cancel', cancellation],
     ['steer', steering],
     ['queueFollowup', followup],
     ['availability'],
+    ['decideCommandApproval', commandApproval],
   ]);
   assert.deepEqual(value.authority, {
     host_adapter_injected: true,
@@ -504,6 +551,8 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     ['builder_generation_workspace_guard_denied', false],
     ['builder_generation_workspace_guard_approval_required', false],
     ['builder_generation_timeout', true],
+    ['builder_generation_runtime_stalled', true],
+    ['builder_generation_run_limit_reached', true],
     ['builder_generation_provider_http_error', true],
     ['builder_generation_provider_transport_error', true],
     ['builder_generation_structured_response_invalid', true],
@@ -529,11 +578,13 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       answerDraft: () => { throw modified; },
       restoreDraft: () => { throw modified; },
       restoreRevisionAsDraft: () => { throw modified; },
+      restorePreviousCheckpointAsDraft: async () => ({}),
       rejectDraft: () => { throw modified; },
       cancel: () => ({}),
       steer: () => ({}),
       queueFollowup: () => ({}),
       availability: () => ({}),
+      ...COMMAND_APPROVAL_OPTION,
       mainWindowRef: () => windowRef,
     });
     const result = await known.channels.generate.invoke({ sender: windowRef.webContents }, {});
@@ -662,6 +713,11 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_parent_unavailable';
       throw error;
     },
+    restorePreviousCheckpointAsDraft: () => {
+      const error = new Error('restore-checkpoint-private-marker');
+      error.code = 'builder_generation_parent_unavailable';
+      throw error;
+    },
     rejectDraft: () => {
       const error = new Error('reject-private-marker');
       error.code = 'builder_generation_parent_unavailable';
@@ -683,6 +739,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       });
       throw error;
     },
+    ...COMMAND_APPROVAL_OPTION,
     mainWindowRef: () => windowRef,
   });
   await assert.rejects(
@@ -755,6 +812,14 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     },
   );
   assert.deepEqual(
+    await hostile.channels.restorePreviousCheckpointAsDraft.invoke({ sender: windowRef.webContents }, {}),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: false,
+      error: { code: 'builder_generation_parent_unavailable', retryable: true },
+    },
+  );
+  assert.deepEqual(
     await hostile.channels.rejectDraft.invoke({ sender: windowRef.webContents }, {}),
     {
       version: GENERATE_RESULT_VERSION,
@@ -789,6 +854,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
     answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
+    restorePreviousCheckpointAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => {
       const error = new Error('control-private-marker');
@@ -806,6 +872,7 @@ test('returns only fixed plain-data diagnostics for known and unknown generate f
       error.code = 'builder_generation_static_preview_contract_rejected';
       throw error;
     },
+    ...COMMAND_APPROVAL_OPTION,
     mainWindowRef: () => windowRef,
   });
   await assert.rejects(
@@ -840,6 +907,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
     answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
+    restorePreviousCheckpointAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => {
       const error = new Error('cancel-private-marker');
@@ -850,6 +918,7 @@ test('keeps cancellation and other control failures as rejected generate invocat
     steer: () => ({}),
     queueFollowup: () => ({}),
       availability: () => ({}),
+    ...COMMAND_APPROVAL_OPTION,
     mainWindowRef: () => windowRef,
   });
   const generationRejection = assert.rejects(
@@ -887,11 +956,13 @@ test('keeps cancellation and other control failures as rejected generate invocat
       answerDraft: async () => ({}),
       restoreDraft: async () => ({}),
       restoreRevisionAsDraft: async () => ({}),
+      restorePreviousCheckpointAsDraft: async () => ({}),
       rejectDraft: async () => ({}),
       cancel: () => ({}),
       steer: () => ({}),
       queueFollowup: () => ({}),
       availability: () => ({}),
+      ...COMMAND_APPROVAL_OPTION,
       mainWindowRef: () => windowRef,
     });
     await assert.rejects(
@@ -931,11 +1002,13 @@ test('fails hostile generated result graphs into a generic plain-data envelope',
       answerDraft: async () => result,
       restoreDraft: async () => result,
       restoreRevisionAsDraft: async () => result,
+      restorePreviousCheckpointAsDraft: async () => ({}),
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
       queueFollowup: () => ({}),
       availability: () => ({}),
+      ...COMMAND_APPROVAL_OPTION,
       mainWindowRef: () => windowRef,
     });
     const envelope = await value.channels.generate.invoke({ sender: windowRef.webContents }, {});
@@ -990,11 +1063,13 @@ test('bounds sparse, cyclic, deep, node-heavy, entry-heavy, and byte-heavy resul
       answerDraft: async () => result,
       restoreDraft: async () => result,
       restoreRevisionAsDraft: async () => result,
+      restorePreviousCheckpointAsDraft: async () => ({}),
       rejectDraft: async () => result,
       cancel: () => ({}),
       steer: () => ({}),
       queueFollowup: () => ({}),
       availability: () => ({}),
+      ...COMMAND_APPROVAL_OPTION,
       mainWindowRef: () => windowRef,
     });
     assert.deepEqual(
@@ -1026,11 +1101,13 @@ test('rejects malformed dependency authority without invoking getters or proxy t
     answerDraft: async () => ({}),
     restoreDraft: async () => ({}),
     restoreRevisionAsDraft: async () => ({}),
+    restorePreviousCheckpointAsDraft: async () => ({}),
     rejectDraft: async () => ({}),
     cancel: () => ({}),
     steer: () => ({}),
     queueFollowup: () => ({}),
       availability: () => ({}),
+    ...COMMAND_APPROVAL_OPTION,
     mainWindowRef: activeWindow,
   };
   const accessor = { ...valid };

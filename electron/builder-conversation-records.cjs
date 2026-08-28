@@ -30,6 +30,13 @@ const {
 const {
   sanitizeBuilderTaskCapsule,
 } = require('./builder-task-capsule-contract.cjs');
+const {
+  sanitizeBuilderProgrammingRuntimeEvent,
+} = require('./builder-programming-runtime-events.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const CONVERSATION_EVENT_VERSION = 'builder-conversation-event.v2';
 const CONVERSATION_EVENT_KIND = 'builder_conversation_event';
@@ -49,7 +56,7 @@ const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const ID_PATTERNS = Object.freeze({
-  conversation: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  conversation: CONVERSATION_ID_PATTERN,
   event: /^builder-conversation-event:[0-9a-f]{64}$/u,
   command: /^builder-command:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   message: /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -118,6 +125,9 @@ const ROUTE_DECISION_DISPATCHES = Object.freeze([
 const CANDIDATE_RESULT_KEYS = Object.freeze([
   'draft_id', 'title', 'summary', 'git_candidate_receipt',
 ]);
+const CANDIDATE_RESULT_OPTIONAL_KEYS = Object.freeze(['current_materialization']);
+const CURRENT_MATERIALIZATION_KEYS = Object.freeze(['status']);
+const CURRENT_MATERIALIZATION_WITH_REASON_KEYS = Object.freeze(['status', 'reason']);
 const PLAN_ADMISSION_INPUT_KEYS = Object.freeze([
   'admission_version', 'admission_kind', 'admission_authority',
   'project_id', 'conversation_id', 'turn_id', 'task_id', 'run_id', 'attempt_number',
@@ -160,6 +170,11 @@ const PAYLOAD_KEYS = Object.freeze({
     'turn_id', 'run_id', 'task_id', 'attempt_number', 'retry_of_run_id', 'input_digest',
   ]),
   run_progress_recorded: Object.freeze(['turn_id', 'run_id', 'stage']),
+  checkpoint_recorded: Object.freeze([
+    'turn_id', 'run_id', 'status', 'changed_file_count', 'verification_status',
+  ]),
+  recovery_action_recorded: Object.freeze(['turn_id', 'run_id', 'action', 'phase']),
+  programming_runtime_event_recorded: Object.freeze(['runtime_event']),
   run_interrupt_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   run_cancel_requested: Object.freeze(['turn_id', 'run_id', 'request_id']),
   tool_call_requested: Object.freeze(['tool_call_record']),
@@ -212,6 +227,20 @@ function assertExactObject(value, keys) {
   const ownKeys = Reflect.ownKeys(value);
   if (ownKeys.length !== keys.length
     || ownKeys.some((key) => typeof key !== 'string' || !keys.includes(key))) fail();
+  for (const key of ownKeys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+}
+
+function assertExactObjectWithOptional(value, requiredKeys, optionalKeys) {
+  if (!isPlainObject(value)) fail();
+  const allowedKeys = [...requiredKeys, ...optionalKeys];
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length < requiredKeys.length
+    || ownKeys.length > allowedKeys.length
+    || requiredKeys.some((key) => !ownKeys.includes(key))
+    || ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))) fail();
   for (const key of ownKeys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
@@ -350,6 +379,23 @@ function sanitizeMessage(value, assistant = false) {
   };
 }
 
+function projectBuilderPublicMessageText(value) {
+  try {
+    if (typeof value !== 'string') return null;
+    const normalized = value.normalize('NFC').trim();
+    if (normalized.length === 0) return null;
+    return safeText(
+      normalized,
+      MAX_MESSAGE_CODE_POINTS,
+      MAX_MESSAGE_UTF8_BYTES,
+      true,
+    );
+  } catch (error) {
+    if (error instanceof BuilderConversationRecordError) return null;
+    throw error;
+  }
+}
+
 function sanitizeTask(value) {
   if (value === null) return null;
   assertExactObject(value, TASK_KEYS);
@@ -478,7 +524,7 @@ function sanitizeConversationTaskCapsule(value, projectId) {
 }
 
 function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
-  assertExactObject(value, CANDIDATE_RESULT_KEYS);
+  assertExactObjectWithOptional(value, CANDIDATE_RESULT_KEYS, CANDIDATE_RESULT_OPTIONAL_KEYS);
   const receipt = sanitizeBuilderGitCandidateReceipt(valueAt(value, 'git_candidate_receipt'));
   if (
     receipt.turn_id !== turnId
@@ -490,7 +536,33 @@ function sanitizeCandidateResult(value, turnId, runId, resultDigest) {
     title: safeText(valueAt(value, 'title'), 160, 1_024, false),
     summary: safeText(valueAt(value, 'summary'), 2_000, 8_192, true),
     git_candidate_receipt: receipt,
+    current_materialization: Object.hasOwn(value, 'current_materialization')
+      ? sanitizeCurrentMaterialization(valueAt(value, 'current_materialization'))
+      : { status: 'not_recorded' },
   };
+}
+
+function sanitizeCurrentMaterialization(value) {
+  if (!isPlainObject(value)) fail();
+  const status = valueAt(value, 'status');
+  if (status === 'materialized') {
+    assertExactObject(value, CURRENT_MATERIALIZATION_KEYS);
+    return { status };
+  }
+  if (status === 'not_materialized' || status === 'not_attempted') {
+    assertExactObject(value, CURRENT_MATERIALIZATION_WITH_REASON_KEYS);
+    const reason = valueAt(value, 'reason');
+    if (
+      (status === 'not_materialized' && reason !== 'current_projection_unavailable')
+      || (status === 'not_attempted' && reason !== 'current_projection_not_configured')
+    ) fail();
+    return { status, reason };
+  }
+  if (status === 'not_recorded') {
+    assertExactObject(value, CURRENT_MATERIALIZATION_KEYS);
+    return { status };
+  }
+  fail();
 }
 
 function sanitizePlanToolRead(value) {
@@ -582,7 +654,7 @@ function sanitizePlanAdmission(value) {
     tool_reads: sanitizePlanToolReads(valueAt(value, 'tool_reads'), fileCount),
   };
   if (
-    admission.conversation_id !== expectedConversationId(admission.project_id)
+    !isConversationAddressBound(admission.project_id, admission.conversation_id)
     || admission.admission_version !== PLAN_ADMISSION_VERSION
     || admission.admission_kind !== PLAN_ADMISSION_KIND
     || admission.admission_authority !== PLAN_ADMISSION_AUTHORITY
@@ -779,6 +851,49 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         stage,
       };
     }
+    case 'checkpoint_recorded': {
+      const status = valueAt(value, 'status');
+      const changedFileCount = valueAt(value, 'changed_file_count');
+      const verificationStatus = valueAt(value, 'verification_status');
+      if (
+        !['created', 'updated', 'failed'].includes(status)
+        || !Number.isSafeInteger(changedFileCount)
+        || changedFileCount < 0
+        || changedFileCount > 50_000
+        || !['candidate_verified', 'candidate_verified_with_warnings'].includes(verificationStatus)
+      ) fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        status,
+        changed_file_count: changedFileCount,
+        verification_status: verificationStatus,
+      };
+    }
+    case 'recovery_action_recorded': {
+      const action = valueAt(value, 'action');
+      const phase = valueAt(value, 'phase');
+      if (
+        !['restore_checkpoint', 'restore_revision'].includes(action)
+        || !['requested', 'completed', 'failed'].includes(phase)
+      ) fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        action,
+        phase,
+      };
+    }
+    case 'programming_runtime_event_recorded': {
+      const runtimeEvent = sanitizeBuilderProgrammingRuntimeEvent(
+        valueAt(value, 'runtime_event'),
+      );
+      if (
+        runtimeEvent.project_id !== projectId
+        || runtimeEvent.conversation_id !== conversationId
+      ) fail();
+      return { runtime_event: runtimeEvent };
+    }
     case 'run_interrupt_requested':
       return {
         turn_id: safeTurnId(valueAt(value, 'turn_id')),
@@ -909,8 +1024,13 @@ function sanitizeAuthority(value) {
   return { ...CONVERSATION_AUTHORITY };
 }
 
-function expectedConversationId(projectId) {
-  return `builder-conversation:${projectId.slice('builder-project:'.length)}`;
+function isConversationAddressBound(projectId, conversationId) {
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function conversationHeadDigest(head) {
@@ -947,7 +1067,7 @@ function sanitizeCore(value, keys) {
   if (sequence === 1 && eventType !== 'turn_submitted') fail();
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
-  if (conversationId !== expectedConversationId(projectId)) fail();
+  if (!isConversationAddressBound(projectId, conversationId)) fail();
   const previousEvent = sanitizePrevious(valueAt(value, 'previous_event'), sequence);
   const payload = sanitizePayload(eventType, valueAt(value, 'payload'), projectId, conversationId);
   if (
@@ -1030,6 +1150,7 @@ module.exports = Object.freeze({
   BuilderConversationRecordError,
   createBuilderConversationPlanAdmission: safeBoundary(createBuilderConversationPlanAdmission),
   createBuilderConversationEvent: safeBoundary(createBuilderConversationEvent),
+  projectBuilderPublicMessageText,
   sanitizeBuilderConversationEvent: safeBoundary(sanitizeBuilderConversationEvent),
   serializeBuilderConversationEvent: safeBoundary(serializeBuilderConversationEvent),
 });

@@ -271,6 +271,7 @@ function fixture({
   });
   const context = conversation.begin_work({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     instruction: 'Read source before the agent continues.',
     request_digest: REQUEST_DIGEST,
     base_revision: null,
@@ -437,7 +438,7 @@ test('collects private source context only from a store-backed read-private-sour
     assert.equal(result.evidence.revision_authority, false);
     assert.equal(result.evidence.private_source_context_record_storage, 'digest_only_receipt_store');
 
-    const stream = item.conversation.read_stream({ project_id: PROJECT_ID });
+    const stream = item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
     assert.equal(stream.conversation.head_sequence, 4);
     assert.equal(stream.conversation.items.filter((entry) => entry.item_kind === 'tool_call_requested').length, 1);
     assert.equal(
@@ -454,7 +455,7 @@ test('collects private source context only from a store-backed read-private-sour
       (error) => assertServiceError(error, 'builder_agent_private_source_context_service_conflict'),
     );
     assert.equal(item.permissionCalls.length, 1);
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 4);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 4);
 
     item.recordStore.close();
     item.recordStore = null;
@@ -522,7 +523,7 @@ test('fails closed without a read-private-source admission or when context and r
       (error) => assertServiceError(error),
     );
     assert.equal(drift.permissionCalls.length, 0);
-    assert.equal(drift.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(drift.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     drift.close();
   }
@@ -536,7 +537,7 @@ test('normalizes collector denial and hostile requests without leaking or append
       (error) => assertServiceError(error, 'builder_agent_private_source_context_service_unavailable'),
     );
     assert.equal(denied.permissionCalls.length, 1);
-    assert.equal(denied.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(denied.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     denied.close();
   }
@@ -562,7 +563,7 @@ test('normalizes collector denial and hostile requests without leaking or append
     );
     assert.equal(getterCalls, 0);
     assert.equal(item.permissionCalls.length, 0);
-    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID }).conversation.head_sequence, 2);
+    assert.equal(item.conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.head_sequence, 2);
   } finally {
     item.close();
   }

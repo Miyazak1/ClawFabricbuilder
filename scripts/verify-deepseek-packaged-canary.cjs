@@ -385,7 +385,8 @@ function sanitizeDeepSeekCanaryInput(value) {
 
 function parseDeepSeekCanaryInput(source) {
   try {
-    return sanitizeDeepSeekCanaryInput(JSON.parse(source));
+    const jsonSource = source.startsWith('\uFEFF') ? source.slice(1) : source;
+    return sanitizeDeepSeekCanaryInput(JSON.parse(jsonSource));
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
     fail('canary_input_invalid');

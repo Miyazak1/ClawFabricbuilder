@@ -2,6 +2,9 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const {
   sanitizeBuilderCodeChangeCandidate,
@@ -77,7 +80,7 @@ const ATTEMPT_ID_PATTERN = /^builder-edit-attempt:[0-9a-f]{64}$/u;
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ID_PATTERNS = Object.freeze({
   project: new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u'),
-  conversation: new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u'),
+  conversation: CONVERSATION_ID_PATTERN,
   turn: new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u'),
   task: new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u'),
   run: new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u'),
@@ -210,7 +213,8 @@ function assertBindings(candidate, plan, report) {
     || report.run_id !== candidate.run_id
     || report.candidate_id !== candidate.candidate_id
     || report.candidate_digest !== candidate.candidate_digest
-    || report.observed_workspace_source_tree_digest !== candidate.base_source_tree.source_tree_digest
+    || report.observed_workspace_source_tree_digest
+      !== report.expected_workspace_source_tree_digest
     || report.decisions.length !== plan.file_operations.length
     || report.decisions.some((decision, index) => (
       decision.decision !== 'allowed'

@@ -137,6 +137,7 @@ test('creates a deterministic terminal CheckRun bound to its exact admission', (
   assert.equal(passed.runtime_identity_id, input.check_run_admission.runtime_identity_id);
   assert.equal(passed.draft_checkpoint_sequence, 1);
   assert.equal(passed.status, 'passed');
+  assert.equal(passed.environment_reason, 'none');
   assert.equal(passed.output_summary, 'Check completed successfully.');
   assert.match(passed.check_run_id, /^builder-check-run:[0-9a-f]{64}$/u);
   assert.deepEqual(sanitizeBuilderCheckRun(passed), passed);
@@ -159,8 +160,27 @@ test('records admitted failure states without claiming false success', () => {
       failure_class: failureClass,
     }));
     assert.equal(record.status, status);
+    assert.equal(
+      record.environment_reason,
+      status === 'environment_unavailable' ? 'environment_unknown' : 'none',
+    );
     assert.notEqual(record.output_summary, 'Check completed successfully.');
   }
+});
+
+test('records a redacted environment reason for unavailable checks', () => {
+  const record = createBuilderCheckRun(resultInput({
+    status: 'environment_unavailable',
+    exit_code: null,
+    failure_class: 'environment_unavailable',
+    environment_reason: 'dependency_workspace_missing',
+  }));
+
+  assert.equal(record.environment_reason, 'dependency_workspace_missing');
+  assert.deepEqual(sanitizeBuilderCheckRun(record), record);
+  assertCheckError(() => createBuilderCheckRun(resultInput({
+    environment_reason: 'dependency_workspace_missing',
+  })));
 });
 
 test('rejects forged admissions, contradictory results, and post-admission drift', () => {

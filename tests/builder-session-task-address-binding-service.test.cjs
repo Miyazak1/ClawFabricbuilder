@@ -24,7 +24,7 @@ const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
 const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174200';
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174203';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174205';
+const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174206';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174207';
 const MESSAGE_ID = 'builder-message:123e4567-e89b-42d3-a456-426614174208';
@@ -483,6 +483,41 @@ test('binds draft continuation work to the current Session and Task Address by c
   assert.equal(bound.authority.source_mutation, false);
   assert.equal(bound.authority.git_mutation, false);
   assert.equal(bound.authority.permission_grant, false);
+  store.close();
+});
+
+test('binds draft continuation after more than 128 conversation events', (t) => {
+  const store = createBuilderSessionTaskAddressStore(temporaryDatabase(t));
+  store.record_session_address({ session_address: sessionAddress() });
+  store.record_task_address({ task_address: taskAddress() });
+  const binder = createBuilderSessionTaskAddressBindingService({ address_store: store });
+  const continuation = draftContinuation();
+  const current = draftContinuationWorkContext();
+  const events = Array.from(
+    { length: 138 },
+    (_, index) => eventAt(index + 1, 'run_progress_recorded', {}),
+  );
+  events.push(
+    eventAt(139, 'turn_submitted', current.events[0].payload),
+    eventAt(140, 'run_started', current.events[1].payload),
+  );
+
+  const bound = binder.bind_draft_continuation_to_current_task_address({
+    context: draftContinuationWorkContext({
+      start_head: {
+        sequence: 140,
+        event_id: `builder-conversation-event:${'0'.repeat(62)}40`,
+        event_digest: digest('4'),
+      },
+      events,
+    }),
+    draft_continuation: continuation,
+  });
+
+  assert.equal(bound.operation, 'draft_continuation_bound');
+  assert.equal(bound.turn_id, CONSUMING_TURN_ID);
+  assert.equal(bound.run_id, CONSUMING_RUN_ID);
+  assert.equal(bound.low_level_task_id, CONSUMING_TASK_ID);
   store.close();
 });
 

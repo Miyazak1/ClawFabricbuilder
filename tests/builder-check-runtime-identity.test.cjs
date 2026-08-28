@@ -48,10 +48,10 @@ function assertRuntimeError(fn) {
   });
 }
 
-test('registers an opaque npm runtime identity and discloses paths only to its registry', (t) => {
+test('registers an opaque npm runtime identity and discloses paths only to its registry', async (t) => {
   const paths = fixture(t);
   const registry = createBuilderCheckRuntimeRegistry();
-  const identity = registry.register_runtime(registration(paths));
+  const identity = await registry.register_runtime_async(registration(paths));
 
   assert.equal(registry.registry_version, BUILDER_CHECK_RUNTIME_REGISTRY_VERSION);
   assert.equal(identity.runtime_identity_version, BUILDER_CHECK_RUNTIME_IDENTITY_VERSION);
@@ -64,7 +64,10 @@ test('registers an opaque npm runtime identity and discloses paths only to its r
   assert.deepEqual(sanitizeBuilderCheckRuntimeIdentity(identity), identity);
   assert.ok(Object.isFrozen(identity));
 
-  const handle = registry.read_private_runtime({ runtime_identity: identity, read_at_ms: 101 });
+  const handle = await registry.read_private_runtime_async({
+    runtime_identity: identity,
+    read_at_ms: 101,
+  });
   assert.equal(handle.runtime_handle_version, BUILDER_CHECK_RUNTIME_HANDLE_VERSION);
   assert.equal(handle.launcher_path, fs.realpathSync.native(paths.launcherPath));
   assert.equal(handle.cli_entry_path, fs.realpathSync.native(paths.cliEntryPath));

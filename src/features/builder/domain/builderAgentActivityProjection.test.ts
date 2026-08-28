@@ -3,18 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeBuilderAgentActivityProjectionWire } from './builderAgentActivityProjection';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
+const CONVERSATION_UUID = '44444444-4444-4444-8444-444444444444';
 
 function projection() {
   return {
     projection_version: 'builder-agent-activity-projection.v1',
     project_id: `builder-project:${UUID}`,
-    conversation_id: `builder-conversation:${UUID}`,
+    conversation_id: `builder-conversation:${UUID}:${CONVERSATION_UUID}`,
     head_sequence: 4,
     current: {
       phase: 'editing',
       status: 'active',
-      label: 'Changing files',
-      summary: 'Applying the approved changes to the project.',
+      label: 'Preparing changes',
+      summary: 'Building and validating the project changes.',
       turn_id: 'builder-turn:22222222-2222-4222-8222-222222222222',
       run_id: 'builder-run:33333333-3333-4333-8333-333333333333',
     },
@@ -76,6 +77,13 @@ describe('sanitizeBuilderAgentActivityProjectionWire', () => {
     expect(sanitizeBuilderAgentActivityProjectionWire({
       ...projection(),
       authority: { ...projection().authority, side_effect_authority: 'write' },
+    })).toBeNull();
+  });
+
+  it('rejects the retired Project-root conversation identity', () => {
+    expect(sanitizeBuilderAgentActivityProjectionWire({
+      ...projection(),
+      conversation_id: `builder-conversation:${UUID}`,
     })).toBeNull();
   });
 });

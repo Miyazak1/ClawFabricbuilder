@@ -69,6 +69,51 @@ test('strips CheckRun identity and digest while preserving fixed completed copy'
   );
 });
 
+test('preserves redacted environment reason without exposing check identity', () => {
+  const status = {
+    ...projectBuilderCheckRunStatus({ check_run: checkRun('environment_unavailable') }),
+    summary:
+      'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+    environment_reason: 'dependency_workspace_missing',
+  };
+  const projection = projectBuilderCheckRunOutcome(input('completed', status));
+
+  assert.equal(projection.state, 'completed');
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.label, 'Check unavailable');
+  assert.equal(projection.environment_reason, 'dependency_workspace_missing');
+  assert.equal(
+    projection.summary,
+    'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(projection),
+    /check_run_id|candidate_id|result_digest|sha256|runtime_identity|node_modules/iu,
+  );
+});
+
+test('preserves dependency preparation failure reason through outcome projection', () => {
+  const status = {
+    ...projectBuilderCheckRunStatus({ check_run: checkRun('environment_unavailable') }),
+    summary: 'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.',
+    environment_reason: 'dependency_preparation_failed',
+  };
+  const projection = projectBuilderCheckRunOutcome(input('completed', status));
+
+  assert.equal(projection.state, 'completed');
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.label, 'Check unavailable');
+  assert.equal(projection.environment_reason, 'dependency_preparation_failed');
+  assert.equal(
+    projection.summary,
+    'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(projection),
+    /check_run_id|candidate_id|result_digest|sha256|runtime_identity|node_modules/iu,
+  );
+});
+
 test('rejects mismatched subjects, forged copy, authority, and state combinations', () => {
   const status = projectBuilderCheckRunStatus({ check_run: checkRun() });
   assertOutcomeError(() => projectBuilderCheckRunOutcome({

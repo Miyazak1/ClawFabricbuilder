@@ -26,7 +26,8 @@ const {
 
 const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
-const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${PROJECT_UUID}:123e4567-e89b-42d3-a456-426614174010`;
 const ACTOR_ID = 'builder-user:123e4567-e89b-42d3-a456-426614174001';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174002';
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174003';

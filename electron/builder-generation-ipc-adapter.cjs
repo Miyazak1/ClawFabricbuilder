@@ -18,8 +18,14 @@ const SUBMIT_CHANNEL = 'clawfabric-builder:code-generator:submit';
 const CLASSIFY_INTENT_CHANNEL = 'clawfabric-builder:code-generator:classify-intent';
 const GENERATION_STARTED_CHANNEL = 'clawfabric-builder:code-generator:started';
 const GENERATION_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:output';
+const COMMAND_APPROVAL_REQUESTED_CHANNEL =
+  'clawfabric-builder:code-generator:command-approval-requested';
+const COMMAND_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:command-output';
+const DECIDE_COMMAND_APPROVAL_CHANNEL =
+  'clawfabric-builder:code-generator:decide-command-approval';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
+const ANSWER_PLAN_CHANNEL = 'clawfabric-builder:code-generator:answer-plan';
 const ANSWER_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:answer-draft';
 const CANCEL_CHANNEL = 'clawfabric-builder:code-generator:cancel';
 const STEER_CHANNEL = 'clawfabric-builder:code-generator:steer';
@@ -28,6 +34,8 @@ const AVAILABILITY_CHANNEL = 'clawfabric-builder:code-generator:availability';
 const RESTORE_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:restore-draft';
 const RESTORE_REVISION_AS_DRAFT_CHANNEL =
   'clawfabric-builder:code-generator:restore-revision-as-draft';
+const RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL =
+  'clawfabric-builder:code-generator:restore-previous-checkpoint-as-draft';
 const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const MAX_PLAIN_DATA_NODES = 20_000;
@@ -50,13 +58,16 @@ const OPTION_KEYS = Object.freeze([
   'answerDraft',
   'restoreDraft',
   'restoreRevisionAsDraft',
+  'restorePreviousCheckpointAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
   'queueFollowup',
   'availability',
+  'decideCommandApproval',
   'mainWindowRef',
 ]);
+const OPTIONAL_OPTION_KEYS = Object.freeze(['answerPlan']);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_forbidden: 'AI project generation is unavailable.',
   builder_generation_request_invalid: 'This project request could not be verified.',
@@ -66,10 +77,14 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_cancelled: 'AI project generation was cancelled.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_project_write_permission_required: 'Allow current project changes before building.',
+  builder_generation_project_busy: 'Another task is changing this project. Open that task or try again later.',
   builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
   builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
   builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
+  builder_generation_checkpoint_undo_unavailable: 'The previous AI change could not be restored.',
   builder_generation_timeout: 'AI project generation timed out.',
+  builder_generation_runtime_stalled: 'The coding runtime stopped making progress.',
+  builder_generation_run_limit_reached: 'This coding run reached its safety limit.',
   builder_generation_provider_http_error: 'The AI service could not make this project.',
   builder_generation_provider_transport_error: 'The AI service could not be reached.',
   builder_generation_structured_response_invalid: 'The generated project could not be prepared.',
@@ -82,10 +97,14 @@ const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
   builder_generation_provider_unavailable: false,
   builder_generation_project_workspace_required: false,
   builder_generation_project_write_permission_required: false,
+  builder_generation_project_busy: true,
   builder_generation_workspace_changed: true,
   builder_generation_workspace_guard_denied: false,
   builder_generation_workspace_guard_approval_required: false,
+  builder_generation_checkpoint_undo_unavailable: false,
   builder_generation_timeout: true,
+  builder_generation_runtime_stalled: true,
+  builder_generation_run_limit_reached: true,
   builder_generation_provider_http_error: true,
   builder_generation_provider_transport_error: true,
   builder_generation_structured_response_invalid: true,
@@ -106,10 +125,14 @@ const CONTROL_ERROR_CODES = new Set([
   'builder_generation_cancelled',
   'builder_generation_project_workspace_required',
   'builder_generation_project_write_permission_required',
+  'builder_generation_project_busy',
   'builder_generation_workspace_changed',
   'builder_generation_workspace_guard_denied',
   'builder_generation_workspace_guard_approval_required',
+  'builder_generation_checkpoint_undo_unavailable',
   'builder_generation_timeout',
+  'builder_generation_runtime_stalled',
+  'builder_generation_run_limit_reached',
   'builder_generation_failed',
 ]);
 
@@ -237,8 +260,9 @@ function safeOptions(value) {
     ) throw ipcError();
     const keys = Reflect.ownKeys(value);
     if (
-      keys.length !== OPTION_KEYS.length
-      || keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.includes(key))
+      keys.length < OPTION_KEYS.length
+      || keys.length > OPTION_KEYS.length + OPTIONAL_OPTION_KEYS.length
+      || keys.some((key) => typeof key !== 'string' || ![...OPTION_KEYS, ...OPTIONAL_OPTION_KEYS].includes(key))
     ) throw ipcError();
     const descriptors = Object.getOwnPropertyDescriptors(value);
     const methods = {};
@@ -251,6 +275,15 @@ function safeOptions(value) {
         || typeof descriptor.value !== 'function'
       ) throw ipcError();
       methods[key] = descriptor.value;
+    }
+    const answerPlan = descriptors.answerPlan;
+    if (answerPlan !== undefined) {
+      if (!answerPlan.enumerable || !Object.hasOwn(answerPlan, 'value') || typeof answerPlan.value !== 'function') {
+        throw ipcError();
+      }
+      methods.answerPlan = answerPlan.value;
+    } else {
+      methods.answerPlan = methods.answer;
     }
     return Object.freeze(methods);
   } catch {
@@ -407,6 +440,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.answer);
         },
       }),
+      answerPlan: Object.freeze({
+        channel: ANSWER_PLAN_CHANNEL,
+        method: 'answerPlan',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.answerPlan);
+        },
+      }),
       answerDraft: Object.freeze({
         channel: ANSWER_DRAFT_CHANNEL,
         method: 'answerDraft',
@@ -426,6 +466,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
         method: 'restoreRevisionAsDraft',
         invoke(event, ...rawArguments) {
           return invokeResult(event, rawArguments, options.restoreRevisionAsDraft);
+        },
+      }),
+      restorePreviousCheckpointAsDraft: Object.freeze({
+        channel: RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
+        method: 'restorePreviousCheckpointAsDraft',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.restorePreviousCheckpointAsDraft);
         },
       }),
       rejectDraft: Object.freeze({
@@ -463,6 +510,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invoke(event, rawArguments, options.availability, 0);
         },
       }),
+      decideCommandApproval: Object.freeze({
+        channel: DECIDE_COMMAND_APPROVAL_CHANNEL,
+        method: 'decideCommandApproval',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.decideCommandApproval);
+        },
+      }),
     }),
     exposed_methods: Object.freeze([
       'generate',
@@ -480,11 +534,13 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'answerDraft',
       'restoreDraft',
       'restoreRevisionAsDraft',
+      'restorePreviousCheckpointAsDraft',
       'rejectDraft',
       'cancel',
       'steer',
       'queueFollowup',
       'availability',
+      'decideCommandApproval',
     ]),
     authority: Object.freeze({
       host_adapter_injected: true,
@@ -511,8 +567,12 @@ module.exports = Object.freeze({
   CLASSIFY_INTENT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
+  COMMAND_APPROVAL_REQUESTED_CHANNEL,
+  COMMAND_OUTPUT_CHANNEL,
+  DECIDE_COMMAND_APPROVAL_CHANNEL,
   RETRY_GENERATE_CHANNEL,
   ANSWER_CHANNEL,
+  ANSWER_PLAN_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
   CANCEL_CHANNEL,
   STEER_CHANNEL,
@@ -520,6 +580,7 @@ module.exports = Object.freeze({
   AVAILABILITY_CHANNEL,
   RESTORE_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
+  RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
   REJECT_DRAFT_CHANNEL,
   GENERATE_RESULT_VERSION,
   BuilderGenerationIpcError,

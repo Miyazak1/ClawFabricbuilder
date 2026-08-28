@@ -13,6 +13,10 @@ const {
   createBuilderProjectSourceTree,
   sanitizeBuilderProjectSourceTree,
 } = require('./builder-project-source-tree.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CODE_CHANGE_CANDIDATE_VERSION = 'builder-code-change-candidate.v2';
 const BUILDER_CODE_CHANGE_RUN_BINDING_VERSION = 'builder-code-change-run-binding.v2';
@@ -25,7 +29,7 @@ const MAX_CODE_CHANGE_CANDIDATE_UTF8_BYTES = 16 * 1_024 * 1_024;
 
 const PROJECT_ID_PATTERN = /^builder-project:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u;
 const ID_PATTERNS = Object.freeze({
-  conversation: /^builder-conversation:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u,
+  conversation: CONVERSATION_ID_PATTERN,
   event: /^builder-conversation-event:[0-9a-f]{64}$/u,
   turn: /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   task: /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -293,9 +297,11 @@ function sanitizeRunBinding(value) {
   ) fail();
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeIdentity(valueAt(value, 'conversation_id'), 'conversation');
-  const projectMatch = PROJECT_ID_PATTERN.exec(projectId);
-  const conversationMatch = ID_PATTERNS.conversation.exec(conversationId);
-  if (!projectMatch || !conversationMatch || projectMatch[1] !== conversationMatch[1]) fail();
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
   return {
     binding_version: BUILDER_CODE_CHANGE_RUN_BINDING_VERSION,
     project_id: projectId,

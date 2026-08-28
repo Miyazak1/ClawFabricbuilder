@@ -9,11 +9,13 @@ import {
   BUILDER_PROJECT_SOURCE_TREE_VERSION,
   BuilderProjectSnapshotError,
   sanitizeBuilderProjectReadSnapshot,
+  sanitizeBuilderProjectSourceTree,
 } from './builderProjectSnapshot';
 
 const ENCODER = new TextEncoder();
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
+const CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174000:223e4567-e89b-42d3-a456-426614174000';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174000';
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174000';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174000';
@@ -65,6 +67,38 @@ async function sourceTree() {
     source_tree_digest: await digest(unsigned),
   };
 }
+
+async function sourceTreeWithPaths(paths: readonly string[]) {
+  const files = await Promise.all(paths.map(async (path) => {
+    const entry = {
+      path,
+      entry_kind: BUILDER_PROJECT_SOURCE_ENTRY_KIND,
+      content: `${path}\n`,
+    };
+    return { ...entry, content_digest: await digest(entry) };
+  }));
+  const unsigned = {
+    files,
+    source_tree_version: BUILDER_PROJECT_SOURCE_TREE_VERSION,
+  };
+  return { ...unsigned, source_tree_digest: await digest(unsigned) };
+}
+
+describe('sanitizeBuilderProjectSourceTree', () => {
+  it('accepts the main-owned case-sensitive path order', async () => {
+    const tree = await sourceTreeWithPaths(['README.md', 'app/posts/[id]/page.js']);
+
+    await expect(sanitizeBuilderProjectSourceTree(tree)).resolves.toEqual(tree);
+  });
+
+  it('rejects paths that collide after case-insensitive normalization', async () => {
+    const tree = await sourceTreeWithPaths(['README.md', 'readme.md']);
+
+    await expect(sanitizeBuilderProjectSourceTree(tree)).rejects.toMatchObject({
+      code: 'builder_project_snapshot_invalid',
+    });
+  });
+});
 
 async function verificationReceipt(sourceDigest: string, commitOid = COMMIT_OID, treeOid = TREE_OID, parentOid: string | null = null) {
   return {

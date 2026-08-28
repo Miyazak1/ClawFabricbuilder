@@ -20,7 +20,7 @@ const WORKER_PATH = path.join(
   'builder-packaged-check-script-worker.cjs',
 );
 
-test('registers a short-lived packaged npm-compatible runtime identity', () => {
+test('registers a short-lived packaged npm-compatible runtime identity', async () => {
   const registry = createBuilderCheckRuntimeRegistry();
   const resolver = createBuilderPackagedCheckRuntimeResolver({
     runtime_registry: registry,
@@ -28,7 +28,7 @@ test('registers a short-lived packaged npm-compatible runtime identity', () => {
     worker_path: path.resolve(WORKER_PATH),
     clock: { now_ms: () => 1_000 },
   });
-  const identity = resolver.resolve_npm_runtime();
+  const identity = await resolver.resolve_npm_runtime_async();
   assert.equal(identity.package_manager, 'npm');
   assert.equal(identity.package_manager_version, '9.0.1');
   assert.equal(identity.resolution_source, 'packaged_runtime');
@@ -37,6 +37,7 @@ test('registers a short-lived packaged npm-compatible runtime identity', () => {
   assert.match(identity.launcher_binary_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.match(identity.cli_entry_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.equal(Object.hasOwn(identity, 'launcher_path'), false);
+  assert.equal(resolver.resolve_npm_runtime(), identity);
 
   const handle = registry.read_private_runtime({ runtime_identity: identity, read_at_ms: 1_001 });
   assert.equal(handle.launcher_path, fs.realpathSync.native(process.execPath));

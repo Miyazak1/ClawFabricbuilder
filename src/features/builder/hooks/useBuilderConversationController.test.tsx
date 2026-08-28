@@ -12,6 +12,7 @@ import type { BuilderTaskStreamPort } from '../application/builderPorts';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 afterEach(() => {
@@ -54,7 +55,11 @@ async function waitFor(assertion: () => void): Promise<void> {
 function renderHook(port: BuilderTaskStreamPort, projectId: string | null = PROJECT_ID) {
   let latest!: UseBuilderConversationControllerResult;
   function Harness() {
-    latest = useBuilderConversationController(port, projectId);
+    latest = useBuilderConversationController(
+      port,
+      projectId,
+      projectId === null ? null : TASK_ADDRESS_ID,
+    );
     return null;
   }
   const container = document.createElement('div');
@@ -73,7 +78,10 @@ describe('useBuilderConversationController', () => {
     await waitFor(() => {
       expect(latest().snapshot.status).toBe('absent');
     });
-    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(read).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    });
     expect(latest().snapshot.conversation?.state).toBe('absent');
   });
 
@@ -84,10 +92,13 @@ describe('useBuilderConversationController', () => {
     expect(latest().snapshot.status).toBe('idle');
     expect(read).not.toHaveBeenCalled();
     await act(async () => {
-      await latest().load(PROJECT_ID);
+      await latest().load(PROJECT_ID, TASK_ADDRESS_ID);
     });
 
-    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(read).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    });
     expect(latest().snapshot.status).toBe('absent');
   });
 

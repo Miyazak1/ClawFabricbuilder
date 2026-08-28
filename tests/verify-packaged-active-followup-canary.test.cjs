@@ -65,14 +65,17 @@ test('active follow-up canary drives the packaged composer and verifies durable 
     /verify:packaged-active-followup/u,
   );
   assert.match(source, new RegExp(RESULT_VERSION.replaceAll('.', String.raw`\.`), 'u'));
-  assert.match(source, /deferCodeChangeResponses:\s*1/u);
-  assert.match(source, /deferCodeChangeResponsesAfter:\s*1/u);
+  assert.match(source, /deferHarnessResponses:\s*1/u);
+  assert.match(source, /deferHarnessResponsesAfter:\s*6/u);
+  assert.match(source, /response_kind\.startsWith\(['"]harness_['"]\)/u);
   assert.match(source, /aria-label['"]\) === ['"]Add context/u);
   assert.match(source, /message_kind === ['"]queued_followup['"]/u);
   assert.match(source, /item_kind === ['"]queued_followup_consumed['"]/u);
   assert.match(source, /durable_queued_followup_recorded:\s*true/u);
   assert.match(source, /queued_followup_consumed:\s*true/u);
   assert.match(source, /continuation_provider_request_observed:\s*true/u);
+  assert.match(source, /formal_version_save_is_secondary:\s*true/u);
+  assert.match(source, /save_version_directly_visible:\s*saveVersionDirectlyVisible/u);
   assert.match(source, /release_gate_integration:\s*['"]not_in_verify_release['"]/u);
   assert.doesNotMatch(
     source,

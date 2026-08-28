@@ -25,6 +25,8 @@ import {
   digest,
 } from '../../../test/builderV2Fixtures';
 
+const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174000';
+
 const PLAN_SOURCE_READ_READY = Object.freeze({
   result_version: 'builder-plan-source-read-approval-status.v1',
   project_id: PROJECT_ID,
@@ -77,6 +79,7 @@ function setup(options: {
   answerDraft?: BuilderCodeGeneratorPort['answerDraft'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   restoreRevisionAsDraft?: BuilderCodeGeneratorPort['restoreRevisionAsDraft'];
+  restorePreviousCheckpointAsDraft?: NonNullable<BuilderCodeGeneratorPort['restorePreviousCheckpointAsDraft']>;
   rejectDraft?: BuilderCodeGeneratorPort['rejectDraft'];
   cancel?: BuilderCodeGeneratorPort['cancel'];
   steer?: BuilderCodeGeneratorPort['steer'];
@@ -158,6 +161,11 @@ function setup(options: {
   const restoreRevisionAsDraft = vi.fn(options.restoreRevisionAsDraft ?? (async () => (
     createGenerationDraft(await createBuilderGenerationRequest('Restore a saved version.', PROJECT_ID))
   )));
+  const restorePreviousCheckpointAsDraft = vi.fn(
+    options.restorePreviousCheckpointAsDraft ?? (async () => (
+      createGenerationDraft(await createBuilderGenerationRequest('Undo the latest AI change.', PROJECT_ID))
+    )),
+  );
   const rejectDraft = vi.fn(options.rejectDraft ?? (async (request) => ({
     result_version: 'builder-generation-draft-rejection-result.v1',
     draft_id: request.draft_id,
@@ -237,6 +245,7 @@ function setup(options: {
       answerDraft,
       restoreDraft,
       restoreRevisionAsDraft,
+      restorePreviousCheckpointAsDraft,
       rejectDraft,
       cancel,
       steer,
@@ -269,6 +278,7 @@ function setup(options: {
     rejectDraft,
     restoreDraft,
     restoreRevisionAsDraft,
+    restorePreviousCheckpointAsDraft,
     saveDraft,
   };
 }
@@ -348,6 +358,40 @@ describe('Builder project controller v2', () => {
     });
   });
 
+  it('keeps the previous verified project shell while another project opens', async () => {
+    let resolveNext!: (value: unknown) => void;
+    const nextProject = new Promise<unknown>((resolve) => {
+      resolveNext = resolve;
+    });
+    let openCount = 0;
+    const { controller } = setup({
+      open: async () => {
+        openCount += 1;
+        return openCount === 1 ? createReadWire() : nextProject;
+      },
+    });
+    const first = await controller.open(PROJECT_ID);
+
+    const opening = controller.open(OTHER_PROJECT_ID);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'opening',
+      busy: true,
+      savedProject: first.savedProject,
+      preview: first.preview,
+    });
+
+    resolveNext(createLocalProjectSelection({
+      projectId: OTHER_PROJECT_ID,
+      title: 'Second project',
+    }));
+    const opened = await opening;
+    expect(opened).toMatchObject({
+      status: 'ready',
+      savedProject: null,
+      workingProjectId: OTHER_PROJECT_ID,
+    });
+  });
+
   it('keeps generation blocked when no local project folder is bound', async () => {
     const { controller, createLocalProject, generate, loadCurrent, saveDraft } = setup();
     const result = await controller.generate('Make a timer.');
@@ -377,7 +421,7 @@ describe('Builder project controller v2', () => {
     expect(result.draft).toBeNull();
   });
 
-  it('keeps chat project identity when a build turn is blocked before source folder binding', async () => {
+  it('keeps Agent chat projectless when a build turn is blocked before source folder binding', async () => {
     const { controller, createLocalProject, submit } = setup({
       createLocalProject: async (request) => createLocalProjectSelection({
         projectId: request.project_id ?? PROJECT_ID,
@@ -385,17 +429,17 @@ describe('Builder project controller v2', () => {
       }),
     });
     const answered = await controller.answer('hi');
-    expect(answered.answer?.project_id).toBe(PROJECT_ID);
+    expect(answered.answer?.project_id).toBeNull();
 
     const blocked = await controller.submit('Make a timer.');
     expect(submit).not.toHaveBeenCalled();
     expect(blocked.error).toBe('builder_generation_project_workspace_required');
-    expect(blocked.answer?.project_id).toBe(PROJECT_ID);
+    expect(blocked.answer?.project_id).toBeNull();
 
     const result = await controller.createLocalProject('Focus timer');
 
     expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: PROJECT_ID,
+      project_id: null,
       project_title: 'Focus timer',
     });
     expect(result.workingProjectId).toBe(PROJECT_ID);
@@ -467,6 +511,52 @@ describe('Builder project controller v2', () => {
       turn_id: TURN_ID,
       run_id: RUN_ID,
     });
+    expect(generate).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('keeps an approved-plan work response in chat when Harness changes no files', async () => {
+    const explanation = 'I inspected the project, but I need the target file before changing anything.';
+    const { controller, generate, generateApprovedPlan, saveDraft } = setup({
+      generateApprovedPlan: async () => ({
+        version: 'builder-generation-result.v2',
+        result_kind: 'explanation',
+        request_id: await digest('approved-plan-no-change'),
+        project_id: PROJECT_ID,
+        existing_project_id: PROJECT_ID,
+        title: 'Request completed',
+        summary: 'The project was inspected without changing files.',
+        explanation,
+        admissions: {
+          conversation: 'sqlite_recorded',
+          draft: 'not_created',
+          save: 'not_performed',
+          preview: 'not_applicable',
+          execution: 'not_evaluated',
+        },
+      }),
+    });
+    await controller.open(PROJECT_ID);
+
+    const result = await controller.generateApprovedPlan({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.answer).toMatchObject({
+      result_kind: 'explanation',
+      explanation,
+      admissions: {
+        draft: 'not_created',
+        save: 'not_performed',
+      },
+    });
+    expect(result.draft).toBeNull();
+    expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
+    expect(generateApprovedPlan).toHaveBeenCalledOnce();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
   });
@@ -571,7 +661,7 @@ describe('Builder project controller v2', () => {
     const result = await controller.proposePlan('Plan the next saved-project change.');
 
     expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: 'Plan the next saved-project change.',
       existing_project_id: PROJECT_ID,
     }));
@@ -600,7 +690,7 @@ describe('Builder project controller v2', () => {
     expect(bound.savedProject).toBeNull();
     expect(bound.workingProjectId).toBe(PROJECT_ID);
     expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: '帮我先做下方案',
       existing_project_id: PROJECT_ID,
     }));
@@ -642,7 +732,7 @@ describe('Builder project controller v2', () => {
     expect(failed.status).toBe('answer_failed');
     expect(failed.workingProjectId).toBe(PROJECT_ID);
     expect(proposePlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: '帮我做成计划',
       existing_project_id: PROJECT_ID,
     }));
@@ -670,6 +760,66 @@ describe('Builder project controller v2', () => {
     });
   });
 
+  it('undoes the first AI change back to the saved project baseline', async () => {
+    const { controller, restorePreviousCheckpointAsDraft, saveDraft } = setup({
+      restorePreviousCheckpointAsDraft: async (request) => ({
+        result_version: 'builder-generation-draft-undo-result.v1',
+        operation: 'draft_baseline_restored',
+        draft_id: request.draft_id,
+        project_id: PROJECT_ID,
+        pending_draft_released: true,
+        conversation_event_admission: 'sqlite_recorded',
+      }),
+    });
+    await controller.open(PROJECT_ID);
+    await controller.generate('Make a timer.');
+    const result = await controller.restorePreviousCheckpointAsDraft();
+
+    expect(restorePreviousCheckpointAsDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'ready',
+      draft: null,
+      savedProject: { target: { project_id: PROJECT_ID } },
+    });
+  });
+
+  it('undoes a later AI change as another recoverable unsaved draft', async () => {
+    const { controller, restorePreviousCheckpointAsDraft, saveDraft } = setup();
+    await controller.open(PROJECT_ID);
+    await controller.generate('Make a timer.');
+    const result = await controller.restorePreviousCheckpointAsDraft();
+
+    expect(restorePreviousCheckpointAsDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(result.status).toBe('draft_ready');
+    expect(result.draft).not.toBeNull();
+    expect(result.draft?.project_id).toBe(PROJECT_ID);
+  });
+
+  it('keeps the draft recoverable and exposes a workspace conflict when checkpoint undo is blocked', async () => {
+    const { controller, restorePreviousCheckpointAsDraft } = setup({
+      restorePreviousCheckpointAsDraft: async () => {
+        throw new BuilderGenerationDiagnosticError('builder_generation_workspace_changed');
+      },
+    });
+    await controller.open(PROJECT_ID);
+    await controller.generate('Make a timer.');
+    const beforeUndo = controller.getSnapshot();
+
+    const result = await controller.restorePreviousCheckpointAsDraft();
+
+    expect(restorePreviousCheckpointAsDraft).toHaveBeenCalledExactlyOnceWith({ draft_id: DRAFT_ID });
+    expect(result).toMatchObject({
+      status: 'generation_failed',
+      error: 'builder_generation_workspace_changed',
+      retryableGeneration: false,
+    });
+    expect(result.draft).toBe(beforeUndo.draft);
+    expect(result.preview).toBe(beforeUndo.preview);
+    expect(result.savedProject).toBe(beforeUndo.savedProject);
+  });
+
   it('keeps a draft visible when discard cannot be durably recorded', async () => {
     const { controller, rejectDraft } = setup({
       rejectDraft: async () => {
@@ -692,7 +842,7 @@ describe('Builder project controller v2', () => {
 
     expect(answer).toHaveBeenCalledOnce();
     expect(answer.mock.calls[0][0]).toMatchObject({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: 'What does this project do?',
       existing_project_id: null,
     });
@@ -702,7 +852,7 @@ describe('Builder project controller v2', () => {
     expect(result.status).toBe('new');
     expect(result.answer).toMatchObject({
       result_kind: 'explanation',
-      project_id: PROJECT_ID,
+      project_id: null,
       admissions: {
         draft: 'not_created',
         save: 'not_performed',
@@ -714,7 +864,7 @@ describe('Builder project controller v2', () => {
     expect(JSON.stringify(result)).not.toContain('request_id');
   });
 
-  it('keeps consecutive read-only chat turns on the same logical project before a folder is selected', async () => {
+  it('keeps consecutive read-only chat turns in the projectless Agent conversation', async () => {
     const { answer, controller } = setup();
     const first = await controller.answer('hi');
     const second = await controller.answer('What did I just ask?');
@@ -726,10 +876,10 @@ describe('Builder project controller v2', () => {
     });
     expect(answer.mock.calls[1][0]).toMatchObject({
       instruction: 'What did I just ask?',
-      existing_project_id: PROJECT_ID,
+      existing_project_id: null,
     });
-    expect(first.answer?.project_id).toBe(PROJECT_ID);
-    expect(second.answer?.project_id).toBe(PROJECT_ID);
+    expect(first.answer?.project_id).toBeNull();
+    expect(second.answer?.project_id).toBeNull();
     expect(second.status).toBe('new');
     expect(second.workingProjectId).toBeNull();
     expect(second.workingProject).toBeNull();
@@ -737,7 +887,7 @@ describe('Builder project controller v2', () => {
     expect(second.draft).toBeNull();
   });
 
-  it('keeps the logical chat project visible while a later read-only answer is running', async () => {
+  it('keeps the projectless Agent answer visible while a later answer is running', async () => {
     let answerAttempts = 0;
     let resolveSecondAnswer!: (value: unknown) => void;
     const secondAnswer = new Promise<unknown>((resolve) => {
@@ -751,7 +901,7 @@ describe('Builder project controller v2', () => {
       },
     });
     const first = await controller.answer('hi');
-    expect(first.answer?.project_id).toBe(PROJECT_ID);
+    expect(first.answer?.project_id).toBeNull();
 
     const running = controller.answer('What did I just ask?');
     for (let attempt = 0; attempt < 20 && answer.mock.calls.length < 2; attempt += 1) {
@@ -762,10 +912,10 @@ describe('Builder project controller v2', () => {
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer.mock.calls[1][0]).toMatchObject({
       instruction: 'What did I just ask?',
-      existing_project_id: PROJECT_ID,
+      existing_project_id: null,
     });
     expect(inFlight.status).toBe('answering');
-    expect(inFlight.answer?.project_id).toBe(PROJECT_ID);
+    expect(inFlight.answer?.project_id).toBeNull();
     expect(inFlight.workingProjectId).toBeNull();
     expect(inFlight.savedProject).toBeNull();
     expect(inFlight.draft).toBeNull();
@@ -773,10 +923,10 @@ describe('Builder project controller v2', () => {
     resolveSecondAnswer(await createGenerationAnswer(answer.mock.calls[1][0]));
     const result = await running;
     expect(result.status).toBe('new');
-    expect(result.answer?.project_id).toBe(PROJECT_ID);
+    expect(result.answer?.project_id).toBeNull();
   });
 
-  it('keeps prior read-only chat identity visible when a later answer fails', async () => {
+  it('keeps the prior projectless Agent answer visible when a later answer fails', async () => {
     let answerAttempts = 0;
     const { answer, controller } = setup({
       answer: async (request) => {
@@ -786,18 +936,18 @@ describe('Builder project controller v2', () => {
       },
     });
     const first = await controller.answer('hi');
-    expect(first.answer?.project_id).toBe(PROJECT_ID);
+    expect(first.answer?.project_id).toBeNull();
 
     const failed = await controller.answer('What model are you?');
 
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer.mock.calls[1][0]).toMatchObject({
       instruction: 'What model are you?',
-      existing_project_id: PROJECT_ID,
+      existing_project_id: null,
     });
     expect(failed.status).toBe('answer_failed');
     expect(failed.error).toBe('builder_generation_provider_http_error');
-    expect(failed.answer?.project_id).toBe(PROJECT_ID);
+    expect(failed.answer?.project_id).toBeNull();
     expect(failed.workingProjectId).toBeNull();
     expect(failed.savedProject).toBeNull();
     expect(failed.draft).toBeNull();
@@ -843,7 +993,7 @@ describe('Builder project controller v2', () => {
     expect(second.draft).toBeNull();
   });
 
-  it('binds a selected source folder to the answered logical project instead of forking it', async () => {
+  it('creates a Project only when a source folder is selected after Agent chat', async () => {
     const { controller, createLocalProject } = setup({
       createLocalProject: async (request) => createLocalProjectSelection({
         projectId: request.project_id ?? PROJECT_ID,
@@ -851,12 +1001,12 @@ describe('Builder project controller v2', () => {
       }),
     });
     const answered = await controller.answer('hi');
-    expect(answered.answer?.project_id).toBe(PROJECT_ID);
+    expect(answered.answer?.project_id).toBeNull();
 
     const result = await controller.createLocalProject('Focus timer');
 
     expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: PROJECT_ID,
+      project_id: null,
       project_title: 'Focus timer',
     });
     expect(result.status).toBe('ready');
@@ -864,6 +1014,29 @@ describe('Builder project controller v2', () => {
     expect(result.workingProject?.project_id).toBe(PROJECT_ID);
     expect(result.savedProject).toBeNull();
     expect(result.draft).toBeNull();
+  });
+
+  it('creates an explicitly new project without reusing retained task identity', async () => {
+    const { controller, createLocalProject } = setup({
+      createLocalProject: async (request) => createLocalProjectSelection({
+        projectId: request.project_id ?? OTHER_PROJECT_ID,
+        title: request.project_title,
+      }),
+    });
+    await controller.open(PROJECT_ID);
+
+    const result = await controller.createNewLocalProject('Fresh Agent project');
+
+    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
+      project_id: null,
+      project_title: 'Fresh Agent project',
+    });
+    expect(result).toMatchObject({
+      status: 'ready',
+      conversationProjectId: null,
+      workingProjectId: OTHER_PROJECT_ID,
+      workingProject: { project_id: OTHER_PROJECT_ID },
+    });
   });
 
   it('clears the selected workspace without deleting the visible conversation identity', async () => {
@@ -884,7 +1057,7 @@ describe('Builder project controller v2', () => {
       existing_project_id: PROJECT_ID,
       instruction: 'Can we keep chatting?',
       request_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
     }));
 
     const blocked = await controller.submit('Build the discussed page.');
@@ -902,7 +1075,7 @@ describe('Builder project controller v2', () => {
 
     expect(submit).toHaveBeenCalledOnce();
     expect(submit.mock.calls[0][0]).toMatchObject({
-      version: 'builder-generation-request.v2',
+      version: 'builder-generation-request.v3',
       instruction: 'Make a timer.',
       existing_project_id: PROJECT_ID,
     });
@@ -932,6 +1105,25 @@ describe('Builder project controller v2', () => {
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');
+    expect(result.draft?.project_id).toBe(PROJECT_ID);
+  });
+
+  it('continues an unsaved draft after selecting a composite Task Address', async () => {
+    const taskAddressId = 'builder-task-address:323e4567-e89b-42d3-a456-426614174000';
+    const { continueDraft, controller } = setup();
+    controller.selectTaskAddress(taskAddressId);
+    await controller.open(PROJECT_ID);
+    const first = await controller.submit('Make a timer.');
+
+    expect(first.status).toBe('draft_ready');
+    const result = await controller.submit('Make it responsive.');
+
+    expect(continueDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: DRAFT_ID,
+      instruction: 'Make it responsive.',
+    });
+    expect(result.status).toBe('draft_ready');
+    expect(result.error).toBeNull();
     expect(result.draft?.project_id).toBe(PROJECT_ID);
   });
 
@@ -975,6 +1167,24 @@ describe('Builder project controller v2', () => {
     expect(saveDraft).not.toHaveBeenCalled();
     expect(result.status).toBe('draft_ready');
     expect(result.draft?.draft_id).toBe(DRAFT_ID);
+    expect(result.answer?.result_kind).toBe('explanation');
+  });
+
+  it('answers about an unsaved draft after selecting a composite Task Address', async () => {
+    const taskAddressId = 'builder-task-address:423e4567-e89b-42d3-a456-426614174000';
+    const { answerDraft, controller } = setup();
+    controller.selectTaskAddress(taskAddressId);
+    await controller.open(PROJECT_ID);
+    await controller.submit('Make a timer.');
+
+    const result = await controller.answer('Why is the preview blank?');
+
+    expect(answerDraft).toHaveBeenCalledExactlyOnceWith({
+      draft_id: DRAFT_ID,
+      instruction: 'Why is the preview blank?',
+    });
+    expect(result.status).toBe('draft_ready');
+    expect(result.error).toBeNull();
     expect(result.answer?.result_kind).toBe('explanation');
   });
 

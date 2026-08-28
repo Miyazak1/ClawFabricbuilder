@@ -24,6 +24,7 @@ const {
 } = require('../electron/builder-task-capsule-recording-service.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
+const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
 const QUESTION_DIGEST = `sha256:${'0'.repeat(64)}`;
 
 function uuidFactory(start = 1) {
@@ -85,6 +86,7 @@ function fixture(t) {
 function beginBrief(conversation) {
   const context = conversation.begin_question({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     question: '我想先聊一下这个作品集首页怎么做。',
     request_digest: QUESTION_DIGEST,
     base_revision: null,

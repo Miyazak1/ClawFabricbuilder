@@ -25,9 +25,25 @@
     "verify:packaged-active-followup": "node scripts/verify-packaged-active-followup-canary.cjs",
     "verify:packaged-experience": "npm run verify:packaged-canary && npm run verify:packaged-plan-mode && npm run verify:packaged-active-followup && npm run verify:packaged-live-preview",
     "verify:packaged-canary:deepseek": "node scripts/verify-deepseek-packaged-canary.cjs",
-    "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary && npm run verify:packaged-plan-mode",
-    "verify:release:deepseek": "npm run verify:release && npm run verify:packaged-canary:deepseek",
-    "pack": "npm run build && electron-builder --dir && npm run verify:package",
+    "verify:packaged-harness:deepseek": "node scripts/verify-deepseek-packaged-harness-canary.cjs",
+    "verify:packaged-agent-browser-cancellation": "node scripts/verify-packaged-agent-browser-cancellation-canary.cjs",
+    "verify:packaged-plan-mode:deepseek": "node scripts/verify-deepseek-packaged-plan-canary.cjs",
+    "verify:packaged-e2e:deepseek": "node scripts/verify-deepseek-packaged-e2e-gate.cjs",
+    "verify:packaged-agent-history:deepseek": "node scripts/verify-deepseek-packaged-agent-history-e2e-canary.cjs",
+    "verify:packaged-harness:deepseek:soak": "node scripts/verify-deepseek-packaged-harness-soak.cjs",
+    "prepare:harness-runtime": "node scripts/prepare-builder-harness-runtime.cjs",
+    "stage:harness-runtime": "node scripts/stage-builder-harness-runtime.cjs",
+    "verify:harness-coding-loop": "node scripts/verify-builder-harness-coding-loop.cjs",
+    "verify:harness-compaction": "node scripts/verify-builder-harness-coding-loop.cjs --compaction",
+    "measure:a0:event-projection": "node scripts/measure-builder-event-projection-baseline.cjs",
+    "verify:packaged-harness-coding-loop": "node scripts/verify-packaged-harness-coding-loop.cjs",
+    "verify:packaged-harness-compaction": "node scripts/verify-packaged-harness-compaction-canary.cjs",
+    "verify:packaged-harness-ui": "node scripts/verify-packaged-harness-ui-canary.cjs",
+    "verify:packaged-harness-stress": "node scripts/verify-packaged-harness-stress-canary.cjs",
+    "verify:packaged-harness-failure": "node scripts/verify-packaged-harness-failure-canary.cjs",
+    "verify:release": "npm run lint && npm run test:unit && npm run test:boundaries && npm run dist && npm run verify:packaged-launch && npm run verify:packaged-canary && npm run verify:packaged-plan-mode && npm run verify:packaged-harness-ui && npm run verify:packaged-harness-compaction && npm run verify:packaged-harness-failure",
+    "verify:release:deepseek": "npm run verify:release && npm run verify:packaged-harness:deepseek",
+    "pack": "npm run build && npm run stage:harness-runtime && electron-builder --dir && npm run verify:package",
     "dist": "npm run build && node scripts/build-windows-release.cjs && npm run verify:package"
   },
   "devDependencies": {
@@ -50,6 +66,8 @@
     "pngjs": "^7.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
@@ -67,17 +85,30 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "package.json"
+      "scripts/verify-builder-harness-coding-loop.cjs",
+      "package.json",
+      "!node_modules/style-to-js/src/*.test.ts"
     ],
     "asarUnpack": [
       "electron/builder-packaged-check-script-worker.cjs",
       "electron/builder-packaged-check-runtime-contract.cjs",
+      "electron/harness/**/*",
       "node_modules/@npmcli/promise-spawn/**/*",
       "node_modules/which/**/*",
       "node_modules/isexe/**/*",
       "node_modules/dugite/git/**/*",
       "node_modules/dugite/LICENSE",
       "node_modules/dugite/git/LICENSE.txt"
+    ],
+    "extraResources": [
+      {
+        "from": ".release-runtime/harness-runtime.asar",
+        "to": "harness-runtime.asar"
+      },
+      {
+        "from": ".release-runtime/harness-runtime-manifest.json",
+        "to": "harness-runtime-manifest.json"
+      }
     ],
     "win": {
       "icon": "icon.ico",

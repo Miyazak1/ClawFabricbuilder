@@ -4,12 +4,17 @@
 
 Builder should not require a formal `Save version` after every AI edit. A
 mutating AI turn should create an automatic local Draft Checkpoint that the
-user can compare, restore, discard, or continue from. `Save version` remains
-the explicit milestone action that promotes reviewed work into a Project
-Revision.
+user can compare, restore, discard, or continue from. A formal Version is an
+optional milestone that may reference a stable checkpoint; it is not required
+to continue coding.
 
 Draft Checkpoint is therefore an undo and recovery layer, not a replacement for
-Review, Git authority, or Project Revision receipts.
+workspace authority, conflict detection, or optional Project Revision receipts.
+
+It is also not the boundary that decides when chat should summarize a coherent
+step. Work Step summaries explain recorded progress; Draft Checkpoints preserve
+recoverable source state. See
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md).
 
 ## Product Meaning
 
@@ -19,7 +24,7 @@ User-facing language:
 - `Restore`
 - `Compare`
 - `Continue from here`
-- `Save version`
+- `Mark version` when a milestone is useful
 
 Avoid exposing staging, git add, branch refs, receipt digests, or internal
 snapshot terms to ordinary users.
@@ -30,11 +35,11 @@ The desired loop is:
 AI changes the project
 -> Builder saves a draft checkpoint automatically
 -> User previews, compares, asks for changes, or restores
--> User saves a version only when the work is a real milestone
+-> User optionally marks a version when the work is a real milestone
 ```
 
-This keeps the ordinary loop fluid while preserving explicit review before a
-verified version becomes current.
+This keeps the ordinary loop fluid while preserving recovery and optional
+milestone history.
 
 ## Boundary With Project Versions
 
@@ -49,8 +54,9 @@ but it must not claim any of these facts by itself:
 - external side effect;
 - test or verification success unless a separate check fact exists.
 
-`Save version` remains the only ordinary path that records an accepted candidate
-as the selected Project Revision and projects it to the current worktree.
+The current working state does not wait for a Version action. Creating a formal
+Version records milestone metadata and durable revision lineage over an already
+stable checkpoint; it does not authorize the next coding turn.
 
 ## Fact Shape
 
@@ -112,15 +118,19 @@ Destructive cleanup must fail closed if the related Run is active or pending.
 
 ## UI Placement
 
-Chat should show compact checkpoint status, not full Git details:
+Automatic checkpoints are recovery facts, not chat milestones. Do not append a
+checkpoint card after each AI edit. The current workspace/history controls may
+show compact recovery availability without full Git details:
 
 ```text
-Checkpoint saved
-[Compare] [Restore] [Save version]
+Recovery available
+History: [Compare] [Restore]
+History menu: [Mark version]
 ```
 
-The Artifact workspace can show source diff, preview, logs, and verification
-details for the selected checkpoint. History should separate formal saved
+The contextual workspace can show source diff, preview, and verification
+details for the selected checkpoint. Expandable work details remain in the
+conversation. History should separate formal saved
 versions from automatic checkpoints so users do not confuse every AI edit with
 a milestone.
 
@@ -178,7 +188,9 @@ no source write, no Git mutation, no permission grant, no Review decision, no
 Save, no Project Revision selection, no publication, and no Work Capsule
 creation. Runtime generation now calls this service only after Workspace Guard,
 successful EditAttempt creation, Git candidate persistence, and Git candidate
-verification. Restore/compare UI actions remain separate gates.
+verification. The service can now prepare the previous logical checkpoint for
+the current Task Address, including repeated backward traversal after a prior
+restore.
 
 Current status projection checkpoint:
 `builder-draft-checkpoint-status-projection.v1` turns a verified latest/read
@@ -187,8 +199,64 @@ availability, changed-file count, and verification status. It exposes no
 checkpoint id, candidate id, digest, commit, tree, source, SQLite schema, Git
 evidence, provider data, permission grant, Save authority, publish authority, or
 Work Capsule authority. Task Stream can carry this projection as optional
-read-only status. Automatic recording from mutating Runs is now active; UI
-restore or compare actions remain separate future gates.
+read-only status. Automatic recording from mutating Runs is active. A direct
+Undo action now submits only the pending `draft_id`; Electron main supplies the
+selected Project, resolves the previous checkpoint, verifies Git evidence, and
+either returns to the Project baseline or creates a new recoverable draft.
+Compare, arbitrary checkpoint selection, and redo remain separate gates.
+External workspace changes are already rejected visibly before materialization,
+and the recoverable current draft is retained.
+
+Current timeline projection checkpoint (2026-08-20):
+`builder-draft-checkpoint-timeline-projection.v1` turns the main-owned bounded
+Task Address checkpoint list into a newest-first renderer-safe timeline. It
+projects at most 12 entries and exposes only checkpoint sequence, creation time,
+fixed product copy, changed-file count, verification status, and whether an
+entry represents current work. It does not expose checkpoint ids, candidate
+ids, task/session/conversation ids, Git OIDs, source digests, SQLite evidence,
+raw checkpoint summaries, restore authority, Save authority, or publication
+authority. The Automatic Checkpoint Service returns this timeline only when the
+latest stored candidate still matches the current unreviewed candidate; Task
+Stream and the renderer sanitize it again at their own boundaries.
+
+Current materialization checkpoint: verified mutating candidates can now be
+projected back into the selected project workspace immediately after Conversation
+candidate admission. Generation reads the candidate's Git-recorded workspace
+base digest and calls the main-owned current projection gate with a CAS
+workspace expectation. Success updates the Git main ref and materialized
+worktree; conflicts or unavailable projection are recorded as non-fatal draft
+materialization status so the verified candidate and automatic checkpoint remain
+recoverable. This does not create a formal Project Revision, does not mark Save
+complete, and does not remove the review/version milestone boundary.
+
+Current durable materialization-status checkpoint: Conversation candidate
+completion now records the bounded `current_materialization` status beside the
+candidate result. Conversation record validation, replay, Task Stream
+projection, renderer snapshot sanitization, and the activity timeline all carry
+that status as renderer-safe copy. Old candidate records without this field are
+treated as `not_recorded`; pending drafts restored from older conversation
+proofs remain recoverable with a legacy `not_attempted` materialization reason.
+This closes the reload/replay visibility gap for whether the current project
+folder was updated, while still leaving local Git history UX and automatic
+conversation compaction as separate follow-up slices.
+
+Current recovery UI checkpoint: the History workspace distinguishes saved
+milestones from active unsaved work. It shows the current automatic recovery
+point with direct Undo, followed by a compact visual timeline of earlier
+automatic checkpoints and then optional milestone Versions. Earlier timeline
+rows are currently read-only. A selected-checkpoint restore must remain a
+main-owned write command: the renderer may submit only the public checkpoint
+sequence, and Electron main must re-resolve the current Project, Task Address,
+candidate, checkpoint, Git receipt, workspace expectation, and write admission
+before replacing current work. That command is intentionally not enabled until
+the user explicitly authorizes its workspace-writing semantics.
+
+The packaged Harness UI canary proves two consecutive Build checkpoints without
+Save Version, restart restoration, current recovery visibility, at least one
+earlier timeline entry, bounded History layout, a nonblank screenshot,
+conflict-safe Undo, restoration of the prior source, and continuation after
+Undo. Its independent strict canary sanitizer accepts the timeline only through
+the same main projection contract.
 
 ## Non-Goals
 
@@ -202,24 +270,26 @@ restore or compare actions remain separate future gates.
 
 ## Relationship To Other Architecture
 
-Draft Checkpoints sit between Candidate and Project Revision:
+Draft Checkpoints preserve the current working lineage. A formal Project
+Revision is an optional branch from a stable checkpoint:
 
 ```text
 Run
 -> Candidate
 -> Draft Checkpoint
--> Review
--> Save version
--> Project Revision
+-> Continue / Undo / Restore
+-> Optional Review
+-> Optional Mark version
+-> Project Revision milestone
 ```
 
 Working Context State may refer to the latest Draft Checkpoint as current work
 context, but it cannot make the checkpoint current source authority.
 
-Work Capsule may only reference saved, reviewed Project Revisions. A Draft
-Checkpoint is not a Work Capsule input until it is promoted through Review and
-Save.
+Work Capsule may initially require a reviewed Project Revision milestone. That
+publication policy does not make Version creation part of the ordinary coding
+loop.
 
 Storage Lifecycle must treat Draft Checkpoints as cleanup-managed product facts:
 export/archive may include them for local recovery, while public export and
-share surfaces should default to saved versions only.
+share surfaces should default to explicitly marked milestone Versions only.

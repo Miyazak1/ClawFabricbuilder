@@ -6,16 +6,26 @@ const READ_CURRENT_DRAFT_FILE_TREE_CHANNEL =
   'clawfabric-builder:side-workspace-files:read-current-draft-tree';
 const READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL =
   'clawfabric-builder:side-workspace-files:read-current-draft-content';
+const READ_RUNTIME_TOOL_FILE_TREE_CHANNEL =
+  'clawfabric-builder:side-workspace-files:read-runtime-tool-tree';
 
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN =
+  /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TOOL_CALL_ID_PATTERN =
+  /^builder-tool-call:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const READ_REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id']);
 const CONTENT_REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id', 'file_ref']);
+const RUNTIME_TOOL_REQUEST_KEYS = Object.freeze([
+  'project_id', 'conversation_id', 'run_id', 'tool_call_id',
+]);
 const FILE_REF_KEYS = Object.freeze([
   'file_ref_version',
+  'source_kind',
   'source_tree_digest',
   'path',
   'content_digest',
@@ -23,6 +33,7 @@ const FILE_REF_KEYS = Object.freeze([
 const OPTION_KEYS = Object.freeze([
   'readCurrentDraftFileTree',
   'readCurrentDraftFileContent',
+  'readRuntimeToolFileTree',
   'mainWindowRef',
 ]);
 const TREE_KEYS = Object.freeze([
@@ -85,7 +96,9 @@ const AUTHORITY_KEYS = Object.freeze([
   'save_admission',
   'permission_grant',
 ]);
-const SOURCE_KINDS = Object.freeze(['current_draft', 'saved_revision', 'inspected_revision']);
+const SOURCE_KINDS = Object.freeze([
+  'current_draft', 'saved_revision', 'inspected_revision', 'runtime_snapshot',
+]);
 const LANGUAGES = Object.freeze([
   'javascript',
   'typescript',
@@ -173,6 +186,7 @@ function safeOptions(value) {
     return Object.freeze({
       readCurrentDraftFileTree: stableMethod(value, 'readCurrentDraftFileTree'),
       readCurrentDraftFileContent: stableMethod(value, 'readCurrentDraftFileContent'),
+      readRuntimeToolFileTree: stableMethod(value, 'readRuntimeToolFileTree'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
   } catch {
@@ -191,7 +205,9 @@ function safeConversationId(value, projectId) {
   if (
     typeof value !== 'string'
     || !CONVERSATION_ID_PATTERN.test(value)
-    || value.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)
+    || !value.startsWith(
+      `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+    )
   ) throw ipcError('builder_side_workspace_file_invalid');
   return value;
 }
@@ -225,10 +241,16 @@ function safeDigest(value) {
   return value;
 }
 
+function safeSourceKind(value) {
+  if (typeof value !== 'string' || !SOURCE_KINDS.includes(value)) throw ipcError();
+  return value;
+}
+
 function safeFileRef(value, sourceTreeDigest = null) {
   const descriptors = exactObject(value, FILE_REF_KEYS);
   const ref = Object.freeze({
     file_ref_version: descriptors.file_ref_version.value,
+    source_kind: safeSourceKind(descriptors.source_kind.value),
     source_tree_digest: safeDigest(descriptors.source_tree_digest.value),
     path: safeFilePath(descriptors.path.value),
     content_digest: safeDigest(descriptors.content_digest.value),
@@ -247,6 +269,23 @@ function safeContentRequest(value) {
     project_id: projectId,
     conversation_id: safeConversationId(descriptors.conversation_id.value, projectId),
     file_ref: safeFileRef(descriptors.file_ref.value),
+  });
+}
+
+function safeRuntimeToolRequest(value) {
+  const descriptors = exactObject(value, RUNTIME_TOOL_REQUEST_KEYS);
+  const projectId = safeProjectId(descriptors.project_id.value);
+  if (
+    typeof descriptors.run_id.value !== 'string'
+    || !RUN_ID_PATTERN.test(descriptors.run_id.value)
+    || typeof descriptors.tool_call_id.value !== 'string'
+    || !TOOL_CALL_ID_PATTERN.test(descriptors.tool_call_id.value)
+  ) throw ipcError('builder_side_workspace_file_invalid');
+  return Object.freeze({
+    project_id: projectId,
+    conversation_id: safeConversationId(descriptors.conversation_id.value, projectId),
+    run_id: descriptors.run_id.value,
+    tool_call_id: descriptors.tool_call_id.value,
   });
 }
 
@@ -308,7 +347,7 @@ function safeAuthority(value) {
   return authority;
 }
 
-function safeEntry(value, sourceTreeDigest) {
+function safeEntry(value, sourceKind, sourceTreeDigest) {
   if (!isPlainObject(value)) throw ipcError();
   const kind = valueAt(value, 'entry_kind');
   if (kind === 'directory') {
@@ -336,7 +375,11 @@ function safeEntry(value, sourceTreeDigest) {
     if (!Number.isSafeInteger(depth) || depth < 0) throw ipcError();
     const ref = safeFileRef(descriptors.file_ref.value, sourceTreeDigest);
     const path = safeFilePath(descriptors.path.value);
-    if (ref.path !== path || ref.content_digest !== descriptors.content_digest.value) throw ipcError();
+    if (
+      ref.source_kind !== sourceKind
+      || ref.path !== path
+      || ref.content_digest !== descriptors.content_digest.value
+    ) throw ipcError();
     return Object.freeze({
       entry_kind: 'text_file',
       path,
@@ -353,26 +396,29 @@ function safeEntry(value, sourceTreeDigest) {
 function safeTreeProjection(value, request) {
   const descriptors = exactObject(value, TREE_KEYS, 'builder_side_workspace_file_unavailable');
   const sourceTreeDigest = safeDigest(descriptors.source_tree_digest.value);
+  const sourceKind = safeSourceKind(descriptors.source_kind.value);
   if (
     descriptors.projection_version.value !== 'builder-side-workspace-file-tree.v1'
     || descriptors.project_id.value !== request.project_id
     || descriptors.conversation_id.value !== request.conversation_id
-    || !SOURCE_KINDS.includes(descriptors.source_kind.value)
     || typeof descriptors.root_label.value !== 'string'
     || descriptors.root_label.value.length < 1
     || descriptors.root_label.value.length > 80
     || !Array.isArray(descriptors.entries.value)
     || descriptors.entries.value.length > 5_000
   ) throw ipcError();
-  const entries = Object.freeze(descriptors.entries.value.map((entry) => safeEntry(entry, sourceTreeDigest)));
+  const entries = Object.freeze(
+    descriptors.entries.value.map((entry) => safeEntry(entry, sourceKind, sourceTreeDigest)),
+  );
   const selectedFileRef = descriptors.selected_file_ref.value === null
     ? null
     : safeFileRef(descriptors.selected_file_ref.value, sourceTreeDigest);
+  if (selectedFileRef !== null && selectedFileRef.source_kind !== sourceKind) throw ipcError();
   return Object.freeze({
     projection_version: 'builder-side-workspace-file-tree.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    source_kind: descriptors.source_kind.value,
+    source_kind: sourceKind,
     root_label: descriptors.root_label.value,
     source_tree_digest: sourceTreeDigest,
     entries,
@@ -386,12 +432,13 @@ function safeContentProjection(value, request) {
   const descriptors = exactObject(value, CONTENT_KEYS, 'builder_side_workspace_file_unavailable');
   const sourceTreeDigest = safeDigest(descriptors.source_tree_digest.value);
   const fileRef = safeFileRef(descriptors.file_ref.value, sourceTreeDigest);
+  const sourceKind = safeSourceKind(descriptors.source_kind.value);
   const textPreview = descriptors.text_preview.value;
   if (
     descriptors.projection_version.value !== 'builder-side-workspace-file-content.v1'
     || descriptors.project_id.value !== request.project_id
     || descriptors.conversation_id.value !== request.conversation_id
-    || !SOURCE_KINDS.includes(descriptors.source_kind.value)
+    || fileRef.source_kind !== sourceKind
     || descriptors.path.value !== fileRef.path
     || !LANGUAGES.includes(descriptors.language_hint.value)
     || !['ready', 'truncated'].includes(descriptors.content_status.value)
@@ -403,7 +450,7 @@ function safeContentProjection(value, request) {
     projection_version: 'builder-side-workspace-file-content.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    source_kind: descriptors.source_kind.value,
+    source_kind: sourceKind,
     source_tree_digest: sourceTreeDigest,
     file_ref: fileRef,
     path: fileRef.path,
@@ -491,6 +538,21 @@ function createBuilderSideWorkspaceFileIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokeRuntimeToolTree(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_side_workspace_file_invalid');
+      const request = safeRuntimeToolRequest(rawArguments[0]);
+      return safeTreeProjection(await Reflect.apply(
+        options.readRuntimeToolFileTree,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   return Object.freeze({
     adapter_id: 'builder_side_workspace_files.controlled_ipc_adapter.v1',
     namespace: 'builderSideWorkspaceFiles',
@@ -510,10 +572,18 @@ function createBuilderSideWorkspaceFileIpcAdapter(rawOptions) {
           return invokeContent(event, rawArguments);
         },
       }),
+      readRuntimeToolFileTree: Object.freeze({
+        channel: READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
+        method: 'readRuntimeToolFileTree',
+        invoke(event, ...rawArguments) {
+          return invokeRuntimeToolTree(event, rawArguments);
+        },
+      }),
     }),
     exposed_methods: Object.freeze([
       'readCurrentDraftFileTree',
       'readCurrentDraftFileContent',
+      'readRuntimeToolFileTree',
     ]),
     authority: Object.freeze({
       renderer_authority: 'current_project_conversation_and_main_issued_file_ref_only',
@@ -538,6 +608,7 @@ function createBuilderSideWorkspaceFileIpcAdapter(rawOptions) {
 module.exports = Object.freeze({
   READ_CURRENT_DRAFT_FILE_TREE_CHANNEL,
   READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
+  READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
   BuilderSideWorkspaceFileIpcError,
   createBuilderSideWorkspaceFileIpcAdapter,
 });

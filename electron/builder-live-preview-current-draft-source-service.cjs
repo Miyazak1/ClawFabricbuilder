@@ -26,6 +26,7 @@ const OPTION_KEYS = Object.freeze([
   'conversation_service',
   'git_authority',
   'automatic_draft_checkpoint_service',
+  'project_read_authority',
   'now_ms',
 ]);
 const REQUEST_KEYS = Object.freeze(['project_id', 'conversation_id']);
@@ -48,11 +49,22 @@ const CANDIDATE_RESULT_KEYS = Object.freeze([
   'title',
   'summary',
   'git_candidate_receipt',
+  'current_materialization',
+]);
+const PROJECT_READ_KEYS = Object.freeze([
+  'result_version',
+  'product_revision_receipt',
+  'current',
+  'source_tree',
+  'git_candidate_receipt',
+  'git_verification_receipt',
+  'authority_evidence',
+  'operation',
 ]);
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 
 class BuilderLivePreviewCurrentDraftSourceServiceError extends Error {
@@ -142,7 +154,9 @@ function safeRequest(rawRequest) {
   const request = exactObject(rawRequest, REQUEST_KEYS);
   const projectId = safePattern(request.project_id.value, PROJECT_ID_PATTERN);
   const conversationId = safePattern(request.conversation_id.value, CONVERSATION_ID_PATTERN);
-  if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
+  if (!conversationId.startsWith(
+    `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+  )) fail();
   return freezeDeep({
     project_id: projectId,
     conversation_id: conversationId,
@@ -166,7 +180,20 @@ function currentDraftIdFromStream(rawValue, request) {
     || !Object.hasOwn(reviewState, 'value')
     || !isPlainObject(reviewState.value)
   ) fail();
-  return safePattern(reviewState.value.draft_id, DRAFT_ID_PATTERN);
+  const draftId = reviewState.value.draft_id;
+  return draftId === null ? null : safePattern(draftId, DRAFT_ID_PATTERN);
+}
+
+function currentRevisionDigest(rawValue, request) {
+  const value = exactObject(rawValue, PROJECT_READ_KEYS);
+  if (
+    value.result_version.value !== 'builder-project-read-result.v1'
+    || value.operation.value !== 'current_loaded'
+    || !isPlainObject(value.product_revision_receipt.value)
+  ) fail();
+  const receipt = value.product_revision_receipt.value;
+  if (receipt.project_id !== request.project_id) fail();
+  return safePattern(receipt.revision_receipt_digest, /^sha256:[0-9a-f]{64}$/u);
 }
 
 function candidateFromConversation(rawValue, request) {
@@ -225,12 +252,14 @@ function createBuilderLivePreviewCurrentDraftSourceService(rawOptions) {
     BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
     'verify_current_candidate_checkpoint',
   );
+  const projectReadAuthority = options.project_read_authority.value;
+  const loadCurrentRevision = ownMethod(projectReadAuthority, 'load_current');
   const nowMs = options.now_ms.value;
   if (typeof nowMs !== 'function' || utilTypes.isProxy(nowMs)) fail();
   const sourceResolver = createBuilderLivePreviewSourceResolver({
     automatic_draft_checkpoint_service: automaticDraftCheckpointService,
     git_authority: gitAuthority,
-    project_read_authority: null,
+    project_read_authority: projectReadAuthority,
   });
 
   return freezeDeep({
@@ -240,20 +269,38 @@ function createBuilderLivePreviewCurrentDraftSourceService(rawOptions) {
       try {
         const request = safeRequest(rawRequest);
         const draftId = currentDraftIdFromStream(
-          await readStream({ project_id: request.project_id }),
+          await readStream({
+            project_id: request.project_id,
+            conversation_id: request.conversation_id,
+          }),
           request,
         );
-        const draftRequest = freezeDeep({ ...request, draft_id: draftId });
-        const receipt = candidateFromConversation(
-          await readCandidateDraft({ draft_id: draftId }),
-          draftRequest,
-        );
-        const resolverResult = await sourceResolver.resolveCurrentDraftPreviewSource({
-          project_id: request.project_id,
-          conversation_id: request.conversation_id,
-          candidate_receipt: receipt,
-          candidate_verification: await verifyCandidateReceipt(receipt),
-        });
+        let resolverResult;
+        if (draftId === null) {
+          const revisionReceiptDigest = currentRevisionDigest(
+            await Reflect.apply(loadCurrentRevision, projectReadAuthority, [{
+              project_id: request.project_id,
+            }]),
+            request,
+          );
+          resolverResult = await sourceResolver.resolveSavedRevisionPreviewSource({
+            project_id: request.project_id,
+            conversation_id: request.conversation_id,
+            revision_receipt_digest: revisionReceiptDigest,
+          });
+        } else {
+          const draftRequest = freezeDeep({ ...request, draft_id: draftId });
+          const receipt = candidateFromConversation(
+            await readCandidateDraft({ draft_id: draftId }),
+            draftRequest,
+          );
+          resolverResult = await sourceResolver.resolveCurrentDraftPreviewSource({
+            project_id: request.project_id,
+            conversation_id: request.conversation_id,
+            candidate_receipt: receipt,
+            candidate_verification: await verifyCandidateReceipt(receipt),
+          });
+        }
         if (resolverResult.status !== 'ready' || resolverResult.preview_source_snapshot === null) fail();
         const sourceTree = resolverResult.preview_source_snapshot.source_tree;
         const admittedAtMs = safeTimestamp(nowMs());
@@ -267,7 +314,9 @@ function createBuilderLivePreviewCurrentDraftSourceService(rawOptions) {
         return freezeDeep({
           result_version: BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_RESULT_VERSION,
           service_version: BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_SERVICE_VERSION,
-          operation: 'current_draft_live_preview_source_admitted',
+          operation: draftId === null
+            ? 'saved_revision_live_preview_source_admitted'
+            : 'current_draft_live_preview_source_admitted',
           draft_id: draftId,
           project_id: request.project_id,
           conversation_id: request.conversation_id,

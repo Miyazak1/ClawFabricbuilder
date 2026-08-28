@@ -2,6 +2,9 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_GIT_PROJECT_REPOSITORY_VERSION = 'builder-git-project-repository.v1';
 const BUILDER_GIT_CANDIDATE_RECEIPT_VERSION = 'builder-git-candidate-receipt.v1';
@@ -15,7 +18,7 @@ const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const BUILDER_ID_PATTERNS = Object.freeze({
   project_id: new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u'),
-  conversation_id: new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u'),
+  conversation_id: CONVERSATION_ID_PATTERN,
   turn_id: new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u'),
   task_id: new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u'),
   run_id: new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u'),

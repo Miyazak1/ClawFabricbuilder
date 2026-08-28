@@ -14,6 +14,7 @@ const {
   createBuilderProductMetadataDatabase,
 } = require('./builder-product-metadata-database.cjs');
 const {
+  BUILDER_PROJECT_READ_AUTHORITY_VERSION,
   createBuilderProjectReadAuthority,
 } = require('./builder-project-read-authority.cjs');
 const {
@@ -158,6 +159,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'persist_candidate_commit',
       'verify_candidate_receipt',
       'read_verified_candidate',
+      'read_verified_candidate_base',
       'read_candidate_workspace_base',
     ]);
     const gitCurrentProjectionAuthority = methodFacade(gitCurrentProjection, [
@@ -181,6 +183,7 @@ function createBuilderProjectMainAuthority(rawOptions) {
       'list_history',
     ]);
     const readAuthority = Object.freeze({
+      authority_version: BUILDER_PROJECT_READ_AUTHORITY_VERSION,
       async load_current(request) {
         const current = await projectReadAuthorityFacade.load_current(request);
         await gitCurrentProjectionAuthority.recover_project({

@@ -21,11 +21,13 @@ test('defines the fixed public route-decision signal vocabulary', () => {
     'capability_question',
     'chat_default',
     'clear_build',
+    'clear_plan_deliverable',
     'composer_mode_plan',
     'contextual_build',
     'contextual_build_phrase',
     'current_artifact_defect',
     'current_artifact_direct_change',
+    'current_draft_continuation',
     'empty_message',
     'explicit_brief',
     'explicit_plan',
@@ -42,6 +44,7 @@ test('defines the fixed public route-decision signal vocabulary', () => {
   ]);
   assert.equal(Object.isFrozen(PUBLIC_BUILDER_ROUTE_DECISION_SIGNALS), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('clear_build'), true);
+  assert.equal(isPublicBuilderRouteDecisionSignal('clear_plan_deliverable'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('read_only'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('working_context_state'), true);
   assert.equal(isPublicBuilderRouteDecisionSignal('semantic_route'), true);

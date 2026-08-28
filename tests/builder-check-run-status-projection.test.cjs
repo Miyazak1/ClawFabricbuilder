@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -24,8 +25,14 @@ const {
   createBuilderProjectUnderstandingSnapshot,
 } = require('../electron/builder-project-understanding.cjs');
 const {
+  createBuilderRuntimeReadinessSnapshot,
+} = require('../electron/builder-runtime-readiness-snapshot.cjs');
+const {
   checkRuntimeIdentity,
 } = require('./helpers/builder-check-runtime-identity-fixture.cjs');
+const {
+  admittedCheck: admittedCheckFixture,
+} = require('./helpers/builder-check-run-fixture.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
@@ -160,6 +167,145 @@ test('maps terminal failures to bounded user-facing states', () => {
     assert.equal(projection.status, publicStatus);
     assert.equal(projection.label, label);
   }
+});
+
+test('projects dependency readiness blocks as a specific redacted reason', (t) => {
+  const selected = admittedCheckFixture('npm', 'test', {
+    devDependencies: { vite: '^5.0.0' },
+  });
+  const checkWorkspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-status-readiness-'));
+  t.after(() => {
+    fs.rmSync(checkWorkspacePath, { recursive: true, force: true });
+  });
+  const run = createBuilderCheckRun({
+    check_run_admission: selected.admission,
+    status: 'environment_unavailable',
+    exit_code: null,
+    output_digest: `sha256:${'e'.repeat(64)}`,
+    failure_class: 'environment_unavailable',
+    started_at_ms: 102,
+    completed_at_ms: 120,
+  });
+  const readiness = createBuilderRuntimeReadinessSnapshot({
+    project_id: selected.admission.project_id,
+    candidate_id: selected.admission.candidate_id,
+    package_manager: selected.admission.package_manager,
+    check_run_admission: selected.admission,
+    source_tree: selected.tree,
+    project_root_path: null,
+    check_workspace_path: checkWorkspacePath,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'not_requested',
+    updated_at_ms: 120,
+  });
+
+  const projection = projectBuilderCheckRunStatus({
+    check_run: run,
+    runtime_readiness_snapshot: readiness,
+  });
+
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.label, 'Check unavailable');
+  assert.equal(projection.environment_reason, 'dependency_workspace_missing');
+  assert.equal(
+    projection.summary,
+    'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+  );
+  assert.doesNotMatch(
+    JSON.stringify(projection),
+    /node_modules|cfb-status-readiness|secret|stdout|stderr/iu,
+  );
+});
+
+test('does not let host probe misses hide dependency workspace readiness', (t) => {
+  const selected = admittedCheckFixture('npm', 'test', {
+    devDependencies: { vite: '^5.0.0' },
+  });
+  const checkWorkspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-status-readiness-'));
+  t.after(() => {
+    fs.rmSync(checkWorkspacePath, { recursive: true, force: true });
+  });
+  const run = createBuilderCheckRun({
+    check_run_admission: selected.admission,
+    status: 'environment_unavailable',
+    exit_code: null,
+    output_digest: `sha256:${'e'.repeat(64)}`,
+    failure_class: 'environment_unavailable',
+    started_at_ms: 102,
+    completed_at_ms: 120,
+  });
+  const readiness = createBuilderRuntimeReadinessSnapshot({
+    project_id: selected.admission.project_id,
+    candidate_id: selected.admission.candidate_id,
+    package_manager: selected.admission.package_manager,
+    check_run_admission: selected.admission,
+    source_tree: selected.tree,
+    project_root_path: null,
+    check_workspace_path: checkWorkspacePath,
+    host_toolchain_state: 'missing',
+    toolchain_probe: null,
+    install_permission: 'not_requested',
+    updated_at_ms: 120,
+  });
+
+  const projection = projectBuilderCheckRunStatus({
+    check_run: run,
+    runtime_readiness_snapshot: readiness,
+  });
+
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.environment_reason, 'dependency_workspace_missing');
+});
+
+test('preserves stored environment reason without needing the readiness snapshot', () => {
+  const selected = admittedCheckFixture('npm', 'test', {
+    devDependencies: { vite: '^5.0.0' },
+  });
+  const run = createBuilderCheckRun({
+    check_run_admission: selected.admission,
+    status: 'environment_unavailable',
+    exit_code: null,
+    output_digest: `sha256:${'e'.repeat(64)}`,
+    failure_class: 'environment_unavailable',
+    environment_reason: 'dependency_workspace_missing',
+    started_at_ms: 102,
+    completed_at_ms: 120,
+  });
+
+  const projection = projectBuilderCheckRunStatus({ check_run: run });
+
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.environment_reason, 'dependency_workspace_missing');
+  assert.equal(
+    projection.summary,
+    'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+  );
+});
+
+test('preserves dependency preparation failure reason without reverting to missing dependencies', () => {
+  const selected = admittedCheckFixture('npm', 'test', {
+    devDependencies: { vite: '^5.0.0' },
+  });
+  const run = createBuilderCheckRun({
+    check_run_admission: selected.admission,
+    status: 'environment_unavailable',
+    exit_code: null,
+    output_digest: `sha256:${'e'.repeat(64)}`,
+    failure_class: 'environment_unavailable',
+    environment_reason: 'dependency_preparation_failed',
+    started_at_ms: 102,
+    completed_at_ms: 120,
+  });
+
+  const projection = projectBuilderCheckRunStatus({ check_run: run });
+
+  assert.equal(projection.status, 'incomplete');
+  assert.equal(projection.environment_reason, 'dependency_preparation_failed');
+  assert.equal(
+    projection.summary,
+    'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.',
+  );
 });
 
 test('rejects forged public labels, identifiers, authority, and extra fields', () => {

@@ -1,5 +1,7 @@
 export type BuilderDesktopBridgeRoot = Readonly<{
   bridgeVersion: string;
+  agentProjectTree: unknown;
+  agentWorkbench: unknown;
   codeGenerator: unknown;
   projectWorkspace: unknown;
   providerSettings: unknown;
@@ -8,15 +10,19 @@ export type BuilderDesktopBridgeRoot = Readonly<{
   providerContextDisclosureApproval: unknown;
   checkRun: unknown;
   livePreview: unknown;
+  agentTestBrowser: unknown;
+  userWeb: unknown;
   sideWorkspaceFiles: unknown;
   taskStream: unknown;
   windowControls: unknown;
 }>;
 
-export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v27';
+export const BUILDER_DESKTOP_BRIDGE_VERSION = 'builder-preload.v38';
 
 const ROOT_KEYS = new Set([
   'bridgeVersion',
+  'agentProjectTree',
+  'agentWorkbench',
   'codeGenerator',
   'projectWorkspace',
   'providerSettings',
@@ -25,6 +31,8 @@ const ROOT_KEYS = new Set([
   'providerContextDisclosureApproval',
   'checkRun',
   'livePreview',
+  'agentTestBrowser',
+  'userWeb',
   'sideWorkspaceFiles',
   'taskStream',
   'windowControls',
@@ -73,6 +81,8 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
     }
     return Object.freeze({
       bridgeVersion,
+      agentProjectTree: descriptors.agentProjectTree.value,
+      agentWorkbench: descriptors.agentWorkbench.value,
       codeGenerator: descriptors.codeGenerator.value,
       projectWorkspace: descriptors.projectWorkspace.value,
       providerSettings: descriptors.providerSettings.value,
@@ -81,6 +91,8 @@ export function sanitizeBuilderDesktopBridgeRoot(value: unknown): BuilderDesktop
       providerContextDisclosureApproval: descriptors.providerContextDisclosureApproval.value,
       checkRun: descriptors.checkRun.value,
       livePreview: descriptors.livePreview.value,
+      agentTestBrowser: descriptors.agentTestBrowser.value,
+      userWeb: descriptors.userWeb.value,
       sideWorkspaceFiles: descriptors.sideWorkspaceFiles.value,
       taskStream: descriptors.taskStream.value,
       windowControls: descriptors.windowControls.value,

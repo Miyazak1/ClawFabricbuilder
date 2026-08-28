@@ -142,6 +142,12 @@ const CURRENT_ARTIFACT_DIRECT_CHANGE_PATTERNS = Object.freeze([
   /^(?:change|update|adjust|tweak|switch|improve)\s+(?:the\s+)?(?:color|colors|palette|theme|background|font|heading|button|card|spacing|radius|layout|style)s?[.?!]*$/u,
 ]);
 
+const CURRENT_DRAFT_CONTINUATION_PATTERNS = Object.freeze([
+  /^(?:继续|接着|再)(?:帮我)?(?:优化|完善|改进|修改|调整|更新|编辑|修复|完成|实现|写|做).*/u,
+  /^(?:continue|keep)\s+(?:on\s+)?(?:improving|refining|polishing|updating|editing|changing|fixing|finishing|implementing|building)\b.*$/u,
+  /^(?:continue|resume)\s+from\s+(?:this|the)\s+(?:restored\s+)?checkpoint\b.{0,120}\b(?:complete|finish|improve|refine|update|edit|change|fix|implement|build)\b.*$/u,
+]);
+
 const EXPLICIT_PLAN_PATTERNS = Object.freeze([
   /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划|计划)(?:一下|下)?(?:(?:这个|当前|整体|本次|接下来|后续)?(?:项目|页面|网站|应用|功能|需求|方向|实现|开发|改版))?(?:[。.!！?？\s]|$)/u,
   /^(?:(?:帮我|请|麻烦)\s*)?(?:先)?(?:规划(?:一下|下)?|计划(?:一下|下)?|制定(?:一下)?方案|出(?:个|一个|下|一下)?方案|做(?:个|一个|下|一下)?方案|给(?:我|我们)?(?:出|做|写|列)?(?:个|一个)?方案|列(?:一下|下)?(?:步骤|计划|方案)|先不要写代码.{0,16}(?:方案|步骤|计划))(?=$|[吧。.!！?？，,\s])/u,
@@ -155,6 +161,12 @@ const EXPLICIT_PLAN_PATTERNS = Object.freeze([
 const SEMANTIC_PLAN_BUILD_CONFLICT_PATTERNS = Object.freeze([
   /(?:做|写|出|给|制定|规划|生成|创建|整理|梳理|设计).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
   /(?:当前|这个|项目|文件夹|网站|页面|应用|readme|README).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)/u,
+  /\b(?:implementation|execution|migration|refactor|optimization|redesign)\s+(?:plan|proposal)\b/u,
+]);
+
+const CLEAR_PLAN_DELIVERABLE_PATTERNS = Object.freeze([
+  /(?:做|写|出|给|制定|规划|生成|创建|整理|梳理|设计).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)(?:[。.!！?？\s]|$)/u,
+  /(?:当前|这个|项目|文件夹|网站|页面|应用|readme|README).{0,36}(?:实施计划|实现计划|开发计划|执行计划|改版方案|优化方案|重构方案|实现方案|实施方案|开发方案|改造方案|调整方案)(?:[。.!！?？\s]|$)/u,
   /\b(?:implementation|execution|migration|refactor|optimization|redesign)\s+(?:plan|proposal)\b/u,
 ]);
 
@@ -246,7 +258,8 @@ export function isBuilderComposerExplicitBriefIntent(instruction: string): boole
 export function isBuilderComposerPlanBuildConflictIntent(instruction: string): boolean {
   const normalized = normalizeComposerInstruction(instruction);
   if (normalized.length === 0) return false;
-  return SEMANTIC_PLAN_BUILD_CONFLICT_PATTERNS.some((pattern) => pattern.test(normalized));
+  return SEMANTIC_PLAN_BUILD_CONFLICT_PATTERNS.some((pattern) => pattern.test(normalized))
+    && !CLEAR_PLAN_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function routeBuilderComposerIntent(
@@ -436,6 +449,12 @@ export function decideBuilderComposerIntent(
       matchedSignals: ['explicit_plan'],
     });
   }
+  if (CLEAR_PLAN_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision('plan', context, {
+      confidence: 'high',
+      matchedSignals: ['clear_plan_deliverable'],
+    });
+  }
   if (isBuilderComposerPlanBuildConflictIntent(normalized)) {
     return createDecision('clarify', context, {
       confidence: 'medium',
@@ -467,6 +486,14 @@ export function decideBuilderComposerIntent(
       downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
       downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
       matchedSignals: ['current_artifact_direct_change'],
+    });
+  }
+  if (CURRENT_DRAFT_CONTINUATION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return createDecision(context.hasPriorBuildContext === true ? 'build' : 'clarify', context, {
+      confidence: context.hasPriorBuildContext === true ? 'high' : 'medium',
+      downgradedFrom: context.hasPriorBuildContext === true ? null : 'build',
+      downgradeReason: context.hasPriorBuildContext === true ? null : 'missing_prior_build_context',
+      matchedSignals: ['current_draft_continuation'],
     });
   }
   if (isBuilderComposerContextualBuildIntent(normalized)) {

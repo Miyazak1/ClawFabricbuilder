@@ -40,7 +40,10 @@ export type BuilderAgentActivityProjectionWire = Readonly<{
 const UUID_SOURCE =
   '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_SOURCE}:${UUID_SOURCE}$`,
+  'u',
+);
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const PROJECTION_KEYS = Object.freeze([
@@ -57,7 +60,7 @@ const COPY = Object.freeze({
   reading_project: ['active', 'Reading project'],
   planning: ['active', 'Planning'],
   waiting_for_permission: ['waiting', 'Waiting for approval'],
-  editing: ['active', 'Changing files'],
+  editing: ['active', 'Preparing changes'],
   running_local_step: ['active', 'Running local step'],
   running_checks: ['active', 'Running checks'],
   waiting_for_check: ['waiting', 'Checks pending'],
@@ -113,8 +116,6 @@ export function sanitizeBuilderAgentActivityProjectionWire(
       || !PROJECT_ID_PATTERN.test(value.project_id)
       || typeof value.conversation_id !== 'string'
       || !CONVERSATION_ID_PATTERN.test(value.conversation_id)
-      || value.conversation_id.slice('builder-conversation:'.length)
-        !== value.project_id.slice('builder-project:'.length)
       || !Number.isSafeInteger(value.head_sequence)
       || Number(value.head_sequence) < 1
       || current.status !== copy[0]

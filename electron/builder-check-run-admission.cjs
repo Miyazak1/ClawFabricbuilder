@@ -12,6 +12,9 @@ const {
 const {
   sanitizeBuilderCheckRuntimeIdentity,
 } = require('./builder-check-runtime-identity.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CHECK_RUN_EXECUTION_APPROVAL_VERSION = 'builder-check-run-execution-approval.v2';
 const BUILDER_CHECK_RUN_ADMISSION_VERSION = 'builder-check-run-admission.v2';
@@ -168,7 +171,6 @@ const ADMISSION_AUTHORITY_KEYS = Object.freeze([
 ]);
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');

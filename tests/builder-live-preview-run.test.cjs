@@ -16,7 +16,8 @@ const {
 } = require('../electron/builder-live-preview-run.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
-const CONVERSATION_ID = 'builder-conversation:22222222-2222-4222-8222-222222222222';
+const CONVERSATION_ID =
+  'builder-conversation:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222';
 const TASK_ID = 'builder-task:33333333-3333-4333-8333-333333333333';
 const RUN_ID = 'builder-run:44444444-4444-4444-8444-444444444444';
 const DRAFT_CHECKPOINT_ID = `builder-draft-checkpoint:${'a'.repeat(64)}`;
@@ -32,6 +33,7 @@ function admissionInput(overrides = {}) {
     task_id: TASK_ID,
     run_id: RUN_ID,
     draft_checkpoint_id: DRAFT_CHECKPOINT_ID,
+    revision_receipt_digest: null,
     source_tree_digest: digest('1'),
     selected_entry_path: 'index.html',
     preview_kind: 'live_static_web',
@@ -119,6 +121,20 @@ test('creates deterministic live preview admission without runtime authority', (
   assert.deepEqual(sanitizeBuilderLivePreviewAdmission(structuredClone(first)), first);
 });
 
+test('admits a saved revision without inventing a run or draft checkpoint identity', () => {
+  const revisionReceiptDigest = digest('9');
+  const admission = createBuilderLivePreviewAdmission(admissionInput({
+    task_id: null,
+    run_id: null,
+    draft_checkpoint_id: null,
+    revision_receipt_digest: revisionReceiptDigest,
+  }));
+
+  assert.equal(admission.run_id, null);
+  assert.equal(admission.draft_checkpoint_id, null);
+  assert.equal(admission.revision_receipt_digest, revisionReceiptDigest);
+});
+
 test('creates preview run evidence bound to admission without exposing raw preview body', () => {
   const run = createBuilderPreviewRun(previewRunInput());
 
@@ -181,6 +197,7 @@ test('fails closed on malformed admissions and stale runtime windows', () => {
     ...admissionInput(),
     run_id: null,
     draft_checkpoint_id: null,
+    revision_receipt_digest: null,
   }));
   assertLivePreviewError(() => createBuilderLivePreviewAdmission({
     ...admissionInput(),

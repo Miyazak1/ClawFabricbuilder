@@ -7,6 +7,107 @@ and compatible with Builder's existing main-owned authority model.
 The slices are ordered. Later slices may prepare contracts early, but visible
 product behavior should not skip ahead of the loop.
 
+## Current Closure State
+
+The foundational loop is not product-complete just because the core generation
+and verification tests pass. The current implementation has meaningful
+foundation pieces: main-owned conversation events, runtime/tool facts,
+automatic Draft Checkpoints, CheckRun evidence, draft continuation, and
+candidate-to-current workspace materialization. The remaining closure work is
+primarily experience and product-history hardening:
+
+- automatic materialization is now restart-durable and visible as project-folder
+  synchronization state; that guarantee must remain covered by the packaged
+  Harness UI canary;
+- local Git state should be understandable as product history, not only as
+  internal candidate/revision evidence;
+- context management has two owners that must not be conflated: DeepSeek
+  Harness owns token-pressure compaction inside one admitted runtime session,
+  while Builder owns bounded cross-run context checkpoints, disclosure, replay,
+  and stale-state tests;
+- packaged canaries should cover the user-facing loop, including continued
+  unsaved-draft work, recovery, and reload behavior.
+
+Treat these as coding-loop completion criteria, not post-loop polish.
+
+Current UI closure evidence:
+
+- Task activity now exposes candidate-to-current materialization as a public
+  `Project folder updated` or sync-attention row without Git receipts.
+- Source files in the side workspace have dedicated file-content and file-tree
+  scroll regions, so long Markdown/source previews do not depend on page-level
+  scrolling.
+- Natural Chinese plan deliverables such as `实施计划`, `优化方案`, and
+  `重构方案` route directly to Plan while artifact names such as `计划管理页面`
+  and `方案展示页` still route to Build.
+- The side workspace now calls this surface `History`, separates current work
+  from optional milestone Versions, and is available for an unsaved-only local
+  project before its first Version exists.
+- A verified current checkpoint appears as `Automatic recovery` with a direct
+  Undo action backed by the existing main-owned previous-checkpoint command.
+  The row exposes no Git/SQLite receipt or renderer-selected checkpoint id.
+- The packaged Harness UI gate opens History after restart and verifies current
+  recovery visibility, enabled Undo, horizontal layout bounds, and screenshot
+  pixel variation before continuing through external-conflict-safe Undo.
+- Builder cross-run context checkpoints now have main-side
+  contract/store/recording-service foundations: successful SQLite conversation
+  appends can best-effort derive a bounded summary, the summary store is
+  restart-readable, and Working Context State can project the latest summary
+  ref without making it executable. This is not the active runtime's compaction
+  engine.
+  A summary body that has passed the compaction-summary contract can now enter
+  provider-context assembly as a `compaction_summary` candidate segment, while
+  provider prompt egress still depends on the disclosure gate.
+  Store/projection tests now cover restart-readable latest summary replay and
+  same-conversation sibling task isolation, so another task's newer summary
+  cannot silently become the current task's provider-context candidate.
+  Latest-summary selection now prefers the widest recorded event window before
+  write time, so a delayed older compaction window cannot supersede a broader
+  current-window summary.
+- The configured DeepSeek Harness runtime remains the sole owner of automatic
+  in-run compaction. It measures actual token pressure at `thresholdRatio: 0.8`,
+  optionally prunes oversized tool results, retains a recent balanced tail, and
+  commits a durable replacement summary. Builder now accepts the required
+  `compaction/prune`, `compaction/start`, `compaction/summary`, and
+  `compaction/end` events plus their historical surface replacements without
+  publishing private summary text as chat activity.
+- Builder's cross-run projection no longer materializes the complete 4 MiB
+  JSONL/Markdown export. A bounded replay projection retains the newest 32
+  public entries, digests omitted history, and has source coverage at 1,020
+  events with more than 4 MiB of public transcript text.
+- A deterministic packaged-runtime gate now forces real token pressure through
+  provider-reported usage and a bounded 20k canary context. The bundled Harness
+  emits exactly one `compaction/start`, block-array `compaction/summary`,
+  replacement `user/message`, and `compaction/end`, then continues the normal
+  edit/check/repair loop. Builder keeps the private summary out of the canonical
+  chat journal: the compacted and default packaged loops both finish with 38
+  canonical events and two public assistant deltas. The gate also caught and
+  fixed the real SDK's explicit `surfaceOp: "append"` union shape.
+- The full packaged Harness UI canary now proves consecutive unsaved Build
+  turns, physical candidate materialization, restart recovery, checkpoint undo,
+  external-workspace conflict refusal, conflict recovery, continued work after
+  restart, cancellation, stale-edit recovery, unsupported-tool recovery, and
+  unchanged-work handling with a real provider. The canary also opens a runtime
+  file from chat and then verifies that Files resumes the replacement current
+  draft rather than remaining pinned to the old runtime snapshot.
+- Restart reconstruction now retains the durable `current_materialization`
+  projection. Checkpoint undo compares the physical workspace against the
+  verified candidate proof digest, so an external edit is rejected with
+  `builder_generation_workspace_changed` instead of being collapsed into a
+  generic generation failure.
+
+Still open:
+
+- local Git history still needs a bounded, main-projected automatic checkpoint
+  timeline and selectable restore semantics beyond current-work Undo and saved
+  milestone cards;
+- materialization and recovery conflicts need clearer user-facing inspection and
+  repair affordances even though their release-path durability is now covered.
+
+Builder cross-run summary egress remains separately disclosure-gated; its
+event-count cadence is only a projection checkpoint frequency, never an in-run
+compaction trigger.
+
 ## Slice 0: Plan Mode Stabilization
 
 ### Purpose
@@ -168,7 +269,8 @@ files, or mark the project ready for execution by itself.
 
 ### UI Projection
 
-- status: `Reading project`;
+- real read/search actions appear as correlated tool rows; discovery itself
+  does not create a fixed `Reading project` sentence;
 - composer project chip may show readiness such as `Ready to plan`;
 - advanced diagnostics may show detected stack and command candidates;
 - ordinary UI should not show digests.
@@ -338,7 +440,7 @@ MVP require explicit visible approval:
 
 ### UI Projection
 
-- timeline status: `Changing files`;
+- timeline: model-authored public explanation followed by real edit facts;
 - review summary: changed path count and operation types;
 - guard denials are ordinary failure messages, not internal exceptions.
 
@@ -380,15 +482,38 @@ in the journal.
 
 The main-owned `builder-agent-activity-projection.v1` now folds the latest
 recorded Conversation/Run/Tool facts and current ReviewState into one
-renderer-safe current-work phase. The chat flow can therefore show plain
-states such as `Reading project`, `Planning`, `Changing files`, and
-`Preparing review` without inferring them from provider text or exposing the
-underlying receipts. Active CheckRun work now joins the same projection from
+renderer-safe current-work phase. The chat flow uses it only for an
+unobtrusive temporary loading indicator before model narration or a real action
+exists; fixed lifecycle sentences do not become chat history. Active CheckRun
+work now joins the same projection from
 the main-owned candidate activity registry, so a completed generation can show
 `Running checks` while its current candidate is being verified. The registry
 publishes only a bounded refresh hint; commands, output, paths, and runtime
 handles remain private. This projection is read-only and grants no provider,
 tool, source, command, Git, SQLite, permission, or Save authority.
+
+The normal chat projection now owns the Codex-like live work narrative. The
+stable Agent Activity phase and pending safe Tool statuses remain visible while
+a Run is active. Matching Tool request/result pairs keep one stable row and
+update its verb, icon, and state in place. When the Run records its terminal
+outcome, settled process rows fold into a separate closed run-history disclosure
+before the final response; expanding it restores the prior action order. The
+final response does not own a generic `Work details` block. Admitted file-change
+and CheckRun facts remain separate typed rows after the response and open the
+matching read-only inspectors. A single fact is not collapsible; only multiple
+facts of the same type may form an expandable group. Generic Agent Step receipts and provider
+request lifecycle phases are temporary status inputs, not completed work
+history. Run admission/control records, context snapshots, brief memory, and raw
+evidence remain outside the user-facing projection.
+
+Ephemeral provider text follows a narrower display contract. Ask may stream only
+the decoded `explanation` field; Harness Build may stream only public assistant
+text blocks and keeps reasoning separate. Structured Build and Plan never expose
+their operation/proposal JSON as chat text. Completed Harness text is persisted
+as a Task Stream assistant message, while an exact duplicate terminal summary is
+shown once. The renderer buffers deltas outside the page state tree and commits
+no more than one local message update per animation frame. The live message node
+remains stable, and chat follows it only while the reader is near the bottom.
 
 This slice is not complete yet. Delete, move, lockfile, and large-edit
 decisions still need a visible approval-and-resume path instead of a terminal
@@ -664,29 +789,40 @@ Remaining Slice 6 gaps are narrower: richer environment-readiness projection,
 FailureTriage persistence/projection, explicit cancellation controls, and
 repair-loop input remain later checkpoints.
 
-## Slice 7: Save Version And Restart Recovery Canary
+## Slice 7: Undo, Optional Milestone, And Restart Recovery Canary
 
 ### Purpose
 
-Prove the draft can become a durable version only through explicit user review,
-and prove the packaged app can recover after restart.
+Prove the current working state can continue without a Version action, can be
+restored through a durable checkpoint, and can recover after packaged restart.
+Also retain an optional formal milestone path.
 
 ### User Outcome
 
-The user saves a reviewed draft. After relaunch, the project, saved version,
-draft status, and conversation continuity are coherent.
+The user completes consecutive coding turns, restores a checkpoint, and
+relaunches. The project working state, checkpoint history, optional milestone
+history, and conversation continuity are coherent.
 
 ### Required Inputs
 
-- ReviewState with `can_save=true`;
 - current DraftCheckpoint;
 - changed source tree;
-- Git candidate creation result;
-- SQLite Project Revision transaction.
+- conversation boundary for the checkpoint;
+- Git/snapshot restore result;
+- optional Git candidate and SQLite Project Revision transaction when the
+  milestone path is exercised.
 
 ### Required Facts
 
 ```text
+RestoreReceipt
+  project_id
+  conversation_id
+  draft_checkpoint_id
+  restored_source_ref
+  conflict_state
+  restored_at_ms
+
 SaveVersionReceipt
   project_id
   review_id
@@ -708,17 +844,18 @@ RestartRecoveryCanaryResult
 
 ### Authority
 
-Only explicit Save Version can select a Project Revision. Check success,
-preview success, provider output, hooks, draft checkpoint, or future agents
-cannot silently save.
+Only checkpoint/restore authority may change working recovery state. A formal
+Version remains optional and cannot be silently marked by check success,
+preview success, provider output, hooks, or future agents.
 
 ### Tests And Evidence
 
-- save denied without current draft;
-- save denied when ReviewState cannot save;
-- Git candidate and SQLite receipt match;
-- selected current revision restored after restart;
-- draft discarded/saved status restored after restart;
+- a second Build turn succeeds without a Version action;
+- restore denied without a current valid checkpoint;
+- restore detects newer external file changes;
+- restored file state and conversation boundary match;
+- optional Git candidate and SQLite milestone receipt match;
+- working state and checkpoint history restore after restart;
 - packaged canary covers the complete MVP loop.
 
 ## Cross-Slice Invariants
@@ -729,7 +866,7 @@ cannot silently save.
   preview, or revision state.
 - Every mutating run has ExecutionApproval, ProgrammingRun, EditIntentPlan,
   WorkspaceGuardDecision, EditAttempt, and DraftCheckpoint evidence.
-- Every saved version has explicit Review/Save evidence.
+- Every optional milestone Version has explicit milestone evidence.
 - Every command execution has CommandProfile or explicit approval.
 - Every failure leaves the composer usable unless the app itself is restarting
   or blocked by an integrity failure.

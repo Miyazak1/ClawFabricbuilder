@@ -16,6 +16,8 @@ const {
 } = require('./builder-conversation-replay.cjs');
 
 const BUILDER_CONVERSATION_EXPORT_VERSION = 'builder-conversation-export.v1';
+const BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION =
+  'builder-conversation-compaction-projection.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
@@ -26,10 +28,14 @@ const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const MAX_TEXT_LENGTH = 16 * 1024;
 const MAX_EXPORT_BYTES = 4 * 1024 * 1024;
+const MAX_COMPACTION_PUBLIC_ENTRIES = 32;
 
 const EXPORT_INPUT_KEYS = Object.freeze([
   'loaded_conversation',
   'exported_at_ms',
+]);
+const COMPACTION_PROJECTION_INPUT_KEYS = Object.freeze([
+  'loaded_conversation',
 ]);
 const LOADED_CONVERSATION_KEYS = Object.freeze([
   'result_version',
@@ -310,7 +316,11 @@ function publicTask(task) {
 
 function publicCandidate(candidate) {
   if (candidate === null) return null;
-  exactObject(candidate, [...CANDIDATE_KEYS, 'git_candidate_receipt']);
+  exactObject(candidate, [
+    ...CANDIDATE_KEYS,
+    'git_candidate_receipt',
+    'current_materialization',
+  ]);
   return {
     draft_id: safeDraftId(valueAt(candidate, 'draft_id')),
     title: safeText(valueAt(candidate, 'title')),
@@ -329,7 +339,7 @@ function safeTurnMode(value) {
 }
 
 function safeTurnStatus(value) {
-  if (!['running', 'completed'].includes(value)) fail();
+  if (!['active', 'running', 'completed'].includes(value)) fail();
   return value;
 }
 
@@ -476,6 +486,48 @@ function boundedText(text) {
   return text;
 }
 
+function sha256(value) {
+  return `sha256:${nodeCrypto.createHash('sha256')
+    .update(canonicalJson(value), 'utf8')
+    .digest('hex')}`;
+}
+
+function createBuilderConversationCompactionProjection(rawInput) {
+  exactObject(rawInput, COMPACTION_PROJECTION_INPUT_KEYS);
+  const loaded = sanitizeLoadedConversation(valueAt(rawInput, 'loaded_conversation'));
+  const snapshot = replay(loaded.events);
+  const publicEntries = exportEntries(loaded, snapshot, 0).slice(1);
+  const omittedEntries = publicEntries.slice(
+    0,
+    Math.max(0, publicEntries.length - MAX_COMPACTION_PUBLIC_ENTRIES),
+  );
+  const recentPublicEntries = publicEntries.slice(-MAX_COMPACTION_PUBLIC_ENTRIES);
+  const publicTextByteLength = publicEntries.reduce((total, entry) => (
+    total + Buffer.byteLength(canonicalJson(entry), 'utf8') + 1
+  ), 0);
+  const body = freezeDeep({
+    project_id: loaded.conversation.project_id,
+    conversation_id: loaded.conversation.conversation_id,
+    source: {
+      authority: 'sqlite_conversation_replay_read_only',
+      event_count: loaded.events.length,
+      current_sequence: loaded.current_head === null ? 0 : loaded.current_head.sequence,
+      current_event_id: loaded.current_head === null ? null : loaded.current_head.event_id,
+      current_event_digest: loaded.current_head === null ? null : loaded.current_head.event_digest,
+    },
+    public_entry_count: publicEntries.length,
+    public_text_byte_length: publicTextByteLength,
+    recent_public_entries: recentPublicEntries,
+    omitted_public_entries_digest: omittedEntries.length === 0 ? null : sha256(omittedEntries),
+    lifecycle: { ...LIFECYCLE },
+  });
+  return freezeDeep({
+    projection_version: BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION,
+    projection_id: `builder-conversation-compaction-projection:${sha256(body).slice('sha256:'.length)}`,
+    ...body,
+  });
+}
+
 function createBuilderConversationExport(rawInput) {
   exactObject(rawInput, EXPORT_INPUT_KEYS);
   const exportedAtMs = safeTimestamp(valueAt(rawInput, 'exported_at_ms'));
@@ -515,7 +567,9 @@ function createBuilderConversationExport(rawInput) {
 }
 
 module.exports = {
+  BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION,
   BUILDER_CONVERSATION_EXPORT_VERSION,
   BuilderConversationExportError,
+  createBuilderConversationCompactionProjection,
   createBuilderConversationExport,
 };

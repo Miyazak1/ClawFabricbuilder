@@ -15,7 +15,7 @@ import {
 import { BUILDER_TASK_STREAM_READ_RESULT_VERSION } from '../features/builder/domain/builderConversationSnapshot';
 
 export const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-export const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
+export const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174000:223e4567-e89b-42d3-a456-426614174000';
 export const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174000';
 export const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174000';
 export const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174000';
@@ -267,7 +267,7 @@ export async function createGenerationAnswer(
     version: BUILDER_GENERATION_RESULT_PROTOCOL,
     result_kind: 'explanation',
     request_id: request.request_digest,
-    project_id: request.existing_project_id ?? PROJECT_ID,
+    project_id: request.existing_project_id,
     existing_project_id: request.existing_project_id,
     title: 'Current project',
     summary: 'Explains the current project.',
@@ -499,6 +499,9 @@ export function createTaskStreamWire() {
             summary: 'A small project.',
             candidate_state: 'proposed',
             source_availability: 'not_loaded',
+            workspace_materialization: {
+              status: 'materialized',
+            },
           },
         },
         {
@@ -643,7 +646,19 @@ export function createPlanTaskStreamWire() {
           failure_phase: 'not_applicable',
           assistant_message: {
             message_id: ASSISTANT_MESSAGE_ID,
-            text: 'Review the proposed plan before files change.',
+            text: [
+              '## Review the proposed plan before files change',
+              '',
+              'This plan stays read-only until you approve it.',
+              '',
+              '1. **Inspect the current structure**',
+              '   - **Purpose:** Confirm the files involved in the requested change.',
+              '   - **Expected change:** The implementation scope is explicit before editing.',
+              '',
+              '2. **Prepare the implementation**',
+              '   - **Purpose:** Keep the next edit bounded and reviewable.',
+              '   - **Expected change:** The approved implementation can proceed without writing a plan file.',
+            ].join('\n'),
           },
           candidate: null,
         },

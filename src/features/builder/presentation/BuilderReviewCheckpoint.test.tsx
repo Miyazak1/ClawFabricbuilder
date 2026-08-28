@@ -1,15 +1,14 @@
 // @vitest-environment jsdom
-import { act, createRef, type ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import {
+  BuilderDraftCheckStatus,
   BuilderDraftWorkspaceActions,
-  BuilderReviewCheckpoint,
 } from './BuilderReviewCheckpoint';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,19 +34,6 @@ function click(container: HTMLElement, selector: string): void {
   const button = container.querySelector<HTMLButtonElement>(selector);
   expect(button).not.toBeNull();
   act(() => button?.click());
-}
-
-function changes(overrides: Partial<BuilderSourceTreeChanges> = {}): BuilderSourceTreeChanges {
-  return Object.freeze({
-    changes_version: 'builder-source-tree-changes.v1',
-    comparison_kind: 'new_project',
-    added_count: 2,
-    modified_count: 1,
-    deleted_count: 0,
-    total_count: 3,
-    files: Object.freeze([]),
-    ...overrides,
-  }) as BuilderSourceTreeChanges;
 }
 
 function reviewState(status: 'ready' | 'blocked'): BuilderReviewStateProjectionWire {
@@ -107,6 +93,7 @@ const passedCheck: BuilderCheckRunStatusProjection = Object.freeze({
   status: 'passed',
   label: 'Checked',
   summary: 'The project check completed successfully.',
+  environment_reason: 'none',
   completed_at_ms: 20,
   result_digest: `sha256:${'4'.repeat(64)}`,
 });
@@ -123,6 +110,7 @@ function checkOutcome(state: 'running' | 'unavailable'): BuilderCheckRunOutcomeP
     summary: running
       ? 'Checking the current draft before it is saved.'
       : 'Builder could not verify the check status for this draft.',
+    environment_reason: 'none',
     completed_at_ms: null,
     authority: Object.freeze({
       projection_authority: 'main_owned_check_run_outcome_projection_v1',
@@ -135,59 +123,45 @@ function checkOutcome(state: 'running' | 'unavailable'): BuilderCheckRunOutcomeP
   });
 }
 
-describe('BuilderReviewCheckpoint', () => {
-  it('renders compact review evidence without mutation actions in the chat flow', () => {
-    const checkpointRef = createRef<HTMLElement>();
-    const container = render(
-      <BuilderReviewCheckpoint
-        changes={changes()}
-        checkpointRef={checkpointRef}
-        hasContent
-        preview={null}
-        reviewState={reviewState('ready')}
-      />,
-    );
+describe('Builder draft review controls', () => {
+  it('keeps review summaries out of chat and shows only compact check state', () => {
+    const container = render(<BuilderDraftCheckStatus />);
 
-    const checkpoint = container.querySelector('[data-builder-review-checkpoint="true"]');
-    expect(checkpoint).toBe(checkpointRef.current);
-    expect(checkpoint?.getAttribute('data-builder-review-layout')).toBe('status-only');
-    expect(container.querySelector('[data-builder-review-title="true"]')?.textContent)
-      .toBe('Review before saving');
-    expect(container.querySelector('[data-builder-review-summary="true"]')?.textContent)
-      .toBe('3 file changes: 2 added, 1 changed.');
-    expect(container.querySelector('[data-builder-review-note="true"]')?.textContent)
-      .toContain('Preview unavailable.');
-    expect(container.querySelector('[data-builder-review-state="ready"]')?.textContent)
-      .toContain('recoverable draft');
-    expect(container.querySelector('[data-builder-review-open-preview="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-review-open-changes="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-check-run-status="not_run"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Review before saving');
+    expect(container.textContent).not.toContain('Result ready');
   });
 
   it('keeps draft mutation commands together in the workspace action group', () => {
     const onRejectDraft = vi.fn();
     const onSave = vi.fn();
+    const onUndoDraft = vi.fn();
     const container = render(
       <BuilderDraftWorkspaceActions
         canReject
         canSave
+        canUndo
         discardLabel="Discard draft"
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onUndoDraft={onUndoDraft}
         reviewState={reviewState('ready')}
         saveLabel="Save version"
       />,
     );
 
     expect(container.querySelector('[data-builder-workspace-draft-actions="true"]')).not.toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')?.textContent).toContain('Save version');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    click(container, '[data-builder-undo-draft="true"]');
     expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
     click(container, '[data-builder-review-more="true"]');
+    expect(container.querySelector('[data-builder-save-version="true"]')?.textContent).toContain('Save version');
     expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent).toContain('Discard draft');
     click(container, '[data-builder-discard-draft="true"]');
+    click(container, '[data-builder-review-more="true"]');
     click(container, '[data-builder-save-version="true"]');
+    expect(onUndoDraft).toHaveBeenCalledTimes(1);
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
   });
@@ -199,9 +173,11 @@ describe('BuilderReviewCheckpoint', () => {
       <BuilderDraftWorkspaceActions
         canReject
         canSave={false}
+        canUndo
         discardLabel="Discard draft"
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onUndoDraft={() => undefined}
         reviewState={reviewState('blocked')}
         saveLabel="Save version"
       />,
@@ -213,50 +189,53 @@ describe('BuilderReviewCheckpoint', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('summarizes automatic discovered checks without exposing a run button', () => {
+  it('keeps passed automatic checks quiet in the workspace toolbar', () => {
     const container = render(
-      <BuilderReviewCheckpoint
-        changes={changes()}
+      <BuilderDraftCheckStatus
         checkRunProfiles={[checkProfile]}
         checkRunStatus={passedCheck}
-        hasContent
-        preview={null}
-        reviewState={reviewState('ready')}
       />,
     );
 
-    expect(container.querySelector('[data-builder-check-run-status="passed"]')?.textContent)
-      .toContain('completed successfully');
+    expect(container.querySelector('[data-builder-check-run-status="passed"]')).toBeNull();
     expect(container.querySelector('[data-builder-check-run-actions="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-run-check]')).toBeNull();
   });
 
   it('restores running and unavailable outcomes from durable task activity', () => {
     const running = render(
-      <BuilderReviewCheckpoint
-        changes={changes()}
+      <BuilderDraftCheckStatus
         checkRunOutcome={checkOutcome('running')}
         checkRunProfiles={[checkProfile]}
-        hasContent
-        preview={null}
-        reviewState={reviewState('ready')}
       />,
     );
     expect(running.querySelector('[data-builder-check-run-status="running"]')?.textContent)
-      .toContain('Running project check');
+      .toContain('Running checks');
     expect(running.querySelector('[data-builder-run-check]')).toBeNull();
 
     const unavailable = render(
-      <BuilderReviewCheckpoint
-        changes={changes()}
+      <BuilderDraftCheckStatus
         checkRunOutcome={checkOutcome('unavailable')}
         checkRunProfiles={[checkProfile]}
-        hasContent
-        preview={null}
-        reviewState={reviewState('ready')}
       />,
     );
     expect(unavailable.querySelector('[data-builder-check-run-status="unavailable"]')?.textContent)
-      .toContain('could not verify the check status');
+      .toContain('Check status unavailable');
+  });
+
+  it('can render draft check state as compact header chrome', () => {
+    const container = render(
+      <BuilderDraftCheckStatus
+        checkRunOutcome={checkOutcome('running')}
+        checkRunProfiles={[checkProfile]}
+        presentation="compact"
+      />,
+    );
+
+    const status = container.querySelector('[data-builder-check-run-status="running"]');
+    expect(status?.getAttribute('data-builder-check-run-presentation')).toBe('compact');
+    expect(status?.getAttribute('title')).toBe('Running checks...');
+    expect(status?.querySelector('svg')).not.toBeNull();
+    expect(status?.querySelector('span')?.classList.contains('cf-builder-visually-hidden')).toBe(true);
   });
 });

@@ -7,6 +7,11 @@ future product stages and cross-feature fact model, read
 The delivery order and release evidence are defined in
 [Implementation Plan](IMPLEMENTATION_PLAN.md).
 
+For user-visible progress and workspace placement, the current specialization
+is [Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md):
+chat owns the work narrative and the side workspace is a contextual inspector,
+not a Logs destination.
+
 ## Product Boundary
 
 The first product loop is: describe an idea, generate a code draft, review the
@@ -184,9 +189,10 @@ until explicit Save verifies the Git candidate and selects a SQLite Project
 Revision receipt.
 
 The desktop artifact surface is a renderer-safe projection over already public
-project snapshots and Task Stream reads. It can show full Preview, Changes,
-Source, Versions, and Logs in a resizable right panel, while the chat flow keeps
-only conversation, status, review, and compact result-summary UI. Resizing,
+project snapshots and Task Stream reads. It can show Browser Preview, Changes,
+Source, Versions, Permissions, and later scoped inspectors in a resizable right
+panel. The chat flow owns conversation, real-time work status, expandable action
+details, approvals, and natural terminal responses. Resizing,
 opening, closing, and tab selection do not grant file access, dispatch tools,
 expose paths, create Git evidence, accept Reviews, save Versions, or change
 Project Revision authority. Preview remains a constrained projection of
@@ -197,8 +203,9 @@ When the Generation host supplies an internal observer, the request uses a
 bounded `text/event-stream` response and assembles the same terminal
 generated-text result. Raw provider deltas stay main-only. The Generation main
 service may extract top-level display text from the approved generation result
-shape and send that through one renderer-safe live output event so the
-conversation can show active AI text while the Run is in flight. This covers
+shape and send bounded display-safe deltas through the renderer-safe live-output
+channel so one stable conversation item can update while the Run is in flight.
+This covers
 code candidate generation, explanation, approved-plan continuation, and
 plan-first proposal text after the source-context collection has bound a trusted
 work Run. This event is ephemeral UI state, not a Task Stream fact, and it

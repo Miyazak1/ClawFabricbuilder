@@ -254,6 +254,12 @@ silently reviving a rejected plan.
 
 ## UI Contract
 
+The detailed item lifecycle, Work Step, contextual inspector, smooth rendering,
+and Logs-removal contract is defined in
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md).
+This document remains the broader Conversation, Turn, Task, Run, Candidate,
+Review, and Save authority.
+
 - The main stage prioritizes the continuing conversation and the next review
   decision. Large artifacts must not turn the chat transcript into a preview
   container.
@@ -286,27 +292,48 @@ silently reviving a rejected plan.
   Project identity, bounded project title, and source-folder display name/count,
   not the folder path or any write authority. The project remains unsaved until
   the user explicitly accepts a verified candidate as a Version.
-- Chat flow may show only compact result summaries, thumbnails, and action rows.
-  Full Preview, Changes, Source, Versions, and Logs belong in a separate
+- Chat flow owns the complete Codex-like work narrative: readable commentary,
+  fact-backed Tool actions, Plan Markdown and approval, terminal results, and
+  compact review actions. Full Preview, Changes, Source, and Versions belong in a separate
   artifact surface such as a right drawer/panel. That surface can be opened on
   demand, switched by tab, resized on desktop, and closed without losing the
-  conversation position.
+  conversation position. Logs are not a normal workspace destination in the
+  MVP and are never required to understand current progress.
 - A generated draft may auto-open the Preview artifact tab, but the chat scroll
   remains readable and the Review/Save decision remains visible. Full preview
   height is independent from the chat scroll height.
 
 Provider output streaming consumes bounded OpenAI-compatible `text/event-stream`
 deltas while preserving the same terminal generation result. Raw provider deltas
-remain main-only. The current renderer path exposes only ephemeral live display
-text extracted from approved generation result fields, so the conversation can
-show active AI text for generation, explanation, approved-plan continuation,
-and plan-first proposal runs without making it a durable Task Stream item.
-Renderer-safe tool activity projection is now part of the visible conversation
-workspace: pending tool requests appear as ordinary project steps, and a
-matching recorded tool result folds the request into one final status row. This
-projection is read-only UI language over already-admitted Task Stream facts; it
-exposes no provider envelopes, prompts, credentials, source evidence, Git
-receipts, raw tool output, Save authority, or Project Revision facts. Main's
+remain main-only. The current renderer path exposes ephemeral live display text
+only for the `explanation` field of a chat-only explanation result. Build and
+Plan responses are structured operation or proposal data, so their raw JSON is
+never projected as assistant prose. After Plan admission, main constructs a
+bounded public Markdown message from the admitted record; the renderer shows it
+in the primary conversation with its approval controls. Build runs remain
+understandable through durable work-status, tool, check, and terminal-result
+rows without exposing operation JSON.
+Renderer live text is held in a dedicated external store and coalesced to at
+most one visible update per animation frame. This prevents provider chunk rate
+from repainting the entire Builder application or replacing the active message
+node.
+Renderer-safe tool activity is part of the normal conversation timeline. A
+pending request appears immediately as concise live progress, and its matching
+recorded result replaces that row instead of duplicating it. When the Run
+finishes, factual process rows fold into a separate closed run-history disclosure
+immediately before the terminal response; expanding it restores the prior
+chronological actions. The response itself does not own `Work details`.
+Admitted file changes and CheckRun results form separate typed rows after the
+response. One fact renders directly; only multiple facts of the same type may
+form an expandable group. File and command facts never share a disclosure.
+Generic provider lifecycle phases such as context ready, request
+started, response received, or result preparing may drive one live status row,
+but they disappear at terminal state and never become completed work steps. The
+user can inspect real work without leaving chat, while the main timeline remains
+compact. Route
+diagnostics, context receipts, brief memory, provider envelopes, prompts,
+credentials, source evidence, Git receipts, raw tool output, Save authority,
+and Project Revision facts never enter that disclosure. Main's
 project-id-only activity hint only tells the desktop conversation controller to
 refresh the current read-only projection; it keeps the existing chat visible
 while reading and never lets the renderer create, accept, or reinterpret work.
@@ -361,11 +388,11 @@ MVP should show:
   `result_preparing`; this supports useful recovery text without exposing
   provider errors, prompts, credentials, source evidence, Git receipts, or
   internal exception material;
-- a completion summary derived from the terminal result, candidate summary,
-  plan summary, verification status, and review state when available. A
-  successful chat-only explanation should not add a separate mechanical summary
-  under the assistant answer; the answer text is already the user-facing
-  terminal result.
+- one natural terminal assistant response derived from the terminal result and
+  recorded public facts. Do not append a mechanical `What happened / Changed /
+  Next` table, candidate metadata, or a second ready-status row. Completed
+  process history remains available through the separate preceding run-history
+  disclosure; result review remains separate after the response.
 
 Current UI checkpoint: durable `run_started` / `run_progress_recorded` status
 rows remain visible in the chat flow even while ephemeral provider live output is
@@ -374,15 +401,23 @@ fact-backed work step. When provider live output has not produced display-safe
 text yet, the chat flow uses the recorded work-status row as the visible waiting
 state instead of adding a second default empty assistant reply. A waiting
 live-output row is kept as an early fallback before any work-status item is
-visible, and for explicit waiting copy such as approved-plan continuation.
+visible, and for explicit waiting copy such as approved-plan continuation. Chat
+auto-follow runs at most once per animation frame and only while the reader is
+already near the bottom; scrolling upward suspends follow until the reader
+returns to the newest work. Provider chunk count is not a scroll trigger.
 
-The first summary can be compact. It should answer:
+When the runtime later records a semantic Work Step, its natural summary can
+answer:
 
 ```text
-What happened?
+What was established or completed?
 What changed, if anything?
-What should the user review or do next?
+What happens next or needs attention?
 ```
+
+This Work Step summary is not a terminal UI table and is not a Draft
+Checkpoint. The conversation-flow contract is specialized in
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md).
 
 Detailed tool-level narration, command output, file-by-file work, test runs,
 repair loops, child Agent updates, and cross-task summaries require later

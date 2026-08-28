@@ -85,9 +85,10 @@ function request({
   existingProjectId = null,
 } = {}) {
   const unsigned = {
-    version: 'builder-generation-request.v2',
+    version: 'builder-generation-request.v3',
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: null,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
 }
@@ -396,6 +397,7 @@ function conversationEvents({
   instruction = 'Make a calm focus timer.',
   requestDigest = request().request_digest,
   baseRevision = null,
+  route = null,
 } = {}) {
   const conversationId = `builder-conversation:${projectId.slice('builder-project:'.length)}`;
   const turnPayload = {
@@ -414,7 +416,19 @@ function conversationEvents({
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
     event_type: 'turn_submitted',
     previous_event: null,
-    payload: { ...turnPayload, route_decision: routeDecision(turnPayload, projectId) },
+    payload: {
+      ...turnPayload,
+      route_decision: route === null
+        ? routeDecision(turnPayload, projectId)
+        : {
+            ...routeDecision(turnPayload, projectId),
+            route,
+            dispatch: route === 'plan' ? 'plan' : routeDecision(turnPayload, projectId).dispatch,
+            required_permissions: route === 'plan' ? [] : routeDecision(turnPayload, projectId).required_permissions,
+            permission_result: route === 'plan' ? 'not_required' : routeDecision(turnPayload, projectId).permission_result,
+            matched_signals: route === 'plan' ? ['composer_mode_plan'] : routeDecision(turnPayload, projectId).matched_signals,
+          },
+    },
     authority: {
       context_authority: 'project_local_conversation',
       permission_admission: 'not_granted',
@@ -763,7 +777,7 @@ function expectKernelError(fn, code, forbidden = []) {
   });
 }
 
-test('sanitizes a v2 renderer request with only instruction, nullable project, and digest', () => {
+test('sanitizes a v3 renderer request with instruction, nullable project, Task Address, and digest', () => {
   const raw = request({ existingProjectId: PROJECT_ID });
   const safe = sanitizeBuilderGenerationRequest(raw);
 
@@ -775,14 +789,16 @@ test('sanitizes a v2 renderer request with only instruction, nullable project, a
   assert.equal(safe.instruction, 'Make a calm focus timer.');
 });
 
-test('creates the full deterministic v2 request only from host-owned project selection', () => {
+test('creates the full deterministic v3 request only from host-owned project selection', () => {
   const first = createBuilderGenerationRequest({
     instruction: 'Make a calm focus timer.',
     existing_project_id: PROJECT_ID,
+    task_address_id: null,
   });
   const second = createBuilderGenerationRequest({
     instruction: 'Make a calm focus timer.',
     existing_project_id: PROJECT_ID,
+    task_address_id: null,
   });
 
   assert.deepEqual(first, second);
@@ -827,6 +843,8 @@ test('builds a deterministic operations prompt without exposing host identities'
     format: 'json_object_only',
   });
   assert.match(first.system_instruction, /You may generate general source code in any language/iu);
+  assert.match(first.system_instruction, /current instruction is written in Chinese/iu);
+  assert.match(first.system_instruction, /use Simplified Chinese for title, summary/iu);
   assert.match(first.system_instruction, /Markdown, README, notes, a \.md file, or a text document/iu);
   assert.match(first.system_instruction, /Do not wrap the document in HTML, JavaScript, or a web page/iu);
   assert.doesNotMatch(first.system_instruction, /builder_conversation_explanation|question\/explanation request/iu);
@@ -868,6 +886,27 @@ test('builds a deterministic operations prompt without exposing host identities'
     },
   });
   assert.doesNotMatch(first.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
+});
+
+test('selects a bounded recent prompt window from conversations longer than 128 events', () => {
+  const rawRequest = request();
+  const currentEvents = conversationEvents({ requestDigest: rawRequest.request_digest });
+  const priorEvents = Array.from({ length: 130 }, () => ({
+    event_type: 'run_progress_recorded',
+    payload: { stage: 'prior_work' },
+  }));
+
+  const descriptor = createBuilderGenerationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: [...priorEvents, ...currentEvents],
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.equal(context.instruction, rawRequest.instruction);
+  assert.equal(context.build_context_snapshot.route, 'build');
+  assert.equal(context.build_context_snapshot.dispatch, 'build');
+  assert.deepEqual(context.build_context_snapshot.matched_signals, ['clear_build']);
 });
 
 test('filters route decision matched signals to the public prompt allowlist', () => {
@@ -1293,6 +1332,26 @@ test('keeps read-only plan-like questions inside the explanation answer contract
   assert.match(descriptor.user_instruction, /帮我写一个方案/u);
 });
 
+test('marks an explicit Agent plan answer as a full Markdown plan response', () => {
+  const rawRequest = request({ instruction: '为摄影博客制定实施计划', existingProjectId: PROJECT_ID });
+  const descriptor = createBuilderExplanationPromptDescriptor({
+    request: rawRequest,
+    base_source_tree: sourceTree(),
+    conversation_events: conversationEvents({
+      instruction: rawRequest.instruction,
+      requestDigest: rawRequest.request_digest,
+      route: 'plan',
+    }),
+  });
+  const context = JSON.parse(descriptor.user_instruction);
+
+  assert.equal(context.response_mode, 'plan');
+  assert.match(descriptor.system_instruction, /complete actionable plan/iu);
+  assert.match(descriptor.system_instruction, /Markdown headings and lists/iu);
+  assert.match(descriptor.system_instruction, /Do not replace it with a summary/iu);
+  assert.equal(context.instruction, rawRequest.instruction);
+});
+
 test('keeps greeting answers conversational instead of project-state diagnostics', () => {
   const rawRequest = request({ instruction: 'hi', existingProjectId: null });
   const descriptor = createBuilderExplanationPromptDescriptor({
@@ -1301,7 +1360,8 @@ test('keeps greeting answers conversational instead of project-state diagnostics
     conversation_events: conversationEvents({ requestDigest: rawRequest.request_digest }),
   });
 
-  assert.match(descriptor.system_instruction, /Match the user language/u);
+  assert.match(descriptor.system_instruction, /current instruction is written in Chinese/iu);
+  assert.match(descriptor.system_instruction, /use Simplified Chinese for title, summary, explanation/iu);
   assert.match(descriptor.system_instruction, /greeting you or making small talk/u);
   assert.match(descriptor.system_instruction, /answer naturally and briefly/u);
   assert.match(descriptor.system_instruction, /Do not answer greetings by listing missing context/u);
@@ -1341,6 +1401,7 @@ test('builds a route-specific plan prompt from bounded private source context', 
     format: 'json_object_only',
   });
   assert.match(descriptor.system_instruction, /Do not include source-change operations/u);
+  assert.match(descriptor.system_instruction, /use Simplified Chinese for title, summary, every plan step/iu);
   assert.match(descriptor.user_instruction, /Plan a smaller settings panel/u);
   assert.match(descriptor.user_instruction, /export const Settings/u);
   assert.deepEqual(JSON.parse(descriptor.user_instruction).conversation_brief, {
@@ -1988,7 +2049,7 @@ test('returns only fixed safe errors without reflecting rejected material', () =
   );
 });
 
-test('stays aligned with the v2 draft protocol and avoids old revision or sandbox authority', () => {
+test('stays aligned with the v3 draft protocol and avoids old revision or sandbox authority', () => {
   const root = path.resolve(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'electron', 'builder-generation-kernel.cjs'), 'utf8');
   const requires = [...source.matchAll(/require\((['"])([^'"]+)\1\)/gu)].map((match) => match[2]);
@@ -1997,6 +2058,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     'node:crypto',
     'node:util',
     './builder-code-change-kernel.cjs',
+    './builder-conversation-records.cjs',
     './builder-project-source-tree.cjs',
     './builder-plan-proposal-records.cjs',
     './builder-route-decision-signals.cjs',
@@ -2004,7 +2066,7 @@ test('stays aligned with the v2 draft protocol and avoids old revision or sandbo
     './builder-provider-context-prompt-bridge-admission.cjs',
   ]);
   for (const literal of [
-    'builder-generation-request.v2',
+    'builder-generation-request.v3',
     'builder-generation-result.v2',
     'builder-code-project.v3',
     'builder-conversation-brief.v3',

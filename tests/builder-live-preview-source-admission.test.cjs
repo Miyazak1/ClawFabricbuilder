@@ -19,7 +19,8 @@ const {
 } = require('../electron/builder-project-source-tree.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174001';
+const CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174000:123e4567-e89b-42d3-a456-426614174001';
 const CHECKPOINT_ID = `builder-draft-checkpoint:${'1'.repeat(64)}`;
 const REVISION_DIGEST = `sha256:${'2'.repeat(64)}`;
 const CANDIDATE_ID = `builder-code-change-candidate:${'3'.repeat(64)}`;

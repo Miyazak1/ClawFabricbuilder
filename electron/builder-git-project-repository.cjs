@@ -639,7 +639,6 @@ function createBuilderGitProjectRepository(rawOptions) {
 
   async function assertExpectedBase(projectRoot, request, baseTreeOid) {
     if (request.expected_base_oid === null) {
-      if (request.candidate.base_source_tree.files.length !== 0) fail('builder_git_project_invalid');
       return;
     }
     const parent = await runner.run(
@@ -746,6 +745,25 @@ function createBuilderGitProjectRepository(rawOptions) {
         { timeout_ms: DEFAULT_TIMEOUT_MS },
       );
       const baseSourceTreeDigest = assertCommitMatchesReceipt(parseCommitObject(commit.stdout), receipt);
+      let unversionedBaseSourceTree = null;
+      if (receipt.expected_base_oid === null) {
+        const baseRef = await readExistingRef(
+          runner,
+          projectRoot,
+          'read_base',
+          requestHash,
+          semanticHash,
+          DEFAULT_TIMEOUT_MS,
+        );
+        if (baseRef === null) {
+          unversionedBaseSourceTree = createBuilderProjectSourceTree({ files: [] });
+        } else {
+          unversionedBaseSourceTree = await readSourceTreeFromGitTree(projectRoot, baseRef);
+        }
+        if (unversionedBaseSourceTree.source_tree_digest !== baseSourceTreeDigest) {
+          fail('builder_git_project_integrity_failed');
+        }
+      }
       const verification = createBuilderGitCandidateVerificationReceipt(receipt);
       sanitizeBuilderGitCandidateReceiptPair(receipt, verification);
       return freezeDeep({
@@ -753,6 +771,7 @@ function createBuilderGitProjectRepository(rawOptions) {
         verification_receipt: verification,
         source_tree: sourceTree,
         base_source_tree_digest: baseSourceTreeDigest,
+        unversioned_base_source_tree: unversionedBaseSourceTree,
       });
     } catch (error) {
       return Promise.reject(normalizeError(error));
@@ -772,6 +791,49 @@ function createBuilderGitProjectRepository(rawOptions) {
       verification_receipt: verified.verification_receipt,
       source_tree: verified.source_tree,
       code_authority: 'git_commit_tree',
+      read_admission: 'verified',
+    });
+  }
+
+  async function readVerifiedCandidateBase(rawReceipt) {
+    const verified = await verifyReceiptAndSourceFromDisk(rawReceipt);
+    let sourceTree;
+    if (verified.candidate_receipt.expected_base_oid === null) {
+      sourceTree = verified.unversioned_base_source_tree;
+      if (sourceTree === null) fail('builder_git_project_integrity_failed');
+    } else {
+      const parent = await runner.run(
+        'read_commit',
+        projectDirectory(
+          projectsRoot,
+          verified.candidate_receipt.project_id,
+          resolveProjectRoot,
+        ),
+        {
+          object_format: BUILDER_GIT_OBJECT_FORMAT,
+          oid: verified.candidate_receipt.expected_base_oid,
+        },
+        { timeout_ms: DEFAULT_TIMEOUT_MS },
+      );
+      sourceTree = await readSourceTreeFromGitTree(
+        projectDirectory(
+          projectsRoot,
+          verified.candidate_receipt.project_id,
+          resolveProjectRoot,
+        ),
+        parseCommitObject(parent.stdout).tree_oid,
+      );
+    }
+    if (sourceTree.source_tree_digest !== verified.base_source_tree_digest) {
+      fail('builder_git_project_integrity_failed');
+    }
+    return freezeDeep({
+      result_version: 'builder-git-verified-candidate-base-read-result.v1',
+      candidate_receipt: verified.candidate_receipt,
+      verification_receipt: verified.verification_receipt,
+      source_tree: sourceTree,
+      base_source_tree_digest: verified.base_source_tree_digest,
+      code_authority: 'git_candidate_base_tree',
       read_admission: 'verified',
     });
   }
@@ -834,6 +896,17 @@ function createBuilderGitProjectRepository(rawOptions) {
         DEFAULT_TIMEOUT_MS,
       );
       if (existingCandidateCommit !== existingRequestCommit) fail('builder_git_project_conflict');
+      const existingBaseTree = await readExistingRef(
+        runner,
+        projectRoot,
+        'read_base',
+        semantic.request_hash,
+        semantic.semantic_hash,
+        DEFAULT_TIMEOUT_MS,
+      );
+      if (existingBaseTree !== null && existingBaseTree !== baseTreeOid) {
+        fail('builder_git_project_conflict');
+      }
       const receipt = createReceipt(request, semantic, existingRequestCommit, true);
       await verifyReceiptFromDisk(receipt);
       return { request, projectRoot, semantic, persisted: receipt };
@@ -872,8 +945,26 @@ function createBuilderGitProjectRepository(rawOptions) {
       semantic.semantic_hash,
       DEFAULT_TIMEOUT_MS,
     );
-    if ((pendingTree === null) !== (pendingRequest === null)) fail('builder_git_project_conflict');
-    if (pendingTree !== null && (pendingTree !== treeOid || pendingRequest !== semanticBlobOid)) {
+    const pendingBaseTree = await readExistingRef(
+      runner,
+      projectRoot,
+      'read_pending_base',
+      semantic.request_hash,
+      semantic.semantic_hash,
+      DEFAULT_TIMEOUT_MS,
+    );
+    if (
+      (pendingTree === null) !== (pendingRequest === null)
+      || (pendingTree === null) !== (pendingBaseTree === null)
+    ) fail('builder_git_project_conflict');
+    if (
+      pendingTree !== null
+      && (
+        pendingTree !== treeOid
+        || pendingRequest !== semanticBlobOid
+        || pendingBaseTree !== baseTreeOid
+      )
+    ) {
       fail('builder_git_project_conflict');
     }
     if (pendingTree === null) {
@@ -884,6 +975,7 @@ function createBuilderGitProjectRepository(rawOptions) {
           object_format: BUILDER_GIT_OBJECT_FORMAT,
           request_hash: semantic.request_hash,
           semantic_hash: semantic.semantic_hash,
+          base_tree_oid: baseTreeOid,
           tree_oid: treeOid,
           semantic_blob_oid: semanticBlobOid,
         },
@@ -894,6 +986,7 @@ function createBuilderGitProjectRepository(rawOptions) {
       request,
       projectRoot,
       semantic,
+      baseTreeOid,
       semanticBlobOid,
       persisted: null,
     };
@@ -972,6 +1065,7 @@ function createBuilderGitProjectRepository(rawOptions) {
             request_hash: prepared.semantic.request_hash,
             semantic_hash: prepared.semantic.semantic_hash,
             commit_oid: commitOid,
+            base_tree_oid: prepared.baseTreeOid,
             tree_oid: prepared.semantic.candidate_tree_oid,
             semantic_blob_oid: prepared.semanticBlobOid,
           },
@@ -995,6 +1089,7 @@ function createBuilderGitProjectRepository(rawOptions) {
     prepare_change: prepareChange,
     persist_candidate_commit: persistCandidateCommit,
     read_verified_candidate: readVerifiedCandidate,
+    read_verified_candidate_base: readVerifiedCandidateBase,
     read_candidate_workspace_base: readCandidateWorkspaceBase,
     verify_candidate_receipt: verifyReceiptFromDisk,
   });

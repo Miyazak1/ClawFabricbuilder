@@ -434,8 +434,8 @@ describe('BuilderComposer', () => {
     );
 
     const readyStatus = ready.querySelector('[data-builder-composer-status="true"]');
-    expect(readyStatus?.textContent).toContain('Ready to execute current direction');
-    expect(readyStatus?.getAttribute('data-builder-composer-context-status')).toBe('ready_to_execute');
+    expect(readyStatus).toBeNull();
+    expect(ready.textContent).not.toContain('Ready to execute current direction');
     expect(ready.querySelector('[data-builder-approval-mode-chip="true"]')).toBeNull();
     const contextBar = ready.querySelector('[data-builder-composer-context-bar="true"]');
     const workspaceChip = ready.querySelector('[data-builder-workspace-chip="true"]');
@@ -443,8 +443,6 @@ describe('BuilderComposer', () => {
     expect(contextBar).not.toBeNull();
     expect(workspaceChip?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
     expect(workspaceChip?.closest('.cf-builder-composer-footer')).not.toBe(footer);
-    expect(readyStatus?.closest('[data-builder-composer-context-bar="true"]')).toBe(contextBar);
-    expect(readyStatus?.closest('.cf-builder-composer-footer')).not.toBe(footer);
     expect(ready.querySelector('[data-builder-composer-context-pills="true"]')).toBeNull();
     expect(ready.querySelector('[data-builder-submit-turn="true"]')).not.toBeNull();
 
@@ -818,8 +816,8 @@ describe('BuilderComposer', () => {
     expect(container.querySelector('[data-builder-clear-composer-brief="true"]')).toBeNull();
     expect(container.textContent).not.toContain('Current brief');
     expect(container.textContent).not.toContain('starfield hero');
-    expect(container.querySelector('[data-builder-composer-status="true"]')?.textContent)
-      .toContain('Ready to execute current direction');
+    expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Ready to execute current direction');
     expect(container.querySelectorAll('[data-builder-submit-turn="true"]')).toHaveLength(1);
   });
 });

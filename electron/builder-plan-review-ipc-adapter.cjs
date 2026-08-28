@@ -1,6 +1,9 @@
 'use strict';
 
 const { types: utilTypes } = require('node:util');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
 const OPTION_KEYS = Object.freeze(['reviewPlan', 'mainWindowRef']);
@@ -13,8 +16,6 @@ const REVIEW_PLAN_REQUEST_KEYS = Object.freeze([
 ]);
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN =
@@ -136,15 +137,17 @@ function safeReviewRequest(value) {
     if (
       typeof projectId !== 'string'
       || !PROJECT_ID_PATTERN.test(projectId)
-      || typeof conversationId !== 'string'
-      || !CONVERSATION_ID_PATTERN.test(conversationId)
-      || conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)
       || typeof turnId !== 'string'
       || !TURN_ID_PATTERN.test(turnId)
       || typeof runId !== 'string'
       || !RUN_ID_PATTERN.test(runId)
       || (decision !== 'approved' && decision !== 'rejected')
     ) throw ipcError('builder_plan_review_invalid');
+    try {
+      sanitizeBuilderConversationAddress(projectId, conversationId);
+    } catch {
+      throw ipcError('builder_plan_review_invalid');
+    }
     return Object.freeze({
       project_id: projectId,
       conversation_id: conversationId,

@@ -7,6 +7,10 @@ memory.
 
 ## Product Decision
 
+Conversation-flow correction (2026-08-13): the current direction is projected
+into the primary conversation/composer when relevant. It does not require a
+Logs tab; any older Logs/Task inspection wording below describes superseded UI.
+
 `Brief` is not a primary user mode.
 
 Builder still needs the underlying capability: it must automatically summarize
@@ -328,7 +332,7 @@ projection, run-audit evidence, and regression tests.
 | Auto Compaction | Architecture only | Not mature until contract, store, digest, budget, and stale-state tests exist |
 | Handoff Packet | Architecture only | Not mature until inbox, adoption, conflict reconciliation, and run-snapshot refs exist |
 | Context Assembler | Pure contract foundation | `builder-context-assembler.v1` now defines bounded model context segments, omitted refs, budget, digest, permission gate, and run snapshot refs; generation dispatch still needs to consume it |
-| User inspection/correction | Partial UI direction | Needs Logs/Task surface for what context will be used and how to correct it |
+| User inspection/correction | Partial UI direction | Needs an on-demand conversation/context surface for what will be used and how to correct it |
 
 ## Mature Solution Comparison
 
@@ -547,6 +551,21 @@ Current checkpoint:
 - Generation main now creates this assembly for run-snapshot audit when a
   selected Working Context State is available, and the snapshot records only
   `assembly_id`, `context_digest`, and `assembled_at_ms`.
+- The Working Context State service can now read the latest main-owned
+  Context Compaction Summary body for the current Conversation/Task Address and
+  return its bounded summary text, summary digest, source-range digest, and
+  compacted timestamp beside the non-authoritative compaction ref. This remains
+  a main-only read projection: it does not change readiness, does not write
+  SQLite, does not grant permission, and is not consumed by the provider prompt
+  path without the disclosure/prompt-bridge gate below.
+- `builder-context-compaction-recording-service.v1` now closes the first
+  automatic-recording gap. After a committed SQLite conversation append, main
+  can derive a bounded public transcript summary, bind it to the current
+  Session/Task Address through the address store, and record it in the
+  Context Compaction Summary store. The recording is deliberately non-blocking
+  and non-authoritative: if it fails, the SQLite conversation remains the source
+  of truth; it dispatches no provider/tool, mutates no source/Git, grants no
+  permission, and cannot make context executable.
 - `builder-provider-context-projection.v1` exists as a pure main-side gate for
   provider disclosure. Without an explicit local-user disclosure decision for
   the same purpose, it returns `blocked` and no provider-sendable context. When
@@ -706,7 +725,7 @@ Recommended chips:
 Interaction rules:
 
 - chips are read-only status, not authority;
-- clicking a chip may open the Logs/Task inspection surface later;
+- clicking a chip may open an on-demand conversation/context disclosure later;
 - chips do not grant read/write permission;
 - chips do not submit, build, save, publish, or clear context;
 - chip copy must stay ordinary-user language and avoid `Brief`,
@@ -727,7 +746,7 @@ need to inspect what the assistant thinks the direction is, use an on-demand
 surface:
 
 ```text
-Artifact Workspace -> Logs / Task -> Current direction
+Conversation or composer status -> Current direction details
 ```
 
 This surface is read-only in the first version. Correction still happens through

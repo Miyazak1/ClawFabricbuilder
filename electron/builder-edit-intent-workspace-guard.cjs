@@ -2,6 +2,9 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const {
   BuilderCodeChangeKernelError,
@@ -15,13 +18,13 @@ const {
 const BUILDER_EDIT_INTENT_PLAN_VERSION = 'builder-edit-intent-plan.v1';
 const BUILDER_WORKSPACE_GUARD_REPORT_VERSION = 'builder-workspace-guard-report.v1';
 const MAX_GUARDED_OPERATIONS = 256;
-const LARGE_CHANGE_THRESHOLD = 12;
 
 const CREATE_PLAN_KEYS = Object.freeze(['candidate', 'created_at_ms']);
 const EVALUATE_GUARD_KEYS = Object.freeze([
   'candidate',
   'edit_intent_plan',
   'observed_workspace_source_tree',
+  'expected_workspace_source_tree_digest',
   'evaluated_at_ms',
 ]);
 const PLAN_KEYS = Object.freeze([
@@ -70,6 +73,7 @@ const GUARD_REPORT_KEYS = Object.freeze([
   'run_id',
   'candidate_id',
   'candidate_digest',
+  'expected_workspace_source_tree_digest',
   'observed_workspace_source_tree_digest',
   'status',
   'decisions',
@@ -146,7 +150,6 @@ const GUARD_REASONS = Object.freeze([
   'user_changed_file_conflict',
   'file_delete_requires_approval',
   'lockfile_change_requires_approval',
-  'large_multi_file_change_requires_approval',
   'protected_git_internal',
   'protected_builder_internal',
   'protected_secret_file',
@@ -247,7 +250,7 @@ function safeId(value, pattern, maximum = 160) {
 
 const BUILDER_ID_PATTERNS = Object.freeze({
   project: /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-  conversation: /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  conversation: CONVERSATION_ID_PATTERN,
   turn: /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   task: /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   run: /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -315,7 +318,7 @@ function fileOperations(candidate) {
 function riskClass(operations) {
   if (operations.some((operation) => protectedPathReason(operation.path) !== null)) return 'sensitive';
   if (operations.some((operation) => operation.operation === 'delete')) return 'destructive';
-  if (operations.length > LARGE_CHANGE_THRESHOLD || operations.some((operation) => isLockfile(operation.path))) {
+  if (operations.some((operation) => isLockfile(operation.path))) {
     return 'approval_required';
   }
   return 'normal';
@@ -495,9 +498,6 @@ function guardDecision(plan, operation, workspaceChangedDuringRun) {
   } else if (isLockfile(operation.path)) {
     decision = 'approval_required';
     reason = 'lockfile_change_requires_approval';
-  } else if (plan.file_operations.length > LARGE_CHANGE_THRESHOLD) {
-    decision = 'approval_required';
-    reason = 'large_multi_file_change_requires_approval';
   }
   const body = {
     run_id: plan.run_id,
@@ -522,6 +522,7 @@ function reportDigestBody(report) {
     decisions: report.decisions,
     edit_intent_plan_id: report.edit_intent_plan_id,
     evaluated_at_ms: report.evaluated_at_ms,
+    expected_workspace_source_tree_digest: report.expected_workspace_source_tree_digest,
     plan_digest: report.plan_digest,
     project_id: report.project_id,
     observed_workspace_source_tree_digest: report.observed_workspace_source_tree_digest,
@@ -545,6 +546,9 @@ function evaluateBuilderWorkspaceGuard(rawInput) {
   const observedWorkspaceSourceTree = sanitizeBuilderProjectSourceTree(
     valueAt(rawInput, 'observed_workspace_source_tree'),
   );
+  const expectedWorkspaceSourceTreeDigest = safeDigest(
+    valueAt(rawInput, 'expected_workspace_source_tree_digest'),
+  );
   const rebuiltPlan = createBuilderEditIntentPlan({
     candidate,
     created_at_ms: plan.created_at_ms,
@@ -553,7 +557,7 @@ function evaluateBuilderWorkspaceGuard(rawInput) {
     fail();
   }
   const workspaceChangedDuringRun = observedWorkspaceSourceTree.source_tree_digest
-    !== candidate.base_source_tree.source_tree_digest;
+    !== expectedWorkspaceSourceTreeDigest;
   const decisions = plan.file_operations.map(
     (operation) => guardDecision(plan, operation, workspaceChangedDuringRun),
   );
@@ -575,6 +579,7 @@ function evaluateBuilderWorkspaceGuard(rawInput) {
     run_id: plan.run_id,
     candidate_id: plan.candidate_id,
     candidate_digest: plan.candidate_digest,
+    expected_workspace_source_tree_digest: expectedWorkspaceSourceTreeDigest,
     observed_workspace_source_tree_digest: observedWorkspaceSourceTree.source_tree_digest,
     status,
     decisions,
@@ -614,7 +619,6 @@ function sanitizeGuardDecision(value) {
       ? [
         'file_delete_requires_approval',
         'lockfile_change_requires_approval',
-        'large_multi_file_change_requires_approval',
       ]
       : [
         'user_changed_file_conflict',
@@ -687,6 +691,9 @@ function sanitizeBuilderWorkspaceGuardReport(value) {
     run_id: safeBuilderId(valueAt(value, 'run_id'), 'run'),
     candidate_id: safeBuilderId(valueAt(value, 'candidate_id'), 'candidate'),
     candidate_digest: safeDigest(valueAt(value, 'candidate_digest')),
+    expected_workspace_source_tree_digest: safeDigest(
+      valueAt(value, 'expected_workspace_source_tree_digest'),
+    ),
     observed_workspace_source_tree_digest: safeDigest(
       valueAt(value, 'observed_workspace_source_tree_digest'),
     ),
@@ -735,10 +742,10 @@ function safeBoundary(fn) {
 module.exports = Object.freeze({
   BUILDER_EDIT_INTENT_PLAN_VERSION,
   BUILDER_WORKSPACE_GUARD_REPORT_VERSION,
-  LARGE_CHANGE_THRESHOLD,
   BuilderEditIntentWorkspaceGuardError,
   createBuilderEditIntentPlan: safeBoundary(createBuilderEditIntentPlan),
   evaluateBuilderWorkspaceGuard: safeBoundary(evaluateBuilderWorkspaceGuard),
+  protectedBuilderWorkspacePathReason: safeBoundary(protectedPathReason),
   sanitizeBuilderEditIntentPlan: safeBoundary(sanitizeBuilderEditIntentPlan),
   sanitizeBuilderWorkspaceGuardReport: safeBoundary(sanitizeBuilderWorkspaceGuardReport),
 });

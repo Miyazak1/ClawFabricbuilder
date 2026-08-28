@@ -18,7 +18,8 @@ const {
 
 const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
-const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${PROJECT_UUID}:123e4567-e89b-42d3-a456-426614174010`;
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 
 function id(kind, index) {
@@ -253,6 +254,20 @@ test('creates a proposed plan record bound to private source context without con
   const sanitized = sanitizeBuilderPlanProposalRecord(structuredClone(record));
   assert.deepEqual(sanitized, record);
   assert.notEqual(sanitized, record);
+});
+
+test('accepts a Harness-detailed conversation context beyond the legacy 64-event limit', () => {
+  const events = Array.from({ length: 65 }, (_, index) => ({
+    sequence: index + 1,
+  }));
+  const record = createBuilderPlanProposalRecord(planInput({
+    source_context_result: sourceContextResult(undefined, {
+      context: { events },
+    }),
+  }));
+
+  assert.equal(record.plan_state, 'proposed');
+  assert.equal(record.context_binding.head_sequence, 6);
 });
 
 test('rejects forged source context drift, hostile shapes, duplicate steps, and unsafe plan text', () => {

@@ -13,6 +13,9 @@ const {
 const {
   createBuilderToolFilesystemReadExecutionService,
 } = require('./builder-tool-filesystem-read-execution-service.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_TOOL_SOURCE_CONTEXT_COLLECTOR_VERSION =
   'builder-tool-source-context-collector.v1';
@@ -58,7 +61,6 @@ const IDS_KEYS = Object.freeze([
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:(${UUID_SOURCE})$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -155,7 +157,15 @@ function safeContext(rawContext) {
   const conversation = exactObject(descriptors.conversation.value, CONVERSATION_KEYS);
   const ids = exactObject(descriptors.ids.value, IDS_KEYS);
   const projectId = safePattern(project.project_id.value, PROJECT_ID_PATTERN);
-  const conversationId = safePattern(conversation.conversation_id.value, CONVERSATION_ID_PATTERN);
+  let conversationId;
+  try {
+    conversationId = sanitizeBuilderConversationAddress(
+      projectId,
+      conversation.conversation_id.value,
+    );
+  } catch {
+    fail();
+  }
   if (
     descriptors.context_version.value !== 'builder-conversation-run-context.v1'
     || descriptors.mode.value !== 'work'
@@ -164,8 +174,6 @@ function safeContext(rawContext) {
     || safeTimestamp(project.created_at_ms.value) < 0
     || conversation.project_id.value !== projectId
     || safeTimestamp(conversation.created_at_ms.value) < 0
-    || conversationId.slice('builder-conversation:'.length)
-      !== projectId.slice('builder-project:'.length)
     || !Array.isArray(descriptors.events.value)
     || utilTypes.isProxy(descriptors.events.value)
     || !Number.isSafeInteger(descriptors.attempt_number.value)

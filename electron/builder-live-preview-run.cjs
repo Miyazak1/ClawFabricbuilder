@@ -3,11 +3,14 @@
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 
-const BUILDER_LIVE_PREVIEW_ADMISSION_VERSION = 'builder-live-preview-admission.v1';
+const BUILDER_LIVE_PREVIEW_ADMISSION_VERSION = 'builder-live-preview-admission.v2';
 const BUILDER_PREVIEW_RUN_VERSION = 'builder-preview-run.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_SOURCE}:${UUID_SOURCE}$`,
+  'u',
+);
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const DRAFT_CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
@@ -20,6 +23,7 @@ const ADMISSION_INPUT_KEYS = Object.freeze([
   'task_id',
   'run_id',
   'draft_checkpoint_id',
+  'revision_receipt_digest',
   'source_tree_digest',
   'selected_entry_path',
   'preview_kind',
@@ -34,6 +38,7 @@ const ADMISSION_KEYS = Object.freeze([
   'task_id',
   'run_id',
   'draft_checkpoint_id',
+  'revision_receipt_digest',
   'source_tree_digest',
   'selected_entry_path',
   'preview_kind',
@@ -81,6 +86,7 @@ const ADMISSION_REF_KEYS = Object.freeze([
   'preview_kind',
   'selected_entry_path',
   'draft_checkpoint_id',
+  'revision_receipt_digest',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'live_preview_authority',
@@ -244,8 +250,12 @@ function safeProjectId(value) {
   return safePattern(value, PROJECT_ID_PATTERN, 52);
 }
 
-function safeConversationId(value) {
-  return safePattern(value, CONVERSATION_ID_PATTERN, 57);
+function safeConversationId(value, projectId) {
+  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN, 96);
+  if (!conversationId.startsWith(
+    `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+  )) fail();
+  return conversationId;
 }
 
 function safeNullableTaskId(value) {
@@ -373,11 +383,15 @@ function createBuilderLivePreviewAdmission(rawInput) {
   try {
     exactObject(rawInput, ADMISSION_INPUT_KEYS);
     const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
-    const conversationId = safeConversationId(valueAt(rawInput, 'conversation_id'));
+    const conversationId = safeConversationId(
+      valueAt(rawInput, 'conversation_id'),
+      projectId,
+    );
     const taskId = safeNullableTaskId(valueAt(rawInput, 'task_id'));
     const runId = safeNullableRunId(valueAt(rawInput, 'run_id'));
     const draftCheckpointId = safeNullableDraftCheckpointId(valueAt(rawInput, 'draft_checkpoint_id'));
-    if (runId === null && draftCheckpointId === null) fail();
+    const revisionReceiptDigest = safeNullableDigest(valueAt(rawInput, 'revision_receipt_digest'));
+    if (runId === null && draftCheckpointId === null && revisionReceiptDigest === null) fail();
     const sourceTreeDigest = safeDigest(valueAt(rawInput, 'source_tree_digest'));
     const selectedEntryPath = safeEntryPath(valueAt(rawInput, 'selected_entry_path'));
     const previewKind = safeEnum(valueAt(rawInput, 'preview_kind'), PREVIEW_KINDS);
@@ -390,6 +404,7 @@ function createBuilderLivePreviewAdmission(rawInput) {
       task_id: taskId,
       run_id: runId,
       draft_checkpoint_id: draftCheckpointId,
+      revision_receipt_digest: revisionReceiptDigest,
       source_tree_digest: sourceTreeDigest,
       selected_entry_path: selectedEntryPath,
       preview_kind: previewKind,
@@ -410,14 +425,16 @@ function createBuilderLivePreviewAdmission(rawInput) {
 function sanitizeBuilderLivePreviewAdmission(rawAdmission) {
   try {
     exactObject(rawAdmission, ADMISSION_KEYS);
+    const projectId = safeProjectId(valueAt(rawAdmission, 'project_id'));
     const admission = {
       admission_version: valueAt(rawAdmission, 'admission_version'),
       admission_id: valueAt(rawAdmission, 'admission_id'),
-      project_id: safeProjectId(valueAt(rawAdmission, 'project_id')),
-      conversation_id: safeConversationId(valueAt(rawAdmission, 'conversation_id')),
+      project_id: projectId,
+      conversation_id: safeConversationId(valueAt(rawAdmission, 'conversation_id'), projectId),
       task_id: safeNullableTaskId(valueAt(rawAdmission, 'task_id')),
       run_id: safeNullableRunId(valueAt(rawAdmission, 'run_id')),
       draft_checkpoint_id: safeNullableDraftCheckpointId(valueAt(rawAdmission, 'draft_checkpoint_id')),
+      revision_receipt_digest: safeNullableDigest(valueAt(rawAdmission, 'revision_receipt_digest')),
       source_tree_digest: safeDigest(valueAt(rawAdmission, 'source_tree_digest')),
       selected_entry_path: safeEntryPath(valueAt(rawAdmission, 'selected_entry_path')),
       preview_kind: safeEnum(valueAt(rawAdmission, 'preview_kind'), PREVIEW_KINDS),
@@ -427,7 +444,11 @@ function sanitizeBuilderLivePreviewAdmission(rawAdmission) {
     };
     if (admission.admission_version !== BUILDER_LIVE_PREVIEW_ADMISSION_VERSION) fail();
     admission.expires_at_ms = safeExpiresAt(valueAt(rawAdmission, 'expires_at_ms'), admission.admitted_at_ms);
-    if (admission.run_id === null && admission.draft_checkpoint_id === null) fail();
+    if (
+      admission.run_id === null
+      && admission.draft_checkpoint_id === null
+      && admission.revision_receipt_digest === null
+    ) fail();
     const body = {
       admission_version: admission.admission_version,
       project_id: admission.project_id,
@@ -435,6 +456,7 @@ function sanitizeBuilderLivePreviewAdmission(rawAdmission) {
       task_id: admission.task_id,
       run_id: admission.run_id,
       draft_checkpoint_id: admission.draft_checkpoint_id,
+      revision_receipt_digest: admission.revision_receipt_digest,
       source_tree_digest: admission.source_tree_digest,
       selected_entry_path: admission.selected_entry_path,
       preview_kind: admission.preview_kind,
@@ -455,6 +477,7 @@ function admissionRef(admission) {
     preview_kind: admission.preview_kind,
     selected_entry_path: admission.selected_entry_path,
     draft_checkpoint_id: admission.draft_checkpoint_id,
+    revision_receipt_digest: admission.revision_receipt_digest,
   });
 }
 
@@ -465,6 +488,7 @@ function sanitizeAdmissionRef(value) {
     preview_kind: safeEnum(valueAt(value, 'preview_kind'), PREVIEW_KINDS),
     selected_entry_path: safeEntryPath(valueAt(value, 'selected_entry_path')),
     draft_checkpoint_id: safeNullableDraftCheckpointId(valueAt(value, 'draft_checkpoint_id')),
+    revision_receipt_digest: safeNullableDigest(valueAt(value, 'revision_receipt_digest')),
   });
 }
 

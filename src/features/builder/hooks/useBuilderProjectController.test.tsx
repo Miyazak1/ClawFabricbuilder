@@ -40,6 +40,7 @@ const PLAN_SOURCE_READ_APPROVED = Object.freeze({
   approval_scope: 'current_project_plan_source_read',
   authority: 'main_selected_project_bounded_filesystem_read_v1',
 } as const);
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174010';
 
 afterEach(() => {
   for (const entry of mounted.splice(0)) {
@@ -67,11 +68,18 @@ async function waitFor(assertion: () => void): Promise<void> {
 async function renderHook(
   projectId?: string,
   strict = false,
-  options: Readonly<{ deferGenerate?: boolean; failGenerate?: boolean }> = {},
+  options: Readonly<{
+    deferClearOpen?: boolean;
+    deferGenerate?: boolean;
+    failGenerate?: boolean;
+    preserveSelectionWhenProjectIdUndefined?: boolean;
+    taskAddressId?: string | null;
+  }> = {},
 ) {
   const readWire = await createReadWire();
   let latest: UseBuilderProjectControllerResult | null = null;
   let draft = await createGenerationDraft();
+  let resolveClearOpen: (() => void) | null = null;
   let resolveGenerate: (() => Promise<void>) | null = null;
   const submit = vi.fn(async (request) => {
     draft = await createGenerationDraft(request, readWire.source_tree);
@@ -149,15 +157,24 @@ async function renderHook(
   const saveDraft = vi.fn(async () => createSaveResult(draft, readWire));
   const loadCurrent = vi.fn(async () => readWire);
   const loadRevision = vi.fn(async () => ({ ...readWire, operation: 'revision_loaded' }));
-  const open = vi.fn(async (request: { project_id: string | null }) => (
-    request.project_id === null
+  const open = vi.fn(async (request: { project_id: string | null }) => {
+    if (request.project_id === null && options.deferClearOpen === true) {
+      return new Promise((resolve) => {
+        resolveClearOpen = () => resolve({
+          result_version: 'builder-project-selection-result.v1',
+          operation: 'new_selected',
+          project_id: null,
+        });
+      });
+    }
+    return request.project_id === null
       ? {
-        result_version: 'builder-project-selection-result.v1',
-        operation: 'new_selected',
-        project_id: null,
-      }
-      : readWire
-  ));
+          result_version: 'builder-project-selection-result.v1',
+          operation: 'new_selected',
+          project_id: null,
+        }
+      : readWire;
+  });
   const generator = {
     submit,
     generateApprovedPlan,
@@ -219,9 +236,17 @@ async function renderHook(
     listHistory: async () => ({ revisions: [] }),
   };
 
-  function Harness({ selectedProjectId }: { selectedProjectId?: string }) {
+  function Harness({
+    selectedProjectId,
+    selectedTaskAddressId,
+  }: {
+    selectedProjectId?: string;
+    selectedTaskAddressId?: string | null;
+  }) {
     const result = useBuilderProjectController({
       projectId: selectedProjectId,
+      preserveSelectionWhenProjectIdUndefined: options.preserveSelectionWhenProjectIdUndefined,
+      taskAddressId: selectedTaskAddressId,
       generator,
       workspace,
     });
@@ -237,8 +262,12 @@ async function renderHook(
   mounted.push({ root, container });
   await act(async () => {
     root.render(strict
-      ? <StrictMode><Harness selectedProjectId={projectId} /></StrictMode>
-      : <Harness selectedProjectId={projectId} />);
+      ? (
+          <StrictMode>
+            <Harness selectedProjectId={projectId} selectedTaskAddressId={options.taskAddressId} />
+          </StrictMode>
+        )
+      : <Harness selectedProjectId={projectId} selectedTaskAddressId={options.taskAddressId} />);
   });
   return {
     current: () => latest as UseBuilderProjectControllerResult,
@@ -252,13 +281,26 @@ async function renderHook(
     loadCurrent,
     open,
     rejectDraft,
+    resolveClearOpen() {
+      resolveClearOpen?.();
+    },
     restoreDraft,
     async resolveGenerate() {
       await resolveGenerate?.();
     },
     async selectProject(selectedProjectId?: string) {
       await act(async () => {
-        root.render(<Harness selectedProjectId={selectedProjectId} />);
+        root.render(<Harness selectedProjectId={selectedProjectId} selectedTaskAddressId={null} />);
+      });
+    },
+    async selectWorkspace(selectedProjectId?: string, selectedTaskAddressId: string | null = null) {
+      await act(async () => {
+        root.render(
+          <Harness
+            selectedProjectId={selectedProjectId}
+            selectedTaskAddressId={selectedTaskAddressId}
+          />,
+        );
       });
     },
     saveDraft,
@@ -303,6 +345,64 @@ describe('useBuilderProjectController', () => {
     expect(hook.current().snapshot.savedProject).toBeNull();
     expect(hook.current().snapshot.workingProjectId).toBeNull();
     expect(hook.current().snapshot.conversationProjectId).toBe(PROJECT_ID);
+  });
+
+  it('keeps the selected project controller mounted while the Agent Workbench is visible', async () => {
+    const hook = await renderHook(PROJECT_ID, false, { preserveSelectionWhenProjectIdUndefined: true });
+    await waitFor(() => {
+      expect(hook.current().snapshot.savedProject?.target.project_id).toBe(PROJECT_ID);
+    });
+    hook.open.mockClear();
+
+    await hook.selectProject(undefined);
+
+    expect(hook.open).not.toHaveBeenCalled();
+    expect(hook.current().snapshot.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('reopens a task project when an older clear-selection request is still pending', async () => {
+    const hook = await renderHook(PROJECT_ID, false, { deferClearOpen: true });
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
+    hook.open.mockClear();
+
+    await hook.selectProject(undefined);
+    expect(hook.open).toHaveBeenCalledExactlyOnceWith({ project_id: null });
+
+    await hook.selectProject(PROJECT_ID);
+    expect(hook.open).toHaveBeenLastCalledWith({ project_id: PROJECT_ID });
+
+    await act(async () => {
+      hook.resolveClearOpen();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
+    expect(hook.current().snapshot.savedProject?.target.project_id).toBe(PROJECT_ID);
+  });
+
+  it('keeps an unsaved draft mounted while visiting Workbench and returning to the same Task', async () => {
+    const hook = await renderHook(PROJECT_ID, false, { taskAddressId: TASK_ADDRESS_ID });
+    await waitFor(() => {
+      expect(hook.current().snapshot.status).toBe('ready');
+    });
+    await act(async () => {
+      await hook.current().generate('Make a timer.');
+    });
+    hook.open.mockClear();
+
+    await hook.selectWorkspace(undefined, null);
+    expect(hook.open).not.toHaveBeenCalled();
+    expect(hook.current().snapshot.draft?.draft_id).toBe(DRAFT_ID);
+
+    await hook.selectWorkspace(PROJECT_ID, TASK_ADDRESS_ID);
+    expect(hook.open).not.toHaveBeenCalled();
+    expect(hook.current().snapshot).toMatchObject({
+      status: 'draft_ready',
+      draft: { draft_id: DRAFT_ID, project_id: PROJECT_ID },
+    });
   });
 
   it('keeps generation unsaved until the explicit save command', async () => {
@@ -439,7 +539,7 @@ describe('useBuilderProjectController', () => {
       savedProject: null,
       answer: {
         result_kind: 'explanation',
-        project_id: PROJECT_ID,
+        project_id: null,
       },
     });
   });

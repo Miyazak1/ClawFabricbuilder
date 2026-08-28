@@ -1,5 +1,19 @@
 # Lifecycle Hooks Architecture
 
+Date: 2026-08-26
+
+Status: product and runtime architecture proposal. This document is a design
+decision record, not implementation evidence.
+
+Related documents:
+
+- [Builder Sandbox Settings And Runtime Policy Plan](BUILDER_SANDBOX_SETTINGS_AND_RUNTIME_POLICY_PLAN_2026_08_26.md)
+- [Builder Worktree And Workspace Lifecycle Policy](BUILDER_WORKTREE_AND_WORKSPACE_LIFECYCLE_POLICY_2026_08_26.md)
+- [Builder Runtime Readiness And Agent Environment Research](BUILDER_RUNTIME_READINESS_AGENT_ENVIRONMENT_RESEARCH_2026_08_26.md)
+- [Controlled Bash V1 Architecture](CONTROLLED_BASH_V1_ARCHITECTURE.md)
+- [Universal Programming Runtime Contract](UNIVERSAL_PROGRAMMING_RUNTIME_CONTRACT.md)
+- [General Browser Web Mode Architecture](GENERAL_BROWSER_WEB_MODE_ARCHITECTURE.md)
+
 This document defines Builder's lifecycle hook architecture. It turns important
 agent events into auditable product facts without immediately exposing arbitrary
 user scripts or plugin code to ordinary users.
@@ -41,6 +55,18 @@ Codex hook output can add model-visible context for events such as
 Large additional context is capped and spilled to disk. `PreToolUse` can block
 or rewrite input, `PermissionRequest` can allow or deny, and `Stop` can continue
 the agent with a follow-up prompt.
+
+Runtime behavior to preserve as product lessons:
+
+- matching hooks from multiple files all run instead of replacing each other;
+- multiple matching command hooks for the same event can run concurrently;
+- non-managed command hooks require review and trust before execution;
+- local tool paths such as shell commands, unified exec, `apply_patch`, MCP
+  tools, and local function tools can be observed by tool hooks;
+- hosted tools do not use the same local function-tool hook path, so hooks are
+  useful guardrails rather than complete enforcement boundaries;
+- large hook output must be bounded, summarized, or spilled without leaking
+  secrets back into model context.
 
 Sources:
 
@@ -127,6 +153,39 @@ Builder should copy the architecture lessons, not the full feature surface:
   after automatic summarization.
 - Desktop should eventually inspect hooks, but ordinary users should not need a
   hook menu for the basic Builder workflow.
+- Hook events should align with settings and worktree lifecycle controls:
+  sandbox admission, dependency readiness, workspace cleanup, browser profile
+  cleanup, and release verification all need observable lifecycle points.
+
+## Boundary With Sandbox And Settings
+
+Hooks are policy extension points, not the sandbox.
+
+The sandbox system owns filesystem, network, process, environment, timeout, and
+workspace containment. Hooks may contribute observations or stricter decisions
+before an action reaches sandbox admission, but a hook may not claim that an
+action is contained. Only the sandbox provider and its enforcement receipt can
+claim `none`, `partial`, or `full` enforcement.
+
+This distinction keeps three authorities separate:
+
+| Concern | Owner | Hook role |
+| --- | --- | --- |
+| Approval | permission admission and user receipt service | observe, deny, or attach audit reason |
+| Sandbox | sandbox policy, provider, and enforcement receipt | request stricter policy or block before admission |
+| Settings | global, project, and managed config parser | surface hook enablement and trust status |
+| Worktree lifecycle | workspace registry and cleanup policy | validate cleanup eligibility and record evidence |
+| Browser session | Browser WebContents/session policy | audit navigation, download, or profile cleanup only through browser-owned events |
+
+For example, a `before_command_spawn` hook can reject `npm install` when network
+policy is `none`. It cannot grant network access, bypass dependency readiness,
+or decide that a process is isolated. The command still needs sandbox admission
+and an enforcement report before spawn.
+
+The settings UI should therefore avoid a generic "hooks make this safe"
+message. It should show hooks as advanced automation or diagnostics, while
+sandbox, approval, network, dependency, browser, and worktree controls remain
+separate first-class settings.
 
 ## Architecture
 
@@ -294,13 +353,20 @@ These events are worth implementing before user-configured hooks:
 | `handoff_received` | Yes | conflict policy before using imported facts |
 | `permission_request_created` | No | audit and UI projection |
 | `permission_decision_recorded` | No | audit and next-action routing |
+| `before_sandbox_admission` | Yes | policy cannot be weakened by local config |
+| `after_sandbox_admission` | No | enforcement receipt projection |
+| `before_command_spawn` | Yes | command policy, dependency readiness, workspace guard |
+| `after_command_exit` | No | output audit, check attribution, repair-loop routing |
 | `before_source_read` | Yes | scoped read guard |
 | `before_source_write_admission` | Yes | protected path and checkpoint guard |
 | `after_draft_checkpoint_recorded` | No | restore surface, auto checkpoint status |
+| `before_workspace_cleanup` | Yes | recovery manifest and association guard |
+| `after_workspace_cleanup` | No | cleanup evidence and settings projection |
 | `before_save_version` | Yes | require review and verification facts |
 | `after_revision_recorded` | No | history, Work Capsule seed |
 | `before_provider_dispatch` | Yes | egress consent and redaction |
 | `after_provider_response` | No | usage, failure, context accounting |
+| `before_browser_profile_cleanup` | Yes | browser-owned cleanup policy |
 | `before_release_verify` | Yes | package gate |
 | `after_packaged_canary` | No | release evidence |
 
@@ -422,8 +488,13 @@ Initial events:
 
 - `before_context_assembly`;
 - `before_auto_compaction`;
+- `before_sandbox_admission`;
+- `after_sandbox_admission`;
+- `before_command_spawn`;
+- `after_command_exit`;
 - `before_source_write_admission`;
 - `after_draft_checkpoint_recorded`;
+- `before_workspace_cleanup`;
 - `before_save_version`.
 
 ### Slice C: Hook Ledger Projection
@@ -462,6 +533,9 @@ Near-term Builder should not:
   stable;
 - execute arbitrary TypeScript plugins in process;
 - use hook scripts as a substitute for permission authority;
+- use hook scripts as a substitute for sandbox provider enforcement;
+- let hooks grant filesystem, network, process, environment, Browser, or
+  worktree cleanup authority;
 - let hooks silently add provider prompt context;
 - let hooks become a hidden automation layer that ordinary users cannot
   inspect;

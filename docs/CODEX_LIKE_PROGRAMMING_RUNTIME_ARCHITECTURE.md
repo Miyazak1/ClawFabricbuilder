@@ -2,7 +2,14 @@
 
 This document defines Builder's core programming runtime: the product and
 engineering layer that lets AI read a project, plan, edit code, run checks,
-repair failures, preview results, and save a reviewed version.
+repair failures, preview results, recover or undo work, and optionally mark a
+stable milestone as a Version.
+
+The current implementation order and the decision to remove mandatory
+`Save version` from the ordinary loop are defined in
+[Foundational Coding Loop And Plugin Runtime Roadmap](FOUNDATIONAL_CODING_LOOP_PLUGIN_RUNTIME_ROADMAP.md).
+Where older sections of this document use save-oriented terminology, the
+foundational roadmap is authoritative.
 
 The goal is not to clone a terminal coding agent. Builder should become a
 trusted desktop workbench whose AI programming loop is as capable as Codex-like
@@ -31,7 +38,7 @@ User instruction
 -> repair loop
 -> preview and diff
 -> automatic draft checkpoint
--> explicit save version
+-> continue, review, or undo
 ```
 
 This pipeline is the v1 priority. Agent teams, community, plugin hooks, and
@@ -55,8 +62,8 @@ select project
 -> AI applies bounded source edits
 -> Builder records an automatic draft checkpoint
 -> Builder shows diff, preview, and basic check evidence
--> user explicitly saves a version
--> packaged app restarts and recovers the project, draft, and version
+-> user continues, reviews, restores, or optionally marks a Version
+-> packaged app restarts and recovers the project, conversation, and working state
 ```
 
 MVP functions:
@@ -70,8 +77,9 @@ MVP functions:
 | Automatic draft | Preserve AI edits without forcing immediate manual save | `DraftCheckpoint` |
 | Review | Show changed files, readable diff, preview, and basic checks | Review Workspace |
 | Basic checks | Run discovered or approved lint/build/test command and summarize result | `CommandProfile`, `CheckRun` |
-| Save version | Persist only after explicit review approval | Git candidate and SQLite Project Revision |
-| Restart recovery | Reopen with current project, draft, and saved version intact | Packaged recovery canary |
+| Undo and restore | Return conversation and files to a known checkpoint without rewriting history | Draft Checkpoint and restore facts |
+| Optional milestone | Mark a stable checkpoint as a formal Version when useful | Git candidate and SQLite Project Revision |
+| Restart recovery | Reopen with current project, conversation, and working state intact | Packaged recovery canary |
 
 MVP exclusions:
 
@@ -82,7 +90,7 @@ MVP exclusions:
 - multi-agent delegation;
 - multi-step automatic repair;
 - live 3D/WebGL preview as a release blocker;
-- automatic version save after AI edits.
+- public third-party plugin loading.
 
 Static preview is enough for the first loop, but the architecture must leave a
 clear path to Live Preview V1. Failed checks should be classified and visible,
@@ -167,8 +175,8 @@ Composer / Handoff / Agent request
    -> Repair Loop
 -> Draft Checkpoint
 -> Review Workspace
--> Save Version
--> Project Revision
+-> Continue / Undo / Restore
+-> Optional Milestone Version
 ```
 
 The pipeline has one invariant: provider output never directly mutates source,
@@ -232,7 +240,8 @@ Inputs:
 - latest user instruction;
 - current Working Context State;
 - approved plan, if present;
-- compaction summary;
+- Builder cross-run context checkpoint (distinct from the active runtime's
+  private compaction summary);
 - handoff packet status;
 - selected project source summary;
 - permission mode;
@@ -478,8 +487,8 @@ PreviewRun
 
 ### 9. Draft Checkpoint Integration
 
-Every successful mutating run should create a Draft Checkpoint before the user
-is asked to save a version.
+Every successful mutating run should create a Draft Checkpoint before Builder
+claims the work is recoverable or offers Undo.
 
 ```text
 AI changes source
@@ -494,8 +503,9 @@ approval, and not publication authority.
 
 ### 10. Review Workspace
 
-The Review Workspace is the user-visible gate between AI work and saved
-project state.
+The Review Workspace is an inspection surface for the current working state.
+It is available when useful, but it is not a mandatory gate before the next
+coding turn.
 
 It must show:
 
@@ -505,17 +515,18 @@ It must show:
 - check results;
 - checkpoint status;
 - risk notes;
-- discard/restore actions;
-- save version action.
+- undo/restore actions;
+- optional milestone action.
 
 It should not show internal receipt digests by default. Advanced diagnostics can
 link to them.
 
-### 11. Save Version
+### 11. Optional Milestone Version
 
-Save Version remains explicit.
+A formal Version is optional milestone metadata over a stable checkpoint. It
+does not gate continuation and is not required after each AI edit.
 
-The save path requires:
+The milestone path requires:
 
 - a current draft checkpoint or candidate;
 - accepted review state;
@@ -524,8 +535,9 @@ The save path requires:
 - selected current revision projection;
 - restart recovery evidence.
 
-No hook, provider output, preview success, or check success can silently save a
-version.
+No hook, provider output, preview success, or check success can silently mark a
+formal milestone unless a future user-selected project policy explicitly
+allows it. Automatic recovery checkpoints remain separate.
 
 ## Required Core Capabilities
 
@@ -813,7 +825,7 @@ Rules:
 - every successful mutating run records a checkpoint;
 - checkpoints are restorable after restart;
 - checkpoints can be compared and discarded;
-- saved versions are still explicit;
+- formal Versions are optional milestones;
 - multiple checkpoints can collapse into one visible draft when appropriate;
 - the user should not need to manually save just to avoid losing AI work.
 
@@ -866,11 +878,17 @@ facts:
 | `tool_call` | `tool_action_proposed` / `tool_action_admitted` |
 | `tool_result` | `tool_action_result_recorded` |
 | `turn_end` | `programming_run_completed` |
-| custom compaction | `before_auto_compaction` / `after_auto_compaction` |
+| Harness in-run compaction | private validated `compaction/start` / `summary` / replacement / `end`; no fabricated public work row |
+| Builder cross-run context checkpoint | disclosure-gated provider-context candidate and restart/handoff reference |
 | session end | `builder_session_idle` / `builder_session_archived` |
 
 These events feed the Lifecycle Hooks Architecture, but v1 handlers are
 built-in only.
+
+The Windows package now has a deterministic installed-runtime compaction gate.
+It forces one native Harness replacement, verifies continued tool execution and
+reconciliation, and proves that the private block-array summary produces no
+additional public assistant row.
 
 ## UI Architecture
 
@@ -879,15 +897,15 @@ The user should not see "tool runtime" or "hook bus".
 Ordinary UI:
 
 ```text
-Reading project
-Planning
-Changing files
-Running checks
-Repairing
-Preview ready
-Checkpoint saved
-Review before saving
-Version saved
+Model-authored explanation of the next meaningful action
+Real read/search actions
+Real file edits
+Real commands and checks
+Model-authored finding, repair explanation, and final summary
+Collapsed completed-run history, expandable in place
+Separate file and command result rows
+Check status, Undo, and optional milestone actions in the workspace toolbar
+Milestone Version saved when requested
 ```
 
 Advanced UI:
@@ -904,11 +922,63 @@ The composer remains simple. The right side is the Review Workspace when a
 draft exists. The chat timeline should show status and decisions, not every raw
 tool output.
 
+The terminal response must not be followed by separate `Review before saving`
+or `Result ready` cards. Those duplicate the result instead of advancing the
+conversation. Check state, Undo, and optional milestone actions remain compact
+workspace-toolbar controls; Preview, Changes, Files, and History remain
+inspectable in the right workspace.
+
+The final response does not own a generic `Work details` disclosure. Concrete
+result facts use the current admitted draft comparison and main-selected
+CheckRun profile in separate typed rows after the response: file rows show
+path plus bounded line deltas and open File/Changes, while command rows show the
+exact safe `command_display` and open a read-only Command Inspector. Renderer
+code does not invent paths, commands, or raw output, and the inspector does not
+become a general Terminal. File and command facts never share one disclosure.
+A single fact is a direct row without an arrow; only multiple facts of the same
+type may form an expandable group.
+
+The renderer follows that boundary deterministically. A factual Tool action
+renders as live progress in chat and keeps one stable identity while its request
+state changes in place to the matching result state. Once `run_completed`
+exists, settled process rows fold into one independent, closed run-history
+disclosure before the terminal response. Expanding it restores the chronological
+actions; it is not nested in or owned by the response. Admitted draft changes
+and CheckRun facts render after the response as separate typed result rows.
+Generic Agent Step receipts and provider lifecycle stages may drive only an
+unobtrusive temporary loading indicator before model text or a real action is
+available. They do not create narration and do not survive as completed work. Run
+admission/control records, context snapshots, brief updates, and raw evidence do
+not render. The right workspace remains for artifacts such as Preview, Changes,
+Files, and History. History distinguishes current automatic recovery from
+optional milestone Versions; Logs are not part of the ordinary MVP workflow.
+
+A Codex-like elapsed label requires durable main-issued start/end timing or a
+trusted `duration_ms` on the Run projection. Until that exists, renderer-local
+timing must not be presented as historical fact.
+
+Live assistant text is a separate display projection, not a copy of the raw
+provider stream. For Ask, main incrementally decodes only the approved
+`explanation` string from the structured response. Harness Build projects only
+the model's public text blocks and keeps reasoning private; real file and
+command progress comes from admitted tool facts. Structured-operation Build and
+Plan keep raw structured provider payload main-only. Once a Plan record is admitted, main projects a bounded
+public Markdown document into the primary chat; this projection is not provider
+JSON and grants no file, Browser, command, or mutation authority. Renderer
+delivery uses a request-bound external store that coalesces chunks once per
+animation frame, updates only the active assistant message, and preserves that
+DOM node for the lifetime of the stream. Chat follows new text only while the
+user is near the bottom, so reading earlier work is not interrupted by incoming
+chunks.
+
+Typography, color, motion, Markdown bounds, and Plan approval placement are
+specified in [Conversation Visual Streaming and Plan Markdown Spec](CONVERSATION_VISUAL_STREAMING_AND_PLAN_MARKDOWN_SPEC.md).
+
 The first convergence layer is `builder-agent-activity-projection.v1`. It is a
 main-owned, renderer-safe summary over already-recorded Conversation, Run,
-Tool, and Review facts. Renderer surfaces consume its fixed current phase and
-plain-language copy instead of guessing from streamed provider text or joining
-authority contracts themselves. It does not replace Task Stream, ReviewState,
+Tool, and Review facts. Renderer surfaces may use its current phase for a
+temporary loading indicator, but not as model narration or completed history.
+It does not replace Task Stream, ReviewState,
 CheckRun, DraftCheckpoint, or Revision authority. Active CheckRun now joins
 through the main-owned candidate activity registry as the fixed `Running
 checks` phase; the public projection receives no command, output, path, or
@@ -1020,18 +1090,29 @@ Evidence:
 - restore after restart;
 - compare checkpoint;
 - discard checkpoint;
-- Save Version still explicit.
+- continue without a Version action;
+- optionally mark a checkpoint as a milestone.
+
+Current verified closure (2026-08-20): restart reconstruction carries the
+durable `current_materialization` projection back into the pending draft, while
+workspace expectation uses the verified candidate proof's resulting tree
+digest. A restarted service therefore distinguishes Builder's own materialized
+draft from an external workspace edit. Undo fails closed with
+`builder_generation_workspace_changed`, preserves both the external source and
+candidate count, and succeeds after the physical workspace is restored. The
+generation main-service suite covers this with a newly instantiated service,
+and the packaged Harness UI canary exercises the same restart path end to end.
 
 ### Slice P6: Review Workspace V1
 
-Unify diff, preview, check results, checkpoint state, and save/discard actions.
+Unify diff, preview, check results, checkpoint state, and undo/restore actions.
 
 Evidence:
 
 - no duplicated preview controls;
 - newest chat remains visible;
 - right panel layout stable;
-- user can save or discard without hidden state.
+- user can undo, restore, or mark a milestone without hidden state.
 
 ### Slice P7: Live Preview V1
 
@@ -1071,9 +1152,10 @@ open project
 -> preview
 -> checkpoint
 -> show diff
--> save version
+-> continue without saving a version
+-> undo or restore
 -> restart
--> recover current project
+-> recover current project and working state
 ```
 
 Required canaries:
@@ -1086,6 +1168,13 @@ Required canaries:
 - static preview;
 - live preview once enabled.
 
+The packaged Harness UI gate currently proves the complete unsaved-draft path
+through two Build turns, automatic check repair, candidate materialization,
+application restart, checkpoint recovery, conflict-safe undo, successful undo
+after conflict clearance, and a further continuation turn. It additionally
+proves cancellation and unsupported/stale tool recovery without requiring a
+formal Version save.
+
 ## Non-Goals
 
 Near-term Builder should not:
@@ -1093,8 +1182,8 @@ Near-term Builder should not:
 - open arbitrary user/plugin extensions like Pi before the internal runtime is
   stable;
 - treat provider tool calls as direct local tools;
-- skip review because tests passed;
-- auto-save versions after AI edits;
+- treat passing tests as user acceptance or publication authority;
+- require a formal Version before the next coding turn;
 - use vector memory as execution readiness;
 - rely on static preview for JavaScript or 3D projects;
 - expose raw tool logs, provider prompts, or private source context to the
@@ -1112,5 +1201,5 @@ Builder has a mature Codex-like programming runtime when:
 - failed checks can drive bounded repair;
 - every mutating run creates a Draft Checkpoint;
 - Review Workspace shows diff, preview, check evidence, and checkpoint state;
-- Save Version is explicit and restart-safe;
+- Undo/restore and optional milestone creation are restart-safe;
 - packaged canaries prove the whole loop with a real provider.

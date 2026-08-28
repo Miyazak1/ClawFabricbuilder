@@ -21,6 +21,9 @@ const {
 const {
   projectBuilderDraftCheckpointStatus,
 } = require('./builder-draft-checkpoint-status-projection.cjs');
+const {
+  projectBuilderDraftCheckpointTimeline,
+} = require('./builder-draft-checkpoint-timeline-projection.cjs');
 
 const BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION =
   'builder-automatic-draft-checkpoint-service.v1';
@@ -45,6 +48,7 @@ const READ_STATUS_KEYS = Object.freeze([
   'conversation_id',
   'candidate_id',
 ]);
+const READ_TIMELINE_KEYS = READ_STATUS_KEYS;
 const VERIFY_CANDIDATE_KEYS = Object.freeze([
   'project_id',
   'conversation_id',
@@ -54,9 +58,22 @@ const VERIFY_CANDIDATE_KEYS = Object.freeze([
   'candidate_digest',
   'resulting_tree_digest',
 ]);
+const PREPARE_UNDO_KEYS = Object.freeze([
+  'project_id',
+  'conversation_id',
+  'candidate_id',
+]);
+const PREPARE_SEQUENCE_KEYS = Object.freeze([
+  ...PREPARE_UNDO_KEYS,
+  'checkpoint_sequence',
+]);
+const RESTORED_CHECKPOINT_SUMMARY_PREFIX = 'Restored earlier draft checkpoint ';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_SOURCE}(?::${UUID_SOURCE})?$`,
+  'u',
+);
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -65,7 +82,7 @@ const MAX_CHECKPOINT_SEQUENCE = 1_000_000;
 
 class BuilderAutomaticDraftCheckpointServiceError extends Error {
   constructor() {
-    super('Automatic draft checkpoint could not be recorded.');
+    super('Automatic draft checkpoint is unavailable.');
     this.name = 'BuilderAutomaticDraftCheckpointServiceError';
     this.code = 'builder_automatic_draft_checkpoint_unavailable';
     this.retryable = false;
@@ -177,6 +194,16 @@ function absentStatus() {
   });
 }
 
+function absentTimeline() {
+  return freezeDeep({
+    result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+    service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+    operation: 'current_draft_checkpoint_timeline_read',
+    status: 'absent',
+    draft_checkpoint_timeline_projection: null,
+  });
+}
+
 function createBuilderAutomaticDraftCheckpointService(rawOptions) {
   exactObject(rawOptions, OPTION_KEYS);
   const addressStore = valueAt(rawOptions, 'address_store');
@@ -196,6 +223,12 @@ function createBuilderAutomaticDraftCheckpointService(rawOptions) {
     'store_version',
     'read_latest_draft_checkpoint_for_task',
   );
+  const listCheckpoints = ownMethod(
+    checkpointStore,
+    BUILDER_DRAFT_CHECKPOINT_STORE_VERSION,
+    'store_version',
+    'list_draft_checkpoints_for_task',
+  );
   const recordCheckpoint = ownMethod(
     recordingService,
     BUILDER_DRAFT_CHECKPOINT_RECORDING_SERVICE_VERSION,
@@ -212,6 +245,26 @@ function createBuilderAutomaticDraftCheckpointService(rawOptions) {
     const status = valueAt(result, 'status');
     if (status !== 'absent' && status !== 'ready') fail();
     return result;
+  }
+
+  function readTaskCheckpointList(projectId, taskAddressId) {
+    const result = Reflect.apply(listCheckpoints, checkpointStore, [{
+      project_id: projectId,
+      task_address_id: taskAddressId,
+    }]);
+    if (!isPlainObject(result)) fail();
+    const status = valueAt(result, 'status');
+    const entries = valueAt(result, 'draft_checkpoints');
+    if (
+      (status !== 'absent' && status !== 'ready')
+      || !Array.isArray(entries)
+      || (status === 'absent') !== (entries.length === 0)
+    ) fail();
+    return result;
+  }
+
+  function readTaskCheckpoints(projectId, taskAddressId) {
+    return valueAt(readTaskCheckpointList(projectId, taskAddressId), 'draft_checkpoints');
   }
 
   return freezeDeep({
@@ -318,6 +371,163 @@ function createBuilderAutomaticDraftCheckpointService(rawOptions) {
           draft_checkpoint_status_projection: projectBuilderDraftCheckpointStatus({
             latest_draft_checkpoint_read_result: latest,
           }),
+        });
+      } catch (error) {
+        if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;
+        fail();
+      }
+    },
+
+    read_current_checkpoint_timeline(rawRequest) {
+      try {
+        exactObject(rawRequest, READ_TIMELINE_KEYS);
+        const projectId = safePattern(valueAt(rawRequest, 'project_id'), PROJECT_ID_PATTERN);
+        const conversationId = safePattern(
+          valueAt(rawRequest, 'conversation_id'),
+          CONVERSATION_ID_PATTERN,
+        );
+        const candidateId = safePattern(valueAt(rawRequest, 'candidate_id'), CANDIDATE_ID_PATTERN);
+        let address;
+        try {
+          address = currentAddress(readCurrentAddress, addressStore, projectId, conversationId);
+        } catch {
+          return absentTimeline();
+        }
+        const checkpointList = readTaskCheckpointList(
+          projectId,
+          address.task_address.task_address_id,
+        );
+        const entries = valueAt(checkpointList, 'draft_checkpoints');
+        const latestEntry = entries.at(-1);
+        const latestCandidateId = latestEntry === undefined
+          ? null
+          : valueAt(valueAt(valueAt(latestEntry, 'draft_checkpoint'), 'candidate_ref'), 'candidate_id');
+        if (
+          valueAt(checkpointList, 'status') !== 'ready'
+          || latestCandidateId !== candidateId
+        ) return absentTimeline();
+        return freezeDeep({
+          result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+          service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+          operation: 'current_draft_checkpoint_timeline_read',
+          status: 'ready',
+          draft_checkpoint_timeline_projection: projectBuilderDraftCheckpointTimeline({
+            checkpoint_list_result: checkpointList,
+            current_candidate_id: candidateId,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;
+        fail();
+      }
+    },
+
+    prepare_previous_checkpoint_restore(rawRequest) {
+      try {
+        exactObject(rawRequest, PREPARE_UNDO_KEYS);
+        const projectId = safePattern(valueAt(rawRequest, 'project_id'), PROJECT_ID_PATTERN);
+        const conversationId = safePattern(
+          valueAt(rawRequest, 'conversation_id'),
+          CONVERSATION_ID_PATTERN,
+        );
+        const candidateId = safePattern(valueAt(rawRequest, 'candidate_id'), CANDIDATE_ID_PATTERN);
+        const address = currentAddress(readCurrentAddress, addressStore, projectId, conversationId);
+        const entries = readTaskCheckpoints(projectId, address.task_address.task_address_id);
+        if (entries.length === 0) fail();
+        const checkpoints = entries.map((entry) => {
+          if (!isPlainObject(entry)) fail();
+          const checkpoint = valueAt(entry, 'draft_checkpoint');
+          if (!isPlainObject(checkpoint)) fail();
+          return checkpoint;
+        });
+        const latest = checkpoints.at(-1);
+        if (
+          latest.project_id !== projectId
+          || latest.conversation_id !== conversationId
+          || latest.task_address_id !== address.task_address.task_address_id
+          || latest.candidate_ref.candidate_id !== candidateId
+        ) fail();
+
+        let logicalIndex = checkpoints.length - 1;
+        if (latest.summary.startsWith(RESTORED_CHECKPOINT_SUMMARY_PREFIX)) {
+          const matchingIndex = checkpoints.findLastIndex((checkpoint, index) => (
+            index < checkpoints.length - 1
+            && checkpoint.candidate_ref.resulting_tree_digest
+              === latest.candidate_ref.resulting_tree_digest
+          ));
+          if (matchingIndex >= 0) logicalIndex = matchingIndex;
+        }
+        const targetIndex = logicalIndex - 1;
+        if (targetIndex < 0) {
+          return freezeDeep({
+            result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+            service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+            operation: 'draft_baseline_restore_prepared',
+            status: 'baseline',
+            target_checkpoint: null,
+          });
+        }
+        const target = checkpoints[targetIndex];
+        return freezeDeep({
+          result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+          service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+          operation: 'previous_checkpoint_restore_prepared',
+          status: 'ready',
+          target_checkpoint: target,
+        });
+      } catch (error) {
+        if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;
+        fail();
+      }
+    },
+
+    prepare_checkpoint_sequence_restore(rawRequest) {
+      try {
+        exactObject(rawRequest, PREPARE_SEQUENCE_KEYS);
+        const projectId = safePattern(valueAt(rawRequest, 'project_id'), PROJECT_ID_PATTERN);
+        const conversationId = safePattern(
+          valueAt(rawRequest, 'conversation_id'),
+          CONVERSATION_ID_PATTERN,
+        );
+        const candidateId = safePattern(valueAt(rawRequest, 'candidate_id'), CANDIDATE_ID_PATTERN);
+        const checkpointSequence = valueAt(rawRequest, 'checkpoint_sequence');
+        if (
+          !Number.isSafeInteger(checkpointSequence)
+          || checkpointSequence < 1
+          || checkpointSequence > MAX_CHECKPOINT_SEQUENCE
+        ) fail();
+        const address = currentAddress(readCurrentAddress, addressStore, projectId, conversationId);
+        const entries = readTaskCheckpoints(projectId, address.task_address.task_address_id);
+        if (entries.length < 2) fail();
+        const checkpoints = entries.map((entry) => {
+          if (!isPlainObject(entry)) fail();
+          const checkpoint = valueAt(entry, 'draft_checkpoint');
+          if (!isPlainObject(checkpoint)) fail();
+          return checkpoint;
+        });
+        const latest = checkpoints.at(-1);
+        if (
+          latest.project_id !== projectId
+          || latest.conversation_id !== conversationId
+          || latest.task_address_id !== address.task_address.task_address_id
+          || latest.candidate_ref.candidate_id !== candidateId
+          || checkpointSequence >= latest.checkpoint_sequence
+        ) fail();
+        const target = checkpoints.find((checkpoint) => (
+          checkpoint.checkpoint_sequence === checkpointSequence
+        ));
+        if (
+          target === undefined
+          || target.project_id !== projectId
+          || target.conversation_id !== conversationId
+          || target.task_address_id !== address.task_address.task_address_id
+        ) fail();
+        return freezeDeep({
+          result_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_RESULT_VERSION,
+          service_version: BUILDER_AUTOMATIC_DRAFT_CHECKPOINT_SERVICE_VERSION,
+          operation: 'selected_checkpoint_restore_prepared',
+          status: 'ready',
+          target_checkpoint: target,
         });
       } catch (error) {
         if (error instanceof BuilderAutomaticDraftCheckpointServiceError) throw error;

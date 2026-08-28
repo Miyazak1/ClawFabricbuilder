@@ -42,10 +42,14 @@ function digest(value) {
 }
 
 function request({ instruction = 'Make a focus timer.', existingProjectId = null } = {}) {
+  const taskAddressId = existingProjectId === null
+    ? null
+    : `builder-task-address:${UUID}`;
   const unsigned = {
-    version: 'builder-generation-request.v2',
+    version: 'builder-generation-request.v3',
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: taskAddressId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
 }
@@ -758,7 +762,7 @@ test('reports fixed generation progress stages around provider transport', async
   ]);
 });
 
-test('observes provider output deltas with the current run context', async () => {
+test('does not expose structured build JSON as user-visible output', async () => {
   const observed = [];
   let controlKeys = [];
   const rawRequest = request();
@@ -769,8 +773,6 @@ test('observes provider output deltas with the current run context', async () =>
     },
     transport: async (_input, control) => {
       controlKeys = Reflect.ownKeys(control).sort();
-      await control.on_output_delta({ delta_text: '{"kind"' });
-      await control.on_output_delta({ delta_text: ':"builder_code_project"}' });
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput()),
@@ -781,16 +783,8 @@ test('observes provider output deltas with the current run context', async () =>
   const result = await adapter.generate(rawRequest);
 
   assert.equal(result.request_id, rawRequest.request_digest);
-  assert.deepEqual(controlKeys, ['on_output_delta', 'signal']);
-  assert.deepEqual(observed.map((event) => event.delta_text), [
-    '{"kind"',
-    ':"builder_code_project"}',
-  ]);
-  assert.equal(observed[0].context.project_id, PROJECT_ID);
-  assert.equal(observed[0].context.turn_id, TURN_ID);
-  assert.equal(observed[0].context.task_id, TASK_ID);
-  assert.equal(observed[0].context.run_id, RUN_ID);
-  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.deepEqual(controlKeys, ['signal']);
+  assert.deepEqual(observed, []);
   assert.doesNotMatch(JSON.stringify(observed), /real-key|provider\.example|builder-model/iu);
 });
 
@@ -824,6 +818,37 @@ test('generates a bounded explanation without candidate or Git context', async (
   assert.doesNotMatch(JSON.stringify(result), /real-key|provider\.example|builder-model|candidate_digest|git_request|operations/iu);
 });
 
+test('projects only the explanation string as incremental user-visible output', async () => {
+  const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
+  const base = sourceTree([{ path: 'src/app.js', content: 'export const saved = true;\n' }]);
+  const observed = [];
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildExplanationContext: (raw) => explanationContextFor(raw, { base_source_tree: base }),
+    onOutputDelta(event) {
+      observed.push(event);
+    },
+    transport: async (_input, control) => {
+      const chunks = [
+        '{"kind":"builder_conversation_explanation","title":"Current project",',
+        '"summary":"A bounded answer.","explanation":"This project ',
+        'renders a quiet timer with \\u4e2d\\u6587 ',
+        'support."}',
+      ];
+      for (const delta_text of chunks) await control.on_output_delta({ delta_text });
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerExplanation()),
+      };
+    },
+  }));
+
+  await adapter.explain(rawRequest);
+
+  assert.equal(observed.map((event) => event.delta_text).join(''), 'This project renders a quiet timer with 中文 support.');
+  assert.equal(observed.every((event) => event.context.project_id === PROJECT_ID), true);
+  assert.doesNotMatch(JSON.stringify(observed), /builder_conversation_explanation|"summary"|"kind"/u);
+});
+
 test('repairs a plan-shaped response in the read-only explanation route', async () => {
   const rawRequest = request({ instruction: '帮我写一个方案', existingProjectId: null });
   const transportInputs = [];
@@ -853,6 +878,8 @@ test('repairs a plan-shaped response in the read-only explanation route', async 
   assert.equal(transportInputs[0][0].messages.length, 2);
   assert.equal(transportInputs[1][0].messages.length, 3);
   assert.match(transportInputs[1][0].messages[2].content, /previous answer response could not be verified/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /Preserve the language of the original end-user instruction/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /must not change the response language/iu);
   assert.match(transportInputs[1][0].messages[2].content, /Set kind to builder_conversation_explanation/u);
   assert.match(transportInputs[1][0].messages[2].content, /write that plan as normal text in explanation/iu);
   assert.doesNotMatch(
@@ -896,9 +923,6 @@ test('generates a bounded plan proposal from source context without creating Git
     },
     transport: async (...args) => {
       transportInput = args;
-      await args[1].on_output_delta({ delta_text: '{"kind":"builder_project_plan_proposal",' });
-      await args[1].on_output_delta({ delta_text: '"summary":"Prepare a bounded' });
-      await args[1].on_output_delta({ delta_text: ' implementation","steps":[]}' });
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerPlan()),
@@ -924,22 +948,14 @@ test('generates a bounded plan proposal from source context without creating Git
   assert.match(transportInput[0].messages[1].content, /Plan a smaller settings panel/u);
   assert.match(transportInput[0].messages[1].content, /export const Settings/u);
   assert.equal(transportInput[1].signal instanceof AbortSignal, true);
-  assert.equal(typeof transportInput[1].on_output_delta, 'function');
+  assert.equal(Object.hasOwn(transportInput[1], 'on_output_delta'), false);
   assert.deepEqual(stages, [
     { stage: 'context_ready', eventCount: 2 },
     { stage: 'provider_request_started', eventCount: 2 },
     { stage: 'provider_response_received', eventCount: 2 },
     { stage: 'result_preparing', eventCount: 2 },
   ]);
-  assert.deepEqual(observed.map((event) => event.delta_text), [
-    '{"kind":"builder_project_plan_proposal",',
-    '"summary":"Prepare a bounded',
-    ' implementation","steps":[]}',
-  ]);
-  assert.equal(observed[0].context.project_id, PROJECT_ID);
-  assert.equal(observed[0].context.turn_id, TURN_ID);
-  assert.equal(observed[0].context.task_id, TASK_ID);
-  assert.equal(observed[0].context.run_id, RUN_ID);
+  assert.deepEqual(observed, []);
   assert.match(
     result.context.source_context_result.private_source_context.files[0].content,
     /export const Settings/u,
@@ -986,6 +1002,8 @@ test('repairs a malformed plan response once while keeping the final plan exact'
   assert.equal(transportInputs[0][0].messages.length, 2);
   assert.equal(transportInputs[1][0].messages.length, 3);
   assert.match(transportInputs[1][0].messages[2].content, /previous plan response could not be verified/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /Preserve the language of the original end-user instruction/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /must not change the response language/iu);
   assert.match(transportInputs[1][0].messages[2].content, /120 characters or fewer/iu);
   assert.match(transportInputs[1][0].messages[2].content, /1200 characters or fewer/iu);
   assert.match(transportInputs[1][0].messages[2].content, /360 characters or fewer/iu);

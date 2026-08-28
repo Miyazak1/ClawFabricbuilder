@@ -27,7 +27,9 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
+const RUN_ID = `builder-run:${UUID}`;
+const TOOL_CALL_ID = `builder-tool-call:${UUID}`;
 const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
 const CHECKPOINT_ID = `builder-draft-checkpoint:${'8'.repeat(64)}`;
 const CANDIDATE_ID = `builder-code-change-candidate:${'4'.repeat(64)}`;
@@ -133,6 +135,26 @@ function serviceFixture(tree = sourceTree()) {
         return sourceResult(tree);
       },
     },
+    runtime_snapshot_source_service: {
+      service_version: 'builder-runtime-workspace-source-service.v1',
+      resolve_runtime_tool_source(request) {
+        return {
+          store_version: 'builder-runtime-workspace-snapshot-store.v1',
+          ...request,
+          selected_path: 'src/app.ts',
+          source_tree: tree,
+        };
+      },
+      resolve_runtime_snapshot_source(request) {
+        return {
+          store_version: 'builder-runtime-workspace-snapshot-store.v1',
+          project_id: request.project_id,
+          conversation_id: request.conversation_id,
+          run_id: RUN_ID,
+          source_tree: tree,
+        };
+      },
+    },
   });
   return { calls, service, tree };
 }
@@ -158,6 +180,27 @@ test('reads current draft file tree from main-owned source admission', async () 
   assert.deepEqual(fixture.calls, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
 });
 
+test('opens a persisted runtime tool file without renderer path authority', async () => {
+  const fixture = serviceFixture();
+  const treeProjection = await fixture.service.read_runtime_tool_file_tree({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    run_id: RUN_ID,
+    tool_call_id: TOOL_CALL_ID,
+  });
+
+  assert.equal(treeProjection.source_kind, 'runtime_snapshot');
+  assert.equal(treeProjection.root_label, 'Run files');
+  assert.equal(treeProjection.selected_file_ref.path, 'src/app.ts');
+  const content = await fixture.service.read_current_draft_file_content({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    file_ref: treeProjection.selected_file_ref,
+  });
+  assert.equal(content.source_kind, 'runtime_snapshot');
+  assert.equal(content.text_preview, 'export const answer = 42;\n');
+});
+
 test('reads current draft file content only through a projected file ref', async () => {
   const fixture = serviceFixture();
   const treeProjection = await fixture.service.read_current_draft_file_tree({
@@ -177,6 +220,7 @@ test('reads current draft file content only through a projected file ref', async
   assert.equal(content.language_hint, 'typescript');
   assert.equal(content.text_preview, 'export const answer = 42;\n');
   assert.equal(content.authority.renderer_path_authority, 'main_issued_file_ref_only');
+  assert.deepEqual(fixture.calls, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
 });
 
 test('rejects renderer source, raw path, and stale file refs before reading content', async () => {

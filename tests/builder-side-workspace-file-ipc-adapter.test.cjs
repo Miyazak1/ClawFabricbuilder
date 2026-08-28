@@ -8,6 +8,7 @@ const test = require('node:test');
 const {
   READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL,
   READ_CURRENT_DRAFT_FILE_TREE_CHANNEL,
+  READ_RUNTIME_TOOL_FILE_TREE_CHANNEL,
   BuilderSideWorkspaceFileIpcError,
   createBuilderSideWorkspaceFileIpcAdapter,
 } = require('../electron/builder-side-workspace-file-ipc-adapter.cjs');
@@ -21,7 +22,9 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
+const RUN_ID = `builder-run:${UUID}`;
+const TOOL_CALL_ID = `builder-tool-call:${UUID}`;
 
 function windowAuthority() {
   const webContents = Object.freeze({ isDestroyed: () => false });
@@ -96,6 +99,10 @@ function adapter(overrides = {}) {
       calls.push(['content', body]);
       return contentProjection(sourceTree, body.file_ref);
     }),
+    readRuntimeToolFileTree: overrides.readRuntimeToolFileTree ?? (async (body) => {
+      calls.push(['runtime-tree', body]);
+      return fileTree;
+    }),
     mainWindowRef: active.mainWindowRef,
   });
   return { active, calls, fileEntry, fileTree, sourceTree, value };
@@ -110,13 +117,16 @@ test('side workspace file adapter exposes fixed read-only channels only', async 
   assert.deepEqual(value.exposed_methods, [
     'readCurrentDraftFileTree',
     'readCurrentDraftFileContent',
+    'readRuntimeToolFileTree',
   ]);
   assert.deepEqual(Object.keys(value.channels), [
     'readCurrentDraftFileTree',
     'readCurrentDraftFileContent',
+    'readRuntimeToolFileTree',
   ]);
   assert.equal(value.channels.readCurrentDraftFileTree.channel, READ_CURRENT_DRAFT_FILE_TREE_CHANNEL);
   assert.equal(value.channels.readCurrentDraftFileContent.channel, READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL);
+  assert.equal(value.channels.readRuntimeToolFileTree.channel, READ_RUNTIME_TOOL_FILE_TREE_CHANNEL);
   assert.equal(value.authority.active_renderer_required, true);
   assert.equal(value.authority.source_tree_from_renderer, false);
   assert.equal(value.authority.raw_path_from_renderer, false);
@@ -131,6 +141,22 @@ test('side workspace file adapter exposes fixed read-only channels only', async 
   assert.equal(Object.isFrozen(projected), true);
   assert.equal(Object.isFrozen(projected.entries), true);
   assert.doesNotMatch(JSON.stringify(projected), /"content":|"text_preview":|"source_tree":/u);
+});
+
+test('runtime tool file resolution accepts only main-issued run and tool identities', async () => {
+  const { active, calls, value } = adapter();
+  const runtimeRequest = {
+    ...request(),
+    run_id: RUN_ID,
+    tool_call_id: TOOL_CALL_ID,
+  };
+  const projection = await value.channels.readRuntimeToolFileTree.invoke(active.event, runtimeRequest);
+  assert.equal(projection.selected_file_ref, null);
+  assert.deepEqual(calls, [['runtime-tree', runtimeRequest]]);
+  await assert.rejects(
+    value.channels.readRuntimeToolFileTree.invoke(active.event, { ...runtimeRequest, path: 'src/app.ts' }),
+    { code: 'builder_side_workspace_file_invalid' },
+  );
 });
 
 test('side workspace file adapter reads content through a bounded file ref only', async () => {

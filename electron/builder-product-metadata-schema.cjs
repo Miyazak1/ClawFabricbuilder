@@ -19,7 +19,10 @@ const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_PATTERN}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_PATTERN}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_PATTERN}(?::${UUID_PATTERN})?$`,
+  'u',
+);
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_PATTERN}$`, 'u');
 const REQUEST_ID_PATTERN = new RegExp(`^builder-git-request:${UUID_PATTERN}$`, 'u');
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;

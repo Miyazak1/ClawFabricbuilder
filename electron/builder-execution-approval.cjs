@@ -2,6 +2,10 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const {
   sanitizeBuilderApprovedPlanContinuationAdmission,
@@ -114,7 +118,6 @@ const AUTHORITY = Object.freeze({
   save_version_authority: 'not_present',
 });
 const PROJECT_ID_PATTERN = /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONVERSATION_ID_PATTERN = /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN = /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ID_PATTERN = /^builder-task:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RUN_ID_PATTERN = /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -338,7 +341,7 @@ function sanitizeBuilderExecutionApproval(rawValue) {
     const source = exactObject(rawValue, RECORD_KEYS);
     const projectId = safePattern(valueAt(source, 'project_id'), PROJECT_ID_PATTERN);
     const conversationId = safePattern(valueAt(source, 'conversation_id'), CONVERSATION_ID_PATTERN);
-    if (conversationId.slice('builder-conversation:'.length) !== projectId.slice('builder-project:'.length)) fail();
+    sanitizeBuilderConversationAddress(projectId, conversationId);
     const approvedAtMs = safeTimestamp(valueAt(source, 'approved_at_ms'));
     const expiresAtMs = safeTimestamp(valueAt(source, 'expires_at_ms'));
     if (expiresAtMs <= approvedAtMs || expiresAtMs - approvedAtMs > 60_000) fail();

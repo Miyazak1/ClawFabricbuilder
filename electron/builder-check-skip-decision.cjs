@@ -49,6 +49,16 @@ const AUTHORITY = Object.freeze({
   check_execution: 'not_performed_by_decision',
   save_authority: 'not_granted',
 });
+const AUTOMATIC_NO_CHECKS_AUTHORITY = Object.freeze({
+  record_authority: 'main_owned_check_skip_decision_contract_v1',
+  intent_evidence: 'main_verified_no_project_checks',
+  check_execution: 'not_performed_by_decision',
+  save_authority: 'not_granted',
+});
+const REASON_CODES = Object.freeze([
+  'user_chose_save_without_check',
+  'no_project_checks_detected',
+]);
 
 class BuilderCheckSkipDecisionError extends Error {
   constructor() {
@@ -138,21 +148,28 @@ function bodyFromInput(rawInput) {
     resulting_tree_digest: safePattern(valueAt(input, 'resulting_tree_digest'), DIGEST_PATTERN),
     reason_code: valueAt(input, 'reason_code'),
     decided_at_ms: safeTime(valueAt(input, 'decided_at_ms')),
-    authority: AUTHORITY,
+    authority: authorityForReason(valueAt(input, 'reason_code')),
   };
-  if (body.reason_code !== 'user_chose_save_without_check') fail();
+  if (!REASON_CODES.includes(body.reason_code)) fail();
   return Object.freeze(body);
+}
+
+function authorityForReason(reasonCode) {
+  if (reasonCode === 'user_chose_save_without_check') return AUTHORITY;
+  if (reasonCode === 'no_project_checks_detected') return AUTOMATIC_NO_CHECKS_AUTHORITY;
+  fail();
 }
 
 function assertDecision(rawDecision) {
   const decision = exactObject(rawDecision, DECISION_KEYS);
   const authority = exactObject(valueAt(decision, 'authority'), AUTHORITY_KEYS);
-  for (const key of AUTHORITY_KEYS) {
-    if (valueAt(authority, key) !== AUTHORITY[key]) fail();
-  }
   const body = bodyFromInput(Object.fromEntries(INPUT_KEYS.map(
     (key) => [key, valueAt(decision, key)],
   )));
+  const expectedAuthority = authorityForReason(body.reason_code);
+  for (const key of AUTHORITY_KEYS) {
+    if (valueAt(authority, key) !== expectedAuthority[key]) fail();
+  }
   const decisionDigest = digest(body);
   if (
     valueAt(decision, 'decision_version') !== BUILDER_CHECK_SKIP_DECISION_VERSION
@@ -165,7 +182,7 @@ function assertDecision(rawDecision) {
     decision_id: valueAt(decision, 'decision_id'),
     decision_digest: decisionDigest,
     ...Object.fromEntries(INPUT_KEYS.map((key) => [key, body[key]])),
-    authority: AUTHORITY,
+    authority: expectedAuthority,
   });
 }
 
@@ -177,7 +194,7 @@ function createBuilderCheckSkipDecision(rawInput) {
     decision_id: `builder-check-skip-decision:${decisionDigest.slice('sha256:'.length)}`,
     decision_digest: decisionDigest,
     ...Object.fromEntries(INPUT_KEYS.map((key) => [key, body[key]])),
-    authority: AUTHORITY,
+    authority: body.authority,
   });
 }
 

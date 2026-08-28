@@ -31,10 +31,12 @@ const ENV_ALLOWLIST = Object.freeze([
 ]);
 const REQUIRED_SELECTORS = Object.freeze([
   SELECTORS.projectPage,
-  SELECTORS.workspaceChip,
   SELECTORS.idea,
   SELECTORS.composerAddMenuButton,
-  '[data-builder-rail-item="projects"]',
+  '[data-builder-rail-item="agents"]',
+  '[data-builder-agent-roster="true"]',
+  '[data-builder-agent-id]',
+  '[data-builder-agent-workbench-stream="true"]',
   '[data-builder-rail-item="settings"]',
 ]);
 const ERROR_MESSAGES = Object.freeze({
@@ -219,6 +221,15 @@ async function assertTextIncludes(page, selector, expected) {
   if (typeof text !== 'string' || !text.includes(expected)) fail('launch_smoke_failed');
 }
 
+async function assertAbsent(page, selector) {
+  try {
+    if (await page.locator(selector).count() !== 0) fail('launch_smoke_failed');
+  } catch (error) {
+    if (error instanceof BuilderPackagedLaunchSmokeError) throw error;
+    fail('launch_smoke_failed');
+  }
+}
+
 async function assertBridgeShape(page) {
   let bridge;
   try {
@@ -226,6 +237,8 @@ async function assertBridgeShape(page) {
       const root = globalThis.clawfabricBuilder;
       return {
         bridgeVersion: root?.bridgeVersion ?? null,
+        agentProjectTree: typeof root?.agentProjectTree?.read,
+        agentWorkbench: typeof root?.agentWorkbench?.read,
         checkRun: typeof root?.checkRun?.readCurrentDraftAvailableChecks,
         codeGenerator: typeof root?.codeGenerator?.answer,
         projectWorkspace: typeof root?.projectWorkspace?.listCurrent,
@@ -241,6 +254,8 @@ async function assertBridgeShape(page) {
     !isPlainObject(bridge)
     || typeof bridge.bridgeVersion !== 'string'
     || !/^builder-preload\.v\d+$/u.test(bridge.bridgeVersion)
+    || bridge.agentProjectTree !== 'function'
+    || bridge.agentWorkbench !== 'function'
     || bridge.checkRun !== 'function'
     || bridge.codeGenerator !== 'function'
     || bridge.projectWorkspace !== 'function'
@@ -253,8 +268,10 @@ async function assertBridgeShape(page) {
 
 async function assertBasicUi(page) {
   for (const selector of REQUIRED_SELECTORS) await assertVisible(page, selector);
-  await assertTextIncludes(page, SELECTORS.workspaceChip, 'Choose project');
-  await assertTextIncludes(page, '[data-builder-rail-item="projects"]', 'Projects');
+  await assertTextIncludes(page, '[data-builder-rail-item="agents"]', 'Agents');
+  await assertTextIncludes(page, '[data-builder-agent-id]', 'Builder');
+  await assertAbsent(page, SELECTORS.workspaceChip);
+  await assertAbsent(page, '[data-builder-workbench-context="true"]');
   await assertTextIncludes(page, '[data-builder-rail-item="settings"]', 'Settings');
   return assertBridgeShape(page);
 }

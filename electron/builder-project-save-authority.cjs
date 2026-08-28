@@ -12,6 +12,9 @@ const {
 const {
   BUILDER_CHECK_RUN_SAVE_GATE_VERSION,
 } = require('./builder-check-run-save-gate.cjs');
+const {
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_PROJECT_SAVE_AUTHORITY_VERSION = 'builder-project-save-authority.v1';
 const BUILDER_PROJECT_SAVE_RESULT_VERSION = 'builder-project-save-result.v1';
@@ -32,7 +35,6 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
 const ID_PATTERNS = Object.freeze({
-  conversation_id: new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u'),
   turn_id: new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u'),
   task_id: new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u'),
   run_id: new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u'),
@@ -91,6 +93,24 @@ function exactObject(value, keys) {
   if (
     actual.length !== keys.length
     || actual.some((key) => typeof key !== 'string' || !keys.includes(key))
+  ) fail('builder_project_save_invalid');
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+      fail('builder_project_save_invalid');
+    }
+  }
+}
+
+function exactObjectWithOptional(value, requiredKeys, optionalKeys) {
+  if (!isPlainObject(value)) fail('builder_project_save_invalid');
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length < requiredKeys.length
+    || actual.length > allowed.size
+    || actual.some((key) => typeof key !== 'string' || !allowed.has(key))
+    || requiredKeys.some((key) => !actual.includes(key))
   ) fail('builder_project_save_invalid');
   for (const key of actual) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -160,6 +180,14 @@ function safeDraftId(value) {
 function safeProjectId(value) {
   if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) fail('builder_project_save_invalid');
   return value;
+}
+
+function safeConversationId(projectId, value) {
+  try {
+    return sanitizeBuilderConversationAddress(projectId, value);
+  } catch {
+    fail('builder_project_save_invalid');
+  }
 }
 
 function safeBuilderId(value, key) {
@@ -426,6 +454,8 @@ function sanitizeCandidateProof(value, expectedGitRequestId) {
   const gitRequestId = safeBuilderId(valueAt(value, 'git_request_id'), 'request_id');
   const baseRevision = sanitizeBaseRevision(valueAt(value, 'base_revision'));
   const expectedBaseOid = safeOid(valueAt(value, 'expected_base_oid'), true);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
+  const conversationId = safeConversationId(projectId, valueAt(value, 'conversation_id'));
   if (
     gitRequestId !== expectedGitRequestId
     || (requestDigest !== null && safeDigest(requestDigest) !== requestDigest)
@@ -433,8 +463,8 @@ function sanitizeCandidateProof(value, expectedGitRequestId) {
   ) fail('builder_project_save_invalid');
   return freezeDeep({
     proof_version: 'builder-generation-pending-candidate-proof.v1',
-    project_id: safeProjectId(valueAt(value, 'project_id')),
-    conversation_id: safeBuilderId(valueAt(value, 'conversation_id'), 'conversation_id'),
+    project_id: projectId,
+    conversation_id: conversationId,
     turn_id: safeBuilderId(valueAt(value, 'turn_id'), 'turn_id'),
     task_id: safeBuilderId(valueAt(value, 'task_id'), 'task_id'),
     run_id: safeBuilderId(valueAt(value, 'run_id'), 'run_id'),
@@ -511,7 +541,27 @@ function sanitizeConversationVerification(value, draft) {
   const verifiedHead = valueAt(value, 'conversation_head');
   exactObject(verifiedHead, ['sequence', 'event_id', 'event_digest']);
   const candidateResult = valueAt(value, 'candidate_result');
-  exactObject(candidateResult, ['draft_id', 'title', 'summary', 'git_candidate_receipt']);
+  exactObjectWithOptional(
+    candidateResult,
+    ['draft_id', 'title', 'summary', 'git_candidate_receipt'],
+    ['current_materialization'],
+  );
+  let currentMaterializationStatus = 'not_recorded';
+  if (Object.hasOwn(candidateResult, 'current_materialization')) {
+    const materialization = valueAt(candidateResult, 'current_materialization');
+    exactObjectWithOptional(materialization, ['status'], ['reason']);
+    const status = valueAt(materialization, 'status');
+    if (
+      !['materialized', 'not_materialized', 'not_attempted', 'not_recorded'].includes(status)
+      || (status === 'materialized' && Object.hasOwn(materialization, 'reason'))
+      || (status === 'not_recorded' && Object.hasOwn(materialization, 'reason'))
+      || (status === 'not_materialized'
+        && valueAt(materialization, 'reason') !== 'current_projection_unavailable')
+      || (status === 'not_attempted'
+        && valueAt(materialization, 'reason') !== 'current_projection_not_configured')
+    ) fail('builder_project_save_invalid');
+    currentMaterializationStatus = status;
+  }
   const gitCandidateReceipt = valueAt(candidateResult, 'git_candidate_receipt');
   if (
     valueAt(value, 'verification_version')
@@ -530,7 +580,10 @@ function sanitizeConversationVerification(value, draft) {
     || valueAt(candidateResult, 'title') !== draft.title
     || valueAt(candidateResult, 'summary') !== draft.summary
   ) fail('builder_project_save_invalid');
-  return gitCandidateReceipt;
+  return freezeDeep({
+    git_candidate_receipt: gitCandidateReceipt,
+    current_materialization_status: currentMaterializationStatus,
+  });
 }
 
 function sanitizeConversationAcceptance(value, draft, candidate) {
@@ -770,7 +823,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         request.draft_id,
       );
       const candidate = draft.candidate_proof;
-      const recordedGitReceipt = sanitizeConversationVerification(
+      const conversationVerification = sanitizeConversationVerification(
         Reflect.apply(
           options.verifyConversationCandidate,
           options.conversationService,
@@ -786,6 +839,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         ),
         draft,
       );
+      const recordedGitReceipt = conversationVerification.git_candidate_receipt;
       const expectedBaseOid = candidate.expected_base_oid;
       const expectedCurrent = candidate.base_revision === null
         ? null
@@ -845,10 +899,15 @@ function createBuilderProjectSaveAuthority(rawOptions) {
         ),
         candidate,
       );
+      const freshWorkspaceDigest = freshWorkspace.source_tree.source_tree_digest;
+      const workspaceMatchesBase = freshWorkspaceDigest === workspaceBase.base_source_tree_digest;
+      const workspaceMatchesMaterializedCandidate = (
+        conversationVerification.current_materialization_status === 'materialized'
+        && freshWorkspaceDigest === candidate.resulting_tree_digest
+      );
       if (
         freshWorkspace.scan_status !== 'complete'
-        || freshWorkspace.source_tree.source_tree_digest
-          !== workspaceBase.base_source_tree_digest
+        || (!workspaceMatchesBase && !workspaceMatchesMaterializedCandidate)
       ) fail('builder_project_save_conflict');
       const project = await projectIdentity(candidate);
       return await Reflect.apply(
@@ -935,7 +994,7 @@ function createBuilderProjectSaveAuthority(rawOptions) {
       const projection = sanitizeCurrentProjection(
         await Reflect.apply(options.projectCurrent, options.currentProjection, [{
           candidate_receipt: gitReceipt,
-          expected_workspace_source_tree_digest: workspaceBase.base_source_tree_digest,
+          expected_workspace_source_tree_digest: freshWorkspaceDigest,
           projection_mode: projectionMode,
         }]),
         gitReceipt,

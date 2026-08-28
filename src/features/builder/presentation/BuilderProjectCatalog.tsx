@@ -1,4 +1,5 @@
-import { FolderOpen, Plus, RefreshCw } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
+import { Archive, FolderOpen, MoreVertical, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 
 import {
   isTrustedBuilderProjectCatalogSnapshot,
@@ -7,9 +8,11 @@ import {
 
 export type BuilderProjectCatalogProps = Readonly<{
   snapshot: BuilderProjectCatalogSnapshot;
+  onArchiveProject?: (projectId: string) => Promise<unknown> | void;
   onOpenProject?: (projectId: string) => void;
   onCreateProject?: () => void;
   onRefresh?: () => void;
+  onRenameProject?: (projectId: string, title: string) => Promise<unknown> | void;
 }>;
 
 function sourceFolderBoundaryLabel(folderName: string | undefined): string {
@@ -18,9 +21,11 @@ function sourceFolderBoundaryLabel(folderName: string | undefined): string {
 
 export function BuilderProjectCatalog({
   snapshot,
+  onArchiveProject,
   onOpenProject,
   onCreateProject,
   onRefresh,
+  onRenameProject,
 }: BuilderProjectCatalogProps) {
   const trusted = isTrustedBuilderProjectCatalogSnapshot(snapshot);
   const status = trusted ? snapshot.status : 'unavailable';
@@ -95,24 +100,18 @@ export function BuilderProjectCatalog({
       {projects.length > 0 ? (
         <ul className="cf-builder-project-list" aria-label="Saved projects">
           {projects.map((project) => (
-            <li key={project.project_id}>
-              <button
-                className="cf-builder-project-row grid min-h-20 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                data-builder-project-id={project.project_id}
-                disabled={busy || typeof onOpenProject !== 'function'}
-                onClick={() => onOpenProject?.(project.project_id)}
-                type="button"
-              >
-                <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{project.title}</span>
-                  <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
-                    {project.summary}
-                  </span>
-                </span>
-                <span className="text-xs text-muted-foreground">Version {project.revision_number}</span>
-              </button>
-            </li>
+            <BuilderProjectCatalogRow
+              badge={`Version ${project.revision_number}`}
+              busy={busy}
+              key={project.project_id}
+              onArchiveProject={onArchiveProject}
+              onOpenProject={onOpenProject}
+              onRenameProject={onRenameProject}
+              projectId={project.project_id}
+              rowKind="saved"
+              summary={project.summary}
+              title={project.title}
+            />
           ))}
         </ul>
       ) : null}
@@ -121,28 +120,186 @@ export function BuilderProjectCatalog({
           <p className="cf-builder-catalog-section-label">In progress</p>
           <ul className="cf-builder-project-list" aria-label="Unsaved projects">
             {workspaceProjects.map((project) => (
-              <li key={project.project_id}>
-                <button
-                  className="cf-builder-project-row grid min-h-16 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                  data-builder-workspace-catalog-project={project.project_id}
-                  disabled={busy || typeof onOpenProject !== 'function'}
-                  onClick={() => onOpenProject?.(project.project_id)}
-                  type="button"
-                >
-                  <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{project.title}</span>
-                    <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
-                      {sourceFolderBoundaryLabel(project.source_folders[0]?.name)}
-                    </span>
-                  </span>
-                  <span className="text-xs text-muted-foreground">Draft</span>
-                </button>
-              </li>
+              <BuilderProjectCatalogRow
+                badge="Draft"
+                busy={busy}
+                key={project.project_id}
+                onArchiveProject={onArchiveProject}
+                onOpenProject={onOpenProject}
+                onRenameProject={onRenameProject}
+                projectId={project.project_id}
+                rowKind="workspace"
+                summary={sourceFolderBoundaryLabel(project.source_folders[0]?.name)}
+                title={project.title}
+              />
             ))}
           </ul>
         </div>
       ) : null}
     </section>
+  );
+}
+
+function BuilderProjectCatalogRow({
+  badge,
+  busy,
+  onArchiveProject,
+  onOpenProject,
+  onRenameProject,
+  projectId,
+  rowKind,
+  summary,
+  title,
+}: Readonly<{
+  badge: string;
+  busy: boolean;
+  onArchiveProject?: (projectId: string) => Promise<unknown> | void;
+  onOpenProject?: (projectId: string) => void;
+  onRenameProject?: (projectId: string, title: string) => Promise<unknown> | void;
+  projectId: string;
+  rowKind: 'saved' | 'workspace';
+  summary: string;
+  title: string;
+}>) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(title);
+  const canRename = typeof onRenameProject === 'function';
+  const canArchive = typeof onArchiveProject === 'function';
+  const showActions = canRename || canArchive;
+  const openDataAttribute = rowKind === 'saved'
+    ? { 'data-builder-project-id': projectId }
+    : { 'data-builder-workspace-catalog-project': projectId };
+
+  function submitRename(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const nextTitle = draftTitle.trim();
+    if (!canRename || nextTitle.length === 0 || nextTitle === title) {
+      setRenaming(false);
+      setMenuOpen(false);
+      setDraftTitle(title);
+      return;
+    }
+    void onRenameProject(projectId, nextTitle);
+    setRenaming(false);
+    setMenuOpen(false);
+  }
+
+  return (
+    <li
+      data-builder-project-catalog-row={rowKind}
+      data-builder-project-lifecycle-target={projectId}
+    >
+      {renaming ? (
+        <form
+          className="cf-builder-project-rename-form"
+          data-builder-project-rename-form={projectId}
+          onSubmit={submitRename}
+        >
+          <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
+          <input
+            aria-label="Project name"
+            className="cf-builder-input"
+            data-builder-project-rename-input={projectId}
+            onChange={(event) => setDraftTitle(event.currentTarget.value)}
+            value={draftTitle}
+          />
+          <span className="cf-builder-project-rename-actions">
+            <button
+              className="cf-builder-secondary-button"
+              data-builder-project-rename-cancel={projectId}
+              onClick={() => {
+                setDraftTitle(title);
+                setRenaming(false);
+              }}
+              type="button"
+            >
+              <X aria-hidden="true" className="size-3.5" />
+              Cancel
+            </button>
+            <button
+              className="cf-builder-primary-button"
+              data-builder-project-rename-save={projectId}
+              disabled={draftTitle.trim().length === 0}
+              type="submit"
+            >
+              Save
+            </button>
+          </span>
+        </form>
+      ) : (
+        <div className="cf-builder-project-row-wrap">
+          <button
+            className="cf-builder-project-row grid min-h-16 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={busy || typeof onOpenProject !== 'function'}
+            onClick={() => onOpenProject?.(projectId)}
+            type="button"
+            {...openDataAttribute}
+          >
+            <FolderOpen aria-hidden="true" className="mt-0.5 size-4" />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{title}</span>
+              <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
+                {summary}
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">{badge}</span>
+          </button>
+          {showActions ? (
+            <span className="cf-builder-project-row-actions">
+              <button
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                aria-label={`Project actions for ${title}`}
+                className="cf-builder-project-action-button"
+                data-builder-project-actions={projectId}
+                onClick={() => setMenuOpen((open) => !open)}
+                title="Project actions"
+                type="button"
+              >
+                <MoreVertical aria-hidden="true" className="size-3.5" />
+              </button>
+              {menuOpen ? (
+                <span
+                  className="cf-builder-project-action-menu"
+                  data-builder-project-action-menu={projectId}
+                  role="menu"
+                >
+                  {canRename ? (
+                    <button
+                      data-builder-project-rename={projectId}
+                      onClick={() => {
+                        setDraftTitle(title);
+                        setRenaming(true);
+                        setMenuOpen(false);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Pencil aria-hidden="true" className="size-3.5" />
+                      Rename
+                    </button>
+                  ) : null}
+                  {canArchive ? (
+                    <button
+                      data-builder-project-archive={projectId}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onArchiveProject(projectId);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Archive aria-hidden="true" className="size-3.5" />
+                      Archive
+                    </button>
+                  ) : null}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      )}
+    </li>
   );
 }

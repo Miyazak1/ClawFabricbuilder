@@ -8,13 +8,18 @@ import { createBuilderConversationController } from '../application/builderConve
 import { createBuilderProjectHistoryController } from '../application/builderProjectHistoryController';
 import { createBuilderProjectCatalogController } from '../application/builderProjectCatalogController';
 import {
+  createBuilderLiveOutputStore,
+  type BuilderLiveOutputFrameScheduler,
+} from '../application/builderLiveOutputStore';
+import {
   BuilderGenerationDiagnosticError,
   type BuilderSideWorkspaceFileAuthority,
   type BuilderSideWorkspaceFileContentProjection,
   type BuilderSideWorkspaceFileRef,
   type BuilderSideWorkspaceFileTreeProjection,
 } from '../application/builderPorts';
-import { BuilderPage } from './BuilderPage';
+import { canStopBuilderAgentTask } from '../domain/builderAgentTaskMonitorProjection';
+import { BuilderPage, type BuilderFileName } from './BuilderPage';
 import {
   CONVERSATION_ID,
   DRAFT_ID,
@@ -62,6 +67,7 @@ const PLAN_SOURCE_READ_APPROVED = Object.freeze({
   approval_scope: 'current_project_plan_source_read',
   authority: 'main_selected_project_bounded_filesystem_read_v1',
 } as const);
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
 
 const SIDE_WORKSPACE_SOURCE_TREE_DIGEST = `sha256:${'a'.repeat(64)}`;
 const SIDE_WORKSPACE_APP_DIGEST = `sha256:${'b'.repeat(64)}`;
@@ -94,9 +100,14 @@ function sideWorkspaceFileAuthority(): BuilderSideWorkspaceFileAuthority {
   });
 }
 
-function sideWorkspaceFileRef(path: string, contentDigest: string): BuilderSideWorkspaceFileRef {
+function sideWorkspaceFileRef(
+  path: string,
+  contentDigest: string,
+  sourceKind: BuilderSideWorkspaceFileRef['source_kind'] = 'current_draft',
+): BuilderSideWorkspaceFileRef {
   return Object.freeze({
     file_ref_version: 'builder-side-workspace-file-ref.v1',
+    source_kind: sourceKind,
     source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
     path,
     content_digest: contentDigest,
@@ -108,6 +119,7 @@ function sideWorkspaceFileTree(
     Object.freeze({ path: 'src/App.tsx', contentDigest: SIDE_WORKSPACE_APP_DIGEST }),
     Object.freeze({ path: 'src/styles.css', contentDigest: SIDE_WORKSPACE_STYLE_DIGEST }),
   ]),
+  sourceKind: BuilderSideWorkspaceFileRef['source_kind'] = 'current_draft',
 ): BuilderSideWorkspaceFileTreeProjection {
   const hasSrcDirectory = files.some((file) => file.path.startsWith('src/'));
   const entries = [
@@ -128,19 +140,25 @@ function sideWorkspaceFileTree(
       parent_path: file.path.includes('/') ? file.path.split('/').slice(0, -1).join('/') : null,
       depth: file.path.includes('/') ? 1 : 0,
       content_digest: file.contentDigest,
-      file_ref: sideWorkspaceFileRef(file.path, file.contentDigest),
+      file_ref: sideWorkspaceFileRef(file.path, file.contentDigest, sourceKind),
     })),
   ];
   return Object.freeze({
     projection_version: 'builder-side-workspace-file-tree.v1',
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
-    source_kind: 'current_draft',
-    root_label: 'Current draft',
+    source_kind: sourceKind,
+    root_label: sourceKind === 'runtime_snapshot' ? 'Run files' : 'Current draft',
     source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
     entries: Object.freeze(entries),
-    selected_file_ref: files[0] === undefined ? null : sideWorkspaceFileRef(files[0].path, files[0].contentDigest),
-    source_ref: Object.freeze({ source_ref_kind: 'current_draft_checkpoint_candidate' }),
+    selected_file_ref: files[0] === undefined
+      ? null
+      : sideWorkspaceFileRef(files[0].path, files[0].contentDigest, sourceKind),
+    source_ref: Object.freeze({
+      source_ref_kind: sourceKind === 'runtime_snapshot'
+        ? 'runtime_workspace_snapshot'
+        : 'current_draft_checkpoint_candidate',
+    }),
     authority: sideWorkspaceFileAuthority(),
   });
 }
@@ -152,14 +170,15 @@ function sideWorkspaceFileContent(
   }),
   textPreview = 'export function App() { return <main />; }\n',
   languageHint: BuilderSideWorkspaceFileContentProjection['language_hint'] = 'typescript',
+  sourceKind: BuilderSideWorkspaceFileRef['source_kind'] = 'current_draft',
 ): BuilderSideWorkspaceFileContentProjection {
   return Object.freeze({
     projection_version: 'builder-side-workspace-file-content.v1',
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
-    source_kind: 'current_draft',
+    source_kind: sourceKind,
     source_tree_digest: SIDE_WORKSPACE_SOURCE_TREE_DIGEST,
-    file_ref: sideWorkspaceFileRef(file.path, file.contentDigest),
+    file_ref: sideWorkspaceFileRef(file.path, file.contentDigest, sourceKind),
     path: file.path,
     language_hint: languageHint,
     content_status: 'ready',
@@ -402,23 +421,28 @@ async function snapshots() {
   return { controller, draftReady, fresh, saved };
 }
 
-async function workingProjectSnapshot() {
+async function workingProjectSnapshot(withDraft = false) {
   const readWire = await createReadWire();
   let draft = await createGenerationDraft();
+  const createUnsavedWorkspaceDraft = async (
+    request: NonNullable<Parameters<typeof createGenerationDraft>[0]>,
+  ) => Object.freeze({
+    ...await createGenerationDraft(request),
+    base_revision_evidence: null,
+  });
   const controller = createBuilderProjectController({
     generator: {
       async submit(request) {
-        draft = await createGenerationDraft(request, readWire.source_tree);
+        draft = await createUnsavedWorkspaceDraft(request);
         return draft;
       },
       async generate(request) {
-        draft = await createGenerationDraft(request, readWire.source_tree);
+        draft = await createUnsavedWorkspaceDraft(request);
         return draft;
       },
       async continueDraft(request) {
-        draft = await createGenerationDraft(
+        draft = await createUnsavedWorkspaceDraft(
           await createBuilderGenerationRequest(request.instruction, PROJECT_ID),
-          readWire.source_tree,
         );
         return draft;
       },
@@ -453,7 +477,7 @@ async function workingProjectSnapshot() {
         };
       },
       async retry(request) {
-        draft = await createGenerationDraft(request, readWire.source_tree);
+        draft = await createUnsavedWorkspaceDraft(request);
         return draft;
       },
       async answer(request) {
@@ -530,7 +554,8 @@ async function workingProjectSnapshot() {
       },
     },
   });
-  return controller.createLocalProject('Unsaved dashboard');
+  const working = await controller.createLocalProject('Unsaved dashboard');
+  return withDraft ? controller.generate('Add a timer.') : working;
 }
 
 function taskStreamPort(read: Parameters<typeof createBuilderConversationController>[0]['read']) {
@@ -616,13 +641,52 @@ async function candidateActivity(rejected = false) {
       review_state_projection: readyReviewStateProjection(),
     }),
   ));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function candidateCheckpointActivity() {
   const wire = createTaskStreamWire();
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 6,
+      window: { ...wire.conversation.window, last_sequence: 6 },
+      items: [
+        wire.conversation.items[0],
+        wire.conversation.items[1],
+        {
+          item_kind: 'run_context_snapshot_recorded',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          context: {
+            recorded_state: 'recorded',
+            route: 'build',
+            dispatch: 'build',
+            downgraded_from: null,
+            downgrade_reason: null,
+            brief: 'not_available',
+            base: 'new_project_or_unsaved',
+            permission_result: 'allowed',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        },
+        {
+          item_kind: 'checkpoint_recorded',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          status: 'updated',
+          changed_file_count: 2,
+          verification_status: 'candidate_verified',
+        },
+        { ...wire.conversation.items[2], sequence: 5 },
+        { ...wire.conversation.items[3], sequence: 6 },
+      ],
+    },
     draft_checkpoint_status_projection: {
       projection_version: 'builder-draft-checkpoint-status-projection.v1',
       status: 'ready',
@@ -653,9 +717,58 @@ async function candidateCheckpointActivity() {
         publication: false,
       },
     },
+    draft_checkpoint_timeline_projection: {
+      projection_version: 'builder-draft-checkpoint-timeline-projection.v1',
+      status: 'ready',
+      entries: [
+        {
+          checkpoint_sequence: 3,
+          created_at_ms: 30_000,
+          label: 'Automatic checkpoint',
+          changed_file_count: 2,
+          verification_status: 'candidate_verified',
+          is_current: true,
+        },
+        {
+          checkpoint_sequence: 2,
+          created_at_ms: 20_000,
+          label: 'Automatic checkpoint',
+          changed_file_count: 1,
+          verification_status: 'candidate_verified_with_warnings',
+          is_current: false,
+        },
+        {
+          checkpoint_sequence: 1,
+          created_at_ms: 10_000,
+          label: 'Automatic checkpoint',
+          changed_file_count: 1,
+          verification_status: 'candidate_verified',
+          is_current: false,
+        },
+      ],
+      truncated: false,
+      authority: {
+        projection_authority: 'main_owned_draft_checkpoint_timeline_projection_v1',
+        checkpoint_store_read: 'verified_task_checkpoint_list',
+        checkpoint_facts: 'bounded_safe_projection',
+        renderer_authority: 'not_present',
+        ipc_authority: 'not_present',
+        provider_dispatch: false,
+        tool_dispatch: false,
+        source_read: 'not_present',
+        source_write: 'not_present',
+        git_read: 'not_present',
+        git_write: false,
+        sqlite_write: false,
+        restore_authority: false,
+        revision_admission: 'not_created',
+        save_authority: false,
+        publication: false,
+      },
+    },
     review_state_projection: readyReviewStateProjection(),
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function candidateBlockedReviewActivity() {
@@ -663,7 +776,7 @@ async function candidateBlockedReviewActivity() {
     ...createTaskStreamWire(),
     review_state_projection: blockedReviewStateProjection(),
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function candidateFailedCheckActivity() {
@@ -671,7 +784,7 @@ async function candidateFailedCheckActivity() {
     ...createTaskStreamWire(),
     review_state_projection: failedCheckReviewStateProjection(),
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function candidateRunningCheckActivity() {
@@ -700,7 +813,7 @@ async function candidateRunningCheckActivity() {
       },
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function absentActivity() {
@@ -717,14 +830,14 @@ async function absentActivity() {
       },
     }),
   ));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 function loadingActivity() {
   const controller = createBuilderConversationController(taskStreamPort(
     async () => new Promise(() => undefined),
   ));
-  void controller.load(PROJECT_ID);
+  void controller.load(PROJECT_ID, TASK_ADDRESS_ID);
   return controller.getSnapshot();
 }
 
@@ -734,7 +847,7 @@ async function unavailableActivity() {
       throw new Error('private');
     },
   ));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function staleActivity() {
@@ -755,14 +868,71 @@ async function staleActivity() {
       };
     },
   ));
-  await controller.load(PROJECT_ID);
+  await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
   fail = true;
   return controller.refresh();
 }
 
 async function answerActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createAnswerTaskStreamWire()));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+}
+
+async function transcriptRestoredActivity() {
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1_234,
+      head_sequence: 2,
+      recorded_active_turn_id: null,
+      source: 'sqlite_derived_public_transcript',
+      recovery: {
+        recovery_kind: 'transcript_restored',
+        latest_source_sequence: 4,
+        authority: 'sqlite_derived_non_authoritative_transcript',
+      },
+      window: {
+        first_sequence: 1,
+        last_sequence: 2,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'transcript_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174010',
+            text: 'What did we change?',
+          },
+          role: 'user',
+          message_kind: 'submitted',
+          recovery_admission: 'sqlite_derived_public_transcript_only',
+        },
+        {
+          item_kind: 'transcript_message',
+          sequence: 2,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174011',
+            text: 'We restored public chat history.',
+          },
+          role: 'assistant',
+          message_kind: 'run_result',
+          recovery_admission: 'sqlite_derived_public_transcript_only',
+        },
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_derived_public_transcript_restore',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  })));
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function briefActivity() {
@@ -803,7 +973,7 @@ async function briefActivity() {
       ],
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function progressActivity() {
@@ -831,7 +1001,7 @@ async function progressActivity() {
       },
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function queuedFollowupActivity() {
@@ -862,7 +1032,7 @@ async function queuedFollowupActivity() {
       ],
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function consumedQueuedFollowupActivity() {
@@ -933,7 +1103,7 @@ async function consumedQueuedFollowupActivity() {
       ],
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function agentStepProgressActivity() {
@@ -1005,7 +1175,7 @@ async function agentStepProgressActivity() {
       ],
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function candidateProgressActivity() {
@@ -1048,7 +1218,7 @@ async function candidateProgressActivity() {
       ],
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function failedRunActivity() {
@@ -1134,7 +1304,7 @@ async function failedRunActivity() {
       project_revision: 'not_inferred',
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function refreshingActivityWithVisibleEntries() {
@@ -1147,7 +1317,7 @@ async function refreshingActivityWithVisibleEntries() {
       resolveRefresh = resolve;
     });
   }));
-  await controller.load(PROJECT_ID);
+  await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
   void controller.refresh();
   await Promise.resolve();
   const snapshot = controller.getSnapshot();
@@ -1167,6 +1337,7 @@ async function toolActivity(
   },
   options: Readonly<{
     action?: 'filesystem.read' | 'project.read';
+    completed?: boolean;
     context?: Readonly<Partial<{
       route: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
       dispatch: 'reply' | 'brief_update' | 'plan' | 'build' | 'ask_workspace' | 'ask_permission' | 'blocked';
@@ -1183,17 +1354,18 @@ async function toolActivity(
   const action = options.action ?? 'project.read';
   const resourceKind = options.resourceKind ?? 'project';
   const toolLabel = options.toolLabel ?? 'Read project context';
+  const completed = options.completed ?? true;
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: PROJECT_ID,
     conversation: {
       conversation_id: CONVERSATION_ID,
       created_at_ms: 1234,
-      head_sequence: 7,
-      recorded_active_turn_id: null,
+      head_sequence: completed ? 7 : 5,
+      recorded_active_turn_id: completed ? null : TURN_ID,
       window: {
         first_sequence: 1,
-        last_sequence: 7,
+        last_sequence: completed ? 7 : 5,
         has_earlier: false,
       },
       items: [
@@ -1286,7 +1458,7 @@ async function toolActivity(
           },
           recorded_state: 'recorded',
         },
-        {
+        ...(completed ? [{
           item_kind: 'run_completed',
           sequence: 6,
           turn_id: TURN_ID,
@@ -1304,15 +1476,16 @@ async function toolActivity(
             summary: 'The draft uses the current project context.',
             candidate_state: 'proposed',
             source_availability: 'not_loaded',
+            workspace_materialization: { status: 'materialized' },
           },
-        },
+        } as const,
         {
           item_kind: 'turn_completed',
           sequence: 7,
           turn_id: TURN_ID,
           run_id: RUN_ID,
           outcome: 'candidate_ready',
-        },
+        } as const] : []),
       ],
     },
     authority: {
@@ -1322,13 +1495,16 @@ async function toolActivity(
       project_revision: 'not_inferred',
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
-async function pendingToolActivity() {
+async function pendingToolActivity(options: Readonly<{ reviewReady?: boolean }> = {}) {
   const controller = createBuilderConversationController(taskStreamPort(async () => ({
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: PROJECT_ID,
+    ...(options.reviewReady === true
+      ? { review_state_projection: readyReviewStateProjection() }
+      : {}),
     conversation: {
       conversation_id: CONVERSATION_ID,
       created_at_ms: 1234,
@@ -1394,24 +1570,24 @@ async function pendingToolActivity() {
       project_revision: 'not_inferred',
     },
   })));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function acceptedCandidateActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createAcceptedTaskStreamWire(1)));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function planReviewActivity(decision: 'approved' | 'rejected' = 'approved') {
   const controller = createBuilderConversationController(taskStreamPort(
     async () => createPlanReviewTaskStreamWire(decision),
   ));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function pendingPlanActivity() {
   const controller = createBuilderConversationController(taskStreamPort(async () => createPlanTaskStreamWire()));
-  return controller.load(PROJECT_ID);
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
 async function savedHistory() {
@@ -1768,6 +1944,258 @@ function click(container: HTMLElement, selector: string): void {
   act(() => button?.click());
 }
 
+async function respondingActivity() {
+  const wire = createProgressTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    agent_activity_projection: {
+      projection_version: 'builder-agent-activity-projection.v1',
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      head_sequence: wire.conversation.head_sequence,
+      current: {
+        phase: 'responding',
+        status: 'active',
+        label: 'Writing response',
+        summary: 'Preparing a response from the current project context.',
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+      },
+      authority: {
+        projection_authority: 'main_owned_agent_activity_projection_v1',
+        fact_source: 'recorded_activity',
+        consumer_role: 'read_only',
+        side_effect_authority: 'none',
+      },
+    },
+  })));
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+}
+
+async function runtimeToolActivity(
+  completed = false,
+  fileTargets: readonly string[] = ['src/file-1.ts', 'src/file-2.ts'],
+  statusOnly = false,
+  includeCommand = true,
+  statusKind: 'reasoning' | 'activity' = 'reasoning',
+) {
+  const stepId = 'builder-run-step:123e4567-e89b-42d3-a456-426614174000';
+  const runtimeNarration = (sequence: number, index: number, text: string) => ({
+    item_kind: 'programming_runtime_assistant_message',
+    sequence,
+    turn_id: TURN_ID,
+    run_id: RUN_ID,
+    step_id: stepId,
+    message: {
+      message_id: `builder-message:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      text,
+    },
+  } as const);
+  const runtimeTool = (
+    sequence: number,
+    index: number,
+    kind: 'edit' | 'command',
+    state: 'running' | 'completed',
+  ) => {
+    const target = kind === 'command' ? 'npm test' : fileTargets[index - 1] ?? `src/file-${index}.ts`;
+    return {
+      item_kind: 'programming_runtime_tool_activity',
+      sequence,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      step_id: stepId,
+      tool_call_id: `builder-tool-call:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      tool_kind: kind,
+      state,
+      active_label: kind === 'command' ? `Running ${target}` : `Editing ${target}`,
+      completed_label: kind === 'command' ? `Ran ${target}` : `Edited ${target}`,
+      target_label: target,
+      presentation: kind === 'command' ? 'terminal' : 'changes',
+      status_label: null,
+      duration_ms: state === 'completed' ? 12 : null,
+      summary: state === 'completed'
+        ? kind === 'command' ? 'The project check completed successfully.' : `Edited ${target}.`
+        : null,
+      failure_class: null,
+      result_ref: state === 'completed'
+        ? `builder-runtime-tool-result:${String(index).repeat(64).slice(0, 64)}`
+        : null,
+      presentation_detail: kind === 'edit' && state === 'completed' ? {
+        detail_kind: 'diff',
+        path: target,
+        added_lines: index + 1,
+        deleted_lines: index,
+      } : null,
+      file_change: kind === 'edit' && state === 'completed' ? {
+        change_ref: `builder-runtime-file-change:${String(index + 3).repeat(64).slice(0, 64)}`,
+        change_kind: 'edited',
+        added_lines: index + 1,
+        deleted_lines: index,
+      } : null,
+      check_result: kind === 'command' && state === 'completed' ? {
+        command_ref: `builder-runtime-command-result:${String(index + 6).repeat(64).slice(0, 64)}`,
+        status: 'passed',
+        duration_ms: 12,
+        summary: 'The project check completed successfully.',
+      } : null,
+    } as const;
+  };
+  const runtimeStatus = {
+    item_kind: 'programming_runtime_status',
+    sequence: 3,
+    turn_id: TURN_ID,
+    run_id: RUN_ID,
+    step_id: stepId,
+    status_kind: statusKind,
+    activity_kind: statusKind === 'activity' ? 'generation_finishing' : null,
+    attention_class: null,
+    failure_class: null,
+    status: statusKind === 'activity' ? '正在准备工具调用' : '正在思考',
+  } as const;
+  const completedActions = [
+    runtimeNarration(3, 1, 'I found the relevant files and will update them now.'),
+    runtimeTool(4, 1, 'edit', 'running'),
+    runtimeTool(5, 1, 'edit', 'completed'),
+    runtimeTool(6, 2, 'edit', 'running'),
+    runtimeTool(7, 2, 'edit', 'completed'),
+    runtimeNarration(8, 2, 'The edits are complete. I will run the project check next.'),
+    runtimeTool(9, 3, 'command', 'running'),
+    runtimeTool(10, 3, 'command', 'completed'),
+    runtimeNarration(11, 3, 'Implemented the requested changes and checked the project.'),
+  ].filter((item) => (
+    includeCommand
+    || item.item_kind !== 'programming_runtime_tool_activity'
+    || item.tool_kind !== 'command'
+  ));
+  const actions = statusOnly
+    ? [runtimeStatus]
+    : completed
+    ? completedActions
+    : [
+      runtimeStatus,
+      runtimeNarration(4, 1, 'I found the relevant file and will update it now.'),
+      runtimeTool(5, 1, 'edit', 'running'),
+    ];
+  const finalItems = completed ? [
+    {
+      item_kind: 'run_completed',
+      sequence: 12,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      terminal_status: 'succeeded',
+      result_kind: 'candidate',
+      failure_phase: 'not_applicable',
+      assistant_message: {
+        message_id: 'builder-message:423e4567-e89b-42d3-a456-426614174000',
+        text: 'Implemented the requested changes and checked the project.',
+      },
+      candidate: {
+        draft_id: DRAFT_ID,
+        title: 'Checked update',
+        summary: 'The requested update is ready.',
+        candidate_state: 'proposed',
+        source_availability: 'not_loaded',
+        workspace_materialization: { status: 'materialized' },
+      },
+    },
+    {
+      item_kind: 'turn_completed',
+      sequence: 13,
+      turn_id: TURN_ID,
+      run_id: RUN_ID,
+      outcome: 'candidate_ready',
+    },
+  ] : [];
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1234,
+      head_sequence: completed ? 13 : statusOnly ? 3 : 5,
+      recorded_active_turn_id: completed ? null : TURN_ID,
+      window: {
+        first_sequence: 1,
+        last_sequence: completed ? 13 : statusOnly ? 3 : 5,
+        has_earlier: false,
+      },
+      items: [
+        {
+          item_kind: 'user_message',
+          sequence: 1,
+          turn_id: TURN_ID,
+          message: {
+            message_id: 'builder-message:323e4567-e89b-42d3-a456-426614174000',
+            text: 'Update the project and run its checks.',
+          },
+          message_kind: 'submitted',
+          mode: 'work',
+          task: { task_id: TASK_ID, title: 'Update project' },
+        },
+        {
+          item_kind: 'run_started',
+          sequence: 2,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          attempt_number: 1,
+          retry_of_run_id: null,
+          recorded_state: 'started',
+        },
+        ...actions,
+        ...finalItems,
+      ],
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+  })));
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+}
+
+async function agentTestBrowserActivity() {
+  const wire = createTaskStreamWire();
+  const controller = createBuilderConversationController(taskStreamPort(async () => ({
+    ...wire,
+    conversation: {
+      ...wire.conversation,
+      head_sequence: 3,
+      recorded_active_turn_id: TURN_ID,
+      window: {
+        first_sequence: 1,
+        last_sequence: 3,
+        has_earlier: false,
+      },
+      items: [wire.conversation.items[0], wire.conversation.items[1], {
+        item_kind: 'programming_runtime_tool_activity',
+        sequence: 3,
+        turn_id: TURN_ID,
+        run_id: RUN_ID,
+        step_id: 'builder-run-step:123e4567-e89b-42d3-a456-426614174000',
+        tool_call_id: 'builder-tool-call:00000000-0000-4000-8000-000000000009',
+        tool_kind: 'browser',
+        state: 'running',
+        active_label: 'Opening Agent Test browser',
+        completed_label: 'Opened Agent Test browser',
+        target_label: 'Agent Test browser',
+        presentation: 'browser',
+        status_label: null,
+        duration_ms: null,
+        summary: null,
+        failure_class: null,
+        result_ref: null,
+        presentation_detail: null,
+        file_change: null,
+        check_result: null,
+      }],
+    },
+  })));
+  return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+}
+
 function openWorkspaceChanges(container: HTMLElement): void {
   click(container, '[data-builder-workspace-menu-button="true"]');
   click(container, '[data-builder-workspace-control-tab="changes"]');
@@ -1850,6 +2278,388 @@ function setScrollMetrics(
 }
 
 describe('BuilderPage v2', () => {
+  it('does not expose Stop for a terminal task with stale cancellation controls', () => {
+    const baseTask = {
+      task_address_id: TASK_ADDRESS_ID,
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      title: 'Task',
+      goal: 'Finish the task.',
+      group: 'attention' as const,
+      status_label: 'Could not finish',
+      latest_activity_at_ms: 1,
+      latest_result: null,
+      attention: null,
+      operations: ['open_task', 'cancel_task'] as const,
+    };
+
+    expect(canStopBuilderAgentTask({ ...baseTask, state: 'failed' })).toBe(false);
+    expect(canStopBuilderAgentTask({ ...baseTask, state: 'interrupted' })).toBe(false);
+    expect(canStopBuilderAgentTask({ ...baseTask, state: 'working' })).toBe(true);
+    expect(canStopBuilderAgentTask({ ...baseTask, state: 'waiting_permission' })).toBe(true);
+  });
+
+  it('renders projectless Agent chat from the declarative Workbench projection', async () => {
+    const { fresh } = await snapshots();
+    const agentId = 'builder-agent:123e4567-e89b-42d3-a456-426614174000';
+    const agentController = createBuilderConversationController(taskStreamPort(async () => ({
+      stream_version: 'builder-task-stream-read-result.v1',
+      scope_kind: 'agent_conversation',
+      agent_id: agentId,
+      project_id: null,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_agent_conversation',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    })));
+    const conversationSnapshot = await agentController.load(null, null, agentId);
+    const onUpdateMessageState = vi.fn();
+    const onDecideTaskProposal = vi.fn();
+    const onCreateProjectForTaskProposal = vi.fn();
+    const onOpenTaskProposal = vi.fn();
+    const onControlAgentTask = vi.fn();
+    const onArchiveAgentTask = vi.fn();
+    const onRenameAgentTask = vi.fn();
+    const onSelectComposerMode = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        agentWorkbenchSnapshot={{
+          status: 'ready',
+          busy: false,
+          projection: {
+            projection_version: 'builder-agent-workbench-projection.v2',
+            agent_id: agentId,
+            stream: {
+              items: [
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174001',
+                  thread_id: 'builder-workbench-thread:123e4567-e89b-42d3-a456-426614174000',
+                  presentation_family: 'conversation',
+                  content_type: 'builder.chat.user_message.v1',
+                  source_label: 'You',
+                  fallback_text: 'Can we discuss the release?',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'plain_text',
+                    body_text: 'Can we discuss the release?',
+                    metadata: [],
+                  },
+                  attention: 'normal',
+                  trust_label: 'local',
+                  state: { unread: false, acknowledged: false, archived: false },
+                  actions: [],
+                  task_ref: null,
+                  created_at_ms: 1,
+                },
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002',
+                  thread_id: 'builder-workbench-thread:123e4567-e89b-42d3-a456-426614174000',
+                  presentation_family: 'conversation',
+                  content_type: 'builder.chat.agent_message.v1',
+                  source_label: 'Agent',
+                  fallback_text: 'Yes. Review the [release notes](https://example.com).',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'markdown',
+                    body_text: 'Yes. Review the [release notes](https://example.com).',
+                    metadata: [],
+                  },
+                  attention: 'normal',
+                  trust_label: 'local',
+                  state: { unread: true, acknowledged: false, archived: false },
+                  actions: [],
+                  task_ref: null,
+                  created_at_ms: 2,
+                },
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174003',
+                  thread_id: null,
+                  presentation_family: 'proposal',
+                  content_type: 'builder.task.proposal.v1',
+                  source_label: 'Agent',
+                  fallback_text: 'Build a compact focus timer.',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'markdown',
+                    body_text: '### Task proposal\n\nBuild a compact focus timer.',
+                    metadata: [],
+                  },
+                  attention: 'action_required',
+                  trust_label: 'local',
+                  state: { unread: true, acknowledged: false, archived: false },
+                  actions: [{
+                    action_version: 'builder-workbench-task-proposal-action.v1',
+                    action_id: `builder-workbench-action:${'a'.repeat(64)}`,
+                    proposal_id: 'builder-task-proposal:323e4567-e89b-42d3-a456-426614174000',
+                    status: 'pending',
+                    objective: 'Build a compact focus timer.',
+                    requested_outcome: 'build',
+                    execution_mode: 'foreground',
+                    project_id: null,
+                    task_address_id: null,
+                    conversation_id: null,
+                    operations: ['approve_existing_project', 'reject'],
+                  }],
+                  task_ref: null,
+                  created_at_ms: 3,
+                },
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174004',
+                  thread_id: null,
+                  presentation_family: 'result',
+                  content_type: 'builder.task.result.v1',
+                  source_label: 'Builder',
+                  fallback_text: 'Release changes are ready for review.',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'markdown',
+                    body_text: 'Release changes are ready for review.',
+                    metadata: [],
+                  },
+                  attention: 'normal',
+                  trust_label: 'local',
+                  state: { unread: true, acknowledged: false, archived: false },
+                  actions: [],
+                  task_ref: {
+                    project_id: PROJECT_ID,
+                    task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+                    operation: 'open_task',
+                  },
+                  created_at_ms: 4,
+                },
+              ],
+              after_cursor: null,
+              next_cursor: 'builder-workbench-cursor:2',
+              has_more: false,
+            },
+            task_monitor: {
+              projection_version: 'builder-workbench-task-monitor.v2',
+              agent_id: agentId,
+              tasks: [{
+                task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+                project_id: PROJECT_ID,
+                conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174001:123e4567-e89b-42d3-a456-426614174010',
+                title: 'Release checks',
+                goal: 'Verify the release.',
+                group: 'attention',
+                state: 'waiting_permission',
+                status_label: 'Permission required',
+                latest_activity_at_ms: 10,
+                latest_result: {
+                  result_version: 'builder-workbench-task-result-summary.v1',
+                  result_id: `builder-task-result:${'c'.repeat(64)}`,
+                  run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174020',
+                  sequence: 8,
+                  completed_at_ms: 10,
+                  terminal_status: 'succeeded',
+                  result_kind: 'candidate',
+                  summary: 'Release changes are ready for review.',
+                  review_state: 'pending',
+                },
+                attention: {
+                  attention_version: 'builder-workbench-task-attention-summary.v1',
+                  state: 'waiting_permission',
+                  label: 'Permission required',
+                  detail: 'This task needs your permission before it can continue.',
+                  action_label: 'Review permission',
+                },
+                operations: ['open_task', 'cancel_task'],
+              }],
+              counts: { active: 0, attention: 1, recent: 0 },
+              authority: {
+                task_identity: 'main_owned_session_task_address_store',
+                task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+                renderer_authority: 'selection_only',
+                provider_dispatch: false,
+                permission_grant: false,
+                source_read: false,
+                source_write: false,
+              },
+            },
+            inbox: {
+              unread_count: 1,
+              action_required_count: 0,
+              mention_count: 0,
+              active_task_count: 0,
+            },
+            authority: {
+              canonical_messages: 'main_owned_workbench_message_store',
+              user_state: 'main_owned_workbench_message_state_store',
+              task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+              renderer_authority: 'selection_and_bounded_state_requests_only',
+              plugin_payload_exposure: 'not_exposed',
+              permission_grant: false,
+              provider_dispatch: false,
+              source_read: false,
+              source_write: false,
+            },
+          },
+        }}
+        conversationSnapshot={conversationSnapshot}
+        instruction=""
+        onCreateProjectForAgentTaskProposal={onCreateProjectForTaskProposal}
+        onArchiveAgentTask={onArchiveAgentTask}
+        onControlAgentTask={onControlAgentTask}
+        onDecideAgentTaskProposal={onDecideTaskProposal}
+        onOpenAgentTaskProposal={onOpenTaskProposal}
+        onRenameAgentTask={onRenameAgentTask}
+        onSelectComposerMode={onSelectComposerMode}
+        onUpdateAgentWorkbenchMessageState={onUpdateMessageState}
+        projectCatalogSnapshot={{
+          status: 'ready',
+          busy: false,
+          projects: [{
+            project_id: PROJECT_ID,
+            title: 'Focus tools',
+            summary: 'Utilities',
+            revision_number: 1,
+            revision_receipt_digest: `sha256:${'b'.repeat(64)}`,
+            commit_oid: 'a'.repeat(40),
+            tree_oid: 'b'.repeat(40),
+            selected_at_ms: 1,
+          }],
+          workspaceProjects: [],
+        }}
+        snapshot={fresh}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-approval-menu-button="true"]')).toBeNull();
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    const agentPlanMode = container.querySelector<HTMLButtonElement>(
+      '[data-builder-composer-add-plan-mode="true"]',
+    );
+    expect(agentPlanMode?.disabled).toBe(false);
+    act(() => agentPlanMode?.click());
+    expect(onSelectComposerMode).toHaveBeenCalledWith('plan');
+    expect(container.querySelector('[data-builder-task-monitor="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('Needs attention');
+    expect(container.textContent).toContain('This task needs your permission before it can continue.');
+    expect(container.textContent).toContain('Release changes are ready for review.');
+    expect(container.textContent).toContain('Agent');
+    expect(container.textContent).toContain('Builder');
+    expect(container.textContent).toContain('Can we discuss the release?');
+    expect(container.querySelector('a[href="https://example.com"]')?.getAttribute('target')).toBe('_blank');
+    click(container, '[data-builder-agent-workbench-filter="conversation"]');
+    expect(container.textContent).toContain('Can we discuss the release?');
+    expect(container.textContent).toContain('Yes. Review the release notes.');
+    expect(container.textContent).not.toContain('Build a compact focus timer.');
+    expect(container.textContent).not.toContain('Release changes are ready for review.');
+    expect(container.querySelector('[data-builder-agent-workbench-hidden-attention="true"]')?.textContent)
+      .toContain('2 hidden');
+    click(container, '[data-builder-agent-workbench-filter="result"]');
+    expect(container.textContent).toContain('Can we discuss the release?');
+    expect(container.textContent).toContain('Release changes are ready for review.');
+    expect(container.textContent).not.toContain('Build a compact focus timer.');
+    click(container, '[data-builder-agent-workbench-filter="all"]');
+    expect(container.textContent).toContain('Build a compact focus timer.');
+    expect(container.textContent).toContain('Release changes are ready for review.');
+    const markRead = container.querySelector<HTMLButtonElement>('[aria-label="Mark message as read"]');
+    act(() => markRead?.click());
+    expect(onUpdateMessageState).toHaveBeenCalledWith(
+      'builder-message:123e4567-e89b-42d3-a456-426614174002',
+      'mark_read',
+    );
+    const createTask = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Create task'));
+    act(() => createTask?.click());
+    expect(onDecideTaskProposal).toHaveBeenCalledWith(
+      'builder-task-proposal:323e4567-e89b-42d3-a456-426614174000',
+      'approve_existing_project',
+      PROJECT_ID,
+    );
+    const newProject = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('New project'));
+    act(() => newProject?.click());
+    expect(onCreateProjectForTaskProposal).toHaveBeenCalledWith(
+      'builder-task-proposal:323e4567-e89b-42d3-a456-426614174000',
+      'Build a compact focus timer.',
+    );
+    const openTask = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Open task'));
+    expect(openTask?.getAttribute('data-builder-agent-result-open-task')).toBe('true');
+    expect(openTask?.getAttribute('data-builder-task-address-id')).toBe(
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+    );
+    act(() => openTask?.click());
+    expect(onOpenTaskProposal).toHaveBeenCalledWith(
+      PROJECT_ID,
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+      {
+        task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+        conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174001:123e4567-e89b-42d3-a456-426614174010',
+        goal: 'Verify the release.',
+        waiting_to_start: false,
+      },
+    );
+    const acknowledgeResult = container.querySelector<HTMLButtonElement>(
+      '[data-builder-agent-result-acknowledge="true"]',
+    );
+    act(() => acknowledgeResult?.click());
+    expect(onUpdateMessageState).toHaveBeenCalledWith(
+      'builder-message:123e4567-e89b-42d3-a456-426614174004',
+      'acknowledge',
+    );
+    const archiveResult = container.querySelector<HTMLButtonElement>(
+      '[data-builder-agent-result-archive="true"]',
+    );
+    act(() => archiveResult?.click());
+    expect(onUpdateMessageState).toHaveBeenCalledWith(
+      'builder-message:123e4567-e89b-42d3-a456-426614174004',
+      'archive',
+    );
+    const reviewPermission = container.querySelector<HTMLButtonElement>(
+      '[data-builder-task-monitor-open-task="true"]',
+    );
+    expect(reviewPermission?.textContent).toContain('Review permission');
+    act(() => reviewPermission?.click());
+    expect(onOpenTaskProposal).toHaveBeenLastCalledWith(
+      PROJECT_ID,
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+      {
+        task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+        conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174001:123e4567-e89b-42d3-a456-426614174010',
+        goal: 'Verify the release.',
+        waiting_to_start: false,
+      },
+    );
+    const stopTask = container.querySelector<HTMLButtonElement>(
+      '[data-builder-task-monitor-cancel-task="true"]',
+    );
+    act(() => stopTask?.click());
+    expect(onControlAgentTask).toHaveBeenCalledWith(
+      PROJECT_ID,
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+      'cancel_task',
+    );
+    click(container, '[data-builder-task-monitor-task-actions="true"]');
+    expect(container.querySelector('[data-builder-task-monitor-action-menu="true"]')).not.toBeNull();
+    click(container, '[data-builder-task-monitor-rename-task="true"]');
+    changeInput(container, '[data-builder-task-monitor-rename-input="true"]', 'Renamed release task');
+    click(container, '[data-builder-task-monitor-rename-save="true"]');
+    expect(onRenameAgentTask).toHaveBeenCalledExactlyOnceWith(
+      PROJECT_ID,
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+      'Renamed release task',
+    );
+    click(container, '[data-builder-task-monitor-task-actions="true"]');
+    click(container, '[data-builder-task-monitor-archive-task="true"]');
+    expect(onArchiveAgentTask).toHaveBeenCalledExactlyOnceWith(
+      PROJECT_ID,
+      'builder-task-address:123e4567-e89b-42d3-a456-426614174010',
+    );
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    expect(container.querySelector('[data-builder-composer-add-build-mode="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-add-files="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-add-plan-mode="true"]')).not.toBeNull();
+  });
+
   it('renders a continuous composer without pretending a new project is saved', async () => {
     const { fresh } = await snapshots();
     const activity = await absentActivity();
@@ -1996,8 +2806,15 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
 
     click(container, '[data-builder-workspace-menu-button="true"]');
+    expect(container.querySelector('[data-builder-workspace-control-tab="browser_placeholder"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-permissions="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-control-tab="browser_placeholder"]');
+    const browserPlaceholder = container.querySelector('[data-builder-side-workspace-browser-placeholder="true"]');
+    expect(browserPlaceholder?.textContent).toContain('Browser');
+    expect(browserPlaceholder?.querySelector('[data-builder-side-workspace-placeholder-note="browser"]')?.classList.contains('cf-builder-visually-hidden'))
+      .toBe(true);
+    click(container, '[data-builder-workspace-menu-button="true"]');
     click(container, '[data-builder-workspace-control-tab="permissions"]');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('permissions');
@@ -2243,6 +3060,21 @@ describe('BuilderPage v2', () => {
     expect(unavailable.textContent).not.toContain('Activity is unavailable.');
     expect(unavailable.textContent).not.toContain('No activity yet.');
 
+    const { saved } = await snapshots();
+    const absent = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={await absentActivity()}
+        instruction="Make a timer."
+        snapshot={saved}
+      />,
+    );
+    expect(absent.querySelector('[data-builder-activity="true"]')).not.toBeNull();
+    expect(absent.querySelector('[data-builder-activity-status="absent"]')).not.toBeNull();
+    expect(absent.textContent).toContain('No recorded activity for this project yet. History is available.');
+    expect(absent.textContent).not.toContain('Loading activity...');
+    expect(absent.textContent).not.toContain('No activity yet.');
+
     const onRefresh = vi.fn();
     const stale = render(
       <BuilderPage
@@ -2259,6 +3091,90 @@ describe('BuilderPage v2', () => {
     expect(stale.querySelector('[data-builder-refresh-activity="true"]')).not.toBeNull();
     click(stale, '[data-builder-refresh-activity="true"]');
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('submits explicit User Web navigation from the Browser address bar', async () => {
+    const working = await workingProjectSnapshot();
+    const onNavigateUserWeb = vi.fn();
+    const onGoBackUserWeb = vi.fn();
+    const onGoForwardUserWeb = vi.fn();
+    const onReloadUserWeb = vi.fn();
+    const onStopUserWeb = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onGoBackUserWeb={onGoBackUserWeb}
+        onGoForwardUserWeb={onGoForwardUserWeb}
+        onNavigateUserWeb={onNavigateUserWeb}
+        onReloadUserWeb={onReloadUserWeb}
+        onStopUserWeb={onStopUserWeb}
+        snapshot={working}
+        userWebStatus={{
+          status_version: 'builder-user-web-status.v1',
+          status: 'ready',
+          current_url: 'https://example.com/',
+          can_go_back: true,
+          can_go_forward: true,
+          can_reload: true,
+          can_stop: true,
+          navigation_block_count: 0,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 0,
+          message: 'Page ready.',
+          updated_at_ms: 10,
+          authority: {
+            user_web_authority: 'builder_main_user_web_v1',
+            renderer_authority: 'explicit_navigation_and_layout_only',
+            provider_authority: 'none',
+            provider_observation: false,
+            command_execution: false,
+            dependency_installation: false,
+            project_write: false,
+            downloads: 'blocked_pending_separate_admission',
+            permissions: 'denied',
+            popup_windows: 'blocked',
+            partition_visibility: 'main_private',
+          },
+        }}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="browser_placeholder"]');
+    changeInput(container, '[data-builder-side-workspace-browser-address="true"] input', 'openai.com/docs');
+    keyDown(container, '[data-builder-side-workspace-browser-address="true"] input', { key: 'Enter' });
+    expect(onNavigateUserWeb).toHaveBeenCalledExactlyOnceWith('openai.com/docs');
+
+    click(container, '[aria-label="Back"]');
+    click(container, '[aria-label="Forward"]');
+    click(container, '[aria-label="Reload page"]');
+    click(container, '[aria-label="Close page"]');
+    expect(onGoBackUserWeb).toHaveBeenCalledOnce();
+    expect(onGoForwardUserWeb).toHaveBeenCalledOnce();
+    expect(onReloadUserWeb).toHaveBeenCalledOnce();
+    expect(onStopUserWeb).toHaveBeenCalledOnce();
+  });
+
+  it('labels transcript-restored activity as read-only without enabling review actions', async () => {
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={await transcriptRestoredActivity()}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-transcript-recovery-status="true"]')?.textContent)
+      .toBe('Showing saved transcript. Live activity is unavailable.');
+    expect(container.textContent).toContain('What did we change?');
+    expect(container.textContent).toContain('We restored public chat history.');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-plan-review-actions="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/sha256:|sqlite_derived|recovery_admission|credential|source_tree/iu);
   });
 
   it('submits the primary composer command with Enter through the single submit action', async () => {
@@ -2505,6 +3421,27 @@ describe('BuilderPage v2', () => {
     expect(onSubmitInstruction).not.toHaveBeenCalled();
   });
 
+  it('does not show a generic generation failure notice when a recoverable draft is present', async () => {
+    const { draftReady } = await snapshots();
+    const recoverable = {
+      ...draftReady,
+      status: 'generation_failed' as const,
+      error: 'builder_generation_failed' as const,
+      retryableGeneration: true,
+    };
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        snapshot={recoverable}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-conversation-notice="generation_failed"]')).toBeNull();
+    expect(container.querySelector('[data-builder-retry-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-stack="true"]')).not.toBeNull();
+  });
+
   it('shows Stop only while AI work is active', async () => {
     const { fresh } = await snapshots();
     const readWire = await createReadWire();
@@ -2579,6 +3516,20 @@ describe('BuilderPage v2', () => {
       .toBe('Stop');
     click(container, '[data-builder-cancel-work="true"]');
     expect(onCancel).toHaveBeenCalledOnce();
+
+    const browserCancel = vi.fn();
+    const browserActive = render(
+      <BuilderPage
+        activeAgentTestBrowserRunId="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        activeFile={null}
+        instruction=""
+        onCancel={browserCancel}
+        snapshot={fresh}
+      />,
+    );
+    expect(browserActive.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+    click(browserActive, '[data-builder-cancel-work="true"]');
+    expect(browserCancel).toHaveBeenCalledOnce();
 
     const answerController = createBuilderProjectController({
       generator: {
@@ -2896,11 +3847,12 @@ describe('BuilderPage v2', () => {
     await restoring;
   });
 
-  it('shows an unsaved draft and requires the explicit Save version command', async () => {
+  it('shows an unsaved draft with a composer version decision card', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateProgressActivity();
     const onSave = vi.fn();
     const onRejectDraft = vi.fn();
+    const onUndoDraft = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
@@ -2908,62 +3860,197 @@ describe('BuilderPage v2', () => {
         instruction="Add a timer."
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onUndoDraft={onUndoDraft}
         snapshot={draftReady}
       />,
     );
 
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')?.textContent)
       .toContain('Unsaved draft');
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
-    expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
-      .toContain('Keep revising here');
-    expect(container.textContent).toContain('The review workspace is ready before saving this version.');
-    const completion = container.querySelector('[data-builder-completion-summary="true"]');
-    expect(completion?.getAttribute('data-builder-completion-result')).toBe('candidate');
-    expect(completion?.textContent).toContain('A draft is ready for review.');
-    expect(completion?.textContent).toContain('A small project.');
-    expect(completion?.textContent).toContain('Review the workspace, then save a version if it looks right.');
-    const completionSteps = completion?.querySelector('[data-builder-completion-steps="true"]');
-    expect(completionSteps?.textContent).toContain('Recorded steps');
-    expect(completionSteps?.textContent).toContain('Read the current project context.');
-    expect(completionSteps?.textContent).toContain('Wrote the response.');
-    expect(completionSteps?.textContent).toContain('Checked the response.');
-    expect(completionSteps?.textContent).toContain('Prepared the result for review.');
-    expect(completion?.textContent).not.toMatch(/saved|version saved|verified|test passed/iu);
-    expect(completion?.textContent).not.toMatch(/provider_request_started|provider_response_received|result_preparing|context_ready/iu);
-    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('Static preview is ready');
-    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('HTML and CSS are shown here');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-review-gate="true"]')).toBeNull();
+    const proposal = container.querySelector('[data-builder-activity-card="Draft proposed"]');
+    expect(proposal?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
+    expect(proposal?.querySelector('[data-builder-completed-actions="true"]')).toBeNull();
+    expect(proposal?.textContent).not.toContain('Work details');
+    expect(proposal?.textContent).not.toContain('The review workspace is ready before saving this version.');
+    expect(proposal?.textContent).not.toContain('What happened');
+    expect(proposal?.textContent).not.toContain('A small project.');
+    expect(container.querySelector('[data-builder-workspace-materialization="materialized"]')?.textContent)
+      .toContain('Project folder updated');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-composer-state'))
       .toBe('draft-ready');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Add a timer.');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.placeholder)
       .toBe('Ask about this draft, or describe the next change...');
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.readOnly).toBe(true);
-    expect(container.querySelector('[data-builder-composer-review-gate="true"]')?.textContent)
-      .toContain('Keep revising here, or review and save this version when ready.');
-    expect(container.querySelector('[data-builder-composer-review-focus="true"]')?.textContent)
-      .toContain('Review draft');
+    expect(container.querySelector('[data-builder-composer-review-focus="true"]')).toBeNull();
     expect(container.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBe(true);
-    expect(container.querySelector('[data-builder-review-checkpoint="true"] button')).toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-workspace-controls="true"]'))
-      .not.toBeNull();
-    expect(container.querySelector('[data-builder-review-more="true"]')?.closest('[data-builder-workspace-controls="true"]'))
-      .not.toBeNull();
-    expect(container.querySelector('[data-builder-save-version="true"]')?.closest('[data-builder-composer="true"]'))
-      .toBeNull();
-    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
-    click(container, '[data-builder-review-more="true"]');
-    expect(container.querySelector('[data-builder-discard-draft="true"]')?.textContent)
+    expect(container.querySelector('[data-builder-check-run-status="passed"]')).toBeNull();
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(decision).not.toBeNull();
+    expect(decision?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(decision?.closest('[data-builder-workspace-controls="true"]')).toBeNull();
+    expect(decision?.textContent).toContain('Draft ready for review');
+    expect(container.querySelector('[data-builder-undo-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
+    expect(decision?.querySelector('[data-builder-save-version="true"]')?.textContent)
+      .toContain('Save version');
+    expect(decision?.querySelector('[data-builder-discard-draft="true"]')?.textContent)
       .toContain('Discard draft');
+    click(container, '[data-builder-save-version="true"]');
     click(container, '[data-builder-discard-draft="true"]');
     expect(onRejectDraft).toHaveBeenCalledOnce();
-    expect(onSave).not.toHaveBeenCalled();
-    click(container, '[data-builder-save-version="true"]');
     expect(onSave).toHaveBeenCalledOnce();
+    expect(onUndoDraft).not.toHaveBeenCalled();
+  });
+
+  it('hides draft decisions while a cancelled run is still finishing', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await pendingToolActivity({ reviewReady: true });
+    expect(activity.status).toBe('ready');
+    const onSave = vi.fn();
+    const onRejectDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-composer-version-decision="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRejectDraft).not.toHaveBeenCalled();
+  });
+
+  it('shows concrete changed files and check commands that open their inspectors', async () => {
+    const draftReady = await changedDraftSnapshot();
+    const draftId = draftReady.draft?.draft_id;
+    expect(draftId).toBeDefined();
+    const wire = createTaskStreamWire();
+    const controller = createBuilderConversationController(taskStreamPort(async () => ({
+      ...wire,
+      review_state_projection: readyReviewStateProjection(),
+      conversation: {
+        ...wire.conversation,
+        items: wire.conversation.items.map((item) => (
+          item.item_kind === 'run_completed' && item.candidate !== null
+            ? { ...item, candidate: { ...item.candidate, draft_id: draftId as string } }
+            : item
+        )),
+      },
+    })));
+    const activity = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    const onSelectFile = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunProfiles={[{
+          command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+          command_kind: 'test',
+          command_display: 'npm test',
+          requires_user_approval: true,
+        }]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(32)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'passed',
+          label: 'Checked',
+          summary: 'Tests passed.',
+          environment_reason: 'none',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onSelectFile={onSelectFile}
+        snapshot={draftReady}
+      />,
+    );
+
+    const fileGroup = container.querySelector('[data-builder-completed-action-group="file"]');
+    const fileActions = fileGroup?.querySelector<HTMLDetailsElement>('[data-builder-completed-actions="file"]');
+    const commandGroup = container.querySelector('[data-builder-completed-action-group="command"]');
+    const proposal = container.querySelector('[data-builder-activity-card="Draft proposed"]');
+    const turnTail = proposal?.querySelector('[data-builder-turn-tail="true"]');
+    expect(fileGroup).not.toBeNull();
+    expect(turnTail?.getAttribute('data-builder-turn-tail-result')).toBe('candidate');
+    expect(turnTail?.querySelector('[data-builder-message-actions="true"]')).not.toBeNull();
+    expect(turnTail?.querySelector('[data-builder-turn-tail-meta="true"]')?.textContent).toContain('Draft proposed');
+    expect(fileGroup?.closest('[data-builder-turn-tail="true"]')).toBe(turnTail);
+    expect(commandGroup?.closest('[data-builder-turn-tail="true"]')).toBe(turnTail);
+    expect(fileActions?.open).toBe(true);
+    expect(fileActions?.textContent).toContain('Edited 3 files');
+    expect(commandGroup?.textContent).toContain('Ran npm test');
+    expect(commandGroup?.querySelector('details')).toBeNull();
+    expect(proposal?.querySelector('[data-builder-completed-actions="true"]')).toBeNull();
+    expect((proposal?.compareDocumentPosition(fileGroup as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect((fileGroup?.compareDocumentPosition(commandGroup as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    const fileAction = container.querySelector<HTMLButtonElement>(
+      '[data-builder-completion-candidate-change] button',
+    );
+    expect(fileAction?.textContent).toMatch(/(?:Added|Edited|Deleted) .+\+\d+ -\d+/u);
+    click(container, '[data-builder-completion-candidate-change] button');
+    expect(onSelectFile).toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
+      .toBe('source');
+
+    const commandAction = container.querySelector<HTMLButtonElement>(
+      '[data-builder-completion-command="npm test"] button',
+    );
+    expect(commandAction?.textContent).toContain('Ran npm test');
+    click(container, '[data-builder-completion-command="npm test"] button');
+    expect(container.querySelector('[data-builder-command-inspector="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-command-display="true"]')?.textContent).toBe('npm test');
+    expect(container.querySelector('[data-builder-command-result="passed"]')?.textContent).toBe('Tests passed.');
+  });
+
+  it('copies a completed assistant response from the turn tail', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const writeText = vi.fn(() => Promise.resolve());
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={draftReady}
+      />,
+    );
+
+    try {
+      const completion = container.querySelector('[data-builder-activity-card="Draft proposed"]');
+      expect(completion?.querySelector('[data-builder-turn-tail="true"]')).not.toBeNull();
+      click(container, '[data-builder-copy-run-message="true"]');
+      await act(async () => { await Promise.resolve(); });
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('I prepared a draft for review.');
+      expect(completion?.querySelector('[data-builder-copy-run-message="true"]')?.textContent)
+        .toContain('Copied');
+    } finally {
+      if (clipboardDescriptor === undefined) {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      } else {
+        Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+      }
+    }
   });
 
   it('projects an explicit Save version command as activity while saving', async () => {
@@ -2987,31 +4074,188 @@ describe('BuilderPage v2', () => {
     expect(savingActivity?.textContent).toContain('Saving version');
     expect(savingActivity?.textContent).toContain('Recording this draft as a saved project version.');
     expect(container.querySelector('[data-builder-conversation-notice="saving"]')).toBeNull();
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-save-version="true"]')?.disabled)
-      .toBe(true);
+    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(decision).toBeNull();
     await save;
   });
 
-  it('shows the main-owned automatic checkpoint beside the current unsaved draft', async () => {
+  it('keeps the automatic checkpoint as a quiet fact in the conversation', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateCheckpointActivity();
+    const onUndoDraft = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         conversationSnapshot={activity}
         instruction="Add a timer."
+        onUndoDraft={onUndoDraft}
         snapshot={draftReady}
       />,
     );
 
     const checkpoint = container.querySelector('[data-builder-draft-checkpoint-status="ready"]');
-    expect(checkpoint?.textContent).toContain('Checkpoint saved');
-    expect(checkpoint?.textContent).toContain('2 files');
-    expect(checkpoint?.getAttribute('title'))
-      .toBe('You can compare, restore, continue, or save a version.');
+    expect(checkpoint?.textContent).toContain('检查点已更新');
+    expect(checkpoint?.textContent).toContain('2 个文件已受到保护');
+    expect(checkpoint?.classList.contains('cf-builder-checkpoint-event-row')).toBe(true);
+    expect(checkpoint?.getAttribute('data-builder-conversation-node')).toBe('checkpoint_event');
+    expect(checkpoint?.getAttribute('data-builder-checkpoint-turn-event')).toBe('updated');
+    expect(checkpoint?.getAttribute('data-builder-checkpoint-animation')).toBe('settle');
+    expect(checkpoint?.getAttribute('data-builder-recovery-action')).toBe('checkpoint_updated');
+    expect(checkpoint?.getAttribute('data-builder-recovery-tone')).toBe('success');
+    const recoveryActions = checkpoint?.querySelector('[data-builder-recovery-actions="checkpoint"]');
+    expect(recoveryActions).not.toBeNull();
+    expect(recoveryActions?.querySelector('[data-builder-recovery-action-command="undo_checkpoint"]')).not.toBeNull();
+    expect(recoveryActions?.querySelector('[data-builder-recovery-action-command="open_history"]')).not.toBeNull();
+    expect(checkpoint?.querySelector<HTMLButtonElement>('[data-builder-chat-undo-checkpoint="true"]')?.disabled)
+      .toBe(false);
+    expect(checkpoint?.closest('[data-builder-conversation-workspace="true"]')).not.toBeNull();
+    expect(checkpoint?.closest('header')).toBeNull();
+    expect(checkpoint?.getAttribute('title')).toBeNull();
+    click(container, '[data-builder-chat-undo-checkpoint="true"]');
+    expect(onUndoDraft).toHaveBeenCalledOnce();
+    click(container, '[data-builder-chat-open-history="true"]');
+    expect(container.querySelector('[data-builder-project-history="true"]')).not.toBeNull();
+    expect(checkpoint?.textContent).not.toMatch(/sha256:|checkpoint_store|receipt|sqlite|credential|provider/iu);
   });
 
-  it('blocks Save but keeps Discard available when Review State has no verified checkpoint', async () => {
+  it('keeps checkpoint history available while disabling undo without a current draft', async () => {
+    const { saved } = await snapshots();
+    const activity = await candidateCheckpointActivity();
+    const onUndoDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onUndoDraft={onUndoDraft}
+        snapshot={saved}
+      />,
+    );
+
+    const checkpoint = container.querySelector('[data-builder-checkpoint-turn-event="updated"]');
+    const undo = checkpoint?.querySelector<HTMLButtonElement>('[data-builder-chat-undo-checkpoint="true"]');
+    expect(checkpoint?.getAttribute('data-builder-conversation-node')).toBe('checkpoint_event');
+    expect(undo?.disabled).toBe(true);
+    click(container, '[data-builder-chat-open-history="true"]');
+    expect(container.querySelector('[data-builder-project-history="true"]')).not.toBeNull();
+    expect(onUndoDraft).not.toHaveBeenCalled();
+  });
+
+  it('shows a bounded run-control request as a recovery action row', async () => {
+    const wire = createTaskStreamWire();
+    const controller = createBuilderConversationController(taskStreamPort(async () => ({
+      ...wire,
+      conversation: {
+        ...wire.conversation,
+        head_sequence: 3,
+        recorded_active_turn_id: TURN_ID,
+        window: {
+          first_sequence: 1,
+          last_sequence: 3,
+          has_earlier: false,
+        },
+        items: [
+          wire.conversation.items[0],
+          wire.conversation.items[1],
+          {
+            item_kind: 'run_control_requested',
+            sequence: 3,
+            turn_id: TURN_ID,
+            run_id: RUN_ID,
+            action: 'cancel',
+          },
+        ],
+      },
+    })));
+    const activity = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    expect(activity.status).toBe('ready');
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const control = container.querySelector('[data-builder-recovery-action="cancel_requested"]');
+    expect(control?.textContent).toContain('Stop requested');
+    expect(control?.textContent).toContain('You asked to stop the current work.');
+    expect(control?.getAttribute('data-builder-recovery-tone')).toBe('pending');
+    expect(container.textContent).not.toMatch(/cancel-request|request_id|sha256:/iu);
+  });
+
+  it('updates a recovery action row in place as the restore completes', async () => {
+    const wire = createTaskStreamWire();
+    const controller = createBuilderConversationController(taskStreamPort(async () => ({
+      ...wire,
+      conversation: {
+        ...wire.conversation,
+        head_sequence: 5,
+        recorded_active_turn_id: TURN_ID,
+        window: {
+          first_sequence: 1,
+          last_sequence: 5,
+          has_earlier: false,
+        },
+        items: [wire.conversation.items[0], wire.conversation.items[1], {
+          item_kind: 'run_context_snapshot_recorded',
+          sequence: 3,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          context: {
+            recorded_state: 'recorded',
+            route: 'build',
+            dispatch: 'build',
+            downgraded_from: null,
+            downgrade_reason: null,
+            brief: 'not_available',
+            base: 'new_project_or_unsaved',
+            permission_result: 'allowed',
+            command_execution: 'not_included',
+            network_access: 'not_included',
+          },
+        }, {
+          item_kind: 'recovery_action_recorded',
+          sequence: 4,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          action: 'restore_checkpoint',
+          phase: 'requested',
+        }, {
+          item_kind: 'recovery_action_recorded',
+          sequence: 5,
+          turn_id: TURN_ID,
+          run_id: RUN_ID,
+          action: 'restore_checkpoint',
+          phase: 'completed',
+        }],
+      },
+    })));
+    const activity = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    expect(activity.status).toBe('ready');
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const rows = container.querySelectorAll('[data-builder-recovery-action^="restore_checkpoint_"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.getAttribute('data-builder-recovery-action')).toBe('restore_checkpoint_completed');
+    expect(rows[0]?.getAttribute('data-builder-recovery-tone')).toBe('success');
+    expect(rows[0]?.textContent).toContain('已恢复上个检查点');
+    expect(rows[0]?.textContent).toContain('恢复结果已写入当前项目');
+  });
+
+  it('blocks draft decisions when Review State has no verified checkpoint', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateBlockedReviewActivity();
     const onSave = vi.fn();
@@ -3027,15 +4271,16 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
-      .toContain('verified draft checkpoint');
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(decision).toBeNull();
+    expect(container.textContent).not.toContain('Checking draft');
+    expect(container.textContent).not.toContain('Finishing checks');
+    expect(container.textContent).not.toContain('Save this draft?');
+    expect(container.textContent).not.toContain('verified draft checkpoint');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    click(container, '[data-builder-review-more="true"]');
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-discard-draft="true"]')?.disabled)
-      .toBe(false);
-    click(container, '[data-builder-discard-draft="true"]');
+    expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
-    expect(onRejectDraft).toHaveBeenCalledOnce();
+    expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
   it('blocks Save and explains the current candidate check failure', async () => {
@@ -3052,8 +4297,11 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-review-state="blocked"]')?.textContent)
-      .toContain('project check failed');
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(decision).toBeNull();
+    expect(container.textContent).not.toContain('Finishing checks');
+    expect(container.textContent).not.toContain('Save this draft?');
+    expect(container.textContent).not.toContain('project check failed');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
   });
@@ -3064,6 +4312,7 @@ describe('BuilderPage v2', () => {
     const container = render(
       <BuilderPage
         activeFile={null}
+        checkRunOperation="running"
         conversationSnapshot={activity}
         instruction="Add a timer."
         snapshot={draftReady}
@@ -3071,51 +4320,47 @@ describe('BuilderPage v2', () => {
     );
 
     const status = container.querySelector('[data-builder-agent-current-activity="running_checks"]');
-    expect(status?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(status?.textContent).toContain('Running checks');
-    expect(status?.textContent).toContain('Checking the current draft before it is saved.');
-    expect(status?.textContent).not.toMatch(/command|output|path|sha256|candidate_id|credential/iu);
+    const checkStatus = container.querySelector('[data-builder-check-run-operation="running"]');
+    expect(status).toBeNull();
+    expect(checkStatus?.getAttribute('data-builder-check-run-presentation')).toBe('compact');
+    expect(checkStatus?.closest('[data-builder-workspace-controls="true"]')).not.toBeNull();
+    expect(checkStatus?.querySelector('span')?.classList.contains('cf-builder-visually-hidden')).toBe(true);
+    expect(container.textContent).not.toContain('Save this draft?');
+    expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Checking the current draft before it is saved.');
+    expect(container.textContent).not.toMatch(/sha256|candidate_id|credential/iu);
   });
 
-  it('uses the draft composer review shortcut without sending or saving', async () => {
+  it('keeps duplicate review shortcuts out of the draft composer', async () => {
     const { draftReady } = await snapshots();
     const activity = await candidateActivity();
     const onInstructionChange = vi.fn();
     const onSubmitInstruction = vi.fn();
     const onSave = vi.fn();
     const onRejectDraft = vi.fn();
-    const { restore, spy } = installScrollIntoViewSpy();
-    try {
-      const container = render(
-        <BuilderPage
-          activeFile={null}
-          conversationSnapshot={activity}
-          instruction="Add a timer."
-          onInstructionChange={onInstructionChange}
-          onRejectDraft={onRejectDraft}
-          onSave={onSave}
-          onSubmitInstruction={onSubmitInstruction}
-          snapshot={draftReady}
-        />,
-      );
+    const onUndoDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Add a timer."
+        onInstructionChange={onInstructionChange}
+        onRejectDraft={onRejectDraft}
+        onSave={onSave}
+        onUndoDraft={onUndoDraft}
+        onSubmitInstruction={onSubmitInstruction}
+        snapshot={draftReady}
+      />,
+    );
 
-      const review = container.querySelector<HTMLElement>('[data-builder-review-checkpoint="true"]');
-      const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
-      expect(review).not.toBeNull();
-      expect(review?.tabIndex).toBe(-1);
-      expect(textarea?.value).toBe('Add a timer.');
-      expect(textarea?.readOnly).toBe(false);
-
-      click(container, '[data-builder-composer-review-focus="true"]');
-
-      expect(spy).toHaveBeenCalledWith({ block: 'start' });
-      expect(document.activeElement).toBe(review);
-      expect(onSubmitInstruction).not.toHaveBeenCalled();
-      expect(onSave).not.toHaveBeenCalled();
-      expect(onRejectDraft).not.toHaveBeenCalled();
-    } finally {
-      restore();
-    }
+    expect(container.querySelector('[data-builder-composer-review-gate="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-review-focus="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Add a timer.');
+    expect(onSubmitInstruction).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRejectDraft).not.toHaveBeenCalled();
   });
 
   it('binds Enter to continuing an unsaved draft without saving or discarding', async () => {
@@ -3170,19 +4415,22 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    expect(container.querySelector('[data-builder-chat-workspace="true"]')
+      ?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
     const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     const conversation = container.querySelector('[data-builder-conversation-workspace="true"]');
-    const draftLanding = container.querySelector('[data-builder-draft-landing="true"]');
-    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
     const composer = container.querySelector('[data-builder-composer="true"]');
     const artifactSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
-    const artifactSummary = container.querySelector('[data-builder-artifact-summary="true"]');
     const workspaceControls = container.querySelector('[data-builder-workspace-controls="true"]');
     const preview = container.querySelector('[data-builder-preview-flow="true"]');
     const code = container.querySelector('[data-builder-code-flow="true"]');
     const source = container.querySelector('[data-builder-source-flow="true"]');
-    const draftActions = container.querySelector('[data-builder-workspace-draft-actions="true"]');
+    const versionDecision = container.querySelector('[data-builder-composer-version-decision="true"]');
     expect(chatMain).not.toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
     expect(artifactSidebar).not.toBeNull();
@@ -3192,6 +4440,8 @@ describe('BuilderPage v2', () => {
     expect(sideWorkspaceTabs?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')?.getAttribute('aria-selected'))
       .toBe('true');
+    expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"] [data-builder-side-workspace-tab-label="active"]')?.textContent)
+      .toBe('Preview');
     expect(sideWorkspaceTabs?.querySelector('[data-builder-side-workspace-tool="preview"]')
       ?.getAttribute('data-builder-side-workspace-tab-kind'))
       .toBe('browser');
@@ -3221,16 +4471,16 @@ describe('BuilderPage v2', () => {
     expect(artifactResizeHandle?.getAttribute('role')).toBe('separator');
     expect(artifactResizeHandle?.getAttribute('aria-label')).toBe('Resize artifact panel');
     expect(artifactResizeHandle?.getAttribute('aria-orientation')).toBe('vertical');
-    expect(artifactResizeHandle?.getAttribute('aria-valuemin')).toBe('360');
-    expect(artifactResizeHandle?.getAttribute('aria-valuenow')).toBe('480');
+    expect(artifactResizeHandle?.getAttribute('aria-valuemin')).toBe('320');
+    expect(artifactResizeHandle?.getAttribute('aria-valuenow')).toBe('400');
     expect(artifactResizeHandle?.getAttribute('data-builder-artifact-resizing')).toBeNull();
     expect(workspaceControls).not.toBeNull();
     expect(workspaceControls?.getAttribute('data-builder-workspace-drawer-visible')).toBe('true');
     expect(workspaceControls?.textContent).not.toContain('Terminal');
-    expect(workspaceControls?.textContent).toContain('Open location');
-    expect(workspaceControls?.textContent).toContain('Preview');
+    expect(workspaceControls?.textContent).not.toContain('Open location');
+    expect(workspaceControls?.textContent).not.toContain('Preview');
     expect(container.querySelector('[data-builder-open-project-location="true"]')?.getAttribute('aria-label'))
-      .toBe('Open location');
+      .toBe('Open project folder');
     expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
       .toBe('Workspace menu');
     expect(container.querySelector('[data-builder-artifact-view-button="true"]')).toBeNull();
@@ -3243,6 +4493,7 @@ describe('BuilderPage v2', () => {
     expect(workspaceMenu).not.toBeNull();
     expect(workspaceMenu?.textContent).toContain('Preview');
     expect(workspaceMenu?.textContent).toContain('Changes');
+    expect(workspaceMenu?.textContent).toContain('History');
     expect(workspaceMenu?.textContent).toContain('Permissions');
     expect(workspaceMenu?.textContent).toContain('Terminal');
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-pressed'))
@@ -3250,6 +4501,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-workspace-control-tab="preview"]')?.getAttribute('aria-checked'))
       .toBe('true');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="versions"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="permissions"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-workspace-control-tab="source"]')?.textContent).toContain('Files');
     click(container, '[data-builder-side-workspace-new-tab-button="true"]');
@@ -3271,6 +4523,18 @@ describe('BuilderPage v2', () => {
     expect(newTabMenu?.querySelector('[data-builder-side-workspace-new-tab-kind="terminal"]')
       ?.getAttribute('aria-disabled'))
       .toBe('false');
+    const stablePreview = container.querySelector('[data-builder-static-preview="true"]');
+    expect(stablePreview).not.toBeNull();
+    stablePreview?.setAttribute('data-test-stable-preview', 'true');
+    click(container, '[data-builder-side-workspace-new-tab-kind="terminal"]');
+    const retainedPreview = container.querySelector('[data-test-stable-preview="true"]');
+    expect(retainedPreview).toBe(stablePreview);
+    expect(retainedPreview?.closest('[data-builder-live-preview-panel="true"]')?.hasAttribute('hidden'))
+      .toBe(true);
+    click(container, '[data-builder-side-workspace-tool="preview"]');
+    expect(container.querySelector('[data-test-stable-preview="true"]')).toBe(stablePreview);
+    expect(stablePreview?.closest('[data-builder-live-preview-panel="true"]')?.hasAttribute('hidden'))
+      .toBe(false);
     click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-workspace-menu="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-minimize-artifact="true"]')?.getAttribute('aria-label'))
@@ -3279,29 +4543,21 @@ describe('BuilderPage v2', () => {
       .toBe('Hide artifact panel');
     expect(container.querySelector('[data-builder-close-artifact-sidebar="true"]')).toBeNull();
     expect(conversation).not.toBeNull();
-    expect(draftLanding).not.toBeNull();
-    expect(review).not.toBeNull();
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('status-only');
+    expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
     expect(composer).not.toBeNull();
-    expect(artifactSummary).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
     expect(preview).not.toBeNull();
     expect(code).toBeNull();
     expect(source).toBeNull();
-    expect(draftActions).not.toBeNull();
-    expect(draftActions?.closest('[data-builder-workspace-controls="true"]')).toBe(workspaceControls);
-    expect(draftActions?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(versionDecision).not.toBeNull();
+    expect(versionDecision?.closest('[data-builder-workspace-controls="true"]')).toBeNull();
+    expect(versionDecision?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(conversation?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(draftLanding?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(review?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
-    expect(artifactSummary?.closest('[data-builder-chat-main="true"]')).toBe(chatMain);
     expect(preview?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(preview?.closest('[data-builder-artifact-sidebar="true"]')).toBe(artifactSidebar);
-    expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
-    expect(artifactSummary?.closest('[data-builder-draft-landing="true"]')).toBe(draftLanding);
     expect(preview?.closest('[data-builder-draft-landing="true"]')).toBeNull();
     expect(conversation?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
-    expect(review?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
-    expect(artifactSummary?.classList.contains('cf-builder-chat-flow-surface')).toBe(true);
     expect(preview?.classList.contains('cf-builder-chat-flow-surface')).toBe(false);
     expect(preview?.getAttribute('aria-label')).toBe('Project result');
     expect(preview?.querySelector('.cf-builder-result-toolbar')).toBeNull();
@@ -3316,22 +4572,24 @@ describe('BuilderPage v2', () => {
     expect(conversation?.textContent).not.toContain('Work stream');
     expect(conversation?.querySelector('[data-builder-activity-toolbar="true"]')).toBeNull();
     expect(conversation?.querySelector('[data-builder-refresh-activity="true"]')).toBeNull();
-    expect(Boolean(conversation!.compareDocumentPosition(review!) & Node.DOCUMENT_POSITION_FOLLOWING))
+    expect(Boolean(conversation!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
       .toBe(true);
-    expect(Boolean(review!.compareDocumentPosition(artifactSummary!) & Node.DOCUMENT_POSITION_FOLLOWING))
-      .toBe(true);
-    expect(Boolean(artifactSummary!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING))
-      .toBe(true);
-    expect(composer?.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    expect(composer?.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
-    expect(draftActions?.closest('[data-builder-review-checkpoint="true"]')).toBeNull();
-    expect(draftActions?.closest('[data-builder-workspace-controls="true"]')).toBe(workspaceControls);
-    expect(draftActions?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
-    expect(draftActions?.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
-    expect(draftActions?.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-draft-actions="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
+    expect(versionDecision?.closest('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(versionDecision?.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
+    expect(versionDecision?.querySelector('[data-builder-discard-draft="true"]')).not.toBeNull();
+    let workspaceWidth = 920;
     Object.defineProperty(workspace, 'getBoundingClientRect', {
       configurable: true,
-      value: () => ({ bottom: 720, height: 640, left: 0, right: 920, top: 80, width: 920 }),
+      value: () => ({
+        bottom: 720,
+        height: 640,
+        left: 0,
+        right: workspaceWidth,
+        top: 80,
+        width: workspaceWidth,
+      }),
     });
     Object.defineProperty(artifactSidebar, 'getBoundingClientRect', {
       configurable: true,
@@ -3339,6 +4597,14 @@ describe('BuilderPage v2', () => {
     });
     const previousBodyCursor = document.body.style.cursor;
     const previousBodyUserSelect = document.body.style.userSelect;
+    workspaceWidth = 640;
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('320px');
+    workspaceWidth = 920;
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
+      .toBe('400px');
     act(() => {
       artifactResizeHandle?.dispatchEvent(new MouseEvent('pointerdown', {
         bubbles: true,
@@ -3360,28 +4626,28 @@ describe('BuilderPage v2', () => {
       }));
     });
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('560px');
+      .toBe('500px');
     const resizedHandle = container.querySelector('[data-builder-artifact-resize-handle="true"]');
-    expect(resizedHandle?.getAttribute('aria-valuenow')).toBe('560');
-    expect(resizedHandle?.getAttribute('aria-valuemax')).toBe('560');
+    expect(resizedHandle?.getAttribute('aria-valuenow')).toBe('500');
+    expect(resizedHandle?.getAttribute('aria-valuemax')).toBe('500');
     expect(resizedHandle?.getAttribute('data-builder-artifact-resizing')).toBeNull();
     expect(document.body.style.cursor).toBe(previousBodyCursor);
     expect(document.body.style.userSelect).toBe(previousBodyUserSelect);
     const shrinkEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'ArrowRight' });
     expect(shrinkEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('536px');
+      .toBe('476px');
     const minEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'Home' });
     expect(minEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('360px');
+      .toBe('320px');
     const maxEvent = keyDown(container, '[data-builder-artifact-resize-handle="true"]', { key: 'End' });
     expect(maxEvent.defaultPrevented).toBe(true);
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('560px');
+      .toBe('500px');
     click(container, '[data-builder-minimize-artifact="true"]');
     expect((workspace as HTMLElement).style.getPropertyValue('--cf-builder-artifact-width'))
-      .toBe('360px');
+      .toBe('320px');
     click(container, '[data-builder-toggle-artifact="true"]');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
@@ -3397,8 +4663,8 @@ describe('BuilderPage v2', () => {
       .toBe('changes');
     expect(container.querySelector('[data-builder-workspace-controls="true"]')?.getAttribute('data-builder-workspace-drawer-visible'))
       .toBe('true');
-    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-      .toContain('Changes');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+      .toBe('Workspace menu');
     click(container, '[data-builder-workspace-menu-button="true"]');
     expect(container.querySelector('[data-builder-workspace-control-tab="changes"]')?.getAttribute('aria-checked'))
       .toBe('true');
@@ -3433,19 +4699,24 @@ describe('BuilderPage v2', () => {
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
     expect(changesDisclosure?.querySelector('.cf-builder-changes-title')).toBeNull();
-    expect(updatedArtifactSidebar?.querySelector('[data-builder-side-workspace-tool="changes"]')?.textContent)
+    expect(updatedArtifactSidebar?.querySelector('[data-builder-side-workspace-tool="changes"] [data-builder-side-workspace-tab-label="active"]')?.textContent)
       .toContain('Changes');
+    expect(updatedArtifactSidebar?.querySelector('[data-builder-side-workspace-tool="preview"] [data-builder-side-workspace-tab-label="collapsed"]'))
+      .not.toBeNull();
+    expect(updatedArtifactSidebar?.querySelector('[data-builder-side-workspace-tool="preview"] [data-builder-side-workspace-tab-label="collapsed"]')?.classList.contains('cf-builder-visually-hidden'))
+      .toBe(true);
     expect(changesDisclosure?.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('file');
     expect(versions).toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
-    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-      .toContain('Changes');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+      .toBe('Workspace menu');
     expect(container.querySelector('[data-builder-open-artifact-preview="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-open-artifact-changes="true"]')).toBeNull();
     expect(container.querySelectorAll('[data-builder-save-version="true"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(0);
-    expect(container.querySelectorAll('[data-builder-review-more="true"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-builder-discard-draft="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-composer-version-decision="true"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-builder-review-more="true"]')).toHaveLength(0);
     expect(container.querySelector('#builder-tool-tab-preview')).toBeNull();
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="You"]')?.getAttribute('data-builder-activity-role'))
@@ -3456,7 +4727,7 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.getAttribute('data-builder-activity-role'))
       .toBe('assistant');
     expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
-      .toContain('The review workspace is ready before saving this version.');
+      .not.toContain('The review workspace is ready before saving this version.');
     expect(onSubmitInstruction).not.toHaveBeenCalled();
     expect(onRejectDraft).not.toHaveBeenCalled();
     expect(onSave).not.toHaveBeenCalled();
@@ -3465,6 +4736,365 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(
       /builder-generation-draft:|review_id|reviewer_id|reviewed_at_ms|sha256:|commit_oid|tree_oid|provider|credential/iu,
     );
+  });
+
+  it('keeps the Browser workspace host mounted while the preview projection updates', async () => {
+    const first = await changedDraftSnapshot();
+    const second = await draftSnapshotFromSourceTrees(
+      await createSourceTree([
+        { path: 'index.html', content: '<main>Old</main>\n' },
+        { path: 'styles.css', content: 'main { color: black; }\n' },
+      ]),
+      await createSourceTree([
+        { path: 'index.html', content: '<main>Newer preview</main>\n' },
+        { path: 'styles.css', content: 'main { color: teal; }\n' },
+      ]),
+    );
+    const activity = await candidateActivity();
+    let setSnapshot!: (value: typeof first) => void;
+
+    function PreviewHostPage() {
+      const [snapshot, updateSnapshot] = useState(first);
+      setSnapshot = updateSnapshot;
+      return (
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          snapshot={snapshot}
+        />
+      );
+    }
+
+    const container = render(<PreviewHostPage />);
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+    const browserHost = container.querySelector('[data-builder-side-workspace-browser="true"]');
+    expect(browserHost).not.toBeNull();
+    browserHost?.setAttribute('data-test-stable-preview-host', 'true');
+
+    act(() => setSnapshot(second));
+
+    const retainedHost = container.querySelector('[data-test-stable-preview-host="true"]');
+    expect(retainedHost).toBe(browserHost);
+    expect(retainedHost?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(retainedHost?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector<HTMLIFrameElement>('[data-builder-static-preview="true"] iframe')?.srcdoc)
+      .toContain('Newer preview');
+  });
+
+  it('runs the saved project from the workspace toolbar and opens its preview', async () => {
+    const { saved } = await snapshots();
+    const onRequestLivePreview = vi.fn();
+    const onStopLivePreview = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        livePreviewStatus={{
+          status_version: 'builder-live-preview-status-projection.v1',
+          project_id: PROJECT_ID,
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+          preview_kind: 'live_static_web',
+          entry_url: null,
+          status: 'idle',
+          can_start: true,
+          can_reload: false,
+          can_stop: false,
+          blocked_request_count: 0,
+          navigation_block_count: 0,
+          network_block_count: 0,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 0,
+          message: 'Live preview is ready to start.',
+          unavailable_reason: null,
+          dev_server_approval: null,
+          updated_at_ms: 10,
+          authority: {
+            live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+            renderer_authority: 'current_project_conversation_only',
+            active_renderer_required: true,
+            source_tree_from_renderer: 'not_accepted',
+            source_read: 'main_owned_preview_source_resolver_or_not_performed',
+            source_write: 'not_performed',
+            provider_dispatch: false,
+            tool_dispatch: false,
+            command_execution: false,
+            git_mutation: false,
+            sqlite_write: false,
+            permission_grant: false,
+            revision_admission: false,
+            save_admission: false,
+            electron_view_attachment: 'main_only_not_exposed_to_renderer',
+            preview_content_ipc: false,
+            node_integration: false,
+            preload: false,
+          },
+        }}
+        onRequestLivePreview={onRequestLivePreview}
+        onStopLivePreview={onStopLivePreview}
+        snapshot={saved}
+      />,
+    );
+
+    const runProject = container.querySelector<HTMLButtonElement>('[data-builder-run-project="true"]');
+    const stopProject = container.querySelector<HTMLButtonElement>('[data-builder-stop-project="true"]');
+    expect(runProject?.disabled).toBe(false);
+    expect(runProject?.getAttribute('data-builder-control-presentation')).toBe('compact');
+    expect(runProject?.getAttribute('aria-label')).toBe('Run project');
+    expect(runProject?.querySelector('span')?.classList.contains('cf-builder-visually-hidden')).toBe(true);
+    expect(stopProject?.disabled).toBe(true);
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+
+    click(container, '[data-builder-run-project="true"]');
+
+    expect(onRequestLivePreview).toHaveBeenCalledOnce();
+    expect(onStopLivePreview).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')
+      ?.getAttribute('data-builder-artifact-tab-active')).toBe('preview');
+  });
+
+  it('shows the exact development server command and records one-time approval explicitly', async () => {
+    const { saved } = await snapshots();
+    const onDecide = vi.fn();
+    const approvalRequestId =
+      'builder-live-preview-dev-server-approval-request:123e4567-e89b-42d3-a456-426614174099';
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        livePreviewStatus={{
+          status_version: 'builder-live-preview-status-projection.v1',
+          project_id: PROJECT_ID,
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+          preview_kind: 'live_static_web',
+          entry_url: null,
+          status: 'approval_required',
+          can_start: false,
+          can_reload: false,
+          can_stop: false,
+          blocked_request_count: 0,
+          navigation_block_count: 0,
+          network_block_count: 0,
+          permission_block_count: 0,
+          download_block_count: 0,
+          window_open_block_count: 0,
+          message: 'Allow this project development server to start?',
+          unavailable_reason: null,
+          dev_server_approval: {
+            request_version: 'builder-live-preview-dev-server-approval-request.v1',
+            approval_request_id: approvalRequestId,
+            project_id: PROJECT_ID,
+            conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+            command_display: 'npm run dev -- --host 127.0.0.1 --port 5174 --strictPort',
+            source_tree_digest: `sha256:${'a'.repeat(64)}`,
+            risk_notice: 'This project script may modify files or use the network.',
+            requested_at_ms: 10,
+            expires_at_ms: 300_010,
+            decisions: ['allow_once', 'deny'],
+          },
+          updated_at_ms: 10,
+          authority: {
+            live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+            renderer_authority: 'current_project_conversation_only',
+            active_renderer_required: true,
+            source_tree_from_renderer: 'not_accepted',
+            source_read: 'main_owned_preview_source_resolver_or_not_performed',
+            source_write: 'not_performed',
+            provider_dispatch: false,
+            tool_dispatch: false,
+            command_execution: false,
+            git_mutation: false,
+            sqlite_write: false,
+            permission_grant: false,
+            revision_admission: false,
+            save_admission: false,
+            electron_view_attachment: 'main_only_not_exposed_to_renderer',
+            preview_content_ipc: false,
+            node_integration: false,
+            preload: false,
+          },
+        }}
+        onDecideLivePreviewDevServerApproval={onDecide}
+        snapshot={saved}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+    expect(container.querySelector(
+      `[data-builder-live-preview-dev-server-approval="${approvalRequestId}"]`,
+    )?.textContent).toContain('npm run dev -- --host 127.0.0.1 --port 5174 --strictPort');
+    expect(container.textContent).toContain('此项目脚本可能修改文件或访问网络');
+
+    click(container, '[data-builder-allow-live-preview-dev-server-once="true"]');
+    expect(onDecide).toHaveBeenCalledExactlyOnceWith('allow_once');
+  });
+
+  it('reports the measured Browser content bounds and hides the native view after changing tabs', async () => {
+    const { draftReady } = await snapshots();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+      this: HTMLElement,
+    ) {
+      if (this.matches('[data-builder-result-placement="artifact"]')) {
+        return {
+          bottom: 700,
+          height: 520,
+          left: 820,
+          right: 1240,
+          top: 180,
+          width: 420,
+          x: 820,
+          y: 180,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      if (this.matches('[data-builder-expanded-preview-content="true"]')) {
+        return {
+          bottom: 760,
+          height: 660,
+          left: 24,
+          right: 1256,
+          top: 100,
+          width: 1232,
+          x: 24,
+          y: 100,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    const onLivePreviewLayoutChange = vi.fn();
+
+    try {
+      const container = render(
+        <BuilderPage
+          activeFile={null}
+          instruction=""
+          onLivePreviewLayoutChange={onLivePreviewLayoutChange}
+          snapshot={draftReady}
+        />,
+      );
+      expect(onLivePreviewLayoutChange).toHaveBeenLastCalledWith(null);
+      onLivePreviewLayoutChange.mockClear();
+      click(container, '[data-builder-workspace-menu-button="true"]');
+      click(container, '[data-builder-workspace-control-tab="preview"]');
+      expect(onLivePreviewLayoutChange).toHaveBeenCalledWith({
+        x: 820,
+        y: 180,
+        width: 420,
+        height: 520,
+      });
+
+      onLivePreviewLayoutChange.mockClear();
+      click(container, '[data-builder-expand-preview="true"]');
+      expect(onLivePreviewLayoutChange).not.toHaveBeenCalledWith(null);
+      expect(onLivePreviewLayoutChange).toHaveBeenLastCalledWith({
+        x: 24,
+        y: 100,
+        width: 1232,
+        height: 660,
+      });
+
+      onLivePreviewLayoutChange.mockClear();
+      click(container, '[data-builder-close-expanded-preview="true"]');
+      expect(onLivePreviewLayoutChange).not.toHaveBeenCalledWith(null);
+      expect(onLivePreviewLayoutChange).toHaveBeenLastCalledWith({
+        x: 820,
+        y: 180,
+        width: 420,
+        height: 520,
+      });
+
+      openWorkspaceChanges(container);
+      expect(onLivePreviewLayoutChange).toHaveBeenLastCalledWith(null);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('re-publishes unchanged Browser bounds when the request-bound layout callback changes', async () => {
+    const { draftReady } = await snapshots();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+      this: HTMLElement,
+    ) {
+      if (this.matches('[data-builder-result-placement="artifact"]')) {
+        return {
+          bottom: 700,
+          height: 520,
+          left: 820,
+          right: 1240,
+          top: 180,
+          width: 420,
+          x: 820,
+          y: 180,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    const initialLayoutChange = vi.fn();
+    const admittedLayoutChange = vi.fn();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      act(() => root.render(
+        <BuilderPage
+          activeFile={null}
+          instruction=""
+          onLivePreviewLayoutChange={initialLayoutChange}
+          snapshot={draftReady}
+        />,
+      ));
+      expect(initialLayoutChange).toHaveBeenLastCalledWith(null);
+      initialLayoutChange.mockClear();
+      click(container, '[data-builder-workspace-menu-button="true"]');
+      click(container, '[data-builder-workspace-control-tab="preview"]');
+      expect(initialLayoutChange).toHaveBeenCalledWith({
+        x: 820,
+        y: 180,
+        width: 420,
+        height: 520,
+      });
+
+      act(() => root.render(
+        <BuilderPage
+          activeFile={null}
+          instruction=""
+          onLivePreviewLayoutChange={admittedLayoutChange}
+          snapshot={draftReady}
+        />,
+      ));
+      expect(admittedLayoutChange).toHaveBeenCalledWith({
+        x: 820,
+        y: 180,
+        width: 420,
+        height: 520,
+      });
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      vi.restoreAllMocks();
+    }
   });
 
   it('opens current draft files from the side workspace using main-issued file refs', async () => {
@@ -3493,16 +5123,15 @@ describe('BuilderPage v2', () => {
     const filesPanel = container.querySelector('[data-builder-side-workspace-files="true"]');
     expect(filesPanel).not.toBeNull();
     expect(filesPanel?.textContent).toContain('Files');
-    expect(filesPanel?.textContent).toContain('2 files');
-    expect(filesPanel?.textContent).toContain('Current draft');
+    expect(filesPanel?.textContent).toContain('Current draft · 2');
     expect(filesPanel?.textContent).toContain('App.tsx');
     expect(filesPanel?.textContent).toContain('styles.css');
     expect(filesPanel?.textContent).toContain('export function App()');
     expect(filesPanel?.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
     expect(filesPanel?.querySelector('[data-builder-side-workspace-code-line="1"]')?.textContent)
       .toContain('export function App()');
-    expect(filesPanel?.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
-      .toContain('/src/App.tsx');
+    expect(filesPanel?.querySelector('[data-builder-side-workspace-file-path="true"]')?.textContent)
+      .toBe('/src/App.tsx');
     expect(filesPanel?.querySelector('[data-builder-side-workspace-file-kind="directory"]')?.textContent)
       .toContain('src');
     expect(onRequestSideWorkspaceFiles).toHaveBeenCalled();
@@ -3514,12 +5143,114 @@ describe('BuilderPage v2', () => {
     );
     expect(Object.keys(onSelectSideWorkspaceFile.mock.calls[0]?.[0] ?? {})).toStrictEqual([
       'file_ref_version',
+      'source_kind',
       'source_tree_digest',
       'path',
       'content_digest',
     ]);
     expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('text_preview');
     expect(JSON.stringify(onSelectSideWorkspaceFile.mock.calls)).not.toContain('entries');
+  });
+
+  it('keeps the file viewer stable while a newly selected file is loading', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+
+    function LoadingFilesPage() {
+      const [activeFile, setActiveFile] = useState<BuilderFileName | null>('src/App.tsx');
+      return (
+        <BuilderPage
+          activeFile={activeFile}
+          conversationSnapshot={activity}
+          instruction="Inspect the files."
+          onSelectFile={setActiveFile}
+          onSelectSideWorkspaceFile={() => undefined}
+          sideWorkspaceFileContent={sideWorkspaceFileContent()}
+          sideWorkspaceFileContentStatus="ready"
+          sideWorkspaceFileTree={sideWorkspaceFileTree()}
+          sideWorkspaceFileTreeStatus="ready"
+          snapshot={draftReady}
+        />
+      );
+    }
+
+    const container = render(<LoadingFilesPage />);
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="source"]');
+    click(container, '[data-builder-side-workspace-file-entry="src/styles.css"]');
+
+    const viewer = container.querySelector('[data-builder-side-workspace-file-content-status="loading"]');
+    expect(viewer?.getAttribute('aria-busy')).toBe('true');
+    expect(viewer?.querySelector('[data-builder-side-workspace-file-path="true"]')?.textContent)
+      .toBe('/src/styles.css');
+    expect(viewer?.querySelectorAll('.cf-builder-artifact-file-loading-line')).toHaveLength(9);
+    expect(viewer?.querySelector('[data-builder-side-workspace-code-viewer="true"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-side-workspace-file-path="true"]')).toHaveLength(1);
+    expect(container.querySelector('.cf-builder-artifact-files-toolbar')).toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-file-entry="src/styles.css"]')?.getAttribute('data-active'))
+      .toBe('true');
+  });
+
+  it('keeps long source previews inside dedicated side-workspace scroll regions', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const markdownFile = Object.freeze({ path: 'docs/static-blog-plan.md', contentDigest: SIDE_WORKSPACE_APP_DIGEST });
+    const longMarkdown = Array.from(
+      { length: 80 },
+      (_, index) => `## ${index + 1}. Static blog implementation detail`,
+    ).join('\n');
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction="Inspect the plan."
+        sideWorkspaceFileContent={sideWorkspaceFileContent(markdownFile, longMarkdown, 'markdown')}
+        sideWorkspaceFileContentStatus="ready"
+        sideWorkspaceFileTree={sideWorkspaceFileTree([markdownFile])}
+        sideWorkspaceFileTreeStatus="ready"
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="source"]');
+
+    const sourcePanel = container.querySelector('[data-builder-side-workspace-files="true"]');
+    const contentScroll = sourcePanel?.querySelector('[data-builder-side-workspace-scroll-region="file-content"]');
+    const treeScroll = sourcePanel?.querySelector('[data-builder-side-workspace-scroll-region="file-tree"]');
+    expect(sourcePanel?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(sourcePanel?.closest('[data-builder-chat-main="true"]')).toBeNull();
+    expect(contentScroll).not.toBeNull();
+    expect(treeScroll).not.toBeNull();
+    expect(contentScroll?.closest('[data-builder-side-workspace-file-content="docs/static-blog-plan.md"]'))
+      .not.toBeNull();
+    expect(contentScroll?.querySelectorAll('[data-builder-side-workspace-code-line]')).toHaveLength(80);
+    expect(contentScroll?.textContent).toContain('Static blog implementation detail');
+  });
+
+  it('keeps the verified project shell mounted and inert while another project opens', async () => {
+    const { controller, saved } = await snapshots();
+    const openingOperation = controller.open(PROJECT_ID);
+    const opening = controller.getSnapshot();
+    expect(opening.status).toBe('opening');
+    expect(opening.savedProject).toBe(saved.savedProject);
+
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        snapshot={opening}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('aria-busy')).toBe('true');
+    expect(container.querySelector('[data-builder-project-opening="true"]')?.textContent)
+      .toBe('Opening project...');
+    expect(container.querySelector('[data-builder-chat-workspace="true"]')?.hasAttribute('inert')).toBe(true);
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-controls="true"]')).not.toBeNull();
+
+    await openingOperation;
   });
 
   it('lets side workspace tabs close and reopen by tool type', async () => {
@@ -3543,6 +5274,9 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-side-workspace-close-tab="changes"]');
 
     expect(container.querySelector('[data-builder-side-workspace-tool="changes"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-side-workspace-tool="preview"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('preview');
@@ -3561,16 +5295,23 @@ describe('BuilderPage v2', () => {
 
     click(container, '[data-builder-side-workspace-new-tab-kind="terminal"]');
     expect(container.querySelector('[data-builder-side-workspace-tool="terminal_placeholder"]')).not.toBeNull();
-    expect(container.querySelector('[data-builder-side-workspace-terminal-placeholder="true"]')?.textContent)
-      .toContain('Windows PowerShell');
+    const terminalPlaceholder = container.querySelector('[data-builder-side-workspace-terminal-placeholder="true"]');
+    expect(terminalPlaceholder?.querySelector('[data-builder-side-workspace-terminal-idle="true"]')?.textContent)
+      .toContain('PS Project>');
+    expect(terminalPlaceholder?.querySelector('[data-builder-side-workspace-placeholder-note="terminal"]')?.classList.contains('cf-builder-visually-hidden'))
+      .toBe(true);
+    expect(terminalPlaceholder?.textContent).not.toContain('Copyright');
     click(container, '[data-builder-side-workspace-close-tab="terminal_placeholder"]');
     expect(container.querySelector('[data-builder-side-workspace-tool="terminal_placeholder"]')).toBeNull();
 
     click(container, '[data-builder-side-workspace-new-tab-button="true"]');
     click(container, '[data-builder-side-workspace-new-tab-kind="side_chat"]');
     expect(container.querySelector('[data-builder-side-workspace-tool="side_chat_placeholder"]')).not.toBeNull();
-    expect(container.querySelector('[data-builder-side-workspace-chat-placeholder="true"]')?.textContent)
+    const sideChatPlaceholder = container.querySelector('[data-builder-side-workspace-chat-placeholder="true"]');
+    expect(sideChatPlaceholder?.textContent)
       .toContain('Side chat');
+    expect(sideChatPlaceholder?.querySelector('[data-builder-side-workspace-placeholder-note="side_chat"]')?.classList.contains('cf-builder-visually-hidden'))
+      .toBe(true);
   });
 
   it('opens a read-only permissions artifact tab without exposing authority internals', async () => {
@@ -3594,8 +5335,8 @@ describe('BuilderPage v2', () => {
     const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
     const permissionsPanel = container.querySelector('[data-builder-artifact-permissions="true"]');
     expect(sidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('permissions');
-    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-      .toContain('Permissions');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+      .toBe('Workspace menu');
     expect(container.querySelector('[data-builder-artifact-view-button="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-artifact-tab="permissions"]')).toBeNull();
     expect(permissionsPanel).not.toBeNull();
@@ -3658,7 +5399,6 @@ describe('BuilderPage v2', () => {
     const { saved } = await snapshots();
     const initialActivity = await candidateActivity();
     const nextActivity = await answerActivity();
-    const { restore, spy } = installScrollIntoViewSpy();
     let setActivity!: (value: typeof initialActivity) => void;
 
     function ChatFollowBuilderPage() {
@@ -3674,19 +5414,15 @@ describe('BuilderPage v2', () => {
       );
     }
 
-    try {
-      const container = render(<ChatFollowBuilderPage />);
-      expect(container.querySelector('[data-builder-chat-scroll="true"]')).not.toBeNull();
-      expect(container.querySelector('[data-builder-chat-tail="true"]')).not.toBeNull();
-      expect(spy).toHaveBeenCalledExactlyOnceWith({ block: 'end' });
+    const container = render(<ChatFollowBuilderPage />);
+    const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+    expect(scroll).not.toBeNull();
+    expect(container.querySelector('[data-builder-chat-tail="true"]')).not.toBeNull();
+    setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 960, scrollTop: 560 });
 
-      act(() => setActivity(nextActivity));
+    act(() => setActivity(nextActivity));
 
-      expect(spy).toHaveBeenCalledTimes(2);
-      expect(spy).toHaveBeenLastCalledWith({ block: 'end' });
-    } finally {
-      restore();
-    }
+    expect(scroll?.scrollTop).toBe(960);
   });
 
   it('keeps background activity refresh out of the visible chat when entries remain', async () => {
@@ -3716,7 +5452,6 @@ describe('BuilderPage v2', () => {
     const initialActivity = await candidateActivity();
     const nextActivity = await answerActivity();
     const acceptedActivity = await acceptedCandidateActivity();
-    const { restore, spy } = installScrollIntoViewSpy();
     let setActivity!: (value: typeof initialActivity) => void;
 
     function ChatFollowBuilderPage() {
@@ -3732,36 +5467,31 @@ describe('BuilderPage v2', () => {
       );
     }
 
-    try {
-      const container = render(<ChatFollowBuilderPage />);
-      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
-      expect(scroll).not.toBeNull();
-      expect(spy).toHaveBeenCalledTimes(1);
-      const initialCallCount = spy.mock.calls.length;
+    const container = render(<ChatFollowBuilderPage />);
+    const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+    expect(scroll).not.toBeNull();
 
-      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 120 });
-      act(() => {
-        scroll?.dispatchEvent(new Event('scroll'));
-      });
-      act(() => setActivity(nextActivity));
-      expect(spy).toHaveBeenCalledTimes(initialCallCount);
+    setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 120 });
+    act(() => {
+      scroll?.dispatchEvent(new WheelEvent('wheel', { deltaY: -120 }));
+      scroll?.dispatchEvent(new Event('scroll'));
+    });
+    act(() => setActivity(nextActivity));
+    expect(scroll?.scrollTop).toBe(120);
 
-      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 720 });
-      act(() => {
-        scroll?.dispatchEvent(new Event('scroll'));
-      });
-      act(() => setActivity(acceptedActivity));
-      expect(spy).toHaveBeenCalledTimes(initialCallCount + 1);
-    } finally {
-      restore();
-    }
+    setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1200, scrollTop: 720 });
+    act(() => {
+      scroll?.dispatchEvent(new WheelEvent('wheel', { deltaY: 120 }));
+      scroll?.dispatchEvent(new Event('scroll'));
+    });
+    act(() => setActivity(acceptedActivity));
+    expect(scroll?.scrollTop).toBe(1200);
   });
 
-  it('lands on the draft review actions when generation finishes', async () => {
+  it('keeps draft completion in the conversation without mounting review landing cards', async () => {
     const { saved } = await snapshots();
     const draftReady = await changedDraftSnapshot();
     const activity = await candidateActivity();
-    const { restore, spy } = installScrollIntoViewSpy();
     let setSnapshot!: (value: typeof saved) => void;
 
     function DraftLandingBuilderPage() {
@@ -3777,48 +5507,37 @@ describe('BuilderPage v2', () => {
       );
     }
 
-    try {
-      const container = render(<DraftLandingBuilderPage />);
-      spy.mockClear();
-      act(() => setSnapshot(draftReady));
+    const container = render(<DraftLandingBuilderPage />);
+    const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+    setScrollMetrics(scroll!, { clientHeight: 500, scrollHeight: 1200, scrollTop: 700 });
+    act(() => setSnapshot(draftReady));
 
       const result = container.querySelector('[data-builder-result-flow="true"]');
-      const landing = container.querySelector('[data-builder-draft-landing="true"]');
-      const review = container.querySelector('[data-builder-review-checkpoint="true"]');
-      expect(result).not.toBeNull();
-      expect(landing).not.toBeNull();
-      expect(review).not.toBeNull();
-      expect(spy).toHaveBeenCalled();
-      expect(spy.mock.contexts.at(-1)).toBe(review);
-      expect(spy).toHaveBeenLastCalledWith({ block: 'start' });
+      expect(result).toBeNull();
+      expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
+      expect(scroll?.scrollTop).toBe(1200);
       expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-discard-draft="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-save-version="true"]')).not.toBeNull();
-      expect(review?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
-      expect(result?.closest('[data-builder-draft-landing="true"]')).toBeNull();
-      expect(result?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
 
-      spy.mockClear();
       openWorkspaceChanges(container);
       const changes = container.querySelector('[data-builder-changes-flow="true"]');
       const changesDisclosure = container.querySelector<HTMLDetailsElement>('[data-builder-changes-disclosure="true"]');
       expect(changes).not.toBeNull();
       expect(changesDisclosure).not.toBeNull();
       expect(changesDisclosure?.open).toBe(true);
-      expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-        .toContain('Changes');
-      expect(spy).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+        .toBe('Workspace menu');
       expect(changes?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
-    } finally {
-      restore();
-    }
   });
 
-  it('keeps the completed draft review inside the chat scroll viewport', async () => {
+  it('keeps the completed draft activity at the composer edge without a duplicate review card', async () => {
     const { saved } = await snapshots();
     const draftReady = await changedDraftSnapshot();
     const activity = await candidateActivity();
-    const { restore, spy } = installScrollIntoViewSpy();
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
@@ -3864,26 +5583,22 @@ describe('BuilderPage v2', () => {
       const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
       expect(scroll).not.toBeNull();
       setScrollMetrics(scroll!, { clientHeight: 500, scrollHeight: 1200, scrollTop: 220 });
-      spy.mockClear();
 
       act(() => setSnapshot(draftReady));
 
-      expect(scroll?.scrollTop).toBe(168);
-      expect(spy).not.toHaveBeenCalledWith({ block: 'start' });
-      expect(requestFrame).toHaveBeenCalledOnce();
+      expect(scroll?.scrollTop).toBe(1200);
+      expect(requestFrame).not.toHaveBeenCalled();
     } finally {
       requestFrame.mockRestore();
       cancelFrame.mockRestore();
       vi.restoreAllMocks();
-      restore();
     }
   });
 
-  it('keeps the draft result summary inside the chat scroll viewport with the review', async () => {
+  it('does not create a draft result-summary scroll target', async () => {
     const { saved } = await snapshots();
     const draftReady = await changedDraftSnapshot();
     const activity = await candidateActivity();
-    const { restore } = installScrollIntoViewSpy();
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
@@ -3933,13 +5648,14 @@ describe('BuilderPage v2', () => {
 
       act(() => setSnapshot(draftReady));
 
-      expect(scroll?.scrollTop).toBe(232);
-      expect(requestFrame).toHaveBeenCalledOnce();
+      expect(scroll?.scrollTop).toBe(1200);
+      expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
+      expect(requestFrame).not.toHaveBeenCalled();
     } finally {
       requestFrame.mockRestore();
       cancelFrame.mockRestore();
       vi.restoreAllMocks();
-      restore();
     }
   });
 
@@ -4004,27 +5720,21 @@ describe('BuilderPage v2', () => {
     const responseReceived = container.querySelector('[data-builder-activity-card="AI response received"]');
     const resultPreparing = container.querySelector('[data-builder-activity-card="Preparing result"]');
     const started = container.querySelector('[data-builder-activity-card="Started"]');
-    expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(1);
-    expect(workStatus?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
-    expect(workStatus?.getAttribute('data-builder-work-phase')).toBe('preparing_review');
-    expect(
-      workStatus?.querySelector('[data-builder-message-surface]')
-        ?.getAttribute('data-builder-message-surface'),
-    ).toBe('status');
-    expect(workStatus?.textContent).toContain('Preparing review');
-    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
+    expect(container.querySelectorAll('[data-builder-work-status="true"]')).toHaveLength(0);
+    expect(workStatus).toBeNull();
     expect(started).toBeNull();
     expect(contextReady).toBeNull();
     expect(responseStarted).toBeNull();
     expect(responseReceived).toBeNull();
     expect(resultPreparing).toBeNull();
+    expect(container.textContent).not.toContain('Preparing review');
+    expect(container.textContent).not.toContain('Checking and organizing the result for review.');
     expect(container.textContent).not.toMatch(
       /provider_request_started|provider_response_received|result_preparing|context_ready|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('renders fact-backed Agent step progress without admission details', async () => {
+  it('hides generic Agent lifecycle steps instead of presenting them as completed actions', async () => {
     const { saved } = await snapshots();
     const activity = await agentStepProgressActivity();
     const container = render(
@@ -4036,18 +5746,18 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const completedStep = container.querySelector('[data-builder-agent-step-progress="result_recorded"]');
-    expect(completedStep).not.toBeNull();
-    expect(completedStep?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(completedStep?.textContent).toContain('Step completed');
-    expect(completedStep?.textContent).toContain('This step completed.');
-    expect(container.querySelector('[data-builder-agent-step-progress="start_recorded"]')).toBeNull();
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    expect(chat?.querySelector('[data-builder-completed-actions="true"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Step completed');
+    expect(chat?.textContent).not.toContain('This step completed.');
+    expect(chat?.querySelector('[data-builder-agent-step-progress="start_recorded"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="logs"]')).toBeNull();
     expect(container.textContent).not.toMatch(
       /agent_step_progress_recorded|progress_admission|admission_digest|read_service|step_start_count|step_result_count|builder-run-step|provider|credential|source_tree|stdout|stderr|commit_oid|tree_oid|receipt/iu,
     );
   });
 
-  it('explains failed work with a completion summary instead of internal phases', async () => {
+  it('explains failed work once without internal phases or a duplicate completion table', async () => {
     const { saved } = await snapshots();
     const activity = await failedRunActivity();
     const container = render(
@@ -4068,17 +5778,9 @@ describe('BuilderPage v2', () => {
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
     expect(workStatus).toBeNull();
-    const summary = failed?.querySelector('[data-builder-completion-summary="true"]');
-    expect(summary?.getAttribute('data-builder-completion-result')).toBe('failed');
-    expect(summary?.textContent).toContain('The AI response arrived but could not be prepared for review.');
-    expect(summary?.textContent).toContain('No version was saved by this result.');
-    expect(summary?.textContent).toContain('Try again with a smaller request or continue with a clearer follow-up.');
-    const completionSteps = summary?.querySelector('[data-builder-completion-steps="true"]');
-    expect(completionSteps?.textContent).toContain('Recorded steps');
-    expect(completionSteps?.textContent).toContain('Read the current project context.');
-    expect(completionSteps?.textContent).toContain('Wrote the response.');
-    expect(completionSteps?.textContent).toContain('Checked the response.');
-    expect(completionSteps?.textContent).not.toContain('Prepared the result for review.');
+    expect(failed?.textContent).toContain('The draft could not be prepared for review.');
+    expect(failed?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
+    expect(failed?.textContent).not.toContain('What happened');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -4086,7 +5788,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('keeps completed run progress available in on-demand work logs', async () => {
+  it('does not turn completed provider lifecycle phases into user-visible actions', async () => {
     const { saved } = await snapshots();
     const activity = await failedRunActivity();
     const container = render(
@@ -4100,26 +5802,14 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
     const failed = container.querySelector('[data-builder-activity-card="Could not finish"]');
-    expect(failed?.querySelector('[data-builder-completion-summary="true"]')).not.toBeNull();
-
-    click(container, '[data-builder-workspace-menu-button="true"]');
-    click(container, '[data-builder-workspace-control-tab="logs"]');
-
-    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
-    const logStatuses = logs?.querySelectorAll('[data-builder-work-status="true"]');
-    expect(logs).not.toBeNull();
-    expect(logStatuses).toHaveLength(4);
-    expect(logs?.textContent).toContain('Preparing this request.');
-    expect(logs?.textContent).toContain('Reading the current project context.');
-    expect(logs?.textContent).toContain('Writing the response.');
-    expect(logs?.textContent).toContain('Checking the response.');
-    expect(logs?.textContent).toContain('Could not finish');
-    expect(logs?.textContent).not.toMatch(
+    expect(failed?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
+    expect(failed?.querySelector('[data-builder-completed-actions="true"]')).toBeNull();
+    expect(failed?.textContent).not.toMatch(
       /provider_response_received|provider_request_started|context_ready|result_preparing|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('keeps active work status visible beside the streaming assistant reply', async () => {
+  it('shows the streaming assistant reply without a duplicate fixed work status', async () => {
     const { saved } = await snapshots();
     const activity = await progressActivity();
     const container = render(
@@ -4147,9 +5837,7 @@ describe('BuilderPage v2', () => {
     ).toBe('plain');
     expect(liveOutput?.textContent).toContain('Planning a quiet timer UI.');
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
-    expect(workStatus).not.toBeNull();
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
-    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
+    expect(workStatus).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response received"]')).toBeNull();
@@ -4157,6 +5845,64 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(
       /provider_request_started|provider_response_received|result_preparing|context_ready|request_id|builder-run:|sha256:|provider|credential|source_tree|receipt/iu,
     );
+  });
+
+  it('streams an answer directly without a redundant writing-response status row', async () => {
+    const { saved } = await snapshots();
+    const activity = await respondingActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: 'This answer appears directly in the conversation.',
+          chunk_count: 1,
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
+      .toContain('This answer appears directly in the conversation.');
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-agent-current-activity="responding"]')).toBeNull();
+    expect(container.textContent).not.toContain('Writing response');
+    expect(container.textContent).not.toContain('Preparing a response from the current project context.');
+  });
+
+  it('moves completed runtime narration into history and shows only the uncommitted live suffix', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false);
+    const committed = 'I found the relevant file and will update it now.';
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: `${committed}I will verify the result after this edit.`,
+          chunk_count: 2,
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const durable = container.querySelector('[data-builder-runtime-assistant-message]');
+    const live = container.querySelector('[data-builder-live-output="true"]');
+    expect(durable?.textContent).toContain(committed);
+    expect(live?.querySelector('.cf-builder-live-output-text')?.textContent)
+      .toBe('I will verify the result after this edit.');
+    expect(live?.querySelector('[data-builder-live-activity="true"]')?.textContent)
+      .toBe('正在处理当前任务');
+    expect(live?.textContent).not.toContain(committed);
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
   });
 
   it('does not refollow chat for live text updates within the same output chunk', async () => {
@@ -4189,8 +5935,6 @@ describe('BuilderPage v2', () => {
       });
       expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
         .toContain('Planning a quiet timer UI.');
-      spy.mockClear();
-
       act(() => {
         root.render(
           <BuilderPage
@@ -4209,6 +5953,164 @@ describe('BuilderPage v2', () => {
     } finally {
       restore();
     }
+  });
+
+  it('keeps one live message node while frame-batching deltas and respects user scroll position', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    let frameCallback: (() => void) | null = null;
+    const scheduler: BuilderLiveOutputFrameScheduler = Object.freeze({
+      request(callback) {
+        frameCallback = callback;
+        return 1;
+      },
+      cancel() {
+        frameCallback = null;
+      },
+    });
+    const store = createBuilderLiveOutputStore(scheduler);
+    const initial = Object.freeze({
+      state: 'streaming' as const,
+      request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+      project_id: PROJECT_ID,
+      text: 'A',
+      chunk_count: 1,
+    });
+    store.start(initial);
+    const animationFrames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={initial}
+        liveOutputStore={store}
+        snapshot={saved}
+      />,
+    );
+    const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]')!;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    animationFrames.shift()?.(0);
+    raf.mockClear();
+    scroll.scrollTop = 700;
+    const liveNode = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveNode).not.toBeNull();
+
+    act(() => {
+      for (let index = 0; index < 100; index += 1) {
+        store.append(Object.freeze({
+          event_version: 'builder-generation-output.v1',
+          request_id: initial.request_id,
+          project_id: PROJECT_ID,
+          conversation_id: CONVERSATION_ID,
+          turn_id: TURN_ID,
+          task_id: TASK_ID,
+          run_id: RUN_ID,
+          display_delta_text: 'x',
+        }));
+      }
+      frameCallback?.();
+    });
+    animationFrames.shift()?.(16);
+
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBe(liveNode);
+    expect(liveNode?.textContent).toContain(`A${'x'.repeat(100)}`);
+    expect(raf).toHaveBeenCalledTimes(1);
+    expect(scroll.scrollTop).toBe(1000);
+
+    scroll.scrollTop = 100;
+    act(() => {
+      scroll.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }));
+      scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    act(() => {
+      store.append(Object.freeze({
+        event_version: 'builder-generation-output.v1',
+        request_id: initial.request_id,
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        turn_id: TURN_ID,
+        task_id: TASK_ID,
+        run_id: RUN_ID,
+        display_delta_text: 'after-scroll',
+      }));
+      frameCallback?.();
+    });
+    expect(scroll.scrollTop).toBe(100);
+    expect(raf).toHaveBeenCalledTimes(1);
+    store.dispose();
+  });
+
+  it('keeps the live message mounted when durable chat entries arrive before it', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    const liveOutput = Object.freeze({
+      state: 'streaming' as const,
+      request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+      project_id: PROJECT_ID,
+      text: 'Reading the current project.',
+      chunk_count: 1,
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mounted.push({ container, root });
+
+    act(() => {
+      root.render(
+        <BuilderPage
+          activeFile={null}
+          instruction=""
+          liveOutput={liveOutput}
+          snapshot={saved}
+        />,
+      );
+    });
+    const initialNode = container.querySelector('[data-builder-live-output="true"]');
+    expect(initialNode).not.toBeNull();
+
+    act(() => {
+      root.render(
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          liveOutput={liveOutput}
+          snapshot={saved}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBe(initialNode);
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+  });
+
+  it('does not mount an empty generic reply before readable output arrives', async () => {
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '',
+          chunk_count: 0,
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    expect(container.textContent).not.toContain("I'm working on this...");
   });
 
   it('renders queued active-run follow-ups as a distinct user message', async () => {
@@ -4233,6 +6135,77 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('renders a pending local user message before durable activity catches up', async () => {
+    const { saved } = await snapshots();
+    const activity = await progressActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        pendingUserMessages={[{
+          client_id: 'builder-pending-user-message:test',
+          message_kind: 'submitted',
+          text: 'Write a plan for the first screen.',
+        }]}
+        snapshot={saved}
+      />,
+    );
+
+    const pending = container.querySelector('[data-builder-activity-pending="true"]');
+    expect(pending).not.toBeNull();
+    expect(pending?.getAttribute('data-builder-activity-card')).toBe('You');
+    expect(pending?.getAttribute('data-builder-activity-role')).toBe('user');
+    expect(pending?.textContent).toContain('Write a plan for the first screen.');
+  });
+
+  it('deduplicates a pending local user message after durable activity includes it', async () => {
+    const { saved } = await snapshots();
+    const activity = await queuedFollowupActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        pendingUserMessages={[{
+          client_id: 'builder-pending-user-message:test',
+          message_kind: 'queued_followup',
+          minimum_sequence: 5,
+          text: 'After this, make the summary shorter.',
+        }]}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-pending="true"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-activity-card="You queued a follow-up"]')).toHaveLength(1);
+    expect(container.textContent).toContain('After this, make the summary shorter.');
+  });
+
+  it('keeps a repeated pending user message visible when only an older durable message matches its text', async () => {
+    const { saved } = await snapshots();
+    const activity = await queuedFollowupActivity();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        pendingUserMessages={[{
+          client_id: 'builder-pending-user-message:test',
+          message_kind: 'queued_followup',
+          minimum_sequence: activity.conversation?.state === 'ready'
+            ? activity.conversation.conversation.head_sequence
+            : 7,
+          text: 'After this, make the summary shorter.',
+        }]}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-activity-pending="true"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-builder-activity-card="You queued a follow-up"]')).toHaveLength(2);
+  });
+
   it('renders consumed queued follow-ups as a compact handoff receipt', async () => {
     const { saved } = await snapshots();
     const activity = await consumedQueuedFollowupActivity();
@@ -4253,7 +6226,7 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('uses fact-backed work status instead of a duplicate waiting reply before display-safe text arrives', async () => {
+  it('does not invent a fixed reply before Harness provides display-safe text', async () => {
     const { saved } = await snapshots();
     const activity = await progressActivity();
     const container = render(
@@ -4274,9 +6247,7 @@ describe('BuilderPage v2', () => {
 
     expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     const workStatus = container.querySelector('[data-builder-work-status="true"]');
-    expect(workStatus).not.toBeNull();
-    expect(workStatus?.getAttribute('data-builder-work-status-stage')).toBe('result_preparing');
-    expect(workStatus?.textContent).toContain('Checking and organizing the result for review.');
+    expect(workStatus).toBeNull();
     expect(container.textContent).not.toContain("I'm working on this...");
     expect(container.querySelector('[data-builder-activity-card="Context ready"]')).toBeNull();
     expect(container.querySelector('[data-builder-activity-card="AI response started"]')).toBeNull();
@@ -4320,7 +6291,181 @@ describe('BuilderPage v2', () => {
     );
   });
 
-  it('keeps pending tool requests visible without exposing internal evidence', async () => {
+  it('shows one replaceable Chinese Harness activity status above live assistant text', async () => {
+    const { saved } = await snapshots();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '我正在检查项目。',
+          chunk_count: 3,
+          waiting_text: '正在思考',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const liveOutput = container.querySelector('[data-builder-live-output="true"]');
+    expect(liveOutput?.getAttribute('data-builder-live-output-state')).toBe('text');
+    expect(liveOutput?.querySelectorAll('[data-builder-live-activity="true"]')).toHaveLength(1);
+    expect(liveOutput?.querySelector('[data-builder-live-activity="true"]')?.textContent)
+      .toBe('正在思考');
+    expect(liveOutput?.querySelector('.cf-builder-live-output-text')?.textContent)
+      .toBe('我正在检查项目。');
+  });
+
+  it('follows the first waiting frame above the composer for an unsaved draft', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+
+    try {
+      const container = render(
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          liveOutput={{
+            state: 'streaming',
+            request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+            project_id: PROJECT_ID,
+            text: '',
+            chunk_count: 0,
+            waiting_text: 'Applying the next change...',
+          }}
+          onRejectDraft={vi.fn()}
+          onSave={vi.fn()}
+          snapshot={draftReady}
+        />,
+      );
+      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+      expect(scroll).not.toBeNull();
+      expect(frames).toHaveLength(1);
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 960, scrollTop: 120 });
+
+      act(() => frames.shift()?.(0));
+
+      expect(scroll?.scrollTop).toBe(960);
+      expect(container.querySelector('[data-builder-chat-tail="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-live-output-state="waiting"]')?.textContent)
+        .toContain('Applying the next change...');
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
+
+  it('keeps the decision card in the composer dock without an overlay spacer', async () => {
+    const { draftReady, saved } = await snapshots();
+    const activity = await candidateActivity();
+
+    const props = {
+      activeFile: null,
+      conversationSnapshot: activity,
+      instruction: '',
+      onRejectDraft: vi.fn(),
+      onSave: vi.fn(),
+    } as const;
+    const container = render(<BuilderPage {...props} snapshot={saved} />);
+    const mountedEntry = mounted.find((entry) => entry.container === container);
+
+    act(() => mountedEntry?.root.render(<BuilderPage {...props} snapshot={draftReady} />));
+
+    const stack = container.querySelector('[data-builder-composer-stack="true"]');
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    const composer = container.querySelector('[data-builder-composer="true"]');
+    expect(decision?.parentElement).toBe(stack);
+    expect(decision?.nextElementSibling).toBe(composer);
+
+    act(() => mountedEntry?.root.render(<BuilderPage {...props} snapshot={saved} />));
+
+    expect(container.querySelector('[data-builder-composer-version-decision="true"]')).toBeNull();
+  });
+
+  it('refollows later activity growth after sidebar work until the user scrolls away', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const observers: Array<{
+      callback: ResizeObserverCallback;
+      observer: ResizeObserver;
+      targets: Set<Element>;
+    }> = [];
+    const originalResizeObserver = globalThis.ResizeObserver;
+
+    class TestResizeObserver implements ResizeObserver {
+      readonly record: (typeof observers)[number];
+
+      constructor(callback: ResizeObserverCallback) {
+        this.record = { callback, observer: this, targets: new Set() };
+        observers.push(this.record);
+      }
+
+      disconnect(): void { this.record.targets.clear(); }
+
+      observe(target: Element): void { this.record.targets.add(target); }
+
+      unobserve(target: Element): void { this.record.targets.delete(target); }
+    }
+
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: TestResizeObserver,
+      writable: true,
+    });
+
+    try {
+      const container = render(
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          onRejectDraft={vi.fn()}
+          onSave={vi.fn()}
+          snapshot={draftReady}
+        />,
+      );
+      const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]');
+      const column = container.querySelector<HTMLElement>('[data-builder-chat-flow-column="true"]');
+      expect(scroll).not.toBeNull();
+      expect(column).not.toBeNull();
+      const flowObserver = observers.find((entry) => entry.targets.has(column!));
+      expect(flowObserver).toBeDefined();
+
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1320, scrollTop: 600 });
+      act(() => flowObserver?.callback([], flowObserver.observer));
+      expect(scroll?.scrollTop).toBe(1320);
+
+      openWorkspaceChanges(container);
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1440, scrollTop: 720 });
+      act(() => flowObserver?.callback([], flowObserver.observer));
+      expect(scroll?.scrollTop).toBe(1440);
+
+      setScrollMetrics(scroll!, { clientHeight: 400, scrollHeight: 1500, scrollTop: 120 });
+      act(() => {
+        scroll?.dispatchEvent(new WheelEvent('wheel', { deltaY: -120 }));
+        scroll?.dispatchEvent(new Event('scroll'));
+      });
+      act(() => flowObserver?.callback([], flowObserver.observer));
+      expect(scroll?.scrollTop).toBe(120);
+    } finally {
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        value: originalResizeObserver,
+        writable: true,
+      });
+    }
+  });
+
+  it('keeps targetless legacy tool lifecycle requests out of the chat flow', async () => {
     const { saved } = await snapshots();
     const activity = await pendingToolActivity();
     const container = render(
@@ -4332,18 +6477,748 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
-    expect(requested).not.toBeNull();
-    expect(requested?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(requested?.textContent).toContain('Looking over the project');
-    expect(requested?.textContent).toContain('checking the current project context');
-    expect(requested?.textContent).not.toContain('Read project context');
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    expect(chat?.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    expect(chat?.querySelector('[data-builder-tool-activity="requested"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Looking over the project');
+    expect(chat?.textContent).not.toContain('checking the current project context');
     expect(container.textContent).not.toMatch(
       /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('folds completed project context checks into one visible status without exposing internal evidence', async () => {
+  it('opens the Agent Test browser sidebar for the current run browser activity', async () => {
+    const { saved } = await snapshots();
+    const activity = await agentTestBrowserActivity();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+      this: HTMLElement,
+    ) {
+      if (this.matches('[data-builder-agent-test-browser-surface="true"]')) {
+        return {
+          bottom: 700,
+          height: 520,
+          left: 820,
+          right: 1240,
+          top: 180,
+          width: 420,
+          x: 820,
+          y: 180,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    const onAgentTestBrowserLayoutChange = vi.fn();
+    try {
+      const container = render(
+        <BuilderPage
+          activeFile={null}
+          conversationSnapshot={activity}
+          instruction=""
+          onAgentTestBrowserLayoutChange={onAgentTestBrowserLayoutChange}
+          snapshot={saved}
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+
+      const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+      expect(sidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('browser_placeholder');
+      expect(sidebar?.querySelector('[data-builder-side-workspace-tab-label="active"]')?.textContent)
+        .toBe('Agent Test');
+      expect(sidebar?.querySelector('[data-builder-agent-test-browser-surface="true"]')).not.toBeNull();
+      expect(onAgentTestBrowserLayoutChange).toHaveBeenCalledWith(RUN_ID, {
+        x: 820,
+        y: 180,
+        width: 420,
+        height: 520,
+      });
+
+      onAgentTestBrowserLayoutChange.mockClear();
+      click(container, '[data-builder-side-workspace-close-tab="browser_placeholder"]');
+      expect(onAgentTestBrowserLayoutChange).toHaveBeenCalledWith(RUN_ID, null);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('opens the Agent Test sidebar from the Main lifecycle even before task stream activity arrives', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity();
+    const container = render(
+      <BuilderPage
+        activeAgentTestBrowserRunId={RUN_ID}
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onAgentTestBrowserLayoutChange={vi.fn()}
+        snapshot={saved}
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    const sidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
+    expect(sidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('browser_placeholder');
+    expect(sidebar?.querySelector('[data-builder-agent-test-browser-surface="true"]')).not.toBeNull();
+  });
+
+  it('replaces generic work status with the concrete active runtime action', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    const editing = chat?.querySelector('[data-builder-tool-activity="running"]');
+    expect(editing).not.toBeNull();
+    expect(editing?.getAttribute('data-builder-conversation-node')).toBe('tool_evidence');
+    expect(editing?.classList.contains('cf-builder-tool-evidence-row')).toBe(true);
+    expect(editing?.querySelector('.cf-builder-tool-evidence-title')?.textContent)
+      .toContain('Editing src/file-1.ts');
+    expect(editing?.textContent).toContain('Editing src/file-1.ts');
+    expect(editing?.querySelector('.cf-builder-activity-spinner')).not.toBeNull();
+    expect(chat?.querySelector('[data-builder-work-status="true"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Preparing this request');
+  });
+
+  it('shows the latest bounded Harness reasoning status without exposing reasoning text', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html'], true);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const status = container.querySelector('[data-builder-runtime-status="reasoning"]');
+    expect(status?.getAttribute('data-builder-conversation-node')).toBe('reasoning');
+    expect(status?.getAttribute('data-builder-reasoning-row')).toBe('true');
+    expect(status?.getAttribute('data-builder-activity-card')).toBe('Think');
+    expect(status?.querySelector('.cf-builder-activity-title')?.textContent).toContain('Think');
+    expect(status?.textContent).toContain('正在思考');
+    expect(status?.querySelector('.cf-builder-activity-spinner')).not.toBeNull();
+    expect(status?.textContent).not.toMatch(/private reasoning|chain of thought/iu);
+    expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+  });
+
+  it('keeps only the inline live status once streaming output is present', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html'], true);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '我将创建项目文件。',
+          chunk_count: 2,
+          waiting_text: '正在思考',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-runtime-status="reasoning"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-live-activity="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-live-activity="true"]')?.textContent)
+      .toBe('正在思考');
+  });
+
+  it('keeps an active runtime activity only in the inline live status', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html'], true, true, 'activity');
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '',
+          chunk_count: 0,
+          waiting_text: '正在准备工具调用',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-runtime-status="activity"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-live-activity="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-builder-live-activity="true"]')?.textContent)
+      .toBe('正在准备工具调用');
+  });
+
+  it('keeps completed file and command facts separate and only folds repeated kinds', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(true);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    const files = chat?.querySelector<HTMLDetailsElement>(
+      '[data-builder-runtime-history-details="file"]',
+    );
+    const command = chat?.querySelector('[data-builder-runtime-tool-kind="command"]');
+    expect(files).not.toBeNull();
+    expect(files?.open).toBe(false);
+    expect(files?.textContent).toContain('Edited 2 files');
+    expect(command?.textContent).toContain('Ran npm test');
+    expect(command?.textContent).toContain('project check completed successfully');
+    expect(command?.getAttribute('data-builder-conversation-node')).toBe('tool_evidence');
+    expect(command?.classList.contains('cf-builder-tool-evidence-row')).toBe(true);
+    expect(command?.querySelector<HTMLDetailsElement>('[data-builder-tool-evidence-details="terminal"]')).not.toBeNull();
+    expect(command?.querySelector<HTMLDetailsElement>('[data-builder-tool-evidence-details="terminal"]')?.open)
+      .toBe(false);
+    expect(command?.querySelector('.cf-builder-tool-evidence-title')?.textContent)
+      .toContain('Ran npm test');
+    expect(command?.querySelector('.cf-builder-tool-evidence-detail')?.textContent)
+      .toContain('project check completed successfully');
+    expect(files?.querySelector('.cf-builder-tool-evidence-row .cf-builder-tool-evidence-title')?.textContent)
+      .toContain('Edited src/file-1.ts');
+    expect(files?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
+      .toContain('src/file-1.ts');
+    expect(files?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
+      .toContain('+2');
+    expect(chat?.querySelector('[data-builder-runtime-history-details="command"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Completed work');
+    const narration = chat?.querySelectorAll('[data-builder-runtime-assistant-message]') ?? [];
+    expect(narration).toHaveLength(2);
+    expect(chat?.textContent).toContain('I found the relevant files and will update them now.');
+    expect(chat?.textContent).toContain('The edits are complete. I will run the project check next.');
+    expect(chat?.textContent?.match(/Implemented the requested changes and checked the project\./gu))
+      .toHaveLength(1);
+    const completion = chat?.querySelector('[data-builder-activity-card="Draft proposed"]');
+    expect(completion?.getAttribute('data-builder-run-completion-message')).toBeTruthy();
+    expect(completion?.textContent)
+      .toContain('Implemented the requested changes and checked the project.');
+    expect((command?.compareDocumentPosition(completion as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .not.toBe(0);
+    expect(chat?.textContent).not.toContain('Preparing this request');
+  });
+
+  it('keeps a main-owned check result in chat when runtime history only has file facts', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await runtimeToolActivity(true, ['src/file-1.ts', 'src/file-2.ts'], false, false);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunProfiles={[{
+          command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+          command_kind: 'test',
+          command_display: 'npm test',
+          requires_user_approval: true,
+        }]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(32)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'passed',
+          label: 'Checked',
+          summary: 'The project check completed successfully.',
+          environment_reason: 'none',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={draftReady}
+      />,
+    );
+
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    const files = chat?.querySelector('[data-builder-runtime-history-details="file"]');
+    const command = chat?.querySelector('[data-builder-runtime-tool-kind="command"]');
+    expect(files?.textContent).toContain('Edited 2 files');
+    expect(command?.textContent).toContain('Ran npm test');
+    expect(command?.textContent).toContain('The project check completed successfully.');
+    click(container, '[data-builder-runtime-tool-open="terminal"]');
+    expect(container.querySelector('[data-builder-command-inspector="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-command-display="true"]')?.textContent).toBe('npm test');
+    expect(container.querySelector('[data-builder-command-result="passed"]')?.textContent)
+      .toBe('The project check completed successfully.');
+    expect(chat?.textContent).not.toContain('Completed work');
+  });
+
+  it('offers a one-shot dependency preparation action above the composer when a check is blocked by missing dependencies', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'test' as const,
+      command_display: 'npm test',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const onDiagnoseCheckEnvironment = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkEnvironmentDiagnosis={{
+          command_profile_id: profile.command_profile_id,
+          status: 'ready',
+          diagnosis: {
+            diagnosis_version: 'builder-environment-readiness-diagnosis.v1',
+            diagnosis_id: `builder-environment-readiness-diagnosis:${'5'.repeat(64)}`,
+            project_id: PROJECT_ID,
+            candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+            source_tree_digest: `sha256:${'6'.repeat(64)}`,
+            command_profile_id: profile.command_profile_id,
+            command_kind: 'test',
+            command_display: 'npm test',
+            package_manager: 'npm',
+            package_manifest: 'present',
+            dependency_manifest: 'present',
+            lockfile: 'package-lock.json',
+            project_dependency_state: 'install_missing',
+            check_workspace_dependency_state: 'install_missing',
+            host_toolchain_state: 'visible',
+            host_node_version: '22.17.0',
+            host_package_manager_version: '10.9.2',
+            install_permission: 'required',
+            dependency_strategy: 'needs_prepared_dependency_workspace',
+            readiness_state: 'dependencies_not_prepared',
+            primary_action: 'prepare_once',
+            safe_summary: 'The isolated check workspace has not prepared this draft\'s dependencies yet.',
+            diagnosed_at_ms: 1234,
+            diagnosis_digest: `sha256:${'7'.repeat(64)}`,
+          },
+        }}
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+          environment_reason: 'dependency_workspace_missing',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        onDiagnoseCheckEnvironment={onDiagnoseCheckEnvironment}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    const composer = container.querySelector('[data-builder-composer-stack="true"]');
+    expect(card?.textContent).toContain('Prepare check dependencies?');
+    expect(card?.textContent).toContain('npm test');
+    expect(card?.textContent).toContain('Readiness: The isolated check workspace has not prepared this draft\'s dependencies yet.');
+    expect(card?.textContent).toContain('Toolchain: visible');
+    expect(card?.textContent).toContain('Check workspace: install_missing');
+    expect(card?.textContent).toContain('Package manager: npm');
+    expect(composer?.compareDocumentPosition(card as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_PRECEDING);
+    click(container, '[data-builder-diagnose-check-environment="true"]');
+    expect(onDiagnoseCheckEnvironment).toHaveBeenCalledExactlyOnceWith(profile);
+    expect(onDecideCheckDependencyPreparation).not.toHaveBeenCalled();
+    click(container, '[data-builder-allow-dependency-preparation="true"]');
+    expect(onDecideCheckDependencyPreparation).toHaveBeenCalledExactlyOnceWith('allow_once', profile);
+  });
+
+  it('keeps dependency preparation focused without a generic generation failure notice', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'test' as const,
+      command_display: 'npm test',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+          environment_reason: 'dependency_workspace_missing',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    const composer = container.querySelector('[data-builder-composer-stack="true"]');
+    expect(container.querySelector('[data-builder-conversation-notice="generation_failed"]')).toBeNull();
+    expect(container.querySelector('[data-builder-retry-draft="true"]')).toBeNull();
+    expect(card?.textContent).toContain('Prepare check dependencies?');
+    expect(composer?.compareDocumentPosition(card as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+
+  it('keeps dependency preparation visible while the preparation request is in flight', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateRunningCheckActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'test' as const,
+      command_display: 'npm test',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunOperation="preparing_dependencies"
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+          environment_reason: 'dependency_workspace_missing',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    const composer = container.querySelector('[data-builder-composer-stack="true"]');
+    expect(card?.textContent).toContain('Prepare check dependencies?');
+    expect(card?.textContent).toContain('Preparing...');
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-allow-dependency-preparation="true"]')?.disabled)
+      .toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-deny-dependency-preparation="true"]')?.disabled)
+      .toBe(true);
+    expect(composer?.compareDocumentPosition(card as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+
+  it('keeps dependency preparation failures visible as retryable state above the composer', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'test' as const,
+      command_display: 'npm test',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.',
+          environment_reason: 'dependency_preparation_failed',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    const composer = container.querySelector('[data-builder-composer-stack="true"]');
+    expect(card?.getAttribute('data-builder-dependency-preparation-failed')).toBe('true');
+    expect(card?.textContent).toContain('Check dependency preparation failed');
+    expect(card?.textContent).toContain('Dependency preparation failed in the isolated check workspace.');
+    expect(card?.textContent).toContain('You can retry this check preparation.');
+    expect(composer?.compareDocumentPosition(card as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_PRECEDING);
+    click(container, '[data-builder-allow-dependency-preparation="true"]');
+    expect(onDecideCheckDependencyPreparation).toHaveBeenCalledExactlyOnceWith('allow_once', profile);
+  });
+
+  it('explains dependency preparation decision failures without hiding the retry action', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'test' as const,
+      command_display: 'npm test',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunOperation="failed"
+        checkRunOperationFailureCode="busy"
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'test',
+          command_label: 'Tests',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.',
+          environment_reason: 'dependency_workspace_missing',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    const composer = container.querySelector('[data-builder-composer-stack="true"]');
+    expect(card?.textContent).toContain('A project check is already running. Try again when it finishes.');
+    expect(card?.textContent).toContain('Prepare once');
+    expect(composer?.compareDocumentPosition(card as Node) ?? 0)
+      .toBe(Node.DOCUMENT_POSITION_PRECEDING);
+    click(container, '[data-builder-allow-dependency-preparation="true"]');
+    expect(onDecideCheckDependencyPreparation).toHaveBeenCalledExactlyOnceWith('allow_once', profile);
+  });
+
+  it('opens runtime file and command facts without rendering duplicate completion actions', async () => {
+    const draftReady = await changedDraftSnapshot();
+    const activity = await runtimeToolActivity(true, ['index.html', 'src/add.ts']);
+    const onSelectFile = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onSelectFile={onSelectFile}
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-completed-action-group]')).toBeNull();
+    click(container, '[data-builder-runtime-tool-open="changes"]');
+    await act(async () => { await Promise.resolve(); });
+    expect(onSelectFile).toHaveBeenCalledExactlyOnceWith('index.html');
+    click(container, '[data-builder-runtime-tool-open="terminal"]');
+    expect(container.querySelector('[data-builder-side-workspace-tool="terminal_placeholder"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-builder-command-inspector="true"]')?.textContent)
+      .toContain('npm test');
+    expect(container.querySelector('[data-builder-command-inspector="true"]')?.textContent)
+      .toContain('The project check completed successfully.');
+  });
+
+  it('opens an active runtime file through its main-issued tool identity without a draft candidate', async () => {
+    const { fresh } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html']);
+    const runtimeFile = Object.freeze({
+      path: 'index.html',
+      contentDigest: SIDE_WORKSPACE_APP_DIGEST,
+    });
+    const runtimeTree = sideWorkspaceFileTree([runtimeFile], 'runtime_snapshot');
+    const runtimeContent = sideWorkspaceFileContent(
+      runtimeFile,
+      '<main>Runtime result</main>\n',
+      'html',
+      'runtime_snapshot',
+    );
+    const onOpenRuntimeToolFile = vi.fn();
+
+    function RuntimeFilePage() {
+      const [opened, setOpened] = useState(false);
+      return (
+        <BuilderPage
+          activeFile={opened ? 'index.html' : null}
+          conversationSnapshot={activity}
+          instruction=""
+          onOpenRuntimeToolFile={async (request) => {
+            onOpenRuntimeToolFile(request);
+            setOpened(true);
+            return true;
+          }}
+          sideWorkspaceFileContent={opened ? runtimeContent : null}
+          sideWorkspaceFileContentStatus={opened ? 'ready' : 'idle'}
+          sideWorkspaceFileTree={opened ? runtimeTree : null}
+          sideWorkspaceFileTreeStatus={opened ? 'ready' : 'idle'}
+          snapshot={fresh}
+        />
+      );
+    }
+    const container = render(
+      <RuntimeFilePage />,
+    );
+
+    const activeTool = container.querySelector('[data-builder-tool-activity="running"]');
+    expect(activeTool?.getAttribute('data-builder-conversation-node')).toBe('tool_evidence');
+    expect(activeTool?.querySelector<HTMLDetailsElement>('[data-builder-tool-evidence-details="changes"]')).not.toBeNull();
+    expect(activeTool?.querySelector('[data-builder-runtime-tool-open="changes"]')?.textContent)
+      .toContain('Open');
+    click(container, '[data-builder-runtime-tool-open="changes"]');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onOpenRuntimeToolFile).toHaveBeenCalledExactlyOnceWith({
+      run_id: RUN_ID,
+      tool_call_id: 'builder-tool-call:00000000-0000-4000-8000-000000000001',
+    });
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('Runtime result');
+  });
+
+  it('returns from a runtime snapshot to current draft files through the Workspace menu', async () => {
+    const { draftReady } = await snapshots();
+    const runtimeFile = Object.freeze({
+      path: 'index.html',
+      contentDigest: SIDE_WORKSPACE_APP_DIGEST,
+    });
+    const onRequestSideWorkspaceFiles = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile="index.html"
+        instruction=""
+        onRequestSideWorkspaceFiles={onRequestSideWorkspaceFiles}
+        sideWorkspaceFileContent={sideWorkspaceFileContent(
+          runtimeFile,
+          '<main>Runtime result</main>\n',
+          'html',
+          'runtime_snapshot',
+        )}
+        sideWorkspaceFileContentStatus="ready"
+        sideWorkspaceFileTree={sideWorkspaceFileTree([runtimeFile], 'runtime_snapshot')}
+        sideWorkspaceFileTreeStatus="ready"
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="source"]');
+
+    expect(onRequestSideWorkspaceFiles).toHaveBeenCalledOnce();
+  });
+
+  it('loads the replacement draft after a runtime file snapshot was opened', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html']);
+    const runtimeFile = Object.freeze({
+      path: 'index.html',
+      contentDigest: SIDE_WORKSPACE_APP_DIGEST,
+    });
+    const runtimeTree = sideWorkspaceFileTree([runtimeFile], 'runtime_snapshot');
+    const runtimeContent = sideWorkspaceFileContent(
+      runtimeFile,
+      '<main>Runtime result</main>\n',
+      'html',
+      'runtime_snapshot',
+    );
+    const onRequestSideWorkspaceFiles = vi.fn();
+
+    function RuntimeThenReplacementDraftPage() {
+      const [runtimeOpened, setRuntimeOpened] = useState(false);
+      const [replacementReady, setReplacementReady] = useState(false);
+      return (
+        <div>
+          <button
+            data-builder-test-show-replacement-draft="true"
+            onClick={() => setReplacementReady(true)}
+            type="button"
+          >
+            Show replacement draft
+          </button>
+          <BuilderPage
+            activeFile={runtimeOpened ? 'index.html' : null}
+            conversationSnapshot={activity}
+            instruction=""
+            onOpenRuntimeToolFile={async () => {
+              setRuntimeOpened(true);
+              return true;
+            }}
+            onRequestSideWorkspaceFiles={onRequestSideWorkspaceFiles}
+            sideWorkspaceFileContent={runtimeOpened && !replacementReady ? runtimeContent : null}
+            sideWorkspaceFileContentStatus={runtimeOpened && !replacementReady ? 'ready' : 'idle'}
+            sideWorkspaceFileTree={runtimeOpened && !replacementReady ? runtimeTree : null}
+            sideWorkspaceFileTreeStatus={runtimeOpened && !replacementReady ? 'ready' : 'idle'}
+            snapshot={draftReady}
+          />
+        </div>
+      );
+    }
+    const container = render(<RuntimeThenReplacementDraftPage />);
+
+    click(container, '[data-builder-runtime-tool-open="changes"]');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Runtime result');
+    expect(onRequestSideWorkspaceFiles).not.toHaveBeenCalled();
+
+    click(container, '[data-builder-test-show-replacement-draft="true"]');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onRequestSideWorkspaceFiles).toHaveBeenCalledOnce();
+  });
+
+  it('does not retain targetless project context lifecycle rows after completion', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity();
     const container = render(
@@ -4355,22 +7230,20 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
-    const completed = container.querySelector('[data-builder-tool-activity="succeeded"]');
-    expect(requested).toBeNull();
-    expect(completed).not.toBeNull();
-    expect(completed?.getAttribute('data-builder-activity-role')).toBe('status');
-    expect(completed?.textContent).toContain('Project context ready');
-    expect(completed?.textContent).toContain('I checked the project context needed for this request.');
-    expect(completed?.textContent).not.toContain('Read project context');
-    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    const completion = chat?.querySelector('[data-builder-activity-card="Draft proposed"]');
+    expect(completion?.textContent)
       .toContain('I prepared a draft after reading the project context.');
+    expect(completion?.querySelector('[data-builder-run-history="true"]')).toBeNull();
+    expect(chat?.querySelector('[data-builder-run-history="true"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Project context ready');
+    expect(chat?.textContent).not.toContain('I checked the project context needed for this request.');
     expect(container.textContent).not.toMatch(
       /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('opens sanitized work logs in the artifact sidebar without turning chat into a log pane', async () => {
+  it('keeps work progress in chat without exposing Logs as a workspace destination', async () => {
     const { fresh } = await snapshots();
     const activity = await toolActivity();
     const container = render(
@@ -4388,43 +7261,18 @@ describe('BuilderPage v2', () => {
     expect(chatMain).not.toBeNull();
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
     expect(sidebar).toBeNull();
-    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-      .toContain('Workspace');
-    expect(container.querySelector('[data-builder-workspace-control-tab="logs"]')).toBeNull();
-    click(container, '[data-builder-workspace-menu-button="true"]');
-    const logsControl = container.querySelector<HTMLButtonElement>('[data-builder-workspace-control-tab="logs"]');
-    expect(logsControl).not.toBeNull();
-    expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
-
-    click(container, '[data-builder-workspace-control-tab="logs"]');
-
-    const updatedSidebar = container.querySelector('[data-builder-artifact-sidebar="true"]');
-    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
-    expect(updatedSidebar?.getAttribute('data-builder-artifact-tab-active')).toBe('logs');
-    expect(logs).not.toBeNull();
-    expect(logs?.closest('[data-builder-artifact-sidebar="true"]')).toBe(updatedSidebar);
-    expect(logs?.closest('[data-builder-chat-main="true"]')).toBeNull();
-    expect(logs?.textContent).toContain('Work logs');
+    expect(chatMain?.querySelector('[data-builder-run-history="true"]')).toBeNull();
     expect(chatMain?.textContent).not.toContain('Why this ran');
-    expect(logs?.textContent).toContain('Why this ran');
-    expect(logs?.textContent).toContain('Builder treated this as a change request.');
-    expect(logs?.textContent).toContain('The current brief was attached.');
-    expect(logs?.textContent).toContain('It used the current project version.');
-    expect(logs?.textContent).toContain('Builder was allowed to write in the selected project.');
-    expect(logs?.textContent).toContain('No terminal commands or network access were used.');
-    expect(logs?.textContent).toContain('Project context ready');
-    expect(logs?.textContent).toContain('I checked the project context needed for this request.');
-    expect(logs?.textContent).toContain('Draft proposed');
-    expect(logs?.textContent).not.toContain('Read project context');
-    expect(logs?.textContent).not.toContain('Make a timer.');
-    expect(logs?.textContent).not.toMatch(
+    expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-control-tab="logs"]')).toBeNull();
+    expect(chatMain?.textContent).not.toMatch(
       /builder-tool-call:|builder-run-step:|builder-run:|permission_admission|dispatch_admission|execution_admission|result_admission|raw_output_admission|revision_admission|summary_code|tool_call_id|step_id|sha256:|provider|credential|source_tree|receipt/iu,
     );
     expect(container.querySelector('[data-builder-activity="true"]')?.closest('[data-builder-chat-main="true"]'))
       .toBe(chatMain);
   });
 
-  it('explains safe route downgrades only inside work logs', async () => {
+  it('keeps route diagnostics out of the user-facing chat flow', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity(undefined, {
       context: {
@@ -4447,19 +7295,15 @@ describe('BuilderPage v2', () => {
     );
 
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
-    click(container, '[data-builder-workspace-menu-button="true"]');
-    click(container, '[data-builder-workspace-control-tab="logs"]');
-
-    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
     expect(chatMain?.textContent).not.toContain('not have enough confirmed direction');
-    expect(logs?.textContent).toContain('Builder kept this as a clarification step.');
-    expect(logs?.textContent).toContain('It did not have enough confirmed direction to start changing files.');
-    expect(logs?.textContent).not.toMatch(
+    expect(chatMain?.textContent).not.toContain('Builder kept this as a clarification step.');
+    expect(container.querySelector('[data-builder-artifact-logs="true"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
       /downgrade_reason|downgraded_from|builder-route-decision|required_permissions|confidence|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('shows the current direction on demand from task brief facts without exposing internal memory', async () => {
+  it('keeps internal task-brief memory out of the user-facing workspace', async () => {
     const { saved } = await snapshots();
     const activity = await briefActivity();
     const container = render(
@@ -4474,26 +7318,13 @@ describe('BuilderPage v2', () => {
     const chatMain = container.querySelector('[data-builder-chat-main="true"]');
     expect(container.querySelector('[data-builder-current-direction="true"]')).toBeNull();
     expect(chatMain?.textContent).not.toContain('Current direction');
-
-    click(container, '[data-builder-workspace-menu-button="true"]');
-    click(container, '[data-builder-workspace-control-tab="logs"]');
-
-    const logs = container.querySelector('[data-builder-artifact-logs="true"]');
-    const currentDirection = container.querySelector('[data-builder-current-direction="true"]');
-    expect(currentDirection).not.toBeNull();
-    expect(currentDirection?.closest('[data-builder-artifact-logs="true"]')).toBe(logs);
-    expect(currentDirection?.closest('[data-builder-chat-main="true"]')).toBeNull();
-    expect(currentDirection?.textContent).toContain('Current direction');
-    expect(currentDirection?.textContent).toContain('Ready for later build');
-    expect(currentDirection?.textContent).toContain('Use a starfield hero, compact project cards');
-    expect(currentDirection?.textContent).toContain('Used only after you ask Builder to start building');
-    expect(logs?.textContent).toContain('Direction updated');
-    expect(currentDirection?.textContent).not.toMatch(
+    expect(container.querySelector('[data-builder-workspace-control-tab="logs"]')).toBeNull();
+    expect(container.textContent).not.toMatch(
       /Current project brief|builder-task:|builder-run:|builder-message:|builder-route-decision|working_brief|sha256:|provider|credential|source_tree|receipt/iu,
     );
   });
 
-  it('shows completed project file reads as ordinary assistant work status', async () => {
+  it('does not retain targetless project file read rows after completion', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity(undefined, {
       action: 'filesystem.read',
@@ -4509,25 +7340,54 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const requested = container.querySelector('[data-builder-tool-activity="requested"]');
-    const completed = container.querySelector('[data-builder-tool-activity="succeeded"]');
-    expect(requested).toBeNull();
-    expect(completed).not.toBeNull();
-    expect(completed?.textContent).toContain('Project files reviewed');
-    expect(completed?.textContent).toContain('I checked the project files needed for this request.');
-    expect(completed?.textContent).not.toContain('Read project file');
-    expect(completed?.textContent).not.toMatch(
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    expect(chat?.querySelector('[data-builder-run-history="true"]')).toBeNull();
+    expect(chat?.textContent).not.toContain('Project files reviewed');
+    expect(chat?.textContent).not.toContain('I checked the project files needed for this request.');
+    expect(chat?.textContent).not.toMatch(
       /tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:|source_tree|receipt/iu,
     );
   });
 
-  it('maps tool result failures to ordinary status text', async () => {
+  it('does not surface targetless legacy tool lifecycle rows while they update', async () => {
+    const { saved } = await snapshots();
+    const pending = await pendingToolActivity();
+    const completed = await toolActivity(undefined, { completed: false });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mounted.push({ container, root });
+
+    act(() => root.render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={pending}
+        instruction=""
+        snapshot={saved}
+      />,
+    ));
+    expect(container.querySelector('[data-builder-tool-activity="requested"]')).toBeNull();
+
+    act(() => root.render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={completed}
+        instruction=""
+        snapshot={saved}
+      />,
+    ));
+    expect(container.querySelector('[data-builder-tool-activity="succeeded"]')).toBeNull();
+    expect(container.querySelectorAll('[data-builder-tool-activity]')).toHaveLength(0);
+    expect(container.textContent).not.toContain('Project context ready');
+  });
+
+  it('keeps a tool failure visible until the run records its final result', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity({
       status: 'failed',
       summary_code: 'output_rejected',
       display_summary: 'The tool output was not accepted.',
-    });
+    }, { completed: false });
     const container = render(
       <BuilderPage
         activeFile={null}
@@ -4545,7 +7405,32 @@ describe('BuilderPage v2', () => {
     expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
   });
 
-  it('maps unavailable tool results without exposing adapter language', async () => {
+  it('folds a tool failure into the completed run history', async () => {
+    const { saved } = await snapshots();
+    const activity = await toolActivity({
+      status: 'failed',
+      summary_code: 'output_rejected',
+      display_summary: 'The tool output was not accepted.',
+    });
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    const chat = container.querySelector('[data-builder-chat-main="true"]');
+    expect(chat?.querySelector('[data-builder-activity-card="Draft proposed"]')).not.toBeNull();
+    const history = chat?.querySelector<HTMLDetailsElement>('[data-builder-run-history="true"]');
+    const loggedFailure = history?.querySelector('[data-builder-tool-activity="failed"]');
+    expect(history?.open).toBe(false);
+    expect(loggedFailure?.textContent).toContain('Project context needs attention');
+    expect(loggedFailure?.textContent).toContain('could not safely use the information from this step');
+  });
+
+  it('maps unavailable tool results to safe text in completed run history', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity({
       status: 'failed',
@@ -4561,7 +7446,11 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const completed = container.querySelector('[data-builder-tool-activity="failed"]');
+    const history = container.querySelector<HTMLDetailsElement>(
+      '[data-builder-chat-main="true"] [data-builder-run-history="true"]',
+    );
+    const completed = history?.querySelector('[data-builder-tool-activity="failed"]');
+    expect(history?.open).toBe(false);
     expect(completed).not.toBeNull();
     expect(completed?.textContent).toContain('Project context needs attention');
     expect(completed?.textContent).toContain('This project step is not available yet.');
@@ -4580,22 +7469,10 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const reviewStrip = container.querySelector('[data-builder-review-checkpoint="true"]');
-    const landing = container.querySelector('[data-builder-draft-landing="true"]');
-    expect(reviewStrip).not.toBeNull();
-    expect(landing).not.toBeNull();
-    expect(reviewStrip?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
-    expect(reviewStrip?.closest('[data-builder-draft-landing="true"]')).toBe(landing);
-    expect(reviewStrip?.getAttribute('data-builder-review-layout')).toBe('status-only');
-    expect(reviewStrip?.textContent).toContain('Review before saving');
-    expect(reviewStrip?.textContent).toContain('3 file changes: 1 added, 1 changed, 1 removed.');
-    expect(reviewStrip?.textContent).toContain('Static preview is ready');
-    expect(reviewStrip?.textContent).toContain('JavaScript is disabled in this preview');
-    expect(reviewStrip?.textContent).not.toContain('Preview may be unavailable here');
-    expect(reviewStrip?.textContent).not.toMatch(
-      /<main>Old|<main>New|const added|const removed|review_id|sha256:|commit_oid|tree_oid|receipt/iu,
-    );
-    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-panel="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-changes-disclosure="true"]')).toBeNull();
     openWorkspaceChanges(container);
@@ -4611,8 +7488,8 @@ describe('BuilderPage v2', () => {
     expect(changesDisclosure).not.toBeNull();
     expect(changesDisclosure?.open).toBe(true);
     expect(changesDisclosure?.querySelector('.cf-builder-changes-title')).toBeNull();
-    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.textContent)
-      .toContain('Changes');
+    expect(container.querySelector('[data-builder-workspace-menu-button="true"]')?.getAttribute('aria-label'))
+      .toBe('Workspace menu');
     expect(container.querySelector('[data-builder-changes-summary="true"]')?.textContent)
       .toContain('3 file changes: 1 added, 1 changed, 1 removed.');
     expect(container.querySelector('[data-builder-change-card="Changed index.html"]')?.textContent)
@@ -4661,13 +7538,14 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
+
     const limitation = container.querySelector('[data-builder-preview-limitation="true"]');
     const blocked = container.querySelector('[data-builder-preview-runtime-blocked="true"]');
-    expect(review?.textContent).toContain('Preview may need live support here');
-    expect(review?.textContent).toContain('Three.js/WebGL');
-    expect(review?.textContent).toContain('canvas animation');
-    expect(review?.textContent).toContain('ready for review');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
     expect(blocked).not.toBeNull();
     expect(limitation?.textContent).toContain('Preview unavailable here');
     expect(limitation?.textContent).toContain('needs live preview support');
@@ -4681,10 +7559,11 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).not.toMatch(/sha256:|commit_oid|tree_oid|receipt/iu);
   });
 
-  it('keeps review evidence in chat and draft commands in the workspace toolbar', async () => {
+  it('keeps compact check state in the toolbar and draft decisions in the composer', async () => {
     const draftReady = await changedDraftSnapshot();
     const activity = await candidateCheckpointActivity();
     const onRejectDraft = vi.fn();
+    const onUndoDraft = vi.fn();
     const onSave = vi.fn();
     const container = render(
       <BuilderPage
@@ -4693,34 +7572,29 @@ describe('BuilderPage v2', () => {
         instruction="Update the saved project."
         onRejectDraft={onRejectDraft}
         onSave={onSave}
+        onUndoDraft={onUndoDraft}
         snapshot={draftReady}
       />,
     );
 
-    const review = container.querySelector('[data-builder-review-checkpoint="true"]');
-    const copy = review?.querySelector('.cf-builder-review-copy');
-    const checks = review?.querySelector('[data-builder-review-checks="true"]');
-    const actions = review?.querySelector('[data-builder-draft-review-actions="true"]');
+    const checks = container.querySelector('[data-builder-check-run-status]');
     const workspaceActions = container.querySelector('[data-builder-workspace-draft-actions="true"]');
-    expect(review?.getAttribute('data-builder-review-layout')).toBe('status-only');
-    expect(copy).not.toBeNull();
-    expect(checks).not.toBeNull();
-    expect(actions).toBeNull();
-    expect(checks?.previousElementSibling).toBe(copy);
-    expect(copy?.textContent).toContain('Review before saving');
-    expect(copy?.textContent).toContain('file changes');
-    expect(workspaceActions).not.toBeNull();
-    expect(workspaceActions?.closest('[data-builder-workspace-controls="true"]')).not.toBeNull();
-    expect(workspaceActions?.closest('[data-builder-chat-scroll="true"]')).toBeNull();
-    expect(workspaceActions?.textContent).toContain('Save version');
-    expect(workspaceActions?.querySelector('[data-builder-review-more="true"]')).not.toBeNull();
-    expect(review?.querySelector('button')).toBeNull();
-    click(container, '[data-builder-review-more="true"]');
-    click(container, '[data-builder-discard-draft="true"]');
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
+    expect(checks).toBeNull();
+    expect(workspaceActions).toBeNull();
+    expect(container.querySelector('[data-builder-review-more="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-undo-draft="true"]')).toBeNull();
+    expect(decision).not.toBeNull();
+    expect(decision?.closest('[data-builder-chat-main="true"]')).not.toBeNull();
+    expect(decision?.closest('[data-builder-workspace-controls="true"]')).toBeNull();
     click(container, '[data-builder-save-version="true"]');
+    click(container, '[data-builder-discard-draft="true"]');
     expect(onRejectDraft).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
-    expect(review?.textContent).not.toMatch(
+    expect(onUndoDraft).not.toHaveBeenCalled();
+    expect(container.textContent).not.toMatch(
       /sha256:|commit_oid|tree_oid|receipt|review_id|provider|credential|ipc|schema/iu,
     );
   });
@@ -4792,17 +7666,116 @@ describe('BuilderPage v2', () => {
     expect(diffTexts.join('\n')).not.toContain('... ...');
   });
 
-  it('shows Git/SQLite revision number only for a verified saved snapshot', async () => {
+  it('keeps saved-version history out of the current-state toolbar', async () => {
     const { saved } = await snapshots();
     const container = render(
       <BuilderPage activeFile={null} instruction="" snapshot={saved} />,
     );
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-draft-landing="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')?.closest('[data-builder-draft-landing="true"]') ?? null)
       .toBeNull();
+  });
+
+  it('keeps saved versions available from Workspace while a draft is active', async () => {
+    const { draftReady } = await snapshots();
+    const history = await savedHistory();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        historySnapshot={history}
+        instruction=""
+        snapshot={draftReady}
+      />,
+    );
+
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    expect(container.querySelector('[data-builder-workspace-control-tab="versions"]')).not.toBeNull();
+    click(container, '[data-builder-workspace-control-tab="versions"]');
+
+    expect(container.querySelector('[data-builder-version-history="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-version-card="Version 1"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-version-history-scope="true"]')?.textContent)
+      .toBe('Current work is protected automatically. Versions are optional milestones.');
+    expect(container.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider|receipt/iu,
+    );
+  });
+
+  it('shows actionable current-work recovery beside milestone versions without exposing Git evidence', async () => {
+    const { draftReady } = await snapshots();
+    const history = await savedHistory();
+    const activity = await candidateCheckpointActivity();
+    const onUndoDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        historySnapshot={history}
+        instruction=""
+        onUndoDraft={onUndoDraft}
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="versions"]');
+
+    const recovery = container.querySelector('[data-builder-draft-recovery-card="true"]');
+    expect(recovery?.textContent).toContain('Automatic recovery');
+    expect(recovery?.textContent).toContain('Checkpoint saved. 2 files protected.');
+    expect(recovery?.getAttribute('title')).toBeNull();
+    const timeline = container.querySelector('[data-builder-checkpoint-timeline="true"]');
+    expect(timeline?.textContent).toContain('Checkpoint 2');
+    expect(timeline?.textContent).toContain('1 file protected with warnings.');
+    expect(timeline?.textContent).toContain('Checkpoint 1');
+    expect(timeline?.textContent).not.toContain('Checkpoint 3');
+    expect(container.querySelectorAll('[data-builder-checkpoint-sequence]')).toHaveLength(2);
+    click(container, '[data-builder-history-undo="true"]');
+    expect(onUndoDraft).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-builder-version-card="Version 1"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider|receipt/iu,
+    );
+  });
+
+  it('exposes automatic recovery in History before the first milestone version is saved', async () => {
+    const draftReady = await workingProjectSnapshot(true);
+    const activity = await candidateCheckpointActivity();
+    const onUndoDraft = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        onUndoDraft={onUndoDraft}
+        snapshot={draftReady}
+      />,
+    );
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    const historyMenuItem = container.querySelector(
+      '[data-builder-workspace-control-tab="versions"]',
+    );
+    expect(historyMenuItem?.textContent).toContain('History');
+    click(container, '[data-builder-workspace-control-tab="versions"]');
+
+    expect(container.querySelector('[data-builder-project-history="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-draft-recovery-card="true"]')?.textContent)
+      .toContain('Checkpoint saved. 2 files protected.');
+    expect(container.textContent).toContain('No milestone versions yet.');
+    expect(container.querySelectorAll('[data-builder-version-card]')).toHaveLength(0);
+    click(container, '[data-builder-history-undo="true"]');
+    expect(onUndoDraft).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toMatch(
+      /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider|receipt/iu,
+    );
   });
 
   it('shows read-only saved version history without exposing receipt or Git evidence', async () => {
@@ -4819,16 +7792,21 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    expect(container.querySelector('[data-builder-version-history="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="versions"]');
     expect(container.querySelector('[data-builder-version-history="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
       .toContain('Current');
     expect(container.querySelector('[data-builder-version-card="Version 1"]')?.textContent)
       .toContain('Version one');
+    expect(container.querySelector('[data-builder-version-history-scope="true"]')?.textContent)
+      .toBe('Versions are optional milestones.');
     expect(container.querySelector('[data-builder-version-card="Version 1"] button'))
       .toBeNull();
     expect(container.querySelector('[data-builder-version-card="Version 1"] [data-builder-show-current-version="true"]'))
       .toBeNull();
-    click(container, 'button[aria-label="Refresh versions"]');
+    click(container, 'button[aria-label="Refresh history"]');
     expect(onRefreshHistory).toHaveBeenCalledOnce();
     expect(container.textContent).not.toMatch(
       /sha256:|commit_oid|tree_oid|parent_oid|sqlite|credential|provider/iu,
@@ -4857,6 +7835,8 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    click(savedContainer, '[data-builder-workspace-menu-button="true"]');
+    click(savedContainer, '[data-builder-workspace-control-tab="versions"]');
     click(savedContainer, '[data-builder-restore-version="Version 1"]');
     expect(onRestoreRevisionAsDraft).toHaveBeenCalledExactlyOnceWith(
       PROJECT_ID,
@@ -4890,6 +7870,9 @@ describe('BuilderPage v2', () => {
     expect(inspectedContainer.querySelector<HTMLButtonElement>('[data-builder-submit-turn="true"]')?.disabled)
       .toBe(true);
     expect(inspected.preview?.src_doc).toContain('<main>Earlier</main>');
+    expect(inspectedContainer.querySelector('iframe')).toBeNull();
+    click(inspectedContainer, '[data-builder-workspace-menu-button="true"]');
+    click(inspectedContainer, '[data-builder-workspace-control-tab="preview"]');
     const previewFrame = inspectedContainer.querySelector('iframe');
     expect(previewFrame).not.toBeNull();
     expect(previewFrame?.getAttribute('srcdoc')).toContain('<main>Earlier</main>');
@@ -4922,12 +7905,13 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-activity-card="Draft proposed"]')?.textContent)
-      .toContain('Activity shows this draft summary only. Review appears only after Builder verifies and restores the files.');
+    const proposal = container.querySelector('[data-builder-activity-card="Draft proposed"]');
+    expect(proposal?.textContent).toContain('This older draft is no longer available in Review.');
+    expect(proposal?.textContent).not.toContain('A small project.');
+    expect(proposal?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-current-version="true"]')?.textContent)
-      .toContain('Version 1');
+    expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.textContent).not.toContain(DRAFT_ID);
   });
 
@@ -4985,8 +7969,11 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    expect(container.querySelector('[data-builder-activity-card="Plan approved"]')?.textContent)
-      .toContain('The plan was approved. The project has not changed yet.');
+    const plan = container.querySelector('[data-builder-plan-markdown="true"]');
+    expect(plan?.querySelector('[data-builder-plan-review-result="approved"]')?.textContent)
+      .toContain('Plan approved');
+    expect(plan?.textContent).toContain('Continuing with the approved plan.');
+    expect(container.querySelector('[data-builder-activity-card="Plan approved"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
     expect(container.textContent).not.toMatch(
@@ -5016,13 +8003,16 @@ describe('BuilderPage v2', () => {
       planCard?.querySelector('[data-builder-message-surface]')
         ?.getAttribute('data-builder-message-surface'),
     ).toBe('plain');
-    expect(planCard?.textContent).toContain('Review the proposed plan before files change.');
-    const summary = planCard?.querySelector('[data-builder-completion-summary="true"]');
-    expect(summary?.getAttribute('data-builder-completion-result')).toBe('plan');
-    expect(summary?.textContent).toContain('A plan is ready for review.');
-    expect(summary?.textContent).toContain('The project files have not changed.');
-    expect(summary?.textContent).toContain('Approve the plan to continue, or reject it to keep discussing.');
-    expect(planCard?.textContent).toContain('Approve this plan to let the assistant continue.');
+    expect(planCard?.textContent).toContain('Review the proposed plan before files change');
+    expect(planCard?.getAttribute('data-builder-plan-markdown')).toBe('true');
+    expect(planCard?.querySelector('[data-builder-markdown-variant="plan"] h2')?.textContent)
+      .toBe('Review the proposed plan before files change');
+    expect(planCard?.querySelectorAll('[data-builder-markdown-variant="plan"] ol > li'))
+      .toHaveLength(2);
+    expect(planCard?.textContent).toContain('Expected change: The implementation scope is explicit before editing.');
+    expect(planCard?.querySelector('[data-builder-completion-summary="true"]')).toBeNull();
+    expect(planCard?.textContent).not.toContain('A plan is ready for review.');
+    expect(planCard?.textContent).not.toContain('Approve this plan to let the assistant continue.');
     expect(planReady).toBeNull();
     expect(planActions).not.toBeNull();
     expect(planActions?.closest('[data-builder-activity-card="Plan proposed"]')).toBe(planCard);
@@ -5030,7 +8020,7 @@ describe('BuilderPage v2', () => {
     click(container, '[data-builder-approve-plan="true"]');
     expect(onReviewPlan).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
-      conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+      conversation_id: CONVERSATION_ID,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174000',
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174000',
       decision: 'approved',
@@ -5200,6 +8190,9 @@ describe('BuilderPage v2', () => {
         snapshot={draftReady}
       />,
     );
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="source"]');
     expect(container.textContent).toContain('src/tool.py');
     expect(container.querySelector('#builder-tool-tab-code')).toBeNull();
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
@@ -5213,8 +8206,8 @@ describe('BuilderPage v2', () => {
       .toBe('source');
     expect(container.querySelector('[data-builder-side-workspace-file-entry="src/tool.py"]')?.getAttribute('data-active'))
       .toBe('true');
-    expect(container.querySelector('[data-builder-side-workspace-file-breadcrumb="true"]')?.textContent)
-      .toContain('/src/tool.py');
+    expect(container.querySelector('[data-builder-side-workspace-file-path="true"]')?.textContent)
+      .toBe('/src/tool.py');
     expect(container.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-side-workspace-code-line="1"]')?.textContent)
       .toContain('print("hello")');
@@ -5223,6 +8216,143 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("hello")');
     expect(container.textContent).not.toContain('app.js');
+  });
+
+  it('shows a bounded command approval and forwards only explicit one-shot decisions', async () => {
+    const { saved } = await snapshots();
+    const commandSourceDigest = await digest('command-source');
+    const onDecideCommandApproval = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        commandApproval={{
+          request: {
+            request_version: 'builder-controlled-command-approval-request.v1',
+            approval_request_id:
+              'builder-controlled-command-approval-request:123e4567-e89b-42d3-a456-426614174000',
+            project_id: PROJECT_ID,
+            conversation_id: CONVERSATION_ID,
+            turn_id: TURN_ID,
+            task_id: TASK_ID,
+            run_id: RUN_ID,
+            command_profile_id: `builder-command-profile:${'a'.repeat(32)}`,
+            command_kind: 'test',
+            command_display: 'npm test',
+            description: 'Verify the current project before finishing.',
+            source_tree_digest: commandSourceDigest,
+            requested_at_ms: 1_000,
+            expires_at_ms: 301_000,
+            risk_notice: 'This project script may modify files or use the network.',
+            decisions: ['allow_once', 'deny'],
+          },
+          state: 'pending',
+        }}
+        instruction=""
+        onDecideCommandApproval={onDecideCommandApproval}
+        snapshot={saved}
+      />,
+    );
+
+    const approval = container.querySelector('[data-builder-command-approval="true"]');
+    expect(approval?.textContent).toContain('允许运行这条命令？');
+    expect(approval?.textContent).toContain('npm test');
+    expect(approval?.textContent).toContain('此项目脚本可能修改文件或访问网络');
+    expect(approval?.textContent).toContain('授权仅对本次命令有效');
+    expect(approval?.closest('[data-builder-composer="true"]')).toBeNull();
+    click(container, '[data-builder-deny-command="true"]');
+    click(container, '[data-builder-allow-command-once="true"]');
+    expect(onDecideCommandApproval).toHaveBeenNthCalledWith(1, 'deny');
+    expect(onDecideCommandApproval).toHaveBeenNthCalledWith(2, 'allow_once');
+    expect(container.textContent).not.toContain('source_tree_digest');
+    expect(container.textContent).not.toContain('approval_request_id');
+  });
+
+  it('keeps approved-plan continuation instructions out of the visible user timeline', async () => {
+    const { saved } = await snapshots();
+    const wire = createPlanReviewTaskStreamWire('approved');
+    const continuationTurnId = 'builder-turn:123e4567-e89b-42d3-a456-426614174110';
+    const continuationRunId = 'builder-run:123e4567-e89b-42d3-a456-426614174111';
+    const continuationTaskId = 'builder-task:123e4567-e89b-42d3-a456-426614174112';
+    const controller = createBuilderConversationController(taskStreamPort(async () => ({
+      ...wire,
+      conversation: {
+        ...wire.conversation,
+        head_sequence: 9,
+        recorded_active_turn_id: continuationTurnId,
+        window: {
+          ...wire.conversation.window,
+          last_sequence: 9,
+        },
+        items: [
+          ...wire.conversation.items,
+          {
+            item_kind: 'user_message' as const,
+            sequence: 6,
+            turn_id: continuationTurnId,
+            message: {
+              message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174113',
+              text: 'Implement the approved plan.',
+            },
+            message_kind: 'submitted' as const,
+            mode: 'work' as const,
+            task: {
+              task_id: continuationTaskId,
+              title: 'Apply approved plan',
+            },
+          },
+          {
+            item_kind: 'run_started' as const,
+            sequence: 7,
+            turn_id: continuationTurnId,
+            run_id: continuationRunId,
+            task_id: continuationTaskId,
+            attempt_number: 1,
+            retry_of_run_id: null,
+            recorded_state: 'started' as const,
+          },
+          {
+            item_kind: 'run_context_snapshot_recorded' as const,
+            sequence: 8,
+            turn_id: continuationTurnId,
+            run_id: continuationRunId,
+            task_id: continuationTaskId,
+            context: {
+              recorded_state: 'recorded' as const,
+              route: 'build' as const,
+              dispatch: 'build' as const,
+              downgraded_from: null,
+              downgrade_reason: null,
+              brief: 'available' as const,
+              base: 'project_revision' as const,
+              permission_result: 'allowed' as const,
+              command_execution: 'not_included' as const,
+              network_access: 'not_included' as const,
+            },
+          },
+          {
+            item_kind: 'programming_run_admitted' as const,
+            sequence: 9,
+            turn_id: continuationTurnId,
+            run_id: continuationRunId,
+            task_id: continuationTaskId,
+            recorded_state: 'admitted' as const,
+          },
+        ],
+      },
+    })));
+    const activity = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        snapshot={saved}
+      />,
+    );
+
+    expect(activity.status).toBe('ready');
+    expect(container.textContent).not.toContain('Implement the approved plan.');
+    expect(container.querySelectorAll('[data-builder-activity-role="user"]')).toHaveLength(1);
   });
 
   it('keeps source files accessible from the artifact sidebar when a project has no static preview', async () => {
@@ -5243,6 +8373,9 @@ describe('BuilderPage v2', () => {
       />,
     );
 
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    click(container, '[data-builder-workspace-control-tab="preview"]');
     expect(container.querySelector('[data-builder-code-flow="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
@@ -5251,10 +8384,8 @@ describe('BuilderPage v2', () => {
       .toContain('files were generated');
     expect(container.querySelector('[data-builder-preview-unavailable="true"]')?.textContent)
       .toContain('live preview support');
-    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('Preview unavailable');
-    expect(container.querySelector('[data-builder-review-checkpoint="true"]')?.textContent)
-      .toContain('need live preview support');
+    expect(container.querySelector('[data-builder-review-checkpoint="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-summary="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('preview');
     expect(container.querySelector('details[data-builder-source-flow="true"]')).toBeNull();
@@ -5264,14 +8395,16 @@ describe('BuilderPage v2', () => {
     expect(source).not.toBeNull();
     expect(source?.closest('[data-builder-chat-main="true"]')).toBeNull();
     expect(source?.closest('[data-builder-artifact-sidebar="true"]')).not.toBeNull();
-    expect(source?.textContent).toContain('1 file');
+    expect(source?.textContent).toContain('Current draft · 1');
     expect(source?.textContent).toContain('src/tool.py');
     expect(container.querySelector('[data-builder-side-workspace-code-viewer="true"]')).not.toBeNull();
     expect(container.querySelector('[data-builder-side-workspace-file-content="src/tool.py"] code')?.textContent)
       .toContain('print("new")');
-    expect(container.textContent).toContain('Preview unavailable');
-    expect(container.textContent).toContain('Three.js');
-    expect(container.textContent).not.toContain('This project has files, but no visual preview.');
+    expect(source?.textContent).not.toContain('Preview unavailable');
+    expect(source?.textContent).not.toContain('Three.js');
+    expect(source?.textContent).not.toContain('This project has files, but no visual preview.');
+    expect(container.querySelector('[data-builder-live-preview-panel="true"]')?.hasAttribute('hidden'))
+      .toBe(true);
 
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')?.getAttribute('data-builder-artifact-tab-active'))
       .toBe('source');
@@ -5426,7 +8559,8 @@ describe('BuilderPage v2', () => {
       />,
     );
     expect(container.textContent).toContain('The save result could not be confirmed.');
-    expect(container.textContent).toContain('Try Save again');
+    const decision = container.querySelector('[data-builder-composer-version-decision="true"]');
+    expect(decision?.textContent).toContain('Try Save again');
     const notice = container.querySelector('[data-builder-conversation-notice="save_unknown"]');
     expect(notice).not.toBeNull();
     expect(notice?.closest('[data-builder-chat-main="true"]')).not.toBeNull();

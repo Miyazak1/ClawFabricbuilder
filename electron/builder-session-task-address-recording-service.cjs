@@ -8,6 +8,10 @@ const {
   sanitizeBuilderSessionAddress,
   sanitizeBuilderTaskAddress,
 } = require('./builder-session-task-address.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const SERVICE_VERSION = 'builder-session-task-address-recording-service.v1';
 const OPTION_KEYS = Object.freeze(['address_store', 'create_uuid', 'now_ms', 'created_by', 'agent_id']);
@@ -72,7 +76,6 @@ const RUN_PAYLOAD_KEYS = Object.freeze([
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -225,7 +228,8 @@ function eventRecord(value) {
 function beginContext(value) {
   exactObject(value, CONTEXT_KEYS);
   if (valueAt(value, 'context_version') !== 'builder-conversation-run-context.v1') fail();
-  if (valueAt(value, 'mode') !== 'work') fail();
+  const mode = valueAt(value, 'mode');
+  if (mode !== 'work' && mode !== 'question') fail();
   if (valueAt(value, 'run_terminal_failure_code') !== null || valueAt(value, 'cancel_requested') !== false) fail();
   if (valueAt(value, 'attempt_number') !== 1) fail();
   const project = valueAt(value, 'project');
@@ -239,9 +243,16 @@ function beginContext(value) {
   safeTimestamp(valueAt(project, 'created_at_ms'));
   if (safePattern(valueAt(conversation, 'project_id'), PROJECT_ID_PATTERN) !== projectId) fail();
   const conversationId = safePattern(valueAt(conversation, 'conversation_id'), CONVERSATION_ID_PATTERN);
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
   const createdAtMs = safeTimestamp(valueAt(conversation, 'created_at_ms'));
   const turnId = safePattern(valueAt(ids, 'turn_id'), TURN_ID_PATTERN);
-  const taskId = safePattern(valueAt(ids, 'task_id'), TASK_ID_PATTERN);
+  const rawTaskId = valueAt(ids, 'task_id');
+  const taskId = mode === 'work' ? safePattern(rawTaskId, TASK_ID_PATTERN) : null;
+  if (mode === 'question' && rawTaskId !== null) fail();
   const runId = safePattern(valueAt(ids, 'run_id'), RUN_ID_PATTERN);
   const messageId = safePattern(valueAt(ids, 'message_id'), MESSAGE_ID_PATTERN);
   const events = denseEvents(valueAt(value, 'events'));
@@ -261,14 +272,15 @@ function beginContext(value) {
   const runPayload = valueAt(runEvent, 'payload');
   exactObject(turnPayload, TURN_PAYLOAD_KEYS);
   exactObject(runPayload, RUN_PAYLOAD_KEYS);
-  if (valueAt(turnPayload, 'turn_id') !== turnId || valueAt(turnPayload, 'mode') !== 'work') fail();
+  if (valueAt(turnPayload, 'turn_id') !== turnId || valueAt(turnPayload, 'mode') !== mode) fail();
   const message = valueAt(turnPayload, 'message');
   const task = valueAt(turnPayload, 'task');
   exactObject(message, MESSAGE_KEYS);
-  exactObject(task, TASK_KEYS);
+  if (mode === 'work') exactObject(task, TASK_KEYS);
+  else if (task !== null) fail();
   if (
     valueAt(message, 'message_id') !== messageId
-    || valueAt(task, 'task_id') !== taskId
+    || (mode === 'work' && valueAt(task, 'task_id') !== taskId)
     || valueAt(runPayload, 'turn_id') !== turnId
     || valueAt(runPayload, 'run_id') !== runId
     || valueAt(runPayload, 'task_id') !== taskId
@@ -285,7 +297,8 @@ function beginContext(value) {
     low_level_task_id: taskId,
     message_id: messageId,
     message_text: valueAt(message, 'text'),
-    task_title: valueAt(task, 'title'),
+    task_title: mode === 'work' ? valueAt(task, 'title') : valueAt(message, 'text'),
+    mode,
   });
 }
 
@@ -335,7 +348,7 @@ function createBuilderSessionTaskAddressRecordingService(rawOptions) {
         conversation_id: context.conversation_id,
         title: safeText(context.task_title, 160, 'Builder work task'),
         goal: safeText(context.message_text, 2048, 'Continue the requested Builder work.'),
-        status: 'active',
+        status: context.mode === 'question' ? 'discussing' : 'active',
         current_brief_id: null,
         current_plan_id: null,
         base_revision_receipt_digest: null,

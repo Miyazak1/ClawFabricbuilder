@@ -13,6 +13,8 @@ const unpacked = path.join(root, 'release', 'win-unpacked');
 const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const unpackedArchive = path.join(unpacked, 'resources', 'app.asar.unpacked');
+const packagedHarnessArchive = path.join(unpacked, 'resources', 'harness-runtime.asar');
+const packagedHarnessManifestPath = path.join(unpacked, 'resources', 'harness-runtime-manifest.json');
 const builtIndex = path.join(root, 'dist', 'index.html');
 const workspacePackageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const forbidden = /ChatCreatePage|chat_planner|CanvasPage|JobMeta|CurrentState|ResultRail|AppLayout|AuthProvider|clawfabricDesktop|desktop:builder|ClawFabric v5/iu;
@@ -45,7 +47,13 @@ function readWindowsIdentity(executablePath) {
 }
 
 assert.equal(process.platform, 'win32', 'Builder package verification currently targets Windows.');
-for (const target of [executable, archive, builtIndex]) assert.equal(fs.existsSync(target), true, target);
+for (const target of [
+  executable,
+  archive,
+  builtIndex,
+  packagedHarnessArchive,
+  packagedHarnessManifestPath,
+]) assert.equal(fs.existsSync(target), true, target);
 
 const packagedEntries = asar.listPackage(archive).map((archivePath) => ({
   archivePath,
@@ -73,6 +81,7 @@ for (const expected of [
   '/electron/builder-project-read-authority.cjs',
   '/electron/builder-project-main-authority.cjs',
   '/electron/builder-project-save-authority.cjs',
+  '/scripts/verify-builder-harness-coding-loop.cjs',
   '/electron/builder-permission-authority-contract.cjs',
   '/electron/builder-permission-fact-store.cjs',
   '/electron/builder-permission-ipc-adapter.cjs',
@@ -104,6 +113,22 @@ for (const expected of [
   '/electron/builder-generation-ipc-adapter.cjs',
   '/electron/builder-generation-ipc-runtime.cjs',
   '/electron/builder-generation-main-service.cjs',
+  '/electron/builder-coding-loop-check-coordinator.cjs',
+  '/electron/builder-harness-candidate-projector.cjs',
+  '/electron/builder-harness-generation-runner.cjs',
+  '/electron/builder-harness-jsonrpc-peer.cjs',
+  '/electron/builder-harness-process-adapter.cjs',
+  '/electron/builder-harness-process-host.cjs',
+  '/electron/builder-harness-programming-runtime.cjs',
+  '/electron/builder-harness-runtime-composition.cjs',
+  '/electron/builder-harness-runtime-event-normalizer.cjs',
+  '/electron/builder-harness-tool-broker-server.cjs',
+  '/electron/builder-programming-runtime-contract.cjs',
+  '/electron/builder-programming-runtime-events.cjs',
+  '/electron/builder-programming-runtime-main-fact-recorder.cjs',
+  '/electron/builder-programming-runtime-selection.cjs',
+  '/electron/builder-programming-runtime-supervision-policy.cjs',
+  '/electron/builder-programming-workspace-tools.cjs',
   '/electron/builder-check-runtime-identity.cjs',
   '/electron/builder-check-run-admission.cjs',
   '/electron/builder-check-workspace-materializer.cjs',
@@ -208,12 +233,17 @@ for (const expectedDugiteLoaderFile of [
 assert.deepEqual(workspacePackageJson.build.asarUnpack, [
   'electron/builder-packaged-check-script-worker.cjs',
   'electron/builder-packaged-check-runtime-contract.cjs',
+  'electron/harness/**/*',
   'node_modules/@npmcli/promise-spawn/**/*',
   'node_modules/which/**/*',
   'node_modules/isexe/**/*',
   'node_modules/dugite/git/**/*',
   'node_modules/dugite/LICENSE',
   'node_modules/dugite/git/LICENSE.txt',
+]);
+assert.deepEqual(workspacePackageJson.build.extraResources, [
+  { from: '.release-runtime/harness-runtime.asar', to: 'harness-runtime.asar' },
+  { from: '.release-runtime/harness-runtime-manifest.json', to: 'harness-runtime-manifest.json' },
 ]);
 assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'playwright-core'), true);
 assert.equal(Object.hasOwn(workspacePackageJson.devDependencies, 'pngjs'), true);
@@ -265,6 +295,101 @@ assert.equal(fs.statSync(path.join(
   'electron',
   'builder-packaged-check-runtime-contract.cjs',
 )).isFile(), true);
+for (const harnessAsset of [
+  'builder-coding-loop.cordis.yml',
+  'builder-coding-loop-compaction-canary.cordis.yml',
+  'builder-tool-broker-plugin.mjs',
+]) {
+  assert.equal(fs.statSync(path.join(
+    unpackedArchive,
+    'electron',
+    'harness',
+    harnessAsset,
+  )).isFile(), true, harnessAsset);
+}
+const packagedHarnessManifest = JSON.parse(fs.readFileSync(packagedHarnessManifestPath, 'utf8'));
+assert.deepEqual(Reflect.ownKeys(packagedHarnessManifest), [
+  'manifest_version',
+  'upstream_repository',
+  'upstream_commit',
+  'upstream_version',
+  'runtime_package_version',
+  'entry_relative_path',
+  'file_count',
+  'source_bytes',
+  'archive_bytes',
+  'archive_sha256',
+  'link_free',
+]);
+assert.equal(packagedHarnessManifest.manifest_version, 'builder-harness-runtime-manifest.v1');
+assert.equal(packagedHarnessManifest.upstream_repository, 'https://github.com/deepseek-ai/deepseek-harness');
+assert.match(packagedHarnessManifest.upstream_commit, /^[0-9a-f]{40}$/u);
+assert.match(packagedHarnessManifest.upstream_version, /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/u);
+assert.equal(packagedHarnessManifest.entry_relative_path,
+  'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/packaged-bin.js');
+assert.equal(packagedHarnessManifest.link_free, true);
+assert.equal(fs.statSync(packagedHarnessArchive).size, packagedHarnessManifest.archive_bytes);
+assert.equal(
+  `sha256:${nodeCrypto.createHash('sha256').update(fs.readFileSync(packagedHarnessArchive)).digest('hex')}`,
+  packagedHarnessManifest.archive_sha256,
+);
+const packagedHarnessEntries = asar.listPackage(packagedHarnessArchive).map(
+  (entry) => entry.replaceAll('\\', '/'),
+);
+assert.equal(
+  packagedHarnessEntries.includes(`/${packagedHarnessManifest.entry_relative_path}`),
+  true,
+);
+const packagedHarnessEntry = path.join(
+  packagedHarnessArchive,
+  ...packagedHarnessManifest.entry_relative_path.split('/'),
+);
+const packagedHarnessSessionRoot = fs.mkdtempSync(path.join(root, 'release', 'packaged-harness-identity-'));
+try {
+  const initialize = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      cwd: root,
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      maxTokens: 4_096,
+    },
+  });
+  const shutdown = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: null });
+  const output = execFileSync(executable, [
+    packagedHarnessEntry,
+    path.join(unpackedArchive, 'electron', 'harness', 'builder-coding-loop.cordis.yml'),
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    input: `${initialize}\n${shutdown}\n`,
+    env: {
+      PATH: process.env.PATH || path.dirname(executable),
+      SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+      ELECTRON_RUN_AS_NODE: '1',
+      BUILDER_TOOL_BROKER_URL: 'http://127.0.0.1:9/v1/tool',
+      BUILDER_TOOL_BROKER_TOKEN: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      DEEPSEEK_API_KEY: 'packaged-harness-identity-no-provider-request',
+      DEEPSEEK_BASE_URL: 'http://127.0.0.1:9',
+      DSH_CWD: root,
+      DSH_SESSION_ROOT: packagedHarnessSessionRoot,
+      DSH_SYSTEM_PROMPT: 'Identity check only. Do not make a provider request.',
+    },
+    windowsHide: true,
+    timeout: 15_000,
+  }).trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+  assert.deepEqual(output, [
+    {
+      jsonrpc: '2.0', id: 1,
+      result: { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } },
+    },
+    { jsonrpc: '2.0', id: 2, result: {} },
+  ]);
+} finally {
+  fs.rmSync(packagedHarnessSessionRoot, { recursive: true, force: true });
+}
 assert.equal(fs.statSync(path.join(
   unpackedArchive,
   'node_modules',
@@ -368,6 +493,8 @@ const packagedGenerationIpcRuntime = packagedSource('electron/builder-generation
 const packagedGenerationMainService = packagedSource('electron/builder-generation-main-service.cjs');
 const packagedLivePreviewIpcAdapter = packagedSource('electron/builder-live-preview-ipc-adapter.cjs');
 const packagedLivePreviewIpcRuntime = packagedSource('electron/builder-live-preview-ipc-runtime.cjs');
+const packagedAgentTestBrowserIpcRuntime = packagedSource('electron/builder-agent-test-browser-ipc-runtime.cjs');
+const packagedUserWebIpcRuntime = packagedSource('electron/builder-user-web-ipc-runtime.cjs');
 const packagedSideWorkspaceFileIpcAdapter = packagedSource('electron/builder-side-workspace-file-ipc-adapter.cjs');
 const packagedSideWorkspaceFileIpcRuntime = packagedSource('electron/builder-side-workspace-file-ipc-runtime.cjs');
 const packagedConversationRecords = packagedSource('electron/builder-conversation-records.cjs');
@@ -375,6 +502,17 @@ const packagedConversationReplay = packagedSource('electron/builder-conversation
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
 const packagedTaskStreamProjection = packagedSource('electron/builder-task-stream-projection.cjs');
 const packagedTaskStreamIpcAdapter = packagedSource('electron/builder-task-stream-ipc-adapter.cjs');
+const packagedAgentProjectTreeProjection = packagedSource('electron/builder-agent-project-tree-projection.cjs');
+const packagedAgentProjectTreeIpcAdapter = packagedSource('electron/builder-agent-project-tree-ipc-adapter.cjs');
+const packagedWorkbenchMessageContract = packagedSource('electron/builder-workbench-message-contract.cjs');
+const packagedWorkbenchMessageStore = packagedSource('electron/builder-workbench-message-store.cjs');
+const packagedWorkbenchTimelineProjection = packagedSource('electron/builder-workbench-timeline-projection.cjs');
+const packagedWorkbenchCapabilityPolicy = packagedSource('electron/builder-workbench-capability-policy.cjs');
+const packagedWorkbenchIpcAdapter = packagedSource('electron/builder-workbench-ipc-adapter.cjs');
+const packagedAgentConversationWorkbenchRecordingService = packagedSource(
+  'electron/builder-agent-conversation-workbench-recording-service.cjs',
+);
+const packagedDefaultAgentBootstrap = packagedSource('electron/builder-default-agent-bootstrap.cjs');
 const packagedPlanReviewIpcAdapter = packagedSource('electron/builder-plan-review-ipc-adapter.cjs');
 const packagedWindowControlsIpcRuntime = packagedSource('electron/builder-window-controls-ipc-runtime.cjs');
 const channels = [
@@ -406,11 +544,15 @@ const generationChannels = [
   'clawfabric-builder:code-generator:answer-draft',
   'clawfabric-builder:code-generator:restore-draft',
   'clawfabric-builder:code-generator:restore-revision-as-draft',
+  'clawfabric-builder:code-generator:restore-previous-checkpoint-as-draft',
   'clawfabric-builder:code-generator:reject-draft',
   'clawfabric-builder:code-generator:cancel',
   'clawfabric-builder:code-generator:steer',
   'clawfabric-builder:code-generator:queue-followup',
   'clawfabric-builder:code-generator:availability',
+  'clawfabric-builder:code-generator:decide-command-approval',
+  'clawfabric-builder:code-generator:command-approval-requested',
+  'clawfabric-builder:code-generator:command-output',
 ];
 const providerSettingsChannels = [
   'clawfabric-builder:provider-settings:read-current',
@@ -420,6 +562,20 @@ const providerSettingsChannels = [
 const taskStreamChannels = [
   'clawfabric-builder:task-stream:read',
   'clawfabric-builder:task-stream:changed',
+];
+const agentProjectTreeChannels = [
+  'clawfabric-builder:agent-project-tree:read',
+  'clawfabric-builder:agent-project-tree:rename-project',
+  'clawfabric-builder:agent-project-tree:archive-project',
+  'clawfabric-builder:agent-project-tree:rename-task',
+  'clawfabric-builder:agent-project-tree:archive-task',
+];
+const agentWorkbenchChannels = [
+  'clawfabric-builder:agent-workbench:read',
+  'clawfabric-builder:agent-workbench:update-message-state',
+  'clawfabric-builder:agent-workbench:create-task-proposal',
+  'clawfabric-builder:agent-workbench:decide-task-proposal',
+  'clawfabric-builder:agent-workbench:changed',
 ];
 const planReviewChannels = [
   'clawfabric-builder:plan-review:review',
@@ -433,6 +589,7 @@ const providerContextDisclosureApprovalChannels = [
 const checkRunChannels = [
   'clawfabric-builder:check-run:read-current-draft-available',
   'clawfabric-builder:check-run:approve-current-draft-check',
+  'clawfabric-builder:check-run:decide-current-draft-dependency-preparation',
   'clawfabric-builder:check-run:skip-current-draft-check',
 ];
 const livePreviewChannels = [
@@ -440,10 +597,26 @@ const livePreviewChannels = [
   'clawfabric-builder:live-preview:reload-current',
   'clawfabric-builder:live-preview:stop-current',
   'clawfabric-builder:live-preview:read-current-status',
+  'clawfabric-builder:live-preview:update-current-layout',
+  'clawfabric-builder:live-preview:decide-dev-server-approval',
+];
+const agentTestBrowserChannels = [
+  'clawfabric-builder:agent-test-browser:update-layout',
+  'clawfabric-builder:agent-test-browser:lifecycle',
+];
+const userWebChannels = [
+  'clawfabric-builder:user-web:navigate',
+  'clawfabric-builder:user-web:go-back',
+  'clawfabric-builder:user-web:go-forward',
+  'clawfabric-builder:user-web:reload',
+  'clawfabric-builder:user-web:stop',
+  'clawfabric-builder:user-web:read-status',
+  'clawfabric-builder:user-web:update-layout',
 ];
 const sideWorkspaceFileChannels = [
   'clawfabric-builder:side-workspace-files:read-current-draft-tree',
   'clawfabric-builder:side-workspace-files:read-current-draft-content',
+  'clawfabric-builder:side-workspace-files:read-runtime-tool-tree',
 ];
 const windowControlsChannels = [
   'clawfabric-builder:window-controls:minimize',
@@ -456,11 +629,15 @@ const preloadChannels = [
   ...generationChannels,
   ...providerSettingsChannels,
   ...taskStreamChannels,
+  ...agentProjectTreeChannels,
+  ...agentWorkbenchChannels,
   ...planReviewChannels,
   ...permissionChannels,
   ...providerContextDisclosureApprovalChannels,
   ...checkRunChannels,
   ...livePreviewChannels,
+  ...agentTestBrowserChannels,
+  ...userWebChannels,
   ...sideWorkspaceFileChannels,
   ...windowControlsChannels,
 ];
@@ -531,6 +708,8 @@ assert.equal(exposeCalls[0].arguments[0].text, 'clawfabricBuilder');
 const preloadRoot = frozenObjectLiteral(exposeCalls[0].arguments[1]);
 exactObjectKeys(preloadRoot, [
   'bridgeVersion',
+  'agentProjectTree',
+  'agentWorkbench',
   'projectWorkspace',
   'codeGenerator',
   'providerSettings',
@@ -540,10 +719,18 @@ exactObjectKeys(preloadRoot, [
   'providerContextDisclosureApproval',
   'checkRun',
   'livePreview',
+  'agentTestBrowser',
+  'userWeb',
   'sideWorkspaceFiles',
   'windowControls',
 ]);
 const bridgeVersionProperty = preloadRoot.properties.find((property) => property.name.text === 'bridgeVersion');
+const agentProjectTreeProperty = preloadRoot.properties.find(
+  (property) => property.name.text === 'agentProjectTree',
+);
+const agentWorkbenchProperty = preloadRoot.properties.find(
+  (property) => property.name.text === 'agentWorkbench',
+);
 const workspaceProperty = preloadRoot.properties.find((property) => property.name.text === 'projectWorkspace');
 const generationProperty = preloadRoot.properties.find((property) => property.name.text === 'codeGenerator');
 const providerSettingsProperty = preloadRoot.properties.find((property) => property.name.text === 'providerSettings');
@@ -555,11 +742,15 @@ const providerContextDisclosureApprovalProperty = preloadRoot.properties.find(
 );
 const checkRunProperty = preloadRoot.properties.find((property) => property.name.text === 'checkRun');
 const livePreviewProperty = preloadRoot.properties.find((property) => property.name.text === 'livePreview');
+const agentTestBrowserProperty = preloadRoot.properties.find((property) => property.name.text === 'agentTestBrowser');
+const userWebProperty = preloadRoot.properties.find((property) => property.name.text === 'userWeb');
 const sideWorkspaceFilesProperty = preloadRoot.properties.find(
   (property) => property.name.text === 'sideWorkspaceFiles',
 );
 const windowControlsProperty = preloadRoot.properties.find((property) => property.name.text === 'windowControls');
 assert.equal(ts.isPropertyAssignment(bridgeVersionProperty), true);
+assert.equal(ts.isPropertyAssignment(agentProjectTreeProperty), true);
+assert.equal(ts.isPropertyAssignment(agentWorkbenchProperty), true);
 assert.equal(ts.isPropertyAssignment(workspaceProperty), true);
 assert.equal(ts.isPropertyAssignment(generationProperty), true);
 assert.equal(ts.isPropertyAssignment(providerSettingsProperty), true);
@@ -569,10 +760,14 @@ assert.equal(ts.isPropertyAssignment(permissionsProperty), true);
 assert.equal(ts.isPropertyAssignment(providerContextDisclosureApprovalProperty), true);
 assert.equal(ts.isPropertyAssignment(checkRunProperty), true);
 assert.equal(ts.isPropertyAssignment(livePreviewProperty), true);
+assert.equal(ts.isPropertyAssignment(agentTestBrowserProperty), true);
+assert.equal(ts.isPropertyAssignment(userWebProperty), true);
 assert.equal(ts.isPropertyAssignment(sideWorkspaceFilesProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v27');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v38');
+const agentProjectTreeBridge = frozenObjectLiteral(agentProjectTreeProperty.initializer);
+const agentWorkbenchBridge = frozenObjectLiteral(agentWorkbenchProperty.initializer);
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
 const generationBridge = frozenObjectLiteral(generationProperty.initializer);
 const providerSettingsBridge = frozenObjectLiteral(providerSettingsProperty.initializer);
@@ -584,8 +779,21 @@ const providerContextDisclosureApprovalBridge = frozenObjectLiteral(
 );
 const checkRunBridge = frozenObjectLiteral(checkRunProperty.initializer);
 const livePreviewBridge = frozenObjectLiteral(livePreviewProperty.initializer);
+const agentTestBrowserBridge = frozenObjectLiteral(agentTestBrowserProperty.initializer);
+const userWebBridge = frozenObjectLiteral(userWebProperty.initializer);
 const sideWorkspaceFilesBridge = frozenObjectLiteral(sideWorkspaceFilesProperty.initializer);
 const windowControlsBridge = frozenObjectLiteral(windowControlsProperty.initializer);
+exactObjectKeys(agentProjectTreeBridge, [
+  'read',
+  'renameProject',
+  'archiveProject',
+  'renameTask',
+  'archiveTask',
+]);
+exactObjectKeys(agentWorkbenchBridge, [
+  'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'controlTask',
+  'subscribeChanged',
+]);
 exactObjectKeys(workspaceBridge, [
   'open',
   'openLocation',
@@ -610,16 +818,21 @@ exactObjectKeys(generationBridge, [
   'approveCurrentProjectWrite',
   'retry',
   'answer',
+  'answerPlan',
   'answerDraft',
   'restoreDraft',
   'restoreRevisionAsDraft',
+  'restorePreviousCheckpointAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
   'queueFollowup',
   'availability',
+  'decideCommandApproval',
   'subscribeStarted',
   'subscribeOutput',
+  'subscribeCommandApproval',
+  'subscribeCommandOutput',
 ]);
 exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
 exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
@@ -628,7 +841,10 @@ exactObjectKeys(permissionsBridge, ['evaluate']);
 exactObjectKeys(providerContextDisclosureApprovalBridge, ['approveCurrent']);
 exactObjectKeys(checkRunBridge, [
   'readCurrentDraftAvailableChecks',
+  'diagnoseCurrentDraftCheckEnvironment',
+  'diagnoseProjectEnvironment',
   'approveAndRunCurrentDraftCheck',
+  'decideCurrentDraftDependencyPreparation',
   'skipCurrentDraftCheck',
 ]);
 exactObjectKeys(livePreviewBridge, [
@@ -636,14 +852,28 @@ exactObjectKeys(livePreviewBridge, [
   'reloadCurrentPreview',
   'stopCurrentPreview',
   'readCurrentPreviewStatus',
+  'updateCurrentPreviewLayout',
+  'decideDevServerApproval',
+]);
+exactObjectKeys(agentTestBrowserBridge, ['stop', 'updateLayout', 'subscribeLifecycle']);
+exactObjectKeys(userWebBridge, [
+  'navigate', 'goBack', 'goForward', 'reload', 'stop', 'readStatus', 'updateLayout',
 ]);
 exactObjectKeys(sideWorkspaceFilesBridge, [
   'readCurrentDraftFileTree',
   'readCurrentDraftFileContent',
+  'readRuntimeToolFileTree',
 ]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  ...Array.from({ length: 29 }, () => 'invoke'),
+  ...Array.from({ length: 10 }, () => 'invoke'),
+  'on',
+  'removeListener',
+  ...Array.from({ length: 32 }, () => 'invoke'),
+  'on',
+  'removeListener',
+  'on',
+  'removeListener',
   'on',
   'removeListener',
   'on',
@@ -651,7 +881,10 @@ assert.deepEqual(rendererPropertyAccesses, [
   ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 16 }, () => 'invoke'),
+  ...Array.from({ length: 17 }, () => 'invoke'),
+  'on',
+  'removeListener',
+  ...Array.from({ length: 14 }, () => 'invoke'),
 ]);
 assert.deepEqual(forbiddenRendererReferences, []);
 assert.doesNotMatch(packagedPreload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
@@ -710,19 +943,34 @@ assert.equal(preloadConstants.get('GENERATION_STARTED_CHANNEL'), generationChann
 assert.equal(preloadConstants.get('GENERATION_OUTPUT_CHANNEL'), generationChannels[11]);
 assert.equal(preloadConstants.get('RETRY_GENERATE_CHANNEL'), generationChannels[12]);
 assert.equal(preloadConstants.get('ANSWER_CHANNEL'), generationChannels[13]);
-assert.equal(preloadConstants.get('ANSWER_DRAFT_CHANNEL'), generationChannels[14]);
-assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[15]);
-assert.equal(preloadConstants.get('RESTORE_REVISION_AS_DRAFT_CHANNEL'), generationChannels[16]);
-assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[17]);
-assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[18]);
-assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[19]);
-assert.equal(preloadConstants.get('QUEUE_FOLLOWUP_CHANNEL'), generationChannels[20]);
-assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[21]);
+assert.equal(preloadConstants.get('ANSWER_PLAN_CHANNEL'), generationChannels[14]);
+assert.equal(preloadConstants.get('ANSWER_DRAFT_CHANNEL'), generationChannels[15]);
+assert.equal(preloadConstants.get('RESTORE_DRAFT_CHANNEL'), generationChannels[16]);
+assert.equal(preloadConstants.get('RESTORE_REVISION_AS_DRAFT_CHANNEL'), generationChannels[17]);
+assert.equal(preloadConstants.get('RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL'), generationChannels[18]);
+assert.equal(preloadConstants.get('REJECT_DRAFT_CHANNEL'), generationChannels[19]);
+assert.equal(preloadConstants.get('CANCEL_CHANNEL'), generationChannels[20]);
+assert.equal(preloadConstants.get('STEER_CHANNEL'), generationChannels[21]);
+assert.equal(preloadConstants.get('QUEUE_FOLLOWUP_CHANNEL'), generationChannels[22]);
+assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[23]);
+assert.equal(preloadConstants.get('DECIDE_COMMAND_APPROVAL_CHANNEL'), generationChannels[24]);
+assert.equal(preloadConstants.get('COMMAND_APPROVAL_REQUESTED_CHANNEL'), generationChannels[25]);
+assert.equal(preloadConstants.get('COMMAND_OUTPUT_CHANNEL'), generationChannels[26]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
 assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
 assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannels[0]);
 assert.equal(preloadConstants.get('TASK_STREAM_CHANGED_CHANNEL'), taskStreamChannels[1]);
+assert.equal(preloadConstants.get('READ_AGENT_PROJECT_TREE_CHANNEL'), agentProjectTreeChannels[0]);
+assert.equal(preloadConstants.get('RENAME_AGENT_PROJECT_CHANNEL'), agentProjectTreeChannels[1]);
+assert.equal(preloadConstants.get('ARCHIVE_AGENT_PROJECT_CHANNEL'), agentProjectTreeChannels[2]);
+assert.equal(preloadConstants.get('RENAME_AGENT_TASK_CHANNEL'), agentProjectTreeChannels[3]);
+assert.equal(preloadConstants.get('ARCHIVE_AGENT_TASK_CHANNEL'), agentProjectTreeChannels[4]);
+assert.equal(preloadConstants.get('READ_AGENT_WORKBENCH_CHANNEL'), agentWorkbenchChannels[0]);
+assert.equal(preloadConstants.get('UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL'), agentWorkbenchChannels[1]);
+assert.equal(preloadConstants.get('CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL'), agentWorkbenchChannels[2]);
+assert.equal(preloadConstants.get('DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL'), agentWorkbenchChannels[3]);
+assert.equal(preloadConstants.get('WORKBENCH_CHANGED_CHANNEL'), agentWorkbenchChannels[4]);
 assert.equal(preloadConstants.get('REVIEW_PLAN_CHANNEL'), planReviewChannels[0]);
 assert.equal(preloadConstants.get('EVALUATE_PERMISSION_CHANNEL'), permissionChannels[0]);
 assert.equal(
@@ -738,8 +986,12 @@ assert.equal(
   checkRunChannels[1],
 );
 assert.equal(
-  preloadConstants.get('SKIP_CURRENT_DRAFT_CHECK_CHANNEL'),
+  preloadConstants.get('DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL'),
   checkRunChannels[2],
+);
+assert.equal(
+  preloadConstants.get('SKIP_CURRENT_DRAFT_CHECK_CHANNEL'),
+  checkRunChannels[3],
 );
 assert.equal(
   preloadConstants.get('REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL'),
@@ -751,8 +1003,20 @@ assert.equal(
   preloadConstants.get('READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL'),
   livePreviewChannels[3],
 );
+assert.equal(preloadConstants.get('UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL'), livePreviewChannels[4]);
+assert.equal(preloadConstants.get('DECIDE_DEV_SERVER_APPROVAL_CHANNEL'), livePreviewChannels[5]);
+assert.equal(preloadConstants.get('UPDATE_AGENT_TEST_BROWSER_LAYOUT_CHANNEL'), agentTestBrowserChannels[0]);
+assert.equal(preloadConstants.get('AGENT_TEST_BROWSER_LIFECYCLE_CHANNEL'), agentTestBrowserChannels[1]);
+assert.equal(preloadConstants.get('NAVIGATE_USER_WEB_CHANNEL'), userWebChannels[0]);
+assert.equal(preloadConstants.get('GO_BACK_USER_WEB_CHANNEL'), userWebChannels[1]);
+assert.equal(preloadConstants.get('GO_FORWARD_USER_WEB_CHANNEL'), userWebChannels[2]);
+assert.equal(preloadConstants.get('RELOAD_USER_WEB_CHANNEL'), userWebChannels[3]);
+assert.equal(preloadConstants.get('STOP_USER_WEB_CHANNEL'), userWebChannels[4]);
+assert.equal(preloadConstants.get('READ_USER_WEB_STATUS_CHANNEL'), userWebChannels[5]);
+assert.equal(preloadConstants.get('UPDATE_USER_WEB_LAYOUT_CHANNEL'), userWebChannels[6]);
 assert.equal(preloadConstants.get('READ_CURRENT_DRAFT_FILE_TREE_CHANNEL'), sideWorkspaceFileChannels[0]);
 assert.equal(preloadConstants.get('READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL'), sideWorkspaceFileChannels[1]);
+assert.equal(preloadConstants.get('READ_RUNTIME_TOOL_FILE_TREE_CHANNEL'), sideWorkspaceFileChannels[2]);
 assert.equal(preloadConstants.get('MINIMIZE_WINDOW_CHANNEL'), windowControlsChannels[0]);
 assert.equal(preloadConstants.get('TOGGLE_MAXIMIZE_WINDOW_CHANNEL'), windowControlsChannels[1]);
 assert.equal(preloadConstants.get('CLOSE_WINDOW_CHANNEL'), windowControlsChannels[2]);
@@ -793,20 +1057,67 @@ exactInvokeMethod(
 );
 exactInvokeMethod(generationBridge, 'retry', 'RETRY_GENERATE_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'answerPlan', 'ANSWER_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answerDraft', 'ANSWER_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'restoreDraft', 'RESTORE_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'restoreRevisionAsDraft', 'RESTORE_REVISION_AS_DRAFT_CHANNEL', ['request']);
+exactInvokeMethod(
+  generationBridge,
+  'restorePreviousCheckpointAsDraft',
+  'RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL',
+  ['request'],
+);
 exactInvokeMethod(generationBridge, 'rejectDraft', 'REJECT_DRAFT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'cancel', 'CANCEL_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'steer', 'STEER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'queueFollowup', 'QUEUE_FOLLOWUP_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'availability', 'AVAILABILITY_CHANNEL', []);
+exactInvokeMethod(
+  generationBridge,
+  'decideCommandApproval',
+  'DECIDE_COMMAND_APPROVAL_CHANNEL',
+  ['request'],
+);
 exactSubscribeMethod(generationBridge, 'subscribeStarted', 'GENERATION_STARTED_CHANNEL');
+exactSubscribeMethod(generationBridge, 'subscribeOutput', 'GENERATION_OUTPUT_CHANNEL');
+exactSubscribeMethod(
+  generationBridge,
+  'subscribeCommandApproval',
+  'COMMAND_APPROVAL_REQUESTED_CHANNEL',
+);
+exactSubscribeMethod(generationBridge, 'subscribeCommandOutput', 'COMMAND_OUTPUT_CHANNEL');
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
 exactSubscribeMethod(taskStreamBridge, 'subscribeChanged', 'TASK_STREAM_CHANGED_CHANNEL');
+exactInvokeMethod(agentProjectTreeBridge, 'read', 'READ_AGENT_PROJECT_TREE_CHANNEL', ['request']);
+exactInvokeMethod(agentWorkbenchBridge, 'read', 'READ_AGENT_WORKBENCH_CHANNEL', ['request']);
+exactInvokeMethod(
+  agentWorkbenchBridge,
+  'updateMessageState',
+  'UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  agentWorkbenchBridge,
+  'createTaskProposal',
+  'CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  agentWorkbenchBridge,
+  'decideTaskProposal',
+  'DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  agentWorkbenchBridge,
+  'controlTask',
+  'CONTROL_WORKBENCH_TASK_CHANNEL',
+  ['request'],
+);
+exactSubscribeMethod(agentWorkbenchBridge, 'subscribeChanged', 'WORKBENCH_CHANGED_CHANNEL');
 exactInvokeMethod(planReviewBridge, 'review', 'REVIEW_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(permissionsBridge, 'evaluate', 'EVALUATE_PERMISSION_CHANNEL', ['request']);
 exactInvokeMethod(
@@ -823,8 +1134,26 @@ exactInvokeMethod(
 );
 exactInvokeMethod(
   checkRunBridge,
+  'diagnoseCurrentDraftCheckEnvironment',
+  'DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'diagnoseProjectEnvironment',
+  'DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
   'approveAndRunCurrentDraftCheck',
   'APPROVE_CURRENT_DRAFT_CHECK_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'decideCurrentDraftDependencyPreparation',
+  'DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL',
   ['request'],
 );
 exactInvokeMethod(
@@ -839,6 +1168,24 @@ exactInvokeMethod(
   'REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL',
   ['request'],
 );
+exactInvokeMethod(
+  agentTestBrowserBridge,
+  'updateLayout',
+  'UPDATE_AGENT_TEST_BROWSER_LAYOUT_CHANNEL',
+  ['request'],
+);
+exactSubscribeMethod(
+  agentTestBrowserBridge,
+  'subscribeLifecycle',
+  'AGENT_TEST_BROWSER_LIFECYCLE_CHANNEL',
+);
+exactInvokeMethod(userWebBridge, 'navigate', 'NAVIGATE_USER_WEB_CHANNEL', ['request']);
+exactInvokeMethod(userWebBridge, 'goBack', 'GO_BACK_USER_WEB_CHANNEL', []);
+exactInvokeMethod(userWebBridge, 'goForward', 'GO_FORWARD_USER_WEB_CHANNEL', []);
+exactInvokeMethod(userWebBridge, 'reload', 'RELOAD_USER_WEB_CHANNEL', []);
+exactInvokeMethod(userWebBridge, 'stop', 'STOP_USER_WEB_CHANNEL', []);
+exactInvokeMethod(userWebBridge, 'readStatus', 'READ_USER_WEB_STATUS_CHANNEL', []);
+exactInvokeMethod(userWebBridge, 'updateLayout', 'UPDATE_USER_WEB_LAYOUT_CHANNEL', ['request']);
 exactInvokeMethod(
   livePreviewBridge,
   'reloadCurrentPreview',
@@ -858,6 +1205,18 @@ exactInvokeMethod(
   ['request'],
 );
 exactInvokeMethod(
+  livePreviewBridge,
+  'updateCurrentPreviewLayout',
+  'UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  livePreviewBridge,
+  'decideDevServerApproval',
+  'DECIDE_DEV_SERVER_APPROVAL_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
   sideWorkspaceFilesBridge,
   'readCurrentDraftFileTree',
   'READ_CURRENT_DRAFT_FILE_TREE_CHANNEL',
@@ -867,6 +1226,12 @@ exactInvokeMethod(
   sideWorkspaceFilesBridge,
   'readCurrentDraftFileContent',
   'READ_CURRENT_DRAFT_FILE_CONTENT_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  sideWorkspaceFilesBridge,
+  'readRuntimeToolFileTree',
+  'READ_RUNTIME_TOOL_FILE_TREE_CHANNEL',
   ['request'],
 );
 exactInvokeMethod(windowControlsBridge, 'minimize', 'MINIMIZE_WINDOW_CHANNEL', []);
@@ -902,7 +1267,9 @@ assert.match(packagedMain, /path\.dirname\(resolved\) !== tempRoot/u);
 assert.match(packagedMain, /path\.basename\(realPath\) !== expectedBasename/u);
 assert.match(packagedMain, /stat\.isSymbolicLink\(\)/u);
 assert.match(packagedMain, /const userDataPath = app\.getPath\(['"]userData['"]\)/u);
-assert.match(packagedMain, /const runtimes = createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u);
+assert.match(packagedMain, /const runtimes =[\s\S]{0,240}createIpcRuntimes\(userDataPath,\s*packagedCanaryProjectRootPath\)/u);
+assert.match(packagedMain, /main\.lifecycle\.create_ipc_runtimes\.duration_ms/u);
+assert.match(packagedMain, /main\.lifecycle\.ready_handler\.duration_ms/u);
 assert.match(packagedMain, /registerIpcRuntimes\(runtimes\)/u);
 assert.match(packagedMain, /ipcRuntimes = runtimes/u);
 assert.match(packagedMain, /shutdownIpcRuntimes/u);
@@ -1296,6 +1663,9 @@ assert.match(packagedGenerationIpcRuntime, /channel:\s*LOAD_REVISION_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_CURRENT_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*LIST_HISTORY_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_TASK_STREAM_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_AGENT_PROJECT_TREE_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*READ_AGENT_WORKBENCH_CHANNEL/u);
+assert.match(packagedGenerationIpcRuntime, /channel:\s*UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*REVIEW_PLAN_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*STEER_CHANNEL/u);
 assert.match(packagedGenerationIpcRuntime, /channel:\s*QUEUE_FOLLOWUP_CHANNEL/u);
@@ -1336,6 +1706,8 @@ assert.match(packagedPreload, /clawfabric-builder:code-generator:answer-draft/u)
 assert.match(packagedPreload, /restoreDraft/u);
 assert.match(packagedPreload, /restoreRevisionAsDraft/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:restore-revision-as-draft/u);
+assert.match(packagedPreload, /restorePreviousCheckpointAsDraft/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:restore-previous-checkpoint-as-draft/u);
 assert.match(packagedPreload, /rejectDraft/u);
 assert.match(packagedPreload, /\bsteer\b/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:steer/u);
@@ -1343,23 +1715,81 @@ assert.match(packagedPreload, /subscribeStarted/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:started/u);
 assert.match(packagedPreload, /providerSettings/u);
 assert.match(packagedPreload, /taskStream/u);
+assert.match(packagedPreload, /agentProjectTree/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:read/u);
+assert.match(packagedPreload, /agentWorkbench/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-workbench:read/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-workbench:update-message-state/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-workbench:control-task/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-workbench:changed/u);
 assert.match(packagedPreload, /planReview/u);
 assert.match(packagedPreload, /permissions/u);
 assert.match(packagedPreload, /providerContextDisclosureApproval/u);
 assert.match(packagedPreload, /clawfabric-builder:provider-context-disclosure:approve-current/u);
 assert.match(packagedPreload, /checkRun/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:read-current-draft-available/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:diagnose-current-draft-check-environment/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:diagnose-project-environment/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:approve-current-draft-check/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:skip-current-draft-check/u);
 assert.match(packagedPreload, /livePreview/u);
 assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
+assert.match(packagedPreload, /clawfabric-builder:live-preview:update-current-layout/u);
+assert.match(packagedPreload, /clawfabric-builder:live-preview:decide-dev-server-approval/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-test-browser:update-layout/u);
+assert.match(packagedPreload, /clawfabric-builder:user-web:navigate/u);
+assert.match(packagedPreload, /clawfabric-builder:user-web:update-layout/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:decide-command-approval/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:command-approval-requested/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:command-output/u);
 assert.match(packagedPreload, /sideWorkspaceFiles/u);
 assert.match(packagedPreload, /clawfabric-builder:side-workspace-files:read-current-draft-tree/u);
 assert.match(packagedPreload, /clawfabric-builder:side-workspace-files:read-current-draft-content/u);
 assert.match(packagedPreload, /windowControls/u);
 assert.match(packagedPreload, /listWorkspaces/u);
 assert.match(packagedPreload, /clawfabric-builder:project-workspace:list-workspaces/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 49);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:rename-project/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:archive-project/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:rename-task/u);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:archive-task/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 76);
+assert.match(packagedAgentProjectTreeProjection, /agent-project-tree-projection\.v1/u);
+assert.match(packagedAgentProjectTreeProjection, /main_owned_session_task_address_store/u);
+assert.match(packagedAgentProjectTreeProjection, /permission_grant:\s*false/u);
+assert.match(packagedAgentProjectTreeProjection, /source_write:\s*false/u);
+assert.match(packagedAgentProjectTreeProjection, /provider_dispatch:\s*false/u);
+assert.match(packagedAgentProjectTreeIpcAdapter, /active_renderer_required:\s*true/u);
+assert.match(packagedAgentProjectTreeIpcAdapter, /direct_electron_registration:\s*false/u);
+assert.match(packagedAgentProjectTreeIpcAdapter, /direct_preload_exposure:\s*false/u);
+assert.doesNotMatch(
+  packagedAgentProjectTreeIpcAdapter,
+  /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|safeStorage|builder-provider|builder-git-|node:sqlite|fetch\s*\(|https?:|saveDraft|generate|persist_candidate_commit|write_current|local-provider-executor/iu,
+);
+assert.match(packagedWorkbenchMessageContract, /builder-workbench-message-envelope\.v1/u);
+assert.match(packagedWorkbenchMessageStore, /builder-workbench-message-store\.v1/u);
+assert.match(packagedWorkbenchMessageStore, /node:sqlite/u);
+assert.match(packagedWorkbenchTimelineProjection, /builder-agent-workbench-projection\.v2/u);
+assert.match(packagedWorkbenchTimelineProjection, /presentation_family:\s*builtin\?\.family \?\? 'generic'/u);
+assert.match(
+  packagedAgentConversationWorkbenchRecordingService,
+  /builder-agent-conversation-workbench-recording-service\.v1/u,
+);
+assert.match(packagedWorkbenchCapabilityPolicy, /builder-workbench-capability-policy\.v1/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /active_renderer_required:\s*true/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /permission_grant:\s*false/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /provider_dispatch:\s*false/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /source_write:\s*false/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /command_execution:\s*'not_performed'/u);
+assert.match(packagedWorkbenchCapabilityPolicy, /browser_session_access:\s*'not_performed'/u);
+assert.match(packagedWorkbenchIpcAdapter, /authorityForBuilderWorkbenchCapabilityPolicy/u);
+assert.match(packagedWorkbenchIpcAdapter, /createBuilderWorkbenchControlPlanePolicy/u);
+assert.doesNotMatch(
+  packagedWorkbenchIpcAdapter,
+  /require\(['"]electron['"]\)|ipcRenderer|contextBridge|safeStorage|Authorization|Bearer|saveDraft|generate|persist_candidate_commit|write_current/iu,
+);
+assert.match(packagedDefaultAgentBootstrap, /builder-default-agent-bootstrap\.v1/u);
+assert.match(packagedDefaultAgentBootstrap, /explicit_permission_required/u);
 assert.doesNotMatch(packagedPreload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage|Authorization|Bearer/iu);
 assert.match(packagedProviderConfigRepository, /bind_current_authority/u);
 assert.match(packagedProviderConfigRepository, /builder-provider-secret-store\.cjs/u);
@@ -1514,7 +1944,7 @@ assert.doesNotMatch(
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
 );
 assert.match(packagedTaskStreamProjection, /builder-task-stream-read-result\.v1/u);
-assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_ITEMS = 128/u);
+assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_ITEMS = 512/u);
 assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
 assert.match(packagedTaskStreamProjection, /replayBuilderConversation/u);
 assert.match(packagedTaskStreamProjection, /Object\.getPrototypeOf\(value\) !== Array\.prototype/u);
@@ -1532,7 +1962,7 @@ assert.match(packagedTaskStreamProjection, /display_summary:\s*record\.result\.d
 assert.match(packagedTaskStreamProjection, /result_admission:\s*'fixed_summary_code_recorded'/u);
 assert.match(packagedTaskStreamProjection, /raw_output_admission:\s*'not_included'/u);
 assert.match(packagedTaskStreamProjection, /revision_admission:\s*'not_created'/u);
-assert.doesNotMatch(packagedTaskStreamProjection, /session_policy|tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|runtime_id|resource_id/u);
+assert.doesNotMatch(packagedTaskStreamProjection, /session_policy|tool_name|permission_admission_receipt|permission_id|record_digest|evidence_digest|policy_digest|dispatch_request_id|dispatch_admission_digest|adapter_selection_id|adapter_selection_digest|runtime_invocation_id|runtime_invocation_digest|runtime_invocation_admission|adapter_id|\bruntime_id\b|resource_id/u);
 assert.match(packagedTaskStreamProjection, /candidate_state:\s*'proposed'/u);
 assert.match(packagedTaskStreamProjection, /source_availability:\s*'not_loaded'/u);
 assert.match(packagedTaskStreamProjection, /plan_reviewed/u);
@@ -1545,7 +1975,10 @@ assert.doesNotMatch(
 );
 assert.match(packagedTaskStreamIpcAdapter, /builder_task_stream\.controlled_ipc_adapter\.v1/u);
 assert.match(packagedTaskStreamIpcAdapter, /READ_TASK_STREAM_CHANNEL/u);
-assert.match(packagedTaskStreamIpcAdapter, /renderer_authority:\s*'project_id_only'/u);
+assert.match(
+  packagedTaskStreamIpcAdapter,
+  /renderer_authority:\s*'agent_or_project_task_address_only'/u,
+);
 assert.match(packagedTaskStreamIpcAdapter, /read_only:\s*true/u);
 assert.match(packagedTaskStreamIpcAdapter, /active_renderer_required:\s*true/u);
 assert.match(packagedTaskStreamIpcAdapter, /direct_electron_registration:\s*false/u);
@@ -1609,6 +2042,23 @@ for (const channel of taskStreamChannels) {
     channel,
   );
 }
+for (const channel of agentProjectTreeChannels) {
+  assert.equal(
+    packagedAgentProjectTreeIpcAdapter.includes(channel)
+      || packagedGenerationIpcRuntime.includes(channel),
+    true,
+    channel,
+  );
+}
+for (const channel of agentWorkbenchChannels) {
+  assert.equal(
+    packagedWorkbenchIpcAdapter.includes(channel)
+      || packagedGenerationIpcRuntime.includes(channel)
+      || packagedPreload.includes(channel),
+    true,
+    channel,
+  );
+}
 for (const channel of permissionChannels) {
   assert.equal(
     packagedPermissionIpcAdapter.includes(channel)
@@ -1624,6 +2074,12 @@ for (const channel of livePreviewChannels) {
     true,
     channel,
   );
+}
+for (const channel of agentTestBrowserChannels) {
+  assert.equal(packagedAgentTestBrowserIpcRuntime.includes(channel), true, channel);
+}
+for (const channel of userWebChannels) {
+  assert.equal(packagedUserWebIpcRuntime.includes(channel), true, channel);
 }
 for (const channel of sideWorkspaceFileChannels) {
   assert.equal(
@@ -1656,5 +2112,6 @@ process.stdout.write(`${JSON.stringify({
   product_name: identity.ProductName,
   company_name: identity.CompanyName,
   production_csp: 'network_denied',
+  harness_runtime: 'bundled_identity_verified',
   asar_entry_count: packagedFiles.length,
 }, null, 2)}\n`);

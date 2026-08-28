@@ -6,6 +6,9 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderCheckRunAdmission,
 } = require('./builder-check-run-admission.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CHECK_RUN_VERSION = 'builder-check-run.v2';
 const INPUT_KEYS = Object.freeze([
@@ -17,6 +20,7 @@ const INPUT_KEYS = Object.freeze([
   'started_at_ms',
   'completed_at_ms',
 ]);
+const INPUT_OPTIONAL_KEYS = Object.freeze(['environment_reason']);
 const RECORD_KEYS = Object.freeze([
   'check_run_version',
   'check_run_id',
@@ -58,6 +62,7 @@ const RECORD_KEYS = Object.freeze([
   'authority',
   'check_run_digest',
 ]);
+const RECORD_OPTIONAL_KEYS = Object.freeze(['environment_reason']);
 const AUTHORITY_KEYS = Object.freeze([
   'record_authority',
   'admission_authority',
@@ -78,7 +83,6 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const ADMISSION_ID_PATTERN = /^builder-check-run-admission:[0-9a-f]{64}$/u;
 const APPROVAL_ID_PATTERN = /^builder-check-run-execution-approval:[0-9a-f]{64}$/u;
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -131,6 +135,17 @@ const STATUSES = Object.freeze([
   'output_exceeded',
   'termination_failed',
 ]);
+const ENVIRONMENT_REASONS = Object.freeze([
+  'none',
+  'dependency_workspace_missing',
+  'install_approval_required',
+  'install_denied',
+  'dependency_preparation_failed',
+  'dependency_preparation_timed_out',
+  'package_manager_unavailable',
+  'host_toolchain_missing',
+  'environment_unknown',
+]);
 const FAILURE_CLASS_BY_STATUS = Object.freeze({
   passed: 'none',
   failed: 'command_failed',
@@ -145,7 +160,7 @@ const SUMMARY_BY_STATUS = Object.freeze({
   passed: 'Check completed successfully.',
   failed: 'Check failed. Review the project command before saving.',
   timed_out: 'Check stopped after reaching the time limit.',
-  environment_unavailable: 'Check could not start in the current environment.',
+  environment_unavailable: 'The admitted check workspace needs prepared dependencies or local toolchain access before this check can run.',
   cancelled: 'Check was cancelled.',
   spawn_failed: 'Check could not be started.',
   output_exceeded: 'Check output exceeded the review limit.',
@@ -194,6 +209,23 @@ function exactObject(value, keys) {
     (key) => typeof key !== 'string' || !keys.includes(key),
   )) fail();
   for (const key of ownKeys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return value;
+}
+
+function exactObjectWithOptional(value, keys, optionalKeys) {
+  if (!isPlainObject(value)) fail();
+  const allowed = new Set([...keys, ...optionalKeys]);
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length < keys.length
+    || actual.length > allowed.size
+    || keys.some((key) => !actual.includes(key))
+    || actual.some((key) => typeof key !== 'string' || !allowed.has(key))
+  ) fail();
+  for (const key of actual) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
   }
@@ -287,8 +319,17 @@ function safeExitCode(value, status) {
   return null;
 }
 
+function safeEnvironmentReason(value, status) {
+  const selected = value === undefined
+    ? status === 'environment_unavailable' ? 'environment_unknown' : 'none'
+    : value;
+  if (typeof selected !== 'string' || !ENVIRONMENT_REASONS.includes(selected)) fail();
+  if (status !== 'environment_unavailable' && selected !== 'none') fail();
+  return selected;
+}
+
 function resultFacts(rawValue) {
-  const source = exactObject(rawValue, INPUT_KEYS);
+  const source = exactObjectWithOptional(rawValue, INPUT_KEYS, INPUT_OPTIONAL_KEYS);
   const admission = sanitizeBuilderCheckRunAdmission(valueAt(source, 'check_run_admission'));
   const status = safeStatus(valueAt(source, 'status'));
   const startedAtMs = safeTimestamp(valueAt(source, 'started_at_ms'));
@@ -306,6 +347,12 @@ function resultFacts(rawValue) {
     exit_code: safeExitCode(valueAt(source, 'exit_code'), status),
     output_digest: safePattern(valueAt(source, 'output_digest'), DIGEST_PATTERN),
     failure_class: failureClass,
+    environment_reason: safeEnvironmentReason(
+      Object.hasOwn(source, 'environment_reason')
+        ? valueAt(source, 'environment_reason')
+        : undefined,
+      status,
+    ),
     started_at_ms: startedAtMs,
     completed_at_ms: completedAtMs,
   });
@@ -370,6 +417,7 @@ function createBuilderCheckRun(rawInput) {
       exit_code: result.exit_code,
       output_digest: result.output_digest,
       failure_class: result.failure_class,
+      environment_reason: result.environment_reason,
       started_at_ms: result.started_at_ms,
       completed_at_ms: result.completed_at_ms,
       output_summary: SUMMARY_BY_STATUS[result.status],
@@ -389,7 +437,7 @@ function createBuilderCheckRun(rawInput) {
 
 function sanitizeBuilderCheckRun(rawValue) {
   try {
-    const value = exactObject(rawValue, RECORD_KEYS);
+    const value = exactObjectWithOptional(rawValue, RECORD_KEYS, RECORD_OPTIONAL_KEYS);
     const commandKind = safeCommandKind(valueAt(value, 'command_kind'));
     const normalized = {
       check_run_version: valueAt(value, 'check_run_version'),
@@ -447,6 +495,14 @@ function sanitizeBuilderCheckRun(rawValue) {
       status: safeStatus(valueAt(value, 'status')),
       exit_code: valueAt(value, 'exit_code'),
       failure_class: valueAt(value, 'failure_class'),
+      ...(Object.hasOwn(value, 'environment_reason')
+        ? {
+          environment_reason: safeEnvironmentReason(
+            valueAt(value, 'environment_reason'),
+            valueAt(value, 'status'),
+          ),
+        }
+        : {}),
       started_at_ms: safeTimestamp(valueAt(value, 'started_at_ms')),
       completed_at_ms: safeTimestamp(valueAt(value, 'completed_at_ms')),
       output_summary: valueAt(value, 'output_summary'),

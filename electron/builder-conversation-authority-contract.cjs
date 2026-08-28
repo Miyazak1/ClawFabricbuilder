@@ -7,18 +7,21 @@ const {
   sanitizeBuilderConversationEvent,
   serializeBuilderConversationEvent,
 } = require('./builder-conversation-records.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CONVERSATION_AUTHORITY_CONTRACT_VERSION =
   'builder-conversation-authority-contract.v1';
 const BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION =
   'builder-conversation-authority-result.v1';
-const MAX_APPEND_EVENTS = 4;
+const MAX_APPEND_EVENTS = 128;
 const MAX_CONVERSATION_EVENTS = 1_024;
 const MAX_CONVERSATION_BYTES = 24 * 1_024 * 1_024;
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const EVENT_ID_PATTERN = /^builder-conversation-event:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -213,8 +216,7 @@ function sanitizeAppendConversationEventsRequest(value) {
   const expectedHead = sanitizeHead(valueAt(value, 'expected_head'));
   if (
     conversation.project_id !== project.project_id
-    || conversation.conversation_id.slice('builder-conversation:'.length)
-      !== project.project_id.slice('builder-project:'.length)
+    || !isConversationAddressBound(project.project_id, conversation.conversation_id)
     || conversation.created_at_ms < project.created_at_ms
   ) fail();
   const events = sanitizeEvents(
@@ -236,12 +238,20 @@ function sanitizeLoadConversationRequest(value) {
   exactObject(value, ['project_id', 'conversation_id']);
   const projectId = safeProjectId(valueAt(value, 'project_id'));
   const conversationId = safeConversationId(valueAt(value, 'conversation_id'));
-  if (conversationId.slice('builder-conversation:'.length)
-    !== projectId.slice('builder-project:'.length)) fail();
+  if (!isConversationAddressBound(projectId, conversationId)) fail();
   return freezeDeep({
     project_id: projectId,
     conversation_id: conversationId,
   });
+}
+
+function isConversationAddressBound(projectId, conversationId) {
+  try {
+    sanitizeBuilderConversationAddress(projectId, conversationId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function safeBoundary(fn) {

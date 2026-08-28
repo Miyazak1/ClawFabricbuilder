@@ -22,16 +22,27 @@ const {
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
 const CHECKPOINT_ID = `builder-draft-checkpoint:${'7'.repeat(64)}`;
 const CANDIDATE_ID = `builder-code-change-candidate:${'a'.repeat(64)}`;
+const REVISION_DIGEST = `sha256:${'e'.repeat(64)}`;
 
 function tree() {
   return createBuilderProjectSourceTree({
     files: [
       { path: 'index.html', content: '<main>Live preview</main>\n' },
       { path: 'app.js', content: 'document.body.dataset.ready = "true";\n' },
+    ],
+  });
+}
+
+function devTree() {
+  return createBuilderProjectSourceTree({
+    files: [
+      { path: 'index.html', content: '<main>Development preview</main>\n' },
+      { path: 'package.json', content: '{"private":true,"scripts":{"dev":"node server.cjs"}}\n' },
+      { path: 'server.cjs', content: '/* admitted test server */\n' },
     ],
   });
 }
@@ -57,23 +68,37 @@ function sourceResolverAuthority() {
   };
 }
 
-function sourceAdmission(sourceTree = tree()) {
+function sourceAdmission(sourceTree = tree(), sourceKind = 'current_draft') {
+  const savedRevision = sourceKind === 'saved_revision';
   return createBuilderLivePreviewSourceAdmission({
     source_resolver_result: {
       result_version: BUILDER_LIVE_PREVIEW_SOURCE_RESOLVER_RESULT_VERSION,
       resolver_version: BUILDER_LIVE_PREVIEW_SOURCE_RESOLVER_VERSION,
-      operation: 'current_draft_preview_source_resolved',
-      source_kind: 'current_draft',
+      operation: savedRevision
+        ? 'saved_revision_preview_source_resolved'
+        : 'current_draft_preview_source_resolved',
+      source_kind: sourceKind,
       status: 'ready',
       unavailable_reason: null,
       preview_source_snapshot: {
         snapshot_version: BUILDER_LIVE_PREVIEW_SOURCE_SNAPSHOT_VERSION,
-        source_kind: 'current_draft',
+        source_kind: sourceKind,
         project_id: PROJECT_ID,
         conversation_id: CONVERSATION_ID,
         source_tree: sourceTree,
         source_tree_digest: sourceTree.source_tree_digest,
-        source_ref: {
+        source_ref: savedRevision ? {
+          source_ref_kind: 'saved_project_revision',
+          project_id: PROJECT_ID,
+          conversation_id: CONVERSATION_ID,
+          revision_receipt_digest: REVISION_DIGEST,
+          revision_number: 1,
+          candidate_id: CANDIDATE_ID,
+          candidate_digest: `sha256:${'2'.repeat(64)}`,
+          resulting_tree_digest: sourceTree.source_tree_digest,
+          commit_oid: '5'.repeat(40),
+          tree_oid: '6'.repeat(40),
+        } : {
           source_ref_kind: 'current_draft_checkpoint_candidate',
           project_id: PROJECT_ID,
           conversation_id: CONVERSATION_ID,
@@ -136,6 +161,9 @@ function runtimeHarness() {
           view.bounds = bounds;
           calls.push(['bounds', bounds]);
         },
+        setVisible(visible) {
+          calls.push(['visible', visible]);
+        },
       };
       let status = 'ready';
       return {
@@ -145,6 +173,7 @@ function runtimeHarness() {
         readStatus() {
           return {
             status,
+            entry_url: input.static_server.entry_url,
             navigation_block_count: 1,
             network_block_count: 2,
             permission_block_count: 0,
@@ -190,6 +219,9 @@ function cleanupFailingRuntimeHarness() {
             view.bounds = bounds;
             selected.calls.push(['bounds', bounds]);
           },
+          setVisible(visible) {
+            selected.calls.push(['visible', visible]);
+          },
         };
         return {
           handle_version: 'builder-live-preview-webcontents-view-handle.v1',
@@ -222,7 +254,7 @@ function cleanupFailingRuntimeHarness() {
   };
 }
 
-function sourceServiceHarness({ fail = false } = {}) {
+function sourceServiceHarness({ fail = false, savedRevision = false, sourceTree = tree() } = {}) {
   const calls = [];
   const service = {
     service_version: 'builder-live-preview-current-draft-source-service.v1',
@@ -232,11 +264,13 @@ function sourceServiceHarness({ fail = false } = {}) {
       return {
         result_version: 'builder-live-preview-current-draft-source-result.v1',
         service_version: 'builder-live-preview-current-draft-source-service.v1',
-        operation: 'current_draft_live_preview_source_admitted',
-        draft_id: DRAFT_ID,
+        operation: savedRevision
+          ? 'saved_revision_live_preview_source_admitted'
+          : 'current_draft_live_preview_source_admitted',
+        draft_id: savedRevision ? null : DRAFT_ID,
         project_id: payload.project_id,
         conversation_id: payload.conversation_id,
-        source_admission: sourceAdmission(),
+        source_admission: sourceAdmission(sourceTree, savedRevision ? 'saved_revision' : 'current_draft'),
       };
     },
   };
@@ -245,16 +279,55 @@ function sourceServiceHarness({ fail = false } = {}) {
 
 function fixture(options = {}) {
   const source = sourceServiceHarness(options.source ?? {});
-  const runtime = runtimeHarness();
-  const window = windowHarness();
+  const runtime = options.runtime ?? runtimeHarness();
+  const window = options.window ?? windowHarness();
   let now = 2_000;
+  const devCalls = [];
+  const devServerRuntime = options.dev ? {
+    runtime_version: 'builder-live-preview-dev-server-runtime.v1',
+    async start(input) {
+      devCalls.push(['start', input]);
+      let stopped = false;
+      return {
+        server_version: 'builder-live-preview-static-server.v1',
+        project_id: input.runtime_admission.project_id,
+        admission_id: input.runtime_admission.admission_id,
+        source_tree_digest: input.runtime_admission.source_tree_digest,
+        preview_origin: 'http://127.0.0.1:49321',
+        entry_url: 'http://127.0.0.1:49321/',
+        async stop() {
+          devCalls.push(['stop']);
+          if (stopped) return { stopped: false, reason: 'already_stopped' };
+          stopped = true;
+          return { stopped: true, reason: 'process_tree_closed' };
+        },
+      };
+    },
+    async shutdown() { devCalls.push(['shutdown']); },
+  } : null;
+  const workspaceService = options.dev ? {
+    service_version: 'builder-project-workspace-path-service.v1',
+    async resolve_project_workspace_path(input) {
+      devCalls.push(['workspace', input]);
+      return {
+        result_version: 'builder-project-workspace-path-result.v1',
+        project_id: input.project_id,
+        project_root_path: path.resolve('bounded-dev-project'),
+        authority: 'main_owned_bound_project_workspace_path',
+      };
+    },
+  } : null;
   const service = createBuilderLivePreviewMainService({
     current_draft_source_service: source.service,
     webcontents_view_runtime: runtime.runtime,
     mainWindowRef: () => window.window,
     now_ms() { return now++; },
+    ...(options.dev ? {
+      dev_server_runtime: devServerRuntime,
+      project_workspace_path_service: workspaceService,
+    } : {}),
   });
-  return { runtime, service, source, window };
+  return { devCalls, runtime, service, source, window };
 }
 
 test('starts a live preview browser from main-owned source and attaches it to requested bounds', async (t) => {
@@ -263,9 +336,11 @@ test('starts a live preview browser from main-owned source and attaches it to re
   assert.deepEqual(Reflect.ownKeys(selected.service), [
     'service_version',
     'request_current_draft_live_preview',
+    'decide_current_live_preview_dev_server',
     'reload_current_live_preview',
     'stop_current_live_preview',
     'read_current_live_preview_status',
+    'update_current_live_preview_layout',
     'shutdown',
   ]);
   const result = await selected.service.request_current_draft_live_preview(request());
@@ -289,7 +364,91 @@ test('starts a live preview browser from main-owned source and attaches it to re
     width: 480,
     height: 682,
   });
-  assert.doesNotMatch(JSON.stringify(result), /"source_tree"|"entry_url"|"preview_origin"|"commit_oid"|"tree_oid"/iu);
+  assert.match(result.entry_url, /^http:\/\/127\.0\.0\.1:/u);
+  assert.doesNotMatch(JSON.stringify(result), /"source_tree"|"preview_origin"|"commit_oid"|"tree_oid"/iu);
+});
+
+test('requires one-time user approval before starting a discovered project development server', async (t) => {
+  const selected = fixture({ dev: true, source: { sourceTree: devTree() } });
+  t.after(async () => { await selected.service.shutdown(); });
+
+  const first = await selected.service.request_current_draft_live_preview(request());
+  assert.equal(first.status, 'approval_required');
+  assert.equal(first.preview_kind, 'live_dev_server_web');
+  assert.equal(first.dev_server_approval.command_display, 'npm run dev');
+  assert.equal(first.authority.command_execution, true);
+  assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace']);
+  assert.equal(
+    selected.service.read_current_live_preview_status(request()).dev_server_approval.approval_request_id,
+    first.dev_server_approval.approval_request_id,
+  );
+
+  const denied = await selected.service.decide_current_live_preview_dev_server({
+    ...request(),
+    approval_request_id: first.dev_server_approval.approval_request_id,
+    decision: 'deny',
+  });
+  assert.equal(denied.status, 'stopped');
+  assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace']);
+
+  const second = await selected.service.request_current_draft_live_preview(request());
+  const ready = await selected.service.decide_current_live_preview_dev_server({
+    ...request(),
+    approval_request_id: second.dev_server_approval.approval_request_id,
+    decision: 'allow_once',
+  });
+  assert.equal(ready.status, 'ready');
+  assert.equal(ready.entry_url, 'http://127.0.0.1:49321/');
+  assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace', 'workspace', 'start']);
+  await assert.rejects(selected.service.decide_current_live_preview_dev_server({
+    ...request(),
+    approval_request_id: second.dev_server_approval.approval_request_id,
+    decision: 'allow_once',
+  }));
+
+  const stopped = await selected.service.stop_current_live_preview(request());
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(selected.devCalls.some(([name]) => name === 'stop'), true);
+});
+
+test('starts a live preview browser from the current saved revision when no draft exists', async (t) => {
+  const selected = fixture({ source: { savedRevision: true } });
+  t.after(async () => { await selected.service.shutdown(); });
+
+  const result = await selected.service.request_current_draft_live_preview(request());
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.can_stop, true);
+  assert.equal(selected.runtime.calls[0][0], 'start');
+  assert.deepEqual(selected.source.calls, [{
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  }]);
+});
+
+test('layout updates follow the Browser panel and hide the native view on other tabs', async (t) => {
+  const selected = fixture();
+  t.after(async () => { await selected.service.shutdown(); });
+  const layout = request({ view_bounds: { x: 610, y: 160, width: 900, height: 900 } });
+
+  await selected.service.update_current_live_preview_layout(layout);
+  await selected.service.request_current_draft_live_preview(request());
+  await selected.service.update_current_live_preview_layout(
+    request({ view_bounds: { x: 700, y: 150, width: 500, height: 600 } }),
+  );
+  await selected.service.update_current_live_preview_layout(request({ view_bounds: null }));
+
+  assert.deepEqual(
+    selected.runtime.calls.filter((item) => item[0] === 'bounds').map((item) => item[1]),
+    [
+      { x: 610, y: 160, width: 670, height: 660 },
+      { x: 700, y: 150, width: 500, height: 600 },
+    ],
+  );
+  assert.deepEqual(
+    selected.runtime.calls.filter((item) => item[0] === 'visible').map((item) => item[1]),
+    [true, true, false],
+  );
 });
 
 test('reload updates bounds and stop detaches then cleans up runtime', async () => {
@@ -334,7 +493,42 @@ test('read status is idle until started and failed source resolution is redacted
   const failed = await selected.service.request_current_draft_live_preview(request());
   assert.equal(failed.status, 'failed');
   assert.equal(failed.message, 'Live preview could not start for the current draft.');
+  assert.equal(failed.unavailable_reason, 'no_current_draft_preview_source');
   assert.doesNotMatch(JSON.stringify(failed), /private source failure|"source_admission"|"source_tree"/iu);
+});
+
+test('reports fixed runtime and attachment failure reasons without leaking details', async () => {
+  const runtimeFailure = fixture({
+    runtime: {
+      calls: [],
+      runtime: {
+        runtime_version: 'builder-live-preview-webcontents-view-runtime.v1',
+        async start() { throw new Error('private runtime failure'); },
+        async dispose() { return { disposed: true }; },
+      },
+    },
+  });
+  const runtimeFailed = await runtimeFailure.service.request_current_draft_live_preview(request());
+  assert.equal(runtimeFailed.status, 'failed');
+  assert.equal(runtimeFailed.unavailable_reason, 'live_preview_runtime_unavailable');
+  assert.doesNotMatch(JSON.stringify(runtimeFailed), /private runtime failure|"source_tree"/iu);
+
+  const attachmentFailure = fixture({
+    window: {
+      calls: [],
+      window: {
+        contentView: {
+          addChildView() { throw new Error('private attach failure'); },
+          removeChildView() {},
+        },
+        getContentBounds() { return { x: 0, y: 0, width: 1280, height: 820 }; },
+      },
+    },
+  });
+  const attachmentFailed = await attachmentFailure.service.request_current_draft_live_preview(request());
+  assert.equal(attachmentFailed.status, 'failed');
+  assert.equal(attachmentFailed.unavailable_reason, 'live_preview_view_attachment_failed');
+  assert.doesNotMatch(JSON.stringify(attachmentFailed), /private attach failure|"source_tree"/iu);
 });
 
 test('shutdown stops active preview before disposing runtime', async () => {

@@ -9,6 +9,11 @@ builder that can discuss, plan, preview, review, and execute work safely.
 
 The core product target is:
 
+Conversation-flow correction (2026-08-13): ordinary progress and expandable
+action details live in chat. References below to an ordinary Artifact Logs tab
+or a mechanical terminal completion table are superseded by
+[Codex-Like Conversation Flow Architecture](CODEX_LIKE_CONVERSATION_FLOW_ARCHITECTURE.md).
+
 - chat naturally before acting;
 - preserve project and conversation context as executable product intent;
 - build only after clear execution intent;
@@ -26,8 +31,8 @@ against the selected project workspace.
 
 The product should support three time horizons:
 
-1. **Current creation loop**: select a project folder, chat, generate a draft,
-   preview, review changes, save or discard.
+1. **Current creation loop**: select a project folder, chat, change the working
+   state, preview, continue, or undo from an automatic checkpoint.
 2. **Working builder loop**: chat maintains internal Working Context State;
    explicit execution generates only when that state is current and ready;
    preview and changes live in an artifact workspace.
@@ -151,7 +156,7 @@ The desktop should converge on this shell:
 global rail        project list and settings
 context sidebar   projects, current workspace, recent sessions
 main column       chat flow and fixed composer
-right drawer      Preview, Changes, Source, Versions, Logs, Permissions
+right workspace   Browser, Files, Review, Versions, Permissions, scoped inspectors
 top bar           project title, workspace state, permission state, drawer toggles
 ```
 
@@ -181,8 +186,8 @@ Recommended behavior:
 
 - **Open location** opens a menu for safe destinations such as project folder,
   preview, generated artifact, saved version, or browser preview when available.
-- **Workspace menu** opens quick access to Preview, Changes, Source, Versions,
-  Logs, Permissions, and later Terminal.
+- **Workspace menu** opens quick access to Browser Preview, Changes, Files,
+  Versions, Permissions, and later separately-authorized inspectors.
 - **Minimize drawer** keeps the artifact workspace mounted but narrow.
 - **Show/hide drawer** toggles the right artifact workspace and must have a
   tooltip plus keyboard shortcut.
@@ -304,7 +309,7 @@ Status projection should be deliberately small:
 
 The chip is a read-only explanation. It must not submit, build, approve, clear
 memory, grant permissions, save, publish, or mutate files. A later click target
-may open `Artifact Workspace -> Logs / Task -> Current direction`, but
+may open on-demand current-direction details in the conversation, but
 correction still happens through natural language.
 
 Handoff display should stay compact:
@@ -315,8 +320,8 @@ Latest verified: tests passed / commit recorded / needs review
 ```
 
 The default composer should not display source thread IDs, digests, receipts,
-provider details, or raw transferred prompts. Those belong in Logs/Task
-inspection. If the handoff asks the current task to execute but local context is
+provider details, or raw transferred prompts. Those remain private diagnostic
+evidence. If the handoff asks the current task to execute but local context is
 missing or newer user messages contradict it, the composer should show
 `Needs confirmation` and route short phrases such as `继续` to clarification
 instead of build.
@@ -332,8 +337,8 @@ Handoff timing should respect the user's current flow:
 - if the handoff is compatible, the next natural message can continue from it;
 - if it conflicts with local direction, keep `Needs confirmation` until the
   user resolves the conflict in natural language;
-- the Logs/Task inspection surface should reveal source task, commit refs,
-  changed files, and verification evidence on demand.
+- an on-demand handoff detail item may reveal sanitized source-task, changed-file,
+  and verification summaries, with selected artifacts opening contextually.
 
 Plan mode can be invoked in two ways:
 
@@ -349,9 +354,15 @@ approval, but it must not write files, save a version, run commands, or publish.
 Approving a plan creates an `approved_plan_ready` context state; source changes
 still require explicit execution intent plus write permission.
 
-Plan mode may run for either a saved project or a bound local workspace before
-Version 1 exists. Source folders define the read boundary; Save Version is the
-later acceptance step, not a prerequisite for planning.
+Plan mode may run for either a project with milestone history or a newly bound
+local workspace. Source folders define the read boundary; a formal Version is
+not a prerequisite for planning or later coding turns.
+
+The complete admitted Plan renders as bounded Markdown in the main chat, with
+approve/reject controls immediately below it. The right workspace remains an
+inspector for files referenced by the Plan and is not required to read or decide
+on the Plan. Typography, color, motion, Markdown bounds, and interaction details
+follow [Conversation Visual Streaming and Plan Markdown Spec](CONVERSATION_VISUAL_STREAMING_AND_PLAN_MARKDOWN_SPEC.md).
 
 Composer mode persistence:
 
@@ -444,20 +455,21 @@ Tabs:
   fullscreen, open in browser.
 - **Changes**: changed files, summaries, diff viewer, file filters.
 - **Source**: source files and selected file content.
-- **Versions**: saved versions, restore, compare.
-- **Logs**: task stages, provider-safe progress, errors.
+- **History**: automatic restore points, optional milestone Versions, compare.
 - **Permissions**: current source folders, approvals, denied/allowed actions.
 - **Terminal**: future bounded command execution surface, only after independent
   permission and runtime gates exist.
 
-Chat flow result card:
+Build completion contract:
 
 ```text
-Draft ready
-2 files changed
-
-[Preview] [Changes] [Save version] [Discard]
+Assistant final response with expandable Work details
+Workspace toolbar: check status, Undo/History, more actions
+Side workspace: Preview, Changes, Files
 ```
+
+Do not append separate `Review before saving` or `Result ready` cards after the
+assistant response. Do not duplicate review navigation beside the composer.
 
 Preview requirements:
 
@@ -484,7 +496,8 @@ First version:
   review;
 - the assistant creates a reviewable candidate diff and optional rendered text
   preview;
-- only `Review` / `Save version` writes and records the accepted version.
+- admitted writes update the current working state and create an automatic
+  checkpoint; Review remains available and a formal Version is optional.
 
 This should happen before general Terminal, arbitrary shell commands, network
 access, publishing, or persistent Agent autonomy. It is the first low-risk
@@ -627,8 +640,9 @@ Terminal should be phased in:
 
 1. **Reserved UI**: the artifact drawer and workspace menu reserve a Terminal
    destination, but it is hidden or disabled.
-2. **Command proposal records**: the chat or Logs tab can show suggested
-   commands and approval UI from fixture or non-executing records.
+2. **Command proposal records**: chat can show suggested commands and approval
+   UI from fixture or non-executing records, with details in a read-only
+   contextual inspector.
 3. **Controlled commands**: main may execute a small allowlist such as build,
    lint, typecheck, and test commands, all tied to workspace and approval.
 4. **Runtime Terminal**: dev-server start/stop, dependency installation, port
@@ -754,7 +768,7 @@ Exit criteria:
 - `按刚才方案做` builds only with confirmed brief or approved plan;
 - no draft/review/save UI appears for chat-only turns.
 
-### Slice 1b - Continuous Agent Progress And Completion Summary
+### Slice 1b - Continuous Agent Progress And Natural Step Summaries
 
 Scope:
 
@@ -762,11 +776,11 @@ Scope:
   `run_started`, `run_progress_recorded`, `tool_call_requested`,
   `tool_call_result_recorded`, and `run_completed`;
 - keep progress rows compact and readable in the chat flow;
-- keep detailed logs available in the artifact drawer on demand;
-- add a terminal completion summary for plan, candidate, failure, cancellation,
-  and interruption outcomes. For a successful chat-only answer, the answer text
-  itself is the completion; do not add a mechanical "no files changed" summary
-  under ordinary conversation;
+- keep action details expandable from the same chat item and route a selected
+  file, diff, command, check, or preview into the contextual inspector;
+- end plan, candidate, failure, cancellation, and interruption with one natural
+  assistant response. Do not append a `What happened / Changed / Next` table or
+  a duplicate ready-status row;
 - avoid invented steps: every displayed work step must map to a sanitized Task
   Stream or live-output fact.
 
@@ -774,8 +788,8 @@ Exit criteria:
 
 - active work shows a readable sequence of steps without opening the right
   drawer automatically;
-- completed work ends with a compact summary of what happened, what changed, and
-  what the user can review next;
+- completed work ends with one readable response, while coherent Work Steps may
+  summarize recorded actions after their children settle;
 - chat-only answers get a natural assistant response and no fake tool steps;
 - draft/candidate completion summarizes preview and changes without claiming
   Save or verification that did not happen;
@@ -823,7 +837,7 @@ Current checkpoint:
   `brief_update` without creating a draft or adding a second submit button;
 - provider, credential, source tree, Git, digest, and receipt details remain
   hidden from all default composer memory surfaces;
-- the Artifact Logs surface can show a read-only `Current direction` summary
+- the conversation/composer can show a read-only `Current direction` summary
   derived from the latest sanitized task-brief projection. This is on-demand
   inspection only: it is not default composer chrome, not correction authority,
   not a second memory database, and not a Goal-mode commitment.
@@ -839,13 +853,16 @@ state must not be presented as that commitment.
 Scope:
 
 - add right drawer shell;
-- move full Preview, Changes, Source, Versions, and Logs out of the chat flow;
-- keep compact draft result card in chat;
+- move full Preview, Changes, Source, and Versions out of the chat flow while
+  keeping expandable work details attached to their conversation items;
+- keep the terminal assistant response in chat without a second draft-result
+  card;
 - add fullscreen preview path.
 
 Exit criteria:
 
-- draft ready does not insert a large preview into chat;
+- draft completion does not insert a large preview or duplicate result card into
+  chat;
 - Preview opens in the drawer;
 - fullscreen preview is available;
 - Changes and Source are reachable from the drawer;

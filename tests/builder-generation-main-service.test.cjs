@@ -6,9 +6,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { types: utilTypes } = require('node:util');
 
 const {
-  createBuilderGenerationMainService,
+  createBuilderGenerationMainService: createRawBuilderGenerationMainService,
 } = require('../electron/builder-generation-main-service.cjs');
 const {
   createBuilderGitCandidateVerificationReceipt,
@@ -23,11 +24,23 @@ const {
   createBuilderConversationMainService,
 } = require('../electron/builder-conversation-main-service.cjs');
 const {
+  MAX_APPEND_EVENTS,
+} = require('../electron/builder-conversation-authority-contract.cjs');
+const {
+  createBuilderAgentConversationService,
+} = require('../electron/builder-agent-conversation-service.cjs');
+const {
+  projectBuilderTaskStream,
+} = require('../electron/builder-task-stream-projection.cjs');
+const {
   createBuilderProductMetadataDatabase,
 } = require('../electron/builder-product-metadata-database.cjs');
 const {
   createBuilderProviderConfig,
 } = require('../electron/builder-provider-config.cjs');
+const {
+  createBuilderProgrammingRuntimeDescriptor,
+} = require('../electron/builder-programming-runtime-contract.cjs');
 const {
   createBuilderProviderConfigRepository,
 } = require('../electron/builder-provider-config-repository.cjs');
@@ -59,6 +72,12 @@ const {
 const {
   createBuilderTaskCapsuleStore,
 } = require('../electron/builder-task-capsule-store.cjs');
+const {
+  createBuilderContextCompactionSummary,
+} = require('../electron/builder-context-compaction-summary.cjs');
+const {
+  createBuilderContextCompactionSummaryStore,
+} = require('../electron/builder-context-compaction-summary-store.cjs');
 const {
   createBuilderSessionTaskAddressRecordingService,
 } = require('../electron/builder-session-task-address-recording-service.cjs');
@@ -95,10 +114,46 @@ const UUIDS = Object.freeze([
 ]);
 const PROJECT_ID = `builder-project:${UUIDS[0]}`;
 const CONVERSATION_ID = `builder-conversation:${UUIDS[0]}`;
+const TEST_AGENT_ID = `builder-agent:${UUIDS[1]}`;
 const APPROVED_PLAN_TURN_ID = `builder-turn:${UUIDS[2]}`;
 const APPROVED_PLAN_TASK_ID = `builder-task:${UUIDS[3]}`;
 const APPROVED_PLAN_RUN_ID = `builder-run:${UUIDS[4]}`;
 const PRIVATE_MARKER = 'private-main-service-marker';
+
+function createBuilderGenerationMainService(options) {
+  if (
+    options === null
+    || typeof options !== 'object'
+    || Array.isArray(options)
+    || utilTypes.isProxy(options)
+  ) return createRawBuilderGenerationMainService(options);
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  if (
+    Object.hasOwn(descriptors, 'sessionTaskTargetService')
+    || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))
+  ) {
+    return createRawBuilderGenerationMainService(options);
+  }
+  return createRawBuilderGenerationMainService({
+    ...options,
+    sessionTaskTargetService: {
+      resolve_target(requestValue) {
+        return {
+          result_version: 'builder-session-task-target-result.v1',
+          operation: requestValue.task_address_id === null
+            ? 'new_task_target_allocated'
+            : 'existing_task_target_resolved',
+          project_id: requestValue.project_id,
+          task_address_id: requestValue.task_address_id,
+          conversation_id: `builder-conversation:${requestValue.project_id.slice('builder-project:'.length)}`,
+          agent_id: TEST_AGENT_ID,
+          should_record_task_address: requestValue.task_address_id === null,
+          authority: 'main_owned_task_target_resolution',
+        };
+      },
+    },
+  });
+}
 const ROUTE_DECISION_CASES = JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'src', 'test', 'builderRouteDecisionCases.json'),
   'utf8',
@@ -113,6 +168,10 @@ function canonicalJson(value) {
 
 function digest(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
+
+function digestText(value) {
+  return `sha256:${nodeCrypto.createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
 function routeDecisionForTurn({
@@ -163,11 +222,15 @@ function routeDecisionForTurn({
   };
 }
 
-function request({ instruction = 'Make a focus timer.', existingProjectId = null } = {}) {
+function request({ instruction = 'Make a focus timer.', existingProjectId = PROJECT_ID, taskAddressId } = {}) {
+  const resolvedTaskAddressId = taskAddressId === undefined && existingProjectId !== null
+    ? `builder-task-address:${UUIDS[9]}`
+    : (taskAddressId ?? null);
   const unsigned = {
-    version: 'builder-generation-request.v2',
+    version: 'builder-generation-request.v3',
     instruction,
     existing_project_id: existingProjectId,
+    task_address_id: resolvedTaskAddressId,
   };
   return { ...unsigned, request_digest: digest(unsigned) };
 }
@@ -703,12 +766,17 @@ function conversationService(options = {}) {
     question: [],
     candidate: [],
     explanation: [],
+    workResponse: [],
     plan: [],
     failure: [],
     completeFailure: [],
     contextSnapshot: [],
     programmingRunAdmission: [],
+    programmingRuntime: [],
+    programmingRuntimeBatches: [],
     progress: [],
+    checkpoint: [],
+    recoveryAction: [],
     retry: [],
     cancel: [],
     steering: [],
@@ -746,6 +814,28 @@ function conversationService(options = {}) {
       },
       authority: { ...CONVERSATION_AUTHORITY },
     });
+  }
+  function programmingRuntimeEvent(context, runtimeEvent) {
+    return createBuilderConversationEvent({
+      record_version: CONVERSATION_EVENT_VERSION,
+      record_kind: CONVERSATION_EVENT_KIND,
+      project_id: context.project.project_id,
+      conversation_id: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      command_id: nextProgressCommandId(),
+      event_type: 'programming_runtime_event_recorded',
+      previous_event: context.start_head,
+      payload: { runtime_event: runtimeEvent },
+      authority: { ...CONVERSATION_AUTHORITY },
+    });
+  }
+  function appendProgrammingRuntimeEvent(context, runtimeEvent) {
+    const event = programmingRuntimeEvent(context, runtimeEvent);
+    return {
+      ...context,
+      start_head: eventHead(event),
+      events: [...context.events, event],
+    };
   }
   function runContextSnapshotEvent(
     context,
@@ -942,6 +1032,7 @@ function conversationService(options = {}) {
           turn_id: turnId,
           task_id: taskId,
           run_id: runId,
+          message_id: messageId,
         },
       };
     },
@@ -1026,6 +1117,7 @@ function conversationService(options = {}) {
           turn_id: turnId,
           task_id: null,
           run_id: runId,
+          message_id: messageId,
         },
       };
     },
@@ -1064,6 +1156,16 @@ function conversationService(options = {}) {
           sequence: input.context.start_head.sequence + 2,
           event_id: `builder-conversation-event:${'e'.repeat(64)}`,
           event_digest: `sha256:${'f'.repeat(64)}`,
+        },
+      };
+    },
+    complete_work_response(input) {
+      calls.workResponse.push(input);
+      return {
+        head: {
+          sequence: input.context.start_head.sequence + 2,
+          event_id: `builder-conversation-event:${'6'.repeat(64)}`,
+          event_digest: `sha256:${'7'.repeat(64)}`,
         },
       };
     },
@@ -1116,9 +1218,73 @@ function conversationService(options = {}) {
         events: [...input.context.events, event],
       };
     },
+    record_programming_runtime_event(input) {
+      calls.programmingRuntime.push(input);
+      return appendProgrammingRuntimeEvent(input.context, input.runtime_event);
+    },
+    record_programming_runtime_events(input) {
+      calls.programmingRuntimeBatches.push(input);
+      let context = input.context;
+      for (const runtimeEvent of input.runtime_events) {
+        calls.programmingRuntime.push({ context, runtime_event: runtimeEvent });
+        context = appendProgrammingRuntimeEvent(context, runtimeEvent);
+      }
+      return context;
+    },
     record_run_progress(input) {
       calls.progress.push(input);
       const event = progressEvent(input.context, input.stage);
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
+      };
+    },
+    record_checkpoint(input) {
+      calls.checkpoint.push(input);
+      const event = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.context.project.project_id,
+        conversation_id: input.context.conversation.conversation_id,
+        sequence: input.context.start_head.sequence + 1,
+        command_id: nextProgressCommandId(),
+        event_type: 'checkpoint_recorded',
+        previous_event: input.context.start_head,
+        payload: {
+          turn_id: input.context.ids.turn_id,
+          run_id: input.context.ids.run_id,
+          status: input.status,
+          changed_file_count: input.changed_file_count,
+          verification_status: input.verification_status,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
+      return {
+        ...input.context,
+        start_head: eventHead(event),
+        events: [...input.context.events, event],
+      };
+    },
+    record_recovery_action(input) {
+      calls.recoveryAction.push(input);
+      const event = createBuilderConversationEvent({
+        record_version: CONVERSATION_EVENT_VERSION,
+        record_kind: CONVERSATION_EVENT_KIND,
+        project_id: input.context.project.project_id,
+        conversation_id: input.context.conversation.conversation_id,
+        sequence: input.context.start_head.sequence + 1,
+        command_id: nextProgressCommandId(),
+        event_type: 'recovery_action_recorded',
+        previous_event: input.context.start_head,
+        payload: {
+          turn_id: input.context.ids.turn_id,
+          run_id: input.context.ids.run_id,
+          action: input.action,
+          phase: input.phase,
+        },
+        authority: { ...CONVERSATION_AUTHORITY },
+      });
       return {
         ...input.context,
         start_head: eventHead(event),
@@ -1296,6 +1462,7 @@ function conversationService(options = {}) {
       calls.approvedPlanWork.push(input);
       return service.begin_work({
         project_id: input.project_id,
+        conversation_id: input.conversation_id,
         instruction: input.instruction,
         request_digest: input.request_digest,
         base_revision: input.base_revision,
@@ -1384,6 +1551,7 @@ function conversationService(options = {}) {
           turn_id: `builder-turn:${suffix}`,
           task_id: `builder-task:${suffix}`,
           run_id: `builder-run:${suffix}`,
+          message_id: messageId,
         },
         cancel_requested: false,
         draft_continuation: {
@@ -1402,6 +1570,7 @@ function conversationService(options = {}) {
 
 function gitAuthority() {
   const receipts = [];
+  const candidates = new Map();
   return {
     receipts,
     async persist_candidate_commit(input) {
@@ -1434,6 +1603,7 @@ function gitAuthority() {
         verification_receipt_digest: digest(verification),
       };
       receipts.push(receipt);
+      candidates.set(receipt.candidate_id, structuredClone(input.candidate));
       return receipt;
     },
     async verify_candidate_receipt(receipt) {
@@ -1441,6 +1611,31 @@ function gitAuthority() {
     },
     async read_verified_candidate() {
       throw new Error('unexpected private candidate read');
+    },
+    async read_verified_candidate_base(receipt) {
+      const candidate = candidates.get(receipt.candidate_id);
+      if (!candidate) throw new Error('unexpected private candidate base read');
+      return {
+        result_version: 'builder-git-verified-candidate-base-read-result.v1',
+        candidate_receipt: receipt,
+        verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+        source_tree: candidate.base_source_tree,
+        base_source_tree_digest: candidate.base_source_tree.source_tree_digest,
+        code_authority: 'git_candidate_base_tree',
+        read_admission: 'verified',
+      };
+    },
+    async read_candidate_workspace_base(receipt) {
+      const candidate = candidates.get(receipt.candidate_id);
+      if (!candidate) throw new Error('unexpected private candidate workspace base read');
+      return {
+        result_version: 'builder-git-candidate-workspace-base.v1',
+        project_id: receipt.project_id,
+        candidate_id: receipt.candidate_id,
+        candidate_digest: receipt.candidate_digest,
+        base_source_tree_digest: candidate.base_source_tree.source_tree_digest,
+        read_admission: 'verified_git_candidate_commit_trailer',
+      };
     },
   };
 }
@@ -1553,7 +1748,7 @@ function repositories(overrides = {}) {
     },
   };
   const projectReadAuthority = {
-    load_current() { throw new Error('new project must not read current source'); },
+    load_current() { return readResult(); },
   };
   return {
     providerConfigRepository,
@@ -1568,8 +1763,25 @@ function repositories(overrides = {}) {
 test('binds provider snapshot and returns only a redacted unsaved draft packet', async () => {
   const transportInputs = [];
   const lifecycle = conversationService();
+  const runtimeSourceTrees = [];
+  const runtimeFileBindings = [];
+  const runtimeSnapshotOperations = [];
+  const runtimeSnapshotComposition = Object.freeze({
+    async recordRuntimeSourceTree(request) {
+      runtimeSourceTrees.push(request);
+      runtimeSnapshotOperations.push('source_tree');
+    },
+    async bindToolFile(request) {
+      runtimeFileBindings.push(request);
+      runtimeSnapshotOperations.push(`file:${request.path}`);
+    },
+  });
   const service = createBuilderGenerationMainService({
-    ...repositories({ conversationService: lifecycle }),
+    ...repositories({
+      conversationService: lifecycle,
+      runtimeWorkspaceSnapshotService: runtimeSnapshotComposition,
+      programmingRuntimeFeatureFlag: 'disabled',
+    }),
     transport: async (input) => {
       transportInputs.push(input);
       return {
@@ -1590,7 +1802,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
   assert.equal(result.version, 'builder-generation-result.v2');
   assert.match(result.draft_id, /^builder-generation-draft:[0-9a-f]{64}$/u);
   assert.equal(result.project_id, PROJECT_ID);
-  assert.equal(result.existing_project_id, null);
+  assert.equal(result.existing_project_id, PROJECT_ID);
   assert.equal(result.candidate.candidate_version, 'builder-code-change-candidate.v2');
   assert.equal(result.admissions.draft, 'candidate_not_saved');
   assert.equal(result.admissions.save, 'not_performed');
@@ -1608,13 +1820,77 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     'provider_response_received',
     'result_preparing',
   ]);
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 7);
-  assert.deepEqual(lifecycle.calls.candidate[0].context.events.slice(-4).map((event) => event.event_type), [
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 21);
+  assert.equal(lifecycle.calls.programmingRuntime.length, 14);
+  assert.deepEqual(lifecycle.calls.programmingRuntime.map((call) => call.runtime_event.event_type), [
+    'run_started',
+    'turn_started',
+    'step_started',
+    'assistant_text_delta',
+    'assistant_text_completed',
+    'tool_call_started',
+    'file_change_recorded',
+    'tool_call_completed',
+    'tool_call_started',
+    'file_change_recorded',
+    'tool_call_completed',
+    'step_completed',
+    'turn_completed',
+    'run_completed',
   ]);
+  assert.deepEqual(
+    lifecycle.calls.programmingRuntime
+      .filter((call) => call.runtime_event.event_type === 'tool_call_started')
+      .map((call) => call.runtime_event.payload.completed_label),
+    ['Added index.html', 'Edited src/app.js'],
+  );
+  assert.equal(runtimeSourceTrees.length, 2);
+  assert.equal(
+    runtimeSourceTrees[0].source_tree.source_tree_digest,
+    readResult().source_tree.source_tree_digest,
+  );
+  assert.equal(
+    runtimeSourceTrees[1].source_tree.source_tree_digest,
+    result.candidate.resulting_tree_digest,
+  );
+  assert.deepEqual(
+    runtimeFileBindings.map((binding) => binding.path),
+    ['index.html', 'src/app.js'],
+  );
+  assert.equal(
+    runtimeFileBindings.every((binding) => (
+      binding.project_id === PROJECT_ID
+      && binding.conversation_id === CONVERSATION_ID
+      && binding.run_id === runtimeSourceTrees[1].run_id
+    )),
+    true,
+  );
+  assert.deepEqual(runtimeSnapshotOperations, [
+    'source_tree',
+    'source_tree',
+    'file:index.html',
+    'file:src/app.js',
+  ]);
+  const runtimeContext = lifecycle.calls.candidate[0].context;
+  const runtimeStream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: runtimeContext.conversation.conversation_id,
+      created_at_ms: runtimeContext.conversation.created_at_ms,
+      events: runtimeContext.events,
+    },
+  });
+  assert.equal(runtimeStream.conversation.items.some(
+    (item) => item.item_kind === 'programming_runtime_tool_activity',
+  ), true);
+  assert.equal(
+    runtimeStream.conversation.window.last_sequence,
+    runtimeStream.conversation.head_sequence,
+  );
+  assert.ok(
+    runtimeStream.conversation.items.at(-1).sequence
+      < runtimeStream.conversation.head_sequence,
+  );
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(lifecycle.calls.completeFailure.length, 0);
   assert.doesNotMatch(JSON.stringify(result), /credential|provider\.example|builder-model|operations|conversation_events|git_request_id/iu);
@@ -1636,6 +1912,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     draft_continuation_generation: 'main_only_pending_candidate_context_squashed_to_project_base',
     draft_answer_generation: 'main_only_pending_candidate_source_explanation_no_mutation',
     history_restore_as_new_version: 'main_only_git_sqlite_candidate_no_current_rewrite',
+    history_checkpoint_undo: 'main_only_verified_checkpoint_git_candidate_or_project_baseline',
     run_steering: 'request_id_only_main_conversation_fact',
     run_followup_queue: 'request_id_only_main_conversation_fact',
     run_followup_consumption: 'main_conversation_replay_verified',
@@ -1666,6 +1943,7 @@ test('classifies whole-sentence intent with bounded product state and no source 
   const result = await service.classify_intent({
     instruction: '帮我做一个静态技术博客实施计划',
     existing_project_id: PROJECT_ID,
+    task_address_id: `builder-task-address:${UUIDS[9]}`,
   });
 
   assert.equal(result.route, 'plan');
@@ -1707,7 +1985,11 @@ test('consumes the main-owned semantic classification as the durable answer rout
     },
   });
   const instruction = '解释一下语义路由如何工作';
-  await service.classify_intent({ instruction, existing_project_id: null });
+  await service.classify_intent({
+    instruction,
+    existing_project_id: PROJECT_ID,
+    task_address_id: `builder-task-address:${UUIDS[9]}`,
+  });
 
   const result = await service.answer(request({ instruction }));
 
@@ -1807,7 +2089,10 @@ test('records an automatic checkpoint after Git verification and before exposing
       record_verified_candidate_checkpoint(input) {
         assert.equal(lifecycle.calls.candidate.length, 0);
         checkpointCalls.push(input);
-        return { status: 'ready' };
+        return {
+          status: 'ready',
+          draft_checkpoint: { draft_checkpoint: { checkpoint_sequence: 1 } },
+        };
       },
     },
     transport: async () => ({
@@ -1822,8 +2107,8 @@ test('records an automatic checkpoint after Git verification and before exposing
   assert.equal(checkpointCalls[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
   assert.equal(checkpointCalls[0].candidate_verification.candidate_id, result.candidate.candidate_id);
   assert.deepEqual(checkpointCalls[0].base_revision_ref, {
-    revision_receipt_digest: null,
-    commit_oid: null,
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
   });
   assert.equal(checkpointCalls[0].summary, 'A quiet timer for focused work.');
   assert.equal(checkpointCalls[0].changed_file_count, 2);
@@ -1841,6 +2126,15 @@ test('records an automatic checkpoint after Git verification and before exposing
     /^builder-edit-attempt:[0-9a-f]{64}$/u,
   );
   assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.deepEqual(lifecycle.calls.checkpoint.map((input) => ({
+    status: input.status,
+    changed_file_count: input.changed_file_count,
+    verification_status: input.verification_status,
+  })), [{
+    status: 'created',
+    changed_file_count: 2,
+    verification_status: 'candidate_verified',
+  }]);
 });
 
 test('fails closed before Conversation draft readiness when automatic checkpoint recording fails', async () => {
@@ -1862,6 +2156,201 @@ test('fails closed before Conversation draft readiness when automatic checkpoint
     code: 'builder_generation_service_unavailable',
   });
   assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.deepEqual(lifecycle.calls.checkpoint.map(({ status }) => status), ['failed']);
+});
+
+test('blocks checkpoint undo on external workspace changes and restores after the conflict clears', async () => {
+  const savedSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const state = "saved";\n' }],
+  });
+  const lifecycle = conversationService();
+  const baseGit = gitAuthority();
+  const sourceTreesByCandidate = new Map();
+  const checkpointCalls = [];
+  const automaticChecks = [];
+  const transportInputs = [];
+  let observedWorkspace = savedSourceTree;
+  const git = {
+    ...baseGit,
+    async persist_candidate_commit(input) {
+      const receipt = await baseGit.persist_candidate_commit(input);
+      sourceTreesByCandidate.set(receipt.candidate_id, input.candidate.resulting_source_tree);
+      return receipt;
+    },
+    async read_verified_candidate(receipt) {
+      const sourceTree = sourceTreesByCandidate.get(receipt.candidate_id);
+      if (sourceTree === undefined) throw new Error(PRIVATE_MARKER);
+      return {
+        result_version: 'builder-git-verified-candidate-read-result.v1',
+        candidate_receipt: receipt,
+        verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+        source_tree: sourceTree,
+        code_authority: 'git_commit_tree',
+        read_admission: 'verified',
+      };
+    },
+  };
+  const automaticDraftCheckpointService = {
+    record_verified_candidate_checkpoint(input) {
+      checkpointCalls.push(input);
+      return {
+        status: 'ready',
+        draft_checkpoint: {
+          draft_checkpoint: { checkpoint_sequence: checkpointCalls.length },
+        },
+      };
+    },
+    prepare_previous_checkpoint_restore(input) {
+      assert.equal(input.candidate_id, checkpointCalls[1].candidate_receipt.candidate_id);
+      const receipt = checkpointCalls[0].candidate_receipt;
+      return {
+        status: 'ready',
+        target_checkpoint: {
+          checkpoint_id: `builder-draft-checkpoint:${'a'.repeat(64)}`,
+          project_id: receipt.project_id,
+          conversation_id: receipt.conversation_id,
+          turn_id: receipt.turn_id,
+          task_id: receipt.task_id,
+          run_id: receipt.run_id,
+          request_id: receipt.request_id,
+          candidate_ref: {
+            candidate_id: receipt.candidate_id,
+            candidate_digest: receipt.candidate_digest,
+            resulting_tree_digest: receipt.resulting_tree_digest,
+            semantic_identity_digest: receipt.semantic_identity_digest,
+            verification_receipt_digest: receipt.verification_receipt_digest,
+            commit_oid: receipt.commit_oid,
+            tree_oid: receipt.tree_oid,
+            parent_oid: receipt.parent_oid,
+          },
+        },
+      };
+    },
+  };
+  const createService = (uuidStart) => createBuilderGenerationMainService({
+    ...repositories({
+      automaticDraftCheckpointService,
+      conversationService: lifecycle,
+      createUuid: createUniqueUuidFactory(uuidStart),
+      currentProjection: {
+        project_current(input) {
+          return {
+            result_version: 'builder-git-current-projection-result.v1',
+            project_id: input.candidate_receipt.project_id,
+            commit_oid: input.candidate_receipt.commit_oid,
+            tree_oid: input.candidate_receipt.tree_oid,
+            expected_base_oid: input.candidate_receipt.expected_base_oid,
+            previous_main_oid: input.candidate_receipt.expected_base_oid,
+            main_ref: 'updated',
+            worktree: 'materialized',
+            worktree_file_count: 1,
+            projection_authority: 'git_main_ref_and_materialized_worktree',
+            source_admission: 'git_verified_candidate',
+          };
+        },
+      },
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(savedSourceTree); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace() { return localWorkspaceReadResult(observedWorkspace); },
+      },
+    }),
+    codingLoopCheckCoordinator: {
+      async run_automatic_candidate_check(input) {
+        automaticChecks.push(input);
+        return Object.freeze({
+          status: 'completed',
+          check_run_status_projection: Object.freeze({ status: 'passed' }),
+        });
+      },
+    },
+    transport: async (input) => {
+      transportInputs.push(input);
+      const state = transportInputs.length === 1 ? 'first' : 'second';
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({
+          summary: `Prepared the ${state} checkpoint.`,
+          operations: [{
+            operation: 'upsert',
+            path: 'src/app.js',
+            content: `export const state = "${state}";\n`,
+          }],
+        })),
+      };
+    },
+  });
+  const service = createService(1_500);
+
+  const first = await service.generate(request({
+    instruction: 'Prepare the first checkpoint.',
+    existingProjectId: PROJECT_ID,
+  }));
+  const second = await service.generate(request({
+    instruction: 'Prepare the second checkpoint.',
+    existingProjectId: PROJECT_ID,
+  }));
+  observedWorkspace = createBuilderProjectSourceTree({
+    files: [
+      { path: 'external-note.txt', content: 'User work that Builder must preserve.\n' },
+      { path: 'src/app.js', content: 'export const state = "second";\n' },
+    ],
+  });
+  const restartedService = createService(1_700);
+  await assert.rejects(
+    restartedService.restore_previous_checkpoint_as_draft({
+      draft_id: second.draft_id,
+      project_id: PROJECT_ID,
+    }),
+    { code: 'builder_generation_workspace_changed' },
+  );
+  assert.equal(checkpointCalls.length, 2);
+  assert.equal(automaticChecks.length, 2);
+  assert.equal(lifecycle.calls.candidate.length, 2);
+  assert.equal(lifecycle.calls.failure.at(-1).failure_code, 'builder_generation_workspace_changed');
+
+  observedWorkspace = second.source_tree;
+  const restored = await restartedService.restore_previous_checkpoint_as_draft({
+    draft_id: second.draft_id,
+    project_id: PROJECT_ID,
+  });
+
+  assert.equal(transportInputs.length, 2);
+  assert.equal(restored.title, 'Previous AI change undone');
+  assert.equal(restored.summary, 'Restored the previous recoverable AI work checkpoint.');
+  assert.equal(restored.project_id, PROJECT_ID);
+  assert.equal(restored.existing_project_id, PROJECT_ID);
+  assert.equal(restored.admissions.draft, 'candidate_not_saved');
+  assert.equal(restored.admissions.save, 'not_performed');
+  assert.equal(restored.source_tree.source_tree_digest, first.source_tree.source_tree_digest);
+  assert.notEqual(restored.draft_id, second.draft_id);
+  assert.equal(checkpointCalls.length, 3);
+  assert.match(checkpointCalls[2].summary, /^Restored earlier draft checkpoint /u);
+  assert.equal(automaticChecks.length, 3);
+  assert.equal(automaticChecks[2].draft_id, restored.draft_id);
+  assert.equal(
+    automaticChecks[2].source_tree.source_tree_digest,
+    first.source_tree.source_tree_digest,
+  );
+  assert.equal(lifecycle.calls.candidate.length, 3);
+  assert.equal(lifecycle.calls.begin.at(-1).instruction, 'Undo the latest AI change.');
+  assert.deepEqual(lifecycle.calls.recoveryAction.map(({ action, phase }) => ({ action, phase })), [
+    { action: 'restore_checkpoint', phase: 'requested' },
+    { action: 'restore_checkpoint', phase: 'failed' },
+    { action: 'restore_checkpoint', phase: 'requested' },
+    { action: 'restore_checkpoint', phase: 'completed' },
+  ]);
+  assert.deepEqual(lifecycle.calls.checkpoint.map(({ status }) => status), [
+    'created',
+    'updated',
+    'updated',
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(restored),
+    /provider|credential|operations|git_candidate_receipt|checkpoint_id/iu,
+  );
 });
 
 test('re-reads the bound workspace and admits an ordinary candidate before Git persistence', async () => {
@@ -1869,10 +2358,29 @@ test('re-reads the bound workspace and admits an ordinary candidate before Git p
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
   });
   const workspaceReads = [];
+  const materializations = [];
   const git = gitAuthority();
   const service = createBuilderGenerationMainService({
     ...repositories({
       gitAuthority: git,
+      currentProjection: {
+        project_current(input) {
+          materializations.push(input);
+          return {
+            result_version: 'builder-git-current-projection-result.v1',
+            project_id: input.candidate_receipt.project_id,
+            commit_oid: input.candidate_receipt.commit_oid,
+            tree_oid: input.candidate_receipt.tree_oid,
+            expected_base_oid: input.candidate_receipt.expected_base_oid,
+            previous_main_oid: input.candidate_receipt.expected_base_oid,
+            main_ref: 'updated',
+            worktree: 'materialized',
+            worktree_file_count: 1,
+            projection_authority: 'git_main_ref_and_materialized_worktree',
+            source_admission: 'git_verified_candidate',
+          };
+        },
+      },
       projectReadAuthority: {
         load_current() { return readResult(sourceTree); },
       },
@@ -1896,8 +2404,52 @@ test('re-reads the bound workspace and admits an ordinary candidate before Git p
   const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
 
   assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(Object.hasOwn(result, 'current_materialization'), false);
   assert.deepEqual(workspaceReads, [{ project_id: PROJECT_ID }]);
   assert.equal(git.receipts.length, 1);
+  assert.equal(materializations.length, 1);
+  assert.equal(
+    materializations[0].expected_workspace_source_tree_digest,
+    sourceTree.source_tree_digest,
+  );
+  assert.equal(materializations[0].projection_mode, 'base_cas');
+  assert.deepEqual(materializations[0].candidate_receipt, git.receipts[0]);
+});
+
+test('falls back to the bound workspace when no saved current revision is available', async () => {
+  const workspaceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'README.md', content: '# Existing local project\n' }],
+  });
+  const workspaceReads = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      projectReadAuthority: {
+        load_current() { throw new Error(PRIVATE_MARKER); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace(input) {
+          workspaceReads.push(input);
+          return localWorkspaceReadResult(workspaceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({
+        operations: [
+          { operation: 'upsert', path: 'plan.md', content: '# Plan\n' },
+        ],
+      })),
+    }),
+  });
+
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
+
+  assert.equal(workspaceReads.length, 2);
+  assert.deepEqual(workspaceReads[0], { project_id: PROJECT_ID });
+  assert.deepEqual(workspaceReads[1], { project_id: PROJECT_ID });
+  assert.equal(result.source_tree.files.some((file) => file.path === 'README.md'), true);
+  assert.equal(result.source_tree.files.some((file) => file.path === 'plan.md'), true);
 });
 
 test('blocks Git candidate persistence when the workspace changes during provider work', async () => {
@@ -1980,6 +2532,41 @@ test('blocks protected paths and approval-required edits before Git persistence'
   }
 });
 
+test('admits a large ordinary text change set without count-only approval', async () => {
+  const base = createBuilderProjectSourceTree({ files: [] });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const operations = Array.from({ length: 39 }, (_, index) => ({
+    operation: 'upsert',
+    path: `src/generated/file-${String(index + 1).padStart(2, '0')}.js`,
+    content: `export const value${index + 1} = ${index + 1};\n`,
+  }));
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return localWorkspaceReadResult(base); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace() { return localWorkspaceReadResult(base); },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput({ operations })),
+    }),
+  });
+
+  const result = await service.generate(request({ existingProjectId: PROJECT_ID }));
+
+  assert.equal(result.admissions.draft, 'candidate_not_saved');
+  assert.equal(result.source_tree.files.length, 39);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.equal(lifecycle.calls.failure.length, 0);
+});
+
 test('restores a saved revision as a new unsaved Git candidate without provider dispatch', async () => {
   const currentSourceTree = createBuilderProjectSourceTree({
     files: [
@@ -2055,7 +2642,11 @@ test('restores a saved revision as a new unsaved Git candidate without provider 
     'context_ready',
   ]);
   assert.equal(lifecycle.calls.candidate.length, 1);
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 4);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 6);
+  assert.deepEqual(lifecycle.calls.recoveryAction.map(({ action, phase }) => ({ action, phase })), [
+    { action: 'restore_revision', phase: 'requested' },
+    { action: 'restore_revision', phase: 'completed' },
+  ]);
   assert.equal(
     lifecycle.calls.candidate[0].candidate_result.git_candidate_receipt.request_id,
     git.receipts[0].request_id,
@@ -2112,6 +2703,10 @@ test('does not create a restore candidate when restoring would delete a project 
   assert.equal(git.receipts.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.failure.length, 1);
+  assert.deepEqual(lifecycle.calls.recoveryAction.map(({ action, phase }) => ({ action, phase })), [
+    { action: 'restore_revision', phase: 'requested' },
+    { action: 'restore_revision', phase: 'failed' },
+  ]);
   assert.equal(
     lifecycle.calls.failure[0].failure_code,
     'builder_generation_workspace_guard_approval_required',
@@ -2156,7 +2751,7 @@ test('does not create a restore candidate when the saved revision matches curren
   assert.equal(git.receipts.length, 0);
 });
 
-test('observes display-safe provider output deltas through a redacted main-only envelope', async () => {
+test('does not expose structured build output through the user-visible delta envelope', async () => {
   const observed = [];
   const lifecycle = conversationService();
   const service = createBuilderGenerationMainService({
@@ -2167,10 +2762,7 @@ test('observes display-safe provider output deltas through a redacted main-only 
     },
     transport: async (_input, control) => {
       assert.equal(control.signal instanceof AbortSignal, true);
-      assert.equal(typeof control.on_output_delta, 'function');
-      await control.on_output_delta({ delta_text: '{"kind":"builder_code_change_operations","title":"Focus",' });
-      await control.on_output_delta({ delta_text: '"summary":"A quiet' });
-      await control.on_output_delta({ delta_text: ' timer","operations":[{"operation":"upsert","path":"index.html","content":"<main>secret</main>"}]}' });
+      assert.equal(Object.hasOwn(control, 'on_output_delta'), false);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput()),
@@ -2183,28 +2775,7 @@ test('observes display-safe provider output deltas through a redacted main-only 
 
   assert.equal(result.request_id, raw.request_digest);
   assert.equal(lifecycle.calls.candidate.length, 1);
-  assert.deepEqual(observed.map((event) => event.display_delta_text), [
-    'A quiet',
-    ' timer',
-  ]);
-  assert.deepEqual(Reflect.ownKeys(observed[0]).sort(), [
-    'conversation_id',
-    'display_delta_text',
-    'event_version',
-    'project_id',
-    'request_id',
-    'run_id',
-    'task_id',
-    'turn_id',
-  ]);
-  assert.equal(observed[0].event_version, 'builder-generation-output.v1');
-  assert.equal(observed[0].request_id, raw.request_digest);
-  assert.equal(observed[0].project_id, PROJECT_ID);
-  assert.match(observed[0].conversation_id, /^builder-conversation:/u);
-  assert.match(observed[0].turn_id, /^builder-turn:/u);
-  assert.match(observed[0].task_id, /^builder-task:/u);
-  assert.match(observed[0].run_id, /^builder-run:/u);
-  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.deepEqual(observed, []);
   assert.doesNotMatch(
     JSON.stringify(observed),
     /credential|provider\.example|builder-model|source_tree|operations|index\.html|<main>|secret|git_request|receipt/iu,
@@ -2348,7 +2919,10 @@ test('generates an unsaved candidate from the current approved plan through main
     transport: async (input) => {
       transportInputs.push(input);
       assert.equal(lifecycle.calls.programmingRunAdmission.length, 1);
-      assert.match(input.messages[1].content, /Review the approved plan/u);
+      const providerPrompt = JSON.parse(input.messages[1].content);
+      assert.equal(providerPrompt.instruction, 'Implement the approved plan.');
+      assert.match(providerPrompt.approved_plan.text, /Review the approved plan/u);
+      assert.equal(providerPrompt.approved_plan.state, 'approved');
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
@@ -2380,7 +2954,7 @@ test('generates an unsaved candidate from the current approved plan through main
     `sha256:${'a'.repeat(64)}`,
   );
   assert.equal(lifecycle.calls.begin.length, 1);
-  assert.equal(lifecycle.calls.begin[0].instruction, 'Review the approved plan.\n\nPlan:\n1. Build the approved change.');
+  assert.equal(lifecycle.calls.begin[0].instruction, 'Implement the approved plan.');
   assert.equal(lifecycle.calls.begin[0].base_revision.commit_oid, '2'.repeat(40));
   assert.equal(lifecycle.calls.progress.length, 4);
   assert.equal(lifecycle.calls.candidate.length, 1);
@@ -2438,6 +3012,171 @@ test('generates an approved-plan candidate from a local workspace before the fir
     JSON.stringify(result),
     /provider_config|provider_secret|credential_secret|credential_value|secret_ref|provider\.example|builder-model|git_candidate_receipt|operations|conversation_events/iu,
   );
+});
+
+test('passes the verified approved plan text into the Harness runtime input', async () => {
+  const sourceTree = createBuilderProjectSourceTree({ files: [] });
+  const lifecycle = conversationService();
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  let observedRunContract = null;
+  const boundRuntimeFiles = [];
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract, event_sink: eventSink }) {
+      observedRunContract = runContract;
+      const common = {
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+      };
+      await eventSink.emit({
+        ...common,
+        runtime_event_ref: 'harness:test:run-started',
+        occurred_at_ms: 101,
+        turn_id: null,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'run_started',
+        payload: { mode: 'build' },
+      });
+      await eventSink.emit({
+        ...common,
+        runtime_event_ref: 'harness:test:turn-started',
+        occurred_at_ms: 102,
+        turn_id: runContract.admission.turn_id,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'turn_started',
+        payload: { message_id: runContract.input.message_id },
+      });
+      const stepId = `builder-run-step:${UUIDS[7]}`;
+      await eventSink.emit({
+        ...common,
+        runtime_event_ref: 'harness:test:step-started',
+        occurred_at_ms: 103,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: null,
+        event_type: 'step_started',
+        payload: { step_index: 1 },
+      });
+      await eventSink.emit({
+        ...common,
+        runtime_event_ref: 'harness:test:tool-started',
+        occurred_at_ms: 104,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: `builder-tool-call:${UUIDS[8]}`,
+        event_type: 'tool_call_started',
+        payload: {
+          tool_kind: 'edit',
+          active_label: 'Editing index.html',
+          completed_label: 'Edited index.html',
+          target_label: 'index.html',
+          presentation: 'changes',
+          argument_digest: `sha256:${'8'.repeat(64)}`,
+        },
+      });
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'failed',
+          runtime_code: 'builder_harness_programming_runtime_failed',
+          runtime_cause_code: 'builder_harness_process_host_runtime_failed',
+          resulting_source_tree: null,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run'); },
+    async reconcileRun() { throw new Error('reconcile must not run'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async bindToolFile(request) { boundRuntimeFiles.push(request); },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: { load_current: () => localWorkspaceReadResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  await assert.rejects(service.generate_approved_plan(approvedPlanExecutionRequest()), {
+    code: 'builder_generation_service_unavailable',
+  });
+
+  assert.notEqual(observedRunContract, null);
+  assert.deepEqual(boundRuntimeFiles, [{
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    run_id: observedRunContract.admission.run_id,
+    tool_call_id: `builder-tool-call:${UUIDS[8]}`,
+    path: 'index.html',
+  }]);
+  assert.equal(observedRunContract.input.message_id.startsWith('builder-message:'), true);
+  assert.equal(observedRunContract.input.text, [
+    'Implement the approved plan below.',
+    '',
+    'This plan was approved in the current Builder conversation and is the implementation specification.',
+    'If the current source tree is empty or lacks the files normally needed for the plan, treat that as a valid new-project starting point. Use write to create the required project files instead of ending the run because README, package.json, src, or other common files are absent.',
+    'Do not use shell or list commands to discover the project tree. Use Builder read, grep, write, and edit tools; Builder runs checks after the turn.',
+    '<approved_plan>',
+    'Review the approved plan.\n\nPlan:\n1. Build the approved change.',
+    '</approved_plan>',
+  ].join('\n'));
+  assert.match(observedRunContract.input.text, /valid new-project starting point/u);
+  assert.match(observedRunContract.input.text, /Use write to create the required project files/u);
+  assert.match(observedRunContract.input.text, /Do not use shell or list commands/u);
+  assert.notEqual(observedRunContract.input.text, 'Implement the approved plan.');
 });
 
 test('fails approved-plan edit context closed on malformed request, stale continuation, or source drift', async () => {
@@ -2595,6 +3334,95 @@ test('revalidates cached pending drafts against durable conversation rejection',
   ]);
 });
 
+test('coordinates the main-owned automatic check before completing a Build conversation', async () => {
+  const lifecycle = conversationService();
+  const order = [];
+  const completeCandidate = lifecycle.complete_candidate;
+  lifecycle.complete_candidate = function completeAfterCheck(input) {
+    order.push('conversation_completed');
+    return Reflect.apply(completeCandidate, lifecycle, [input]);
+  };
+  const automaticChecks = [];
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    codingLoopCheckCoordinator: {
+      coordinator_version: 'builder-coding-loop-check-coordinator.v1',
+      async run_automatic_candidate_check(input) {
+        order.push('automatic_check_completed');
+        automaticChecks.push(input);
+        return Object.freeze({
+          status: 'completed',
+          profile: Object.freeze({
+            command_profile_id: 'builder-check-profile:npm-test',
+            command_kind: 'npm_test',
+            command_display: 'npm test',
+          }),
+          check_run_status_projection: Object.freeze({
+            status: 'passed',
+            summary: 'The project check completed successfully.',
+          }),
+          duration_ms: 42,
+        });
+      },
+    },
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+
+  const result = await service.generate(request());
+
+  assert.deepEqual(order, ['automatic_check_completed', 'conversation_completed']);
+  assert.equal(automaticChecks.length, 1);
+  assert.equal(automaticChecks[0].draft_id, result.draft_id);
+  assert.equal(automaticChecks[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
+  assert.equal(
+    automaticChecks[0].source_tree.source_tree_digest,
+    result.candidate.resulting_tree_digest,
+  );
+  assert.deepEqual(
+    lifecycle.calls.programmingRuntime
+      .filter((call) => [
+        'tool_call_started',
+        'check_result_recorded',
+        'tool_call_completed',
+      ].includes(call.runtime_event.event_type))
+      .slice(-3)
+      .map((call) => call.runtime_event.event_type),
+    ['tool_call_started', 'check_result_recorded', 'tool_call_completed'],
+  );
+  assert.equal(
+    lifecycle.calls.programmingRuntime.find(
+      (call) => call.runtime_event.event_type === 'check_result_recorded',
+    ).runtime_event.payload.summary,
+    'The project check completed successfully.',
+  );
+  const completedContext = lifecycle.calls.candidate[0].context;
+  const stream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: completedContext.conversation.conversation_id,
+      created_at_ms: completedContext.conversation.created_at_ms,
+      events: completedContext.events,
+    },
+  });
+  assert.equal(stream.conversation.items.some((item) => (
+    item.item_kind === 'programming_runtime_tool_activity'
+    && item.tool_kind === 'command'
+    && item.state === 'completed'
+    && item.check_result?.status === 'passed'
+  )), true);
+  const commandFacts = stream.conversation.items.filter((item) => (
+    item.item_kind === 'programming_runtime_tool_activity'
+    && item.tool_kind === 'command'
+    && item.check_result !== null
+  ));
+  assert.equal(commandFacts.length, 2);
+  assert.notEqual(commandFacts[0].check_result, commandFacts[1].check_result);
+  assert.equal(JSON.stringify(result).includes('automatic_check'), false);
+});
+
 test('rejects a pending draft by draft id and releases main-only cache', async () => {
   const lifecycle = conversationService();
   const git = gitAuthority();
@@ -2634,6 +3462,7 @@ test('records a provider explanation without creating Git candidate, draft, or s
     files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
   });
   const reads = [];
+  const observed = [];
   const transportInputs = [];
   const lifecycle = conversationService();
   const git = gitAuthority();
@@ -2648,8 +3477,14 @@ test('records a provider explanation without creating Git candidate, draft, or s
         },
       },
     }),
-    transport: async (input) => {
+    onProviderOutputDelta(event) {
+      observed.push(event);
+    },
+    transport: async (input, control) => {
       transportInputs.push(input);
+      await control.on_output_delta({
+        delta_text: JSON.stringify(providerExplanation()),
+      });
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerExplanation()),
@@ -2687,6 +3522,18 @@ test('records a provider explanation without creating Git candidate, draft, or s
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(git.receipts.length, 0);
   assert.equal(transportInputs.length, 1);
+  assert.equal(observed.length, 1);
+  assert.deepEqual(observed[0], {
+    event_version: 'builder-generation-output.v1',
+    request_id: result.request_id,
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    turn_id: lifecycle.calls.explanation[0].context.ids.turn_id,
+    task_id: null,
+    run_id: lifecycle.calls.explanation[0].context.ids.run_id,
+    display_delta_text: providerExplanation().explanation,
+  });
+  assert.doesNotMatch(JSON.stringify(observed), /"kind"|provider|credential|source_tree|commit_oid|tree_oid/iu);
   assert.match(transportInputs[0].messages[1].content, /export const saved = true/u);
   assert.equal(Object.hasOwn(result, 'draft_id'), false);
   assert.equal(Object.hasOwn(result, 'source_tree'), false);
@@ -2753,7 +3600,18 @@ test('records read-only exploratory answer turns as task brief context without w
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['exploratory_work']);
 });
 
-test('answers local read-only chat without dispatching provider transport', async () => {
+test('answers local read-only chat without dispatching provider transport', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-local-agent-answer-'));
+  const agentConversation = createBuilderAgentConversationService({
+    databasePath: path.join(root, 'agent-conversations.sqlite'),
+    agentId: TEST_AGENT_ID,
+    createUuid: createUniqueUuidFactory(340),
+    nowMs: () => 3_400,
+  });
+  t.after(() => {
+    agentConversation.close();
+    removeRoot(root);
+  });
   const transportInputs = [];
   const startedEvents = [];
   const lifecycle = conversationService();
@@ -2765,6 +3623,7 @@ test('answers local read-only chat without dispatching provider transport', asyn
       providerConfigRepository: {
         bind_current_authority() { throw new Error('unexpected provider authority bind'); },
       },
+      agentConversationService: agentConversation,
     }),
     onGenerationStarted(event) {
       startedEvents.push(event);
@@ -2775,10 +3634,10 @@ test('answers local read-only chat without dispatching provider transport', asyn
     },
   });
 
-  const english = await service.answer(request({ instruction: 'hi' }));
-  const chinese = await service.answer(request({ instruction: '你好' }));
-  const status = await service.answer(request({ instruction: '你现在在做什么？' }));
-  const blankPreview = await service.answer(request({ instruction: '为什么预览空白？' }));
+  const english = await service.answer(request({ instruction: 'hi', existingProjectId: null }));
+  const chinese = await service.answer(request({ instruction: '你好', existingProjectId: null }));
+  const status = await service.answer(request({ instruction: '你现在在做什么？', existingProjectId: null }));
+  const blankPreview = await service.answer(request({ instruction: '为什么预览空白？', existingProjectId: null }));
 
   assert.equal(english.version, 'builder-generation-result.v2');
   assert.equal(english.result_kind, 'explanation');
@@ -2805,15 +3664,13 @@ test('answers local read-only chat without dispatching provider transport', asyn
   assert.equal(blankPreview.admissions.draft, 'not_created');
   assert.match(blankPreview.explanation, /没有可查看的项目内容或预览/u);
   assert.equal(lifecycle.calls.begin.length, 0);
-  assert.equal(lifecycle.calls.question.length, 4);
-  assert.deepEqual(
-    lifecycle.calls.question.map((call) => call.question),
-    ['hi', '你好', '你现在在做什么？', '为什么预览空白？'],
-  );
+  assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 0);
-  assert.equal(lifecycle.calls.explanation.length, 4);
+  assert.equal(lifecycle.calls.explanation.length, 0);
   assert.deepEqual(
-    lifecycle.calls.explanation.map((call) => call.assistant_text),
+    agentConversation.read_stream({ agent_id: TEST_AGENT_ID }).conversation.items
+      .filter((item) => item.role === 'assistant')
+      .map((item) => item.message.text),
     [english.explanation, chinese.explanation, status.explanation, blankPreview.explanation],
   );
   assert.equal(lifecycle.calls.progress.length, 0);
@@ -2885,7 +3742,10 @@ test('answers pending draft questions from verified candidate source without sou
   assert.equal(lifecycle.calls.question.length, 1);
   assert.equal(lifecycle.calls.question[0].project_id, draft.project_id);
   assert.equal(lifecycle.calls.question[0].question, 'Why is the preview blank?');
-  assert.equal(lifecycle.calls.question[0].base_revision, null);
+  assert.deepEqual(lifecycle.calls.question[0].base_revision, {
+    revision_receipt_digest: `sha256:${'1'.repeat(64)}`,
+    commit_oid: '2'.repeat(40),
+  });
   assert.equal(lifecycle.calls.candidate.length, 1);
   assert.equal(lifecycle.calls.explanation.length, 1);
   assert.equal(git.receipts.length, 1);
@@ -2948,10 +3808,7 @@ test('records a main-only plan proposal from collected source context without so
     transport: async (input, control) => {
       transportInputs.push(input);
       assert.equal(control.signal instanceof AbortSignal, true);
-      assert.equal(typeof control.on_output_delta, 'function');
-      await control.on_output_delta({ delta_text: '{"kind":"builder_project_plan_proposal","title":"Review",' });
-      await control.on_output_delta({ delta_text: '"summary":"Prepare a bounded' });
-      await control.on_output_delta({ delta_text: ' implementation before editing","steps":[{"title":"secret source text"}]}' });
+      assert.equal(Object.hasOwn(control, 'on_output_delta'), false);
       assert.match(input.messages[0].content, /builder_project_plan_proposal/u);
       assert.doesNotMatch(input.messages[0].content, /builder_code_change_operations|builder_conversation_explanation/u);
       assert.match(input.messages[1].content, /Plan a smaller settings panel/u);
@@ -3040,28 +3897,7 @@ test('records a main-only plan proposal from collected source context without so
     request_id: raw.request_digest,
     project_id: PROJECT_ID,
   }]);
-  assert.deepEqual(observed.map((event) => event.display_delta_text), [
-    'Prepare a bounded',
-    ' implementation before editing',
-  ]);
-  assert.deepEqual(Reflect.ownKeys(observed[0]).sort(), [
-    'conversation_id',
-    'display_delta_text',
-    'event_version',
-    'project_id',
-    'request_id',
-    'run_id',
-    'task_id',
-    'turn_id',
-  ]);
-  assert.equal(observed[0].event_version, 'builder-generation-output.v1');
-  assert.equal(observed[0].request_id, raw.request_digest);
-  assert.equal(observed[0].project_id, PROJECT_ID);
-  assert.match(observed[0].conversation_id, /^builder-conversation:/u);
-  assert.match(observed[0].turn_id, /^builder-turn:/u);
-  assert.match(observed[0].task_id, /^builder-task:/u);
-  assert.match(observed[0].run_id, /^builder-run:/u);
-  assert.equal(Object.isFrozen(observed[0]), true);
+  assert.deepEqual(observed, []);
   assert.doesNotMatch(
     JSON.stringify(observed),
     /secret source text|credential|provider\.example|builder-model|source_tree|operations|src\/app|export const|commit_oid|tree_oid|receipt|record_digest/iu,
@@ -3273,8 +4109,9 @@ test('rejects plan proposal cross-route concurrency before creating a second tur
   });
   await assert.rejects(plan, { code: 'builder_generation_cancelled' });
   assert.equal(lifecycle.calls.cancel.length, 1);
-  assert.equal(lifecycle.calls.failure.length, 1);
-  assert.equal(lifecycle.calls.failure[0].context.cancel_requested, true);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].context.cancel_requested, true);
 });
 
 test('keeps main submit fallback aligned with shared route-decision cases', async () => {
@@ -3295,33 +4132,47 @@ test('keeps main submit fallback aligned with shared route-decision cases', asyn
             return readResult(sourceTree);
           },
         },
+        sourceContextCollector: {
+          collect_project_source_context(input) {
+            return sourceContextResult(input.context, [
+              { path: 'src/app.js', content: 'export const ready = true;\n' },
+            ]);
+          },
+        },
       }),
-      transport: async (input) => {
-        const systemPrompt = input.messages[0].content;
+      transport: async () => {
         return {
           transport_version: 'builder-openai-compatible-transport.v1',
-          generated_text: systemPrompt.includes('builder_conversation_explanation')
-            ? JSON.stringify(providerExplanation({
-              title: 'Route fixture answer',
-              summary: 'A bounded route fixture answer.',
-              explanation: 'This fixture answer does not change files.',
-            }))
-            : JSON.stringify(providerOutput({
-              title: 'Route fixture candidate',
-              summary: 'A bounded route fixture candidate.',
-              operations: [
-                { operation: 'upsert', path: 'src/app.js', content: 'export const ready = false;\n' },
-              ],
-            })),
+          generated_text: routeCase.mainSubmit.resultKind === 'plan'
+            ? JSON.stringify(providerPlan())
+            : routeCase.mainSubmit.resultKind === 'explanation'
+              ? JSON.stringify(providerExplanation({
+                title: 'Route fixture answer',
+                summary: 'A bounded route fixture answer.',
+                explanation: 'This fixture answer does not change files.',
+              }))
+              : JSON.stringify(providerOutput({
+                title: 'Route fixture candidate',
+                summary: 'A bounded route fixture candidate.',
+                operations: [
+                  { operation: 'upsert', path: 'src/app.js', content: 'export const ready = false;\n' },
+                ],
+              })),
         };
       },
     });
 
-    const result = await service.submit(request({
-      instruction: routeCase.instruction,
-      existingProjectId: PROJECT_ID,
-    }));
+    let result;
+    try {
+      result = await service.submit(request({
+        instruction: routeCase.instruction,
+        existingProjectId: PROJECT_ID,
+      }));
+    } catch (error) {
+      assert.fail(`${routeCase.name}: ${error.code ?? error.message}`);
+    }
     const routeDecision = routeCase.mainSubmit.resultKind === 'candidate'
+      || routeCase.mainSubmit.resultKind === 'plan'
       ? lifecycle.calls.begin[0]?.route_decision_hint
       : lifecycle.calls.question[0]?.route_decision_hint;
 
@@ -3339,12 +4190,22 @@ test('keeps main submit fallback aligned with shared route-decision cases', asyn
       assert.equal(result.admissions.draft, 'candidate_not_saved', routeCase.name);
       assert.equal(lifecycle.calls.begin.length, 1, routeCase.name);
       assert.equal(lifecycle.calls.question.length, 0, routeCase.name);
+      assert.equal(lifecycle.calls.plan.length, 0, routeCase.name);
       assert.equal(git.receipts.length, 1, routeCase.name);
+    } else if (routeCase.mainSubmit.resultKind === 'plan') {
+      assert.equal(result.version, 'builder-generation-result.v2', routeCase.name);
+      assert.equal(result.result_kind, 'plan', routeCase.name);
+      assert.equal(result.admissions.draft, 'not_created', routeCase.name);
+      assert.equal(lifecycle.calls.begin.length, 1, routeCase.name);
+      assert.equal(lifecycle.calls.question.length, 0, routeCase.name);
+      assert.equal(lifecycle.calls.plan.length, 1, routeCase.name);
+      assert.equal(git.receipts.length, 0, routeCase.name);
     } else {
       assert.equal(result.result_kind, 'explanation', routeCase.name);
       assert.equal(result.admissions.draft, 'not_created', routeCase.name);
       assert.equal(lifecycle.calls.begin.length, 0, routeCase.name);
       assert.equal(lifecycle.calls.question.length, 1, routeCase.name);
+      assert.equal(lifecycle.calls.plan.length, 0, routeCase.name);
       assert.equal(git.receipts.length, 0, routeCase.name);
     }
   }
@@ -3393,7 +4254,7 @@ test('submits one composer turn through main-owned work or explanation routing',
     },
   });
 
-  await assert.rejects(service.submit(request({ instruction: 'Make a timer.' })), {
+  await assert.rejects(service.submit(request({ instruction: 'Make a timer.', existingProjectId: null })), {
     code: 'builder_generation_project_workspace_required',
   });
   const draft = await service.submit(request({
@@ -3488,7 +4349,7 @@ test('submits one composer turn through main-owned work or explanation routing',
   assert.equal(chineseAnswer.admissions.draft, 'not_created');
   assert.equal(chineseHowToAnswer.result_kind, 'explanation');
   assert.equal(chineseHowToAnswer.admissions.draft, 'not_created');
-  assert.equal(chineseHowToAnswer.existing_project_id, null);
+  assert.equal(chineseHowToAnswer.existing_project_id, PROJECT_ID);
   assert.equal(defectWithoutBriefAnswer.result_kind, 'explanation');
   assert.equal(defectWithoutBriefAnswer.admissions.draft, 'not_created');
   assert.equal(defectWithoutBriefAnswer.project_id, PROJECT_ID);
@@ -3548,7 +4409,10 @@ test('submits one composer turn through main-owned work or explanation routing',
     lifecycle.calls.question.slice(-2).map((input) => input.route_decision_hint.downgrade_reason ?? null),
     ['missing_prior_build_context', null],
   );
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [
+    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+  ]);
   assert.equal(git.receipts.length, 3);
   assert.deepEqual(startedEvents.map((event) => event.event_version), Array(16).fill('builder-generation-started.v1'));
   assert.deepEqual(startedEvents.map((event) => event.request_id), [
@@ -3646,7 +4510,7 @@ test('routes local Markdown artifact submit through main-owned build admission',
     },
   });
 
-  await assert.rejects(service.submit(request({ instruction: '新建一个 README.md，写项目说明' })), {
+  await assert.rejects(service.submit(request({ instruction: '新建一个 README.md，写项目说明', existingProjectId: null })), {
     code: 'builder_generation_project_workspace_required',
   });
   const draft = await service.submit(request({
@@ -3859,7 +4723,10 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.equal(lifecycle.calls.begin[1].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.deepEqual(lifecycle.calls.begin[1].route_decision_hint.matched_signals, ['contextual_build']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [
+    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+  ]);
   assert.equal(git.receipts.length, 2);
 });
 
@@ -3908,7 +4775,7 @@ test('downgrades contextual submit after a newer task brief correction removes r
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -3949,7 +4816,7 @@ test('keeps Chinese rewrite shortcuts read-only without main-owned build context
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
 });
 
 test('allows current artifact defect feedback only with main-owned build context', async () => {
@@ -3992,7 +4859,7 @@ test('allows current artifact defect feedback only with main-owned build context
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_defect']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -4034,7 +4901,46 @@ test('allows concise current artifact changes only with main-owned build context
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.equal(git.receipts.length, 1);
+});
+
+test('continues an English current-draft edit only with main-owned build context', async () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const saved = true;\n' }],
+  });
+  const lifecycle = conversationService({ readStreamResult: candidateReadyTaskStream() });
+  const git = gitAuthority();
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() {
+          return readResult(sourceTree);
+        },
+      },
+    }),
+    transport: async () => ({
+      transport_version: 'builder-openai-compatible-transport.v1',
+      generated_text: JSON.stringify(providerOutput()),
+    }),
+  });
+
+  const draft = await service.submit(request({
+    instruction: 'Continue improving the focus timer heading and subtitle.',
+    existingProjectId: PROJECT_ID,
+  }));
+
+  assert.equal(draft.version, 'builder-generation-result.v2');
+  assert.equal(draft.title, 'Focus timer');
+  assert.equal(draft.admissions.draft, 'candidate_not_saved');
+  assert.equal(lifecycle.calls.begin.length, 1);
+  assert.equal(lifecycle.calls.question.length, 0);
+  assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
+  assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, [
+    'current_draft_continuation',
+  ]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -4075,7 +4981,7 @@ test('keeps concise current artifact changes read-only without main-owned build 
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -4117,7 +5023,7 @@ test('admits short confirmations only after an assistant execution proposal is p
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['pending_build_confirmation']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -4158,7 +5064,7 @@ test('keeps isolated short confirmations read-only even after prior candidate co
   assert.equal(lifecycle.calls.question.length, 1);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -4201,7 +5107,7 @@ test('keeps contextual submit in answer route after transcript-only proposals', 
   assert.equal(lifecycle.calls.explanation.length, 1);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -4245,7 +5151,7 @@ test('keeps contextual submit in answer route after read-only exploratory diagno
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, null);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -4268,6 +5174,7 @@ test('does not admit contextual submit from transcript-only conversation proposa
   });
   const prior = conversation.begin_question({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     question: priorRequest.instruction,
     request_digest: priorRequest.request_digest,
     base_revision: null,
@@ -4465,7 +5372,7 @@ test('records brief corrections as not-ready conversation context without ready 
     instruction: '等等，先不要按这个做，我要重新整理方向。',
     existingProjectId: PROJECT_ID,
   }));
-  const stream = conversation.read_stream({ project_id: PROJECT_ID });
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
 
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.admissions.draft, 'not_created');
@@ -4482,6 +5389,7 @@ test('does not record ordinary read-only answers into the task capsule store', a
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   t.after(() => {
+    try { agentConversation.close(); } catch { /* already closed */ }
     try { taskCapsuleStore.close(); } catch { /* already closed */ }
     try { database.close(); } catch { /* already closed */ }
     removeRoot(root);
@@ -4492,6 +5400,12 @@ test('does not record ordinary read-only answers into the task capsule store', a
     createUuid: createUniqueUuidFactory(870),
     nowMs: () => now++,
   });
+  const agentConversation = createBuilderAgentConversationService({
+    databasePath: path.join(root, 'agent-conversations.sqlite'),
+    agentId: TEST_AGENT_ID,
+    createUuid: createUniqueUuidFactory(875),
+    nowMs: () => now++,
+  });
   const service = createBuilderGenerationMainService({
     ...repositories({
       conversationService: conversation,
@@ -4500,6 +5414,7 @@ test('does not record ordinary read-only answers into the task capsule store', a
       taskCapsuleRecordingService: createBuilderTaskCapsuleRecordingService({
         task_capsule_store: taskCapsuleStore,
       }),
+      agentConversationService: agentConversation,
     }),
     transport: async () => ({
       transport_version: 'builder-openai-compatible-transport.v1',
@@ -4513,6 +5428,7 @@ test('does not record ordinary read-only answers into the task capsule store', a
 
   const answer = await service.answer(request({
     instruction: '你好',
+    existingProjectId: null,
   }));
 
   assert.equal(answer.result_kind, 'explanation');
@@ -4523,6 +5439,14 @@ test('does not record ordinary read-only answers into the task capsule store', a
 test('records fresh work turns into the main-owned Session/Task Address store before provider dispatch', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-address-recording-main-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Addressed dashboard',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 9_000,
+    bound_at_ms: 9_050,
+  });
   const addressStore = createBuilderSessionTaskAddressStore(path.join(root, 'session-task-addresses.sqlite'));
   t.after(() => {
     try { addressStore.close(); } catch { /* already closed */ }
@@ -4535,7 +5459,7 @@ test('records fresh work turns into the main-owned Session/Task Address store be
     createUuid: createUniqueUuidFactory(910),
     nowMs: () => now++,
   });
-  const generatedProjectId = 'builder-project:00000000-0000-4000-8000-000000000398';
+  const generatedProjectId = PROJECT_ID;
   const sessionUuid = '123e4567-e89b-42d3-a456-426614174310';
   const taskAddressUuid = '123e4567-e89b-42d3-a456-426614174311';
   let nextAddressUuid = 0;
@@ -4552,6 +5476,21 @@ test('records fresh work turns into the main-owned Session/Task Address store be
         created_by: 'builder-user:123e4567-e89b-42d3-a456-426614174201',
         agent_id: 'builder-agent:123e4567-e89b-42d3-a456-426614174202',
       }),
+      sessionTaskTargetService: {
+        resolve_target(targetRequest) {
+          const projectUuid = targetRequest.project_id.slice('builder-project:'.length);
+          return {
+            result_version: 'builder-session-task-target-result.v1',
+            operation: 'new_task_target_allocated',
+            project_id: targetRequest.project_id,
+            task_address_id: null,
+            conversation_id: `builder-conversation:${projectUuid}:123e4567-e89b-42d3-a456-426614174399`,
+            agent_id: 'builder-agent:123e4567-e89b-42d3-a456-426614174202',
+            should_record_task_address: true,
+            authority: 'main_owned_task_target_resolution',
+          };
+        },
+      },
     }),
     transport: async () => {
       const recordedBeforeProvider = addressStore.read_task_address({
@@ -4571,6 +5510,7 @@ test('records fresh work turns into the main-owned Session/Task Address store be
 
   const draft = await service.generate(request({
     instruction: 'Build the addressed dashboard.',
+    taskAddressId: null,
   }));
   const session = addressStore.read_session_address({
     project_id: generatedProjectId,
@@ -4643,7 +5583,11 @@ test('does not create new Session/Task Address facts for read-only answers or qu
     },
   });
 
-  const firstWork = request({ instruction: 'Make a timer.', existingProjectId: PROJECT_ID });
+  const firstWork = request({
+    instruction: 'Make a timer.',
+    existingProjectId: PROJECT_ID,
+    taskAddressId: null,
+  });
   const running = service.generate(firstWork);
   while (activeSignal === undefined) await new Promise((resolve) => setImmediate(resolve));
   const queued = service.queue_followup({
@@ -4693,7 +5637,7 @@ test('fails closed before provider dispatch when Session/Task Address recording 
   });
 
   await assert.rejects(
-    service.generate(request({ existingProjectId: PROJECT_ID })),
+    service.generate(request({ existingProjectId: PROJECT_ID, taskAddressId: null })),
     (error) => {
       assert.equal(error.code, 'builder_generation_base_unavailable');
       assert.doesNotMatch(`${error.message}:${error.stack}`, new RegExp(PRIVATE_MARKER, 'u'));
@@ -4722,6 +5666,7 @@ test('uses a durable task capsule brief as contextual submit build context', asy
   });
   const prior = conversation.begin_question({
     project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
     question: priorRequest.instruction,
     request_digest: priorRequest.request_digest,
     base_revision: null,
@@ -4915,7 +5860,10 @@ test('uses the main-owned task capsule store as contextual submit route evidence
   const providerPrompt = JSON.parse(transportInput.messages[1].content);
 
   assert.equal(draft.title, 'Portfolio from stored brief');
-  assert.deepEqual(readStreamCalls, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(readStreamCalls, [{
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  }]);
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
     source: 'task_capsule_update',
@@ -4942,7 +5890,9 @@ test('uses the Working Context State service as contextual submit route evidence
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   const addressStore = createBuilderSessionTaskAddressStore(path.join(root, 'session-task-addresses.sqlite'));
+  const compactionStore = createBuilderContextCompactionSummaryStore(path.join(root, 'context-compactions.sqlite'));
   t.after(() => {
+    try { compactionStore.close(); } catch { /* already closed */ }
     try { addressStore.close(); } catch { /* already closed */ }
     try { taskCapsuleStore.close(); } catch { /* already closed */ }
     try { database.close(); } catch { /* already closed */ }
@@ -5036,8 +5986,30 @@ test('uses the Working Context State service as contextual submit route evidence
       closed_at_ms: null,
     }),
   });
+  const compactedSummary = createBuilderContextCompactionSummary({
+    conversation_id: CONVERSATION_ID,
+    task_address_id: `builder-task-address:${UUIDS[2]}`,
+    source_event_start_id: `builder-conversation-event:${'1'.repeat(64)}`,
+    source_event_end_id: `builder-conversation-event:${'2'.repeat(64)}`,
+    source_event_count: 24,
+    token_budget_before: 40_000,
+    token_budget_after: 4_000,
+    summary: 'Earlier discussion chose a gallery-first portfolio with a starry hero and compact project cards.',
+    durable_decisions: ['Use the portfolio direction from the saved discussion.'],
+    unresolved_questions: [],
+    omitted_large_outputs: [],
+    source_refs: [
+      { source_kind: 'user_message', source_digest: `sha256:${'3'.repeat(64)}` },
+      { source_kind: 'assistant_message', source_digest: `sha256:${'4'.repeat(64)}` },
+    ],
+    created_at_ms: 8_500,
+  });
+  compactionStore.record_context_compaction_summary({
+    context_compaction_summary: compactedSummary,
+  });
   const workingContextStateService = createBuilderWorkingContextStateService({
     task_capsule_store: taskCapsuleStore,
+    context_compaction_summary_store: compactionStore,
     session_task_address_store: addressStore,
   });
   const workingContextReads = [];
@@ -5180,6 +6152,22 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.match(contextSnapshotInputs[0].context_assembly.assembly_id, /^builder-context-assembly:[0-9a-f]{64}$/u);
   assert.equal(contextSnapshotInputs[0].context_assembly.assembly_purpose, 'contextual_build');
   assert.equal(contextSnapshotInputs[0].context_assembly.permission_gate.side_effect_ready, true);
+  assert.deepEqual(
+    contextSnapshotInputs[0].context_assembly.model_context_segments.map((segment) => segment.segment_kind),
+    [
+      'latest_user_message',
+      'compaction_summary',
+    ],
+  );
+  assert.equal(
+    contextSnapshotInputs[0].context_assembly.model_context_segments.at(-1).text,
+    compactedSummary.summary,
+  );
+  assert.deepEqual(contextSnapshotInputs[0].context_assembly.run_snapshot_refs.compaction_refs, [{
+    summary_digest: compactedSummary.digest,
+    source_range_digest: compactedSummary.source_range_digest,
+    compacted_at_ms: compactedSummary.created_at_ms,
+  }]);
   assert.equal(contextSnapshotInputs[0].provider_context_projection.projection_status, 'blocked');
   assert.equal(contextSnapshotInputs[0].provider_context_projection.blocked_reason, 'context_disclosure_denied');
   assert.deepEqual(contextSnapshotInputs[0].provider_context_projection.source_refs, {
@@ -5253,6 +6241,7 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.equal(JSON.stringify(providerPrompt).includes('provider_context'), false);
   assert.equal(JSON.stringify(providerPrompt).includes('builder-provider-context'), false);
   assert.equal(JSON.stringify(providerPrompt).includes('context.disclose'), false);
+  assert.equal(JSON.stringify(providerPrompt).includes(compactedSummary.summary), false);
 });
 
 test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {
@@ -5361,7 +6350,7 @@ test('does not let stale task capsule store readiness override a newer task stre
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -5391,6 +6380,14 @@ test('records a retryable terminal run outcome when provider generation fails', 
 test('retries a provider failure as a second run on the same turn', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-explicit-retry-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Retry project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 7_400,
+    bound_at_ms: 7_450,
+  });
   t.after(() => {
     database.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -5427,13 +6424,13 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
     },
   });
 
-  const rawRequest = request();
+  const rawRequest = request({ taskAddressId: null });
   await assert.rejects(
     service.generate(rawRequest),
     (error) => error.code === 'builder_generation_failed'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
-  const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
   assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   await assert.rejects(
@@ -5445,37 +6442,47 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
   const result = await service.retry_generate(rawRequest);
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.request_id, rawRequest.request_digest);
-  const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 14);
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  assert.equal(stream.conversation.head_sequence, 28);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.equal(stream.conversation.items[0].turn_id, stream.conversation.items[6].turn_id);
-  assert.deepEqual(stream.conversation.items[6], {
+  const retriedRun = stream.conversation.items.find((item) => (
+    item.item_kind === 'run_started' && item.attempt_number === 2
+  ));
+  assert.ok(retriedRun);
+  assert.equal(stream.conversation.items[0].turn_id, retriedRun.turn_id);
+  assert.deepEqual(retriedRun, {
     item_kind: 'run_started',
     sequence: 7,
     turn_id: stream.conversation.items[0].turn_id,
-    run_id: stream.conversation.items[6].run_id,
+    run_id: retriedRun.run_id,
     task_id: stream.conversation.items[0].task.task_id,
     attempt_number: 2,
     retry_of_run_id: stream.conversation.items[1].run_id,
     recorded_state: 'started',
   });
-  assert.equal(stream.conversation.items[7].item_kind, 'run_context_snapshot_recorded');
-  assert.deepEqual(stream.conversation.items.slice(8, 12).map((item) => item.item_kind), [
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
-  ]);
-  assert.equal(stream.conversation.items[12].item_kind, 'run_completed');
-  assert.equal(stream.conversation.items[12].run_id, stream.conversation.items[6].run_id);
-  assert.equal(stream.conversation.items[12].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[13].outcome, 'candidate_ready');
-  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+  assert.equal(stream.conversation.items.some((item) => (
+    item.item_kind === 'programming_runtime_tool_activity'
+    && item.run_id === retriedRun.run_id
+  )), true);
+  const retriedCompletion = stream.conversation.items.find((item) => (
+    item.item_kind === 'run_completed' && item.run_id === retriedRun.run_id
+  ));
+  assert.equal(retriedCompletion.result_kind, 'candidate');
+  assert.equal(stream.conversation.items.at(-1).outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid/iu);
 });
 
 test('records real provider failures as retryable activity and closes them before distinct new work', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-retryable-generation-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Retryable project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 6_900,
+    bound_at_ms: 6_950,
+  });
   t.after(() => {
     database.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -5513,11 +6520,11 @@ test('records real provider failures as retryable activity and closes them befor
   });
 
   await assert.rejects(
-    service.generate(request()),
+    service.generate(request({ taskAddressId: null })),
     (error) => error.code === 'builder_generation_failed'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
-  const failedStream = conversation.read_stream({ project_id: PROJECT_ID });
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
   assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   assert.equal(failedStream.conversation.items[2].item_kind, 'run_context_snapshot_recorded');
@@ -5526,28 +6533,34 @@ test('records real provider failures as retryable activity and closes them befor
   assert.equal(failedStream.conversation.items[5].result_kind, 'failure');
   assert.equal(failedStream.conversation.items[5].candidate, null);
 
-  const result = await service.generate(request({ instruction: 'Try a different timer layout.' }));
+  const result = await service.generate(request({
+    instruction: 'Try a different timer layout.',
+    taskAddressId: null,
+  }));
   assert.equal(result.project_id, PROJECT_ID);
-  const stream = conversation.read_stream({ project_id: PROJECT_ID });
-  assert.equal(stream.conversation.head_sequence, 16);
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  assert.equal(stream.conversation.head_sequence, 30);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
-  assert.deepEqual(stream.conversation.items.slice(6, 9).map((item) => item.item_kind), [
-    'turn_completed',
-    'user_message',
-    'run_started',
-  ]);
-  assert.equal(stream.conversation.items[6].outcome, 'failed');
-  assert.equal(stream.conversation.items[7].message.text, 'Try a different timer layout.');
-  assert.equal(stream.conversation.items[9].item_kind, 'run_context_snapshot_recorded');
-  assert.deepEqual(stream.conversation.items.slice(10, 14).map((item) => item.item_kind), [
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
-    'run_progress_recorded',
-  ]);
-  assert.equal(stream.conversation.items[14].result_kind, 'candidate');
-  assert.equal(stream.conversation.items[15].outcome, 'candidate_ready');
-  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid|live|running/iu);
+  const secondUser = stream.conversation.items.find((item) => (
+    item.item_kind === 'user_message'
+    && item.message.text === 'Try a different timer layout.'
+  ));
+  assert.ok(secondUser);
+  const secondRun = stream.conversation.items.find((item) => (
+    item.item_kind === 'run_started'
+    && item.turn_id === secondUser.turn_id
+  ));
+  assert.ok(secondRun);
+  assert.equal(stream.conversation.items.some((item) => (
+    item.item_kind === 'programming_runtime_tool_activity'
+    && item.run_id === secondRun.run_id
+  )), true);
+  const secondCompletion = stream.conversation.items.find((item) => (
+    item.item_kind === 'run_completed' && item.run_id === secondRun.run_id
+  ));
+  assert.equal(secondCompletion.result_kind, 'candidate');
+  assert.equal(stream.conversation.items.at(-1).outcome, 'candidate_ready');
+  assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid/iu);
 });
 
 test('records cancellation intent before aborting provider work and fails closed if recording fails', async () => {
@@ -5613,9 +6626,10 @@ test('records cancellation intent before aborting provider work and fails closed
   await assert.rejects(generation, { code: 'builder_generation_cancelled' });
   assert.deepEqual(order, ['intent_recorded', 'provider_aborted']);
   assert.equal(lifecycle.calls.cancel.length, 1);
-  assert.equal(lifecycle.calls.failure.length, 1);
-  assert.equal(lifecycle.calls.failure[0].context.cancel_requested, true);
-  assert.equal(lifecycle.calls.completeFailure.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].context.cancel_requested, true);
+  assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
 
   const answerLifecycle = conversationService();
   const answerGit = gitAuthority();
@@ -5647,10 +6661,859 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(answerLifecycle.calls.question.length, 1);
   assert.equal(answerLifecycle.calls.cancel.length, 1);
   assert.equal(answerLifecycle.calls.explanation.length, 0);
-  assert.equal(answerLifecycle.calls.failure.length, 1);
-  assert.equal(answerLifecycle.calls.failure[0].context.cancel_requested, true);
-  assert.equal(answerLifecycle.calls.completeFailure.length, 0);
+  assert.equal(answerLifecycle.calls.failure.length, 0);
+  assert.equal(answerLifecycle.calls.completeFailure.length, 1);
+  assert.equal(answerLifecycle.calls.completeFailure[0].context.cancel_requested, true);
+  assert.equal(answerLifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
   assert.equal(answerGit.receipts.length, 0);
+});
+
+test('returns a successful Harness response without Git, checks, or checkpoint when files are unchanged', async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer</h1>\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  const reconciliationStatuses = [];
+  let admittedRunDurationMs = null;
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract }) {
+      admittedRunDurationMs = runContract.admission.limits.max_duration_ms;
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: sourceTree,
+          assistant_text: 'I inspected the project, but I need the target file before changing anything.',
+          verification_step_id: `builder-run-step:${UUIDS[0]}`,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run without a candidate'); },
+    async reconcileRun(_handle, { checkpoint_status: checkpointStatus }) {
+      reconciliationStatuses.push(checkpointStatus);
+      return Object.freeze({ status: 'completed' });
+    },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  const result = await service.generate(attemptedRequest);
+
+  assert.equal(result.result_kind, 'explanation');
+  assert.equal(
+    result.explanation,
+    'I inspected the project, but I need the target file before changing anything.',
+  );
+  assert.equal(result.project_id, PROJECT_ID);
+  assert.equal(result.existing_project_id, PROJECT_ID);
+  assert.equal(result.admissions.draft, 'not_created');
+  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(admittedRunDurationMs, 60 * 60 * 1_000);
+  assert.notEqual(admittedRunDurationMs, deepSeekConfig.timeout_ms);
+  assert.deepEqual(reconciliationStatuses, ['not_applicable']);
+  assert.equal(lifecycle.calls.workResponse.length, 1);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(git.receipts.length, 0);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /source_tree|candidate|checkpoint|git_candidate_receipt|credential/iu,
+  );
+});
+
+test('streams every Harness text delta while batching durable runtime event records', async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer</h1>\n' }],
+  });
+  const resultingSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer updated</h1>\n' }],
+  });
+  const lifecycle = conversationService();
+  const observed = [];
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract, event_sink: eventSink }) {
+      const common = {
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+      };
+      const stepId = `builder-run-step:${UUIDS[7]}`;
+      const messageId = `builder-message:${UUIDS[8]}`;
+      const emittedAtMs = Date.now() - 1_000;
+      async function emitRuntimeEvent(event) {
+        await eventSink.emit(event);
+      }
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:run-started',
+        occurred_at_ms: emittedAtMs + 1,
+        turn_id: null,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'run_started',
+        payload: { mode: 'build' },
+      });
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:turn-started',
+        occurred_at_ms: emittedAtMs + 2,
+        turn_id: runContract.admission.turn_id,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'turn_started',
+        payload: { message_id: runContract.input.message_id },
+      });
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:step-started',
+        occurred_at_ms: emittedAtMs + 3,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: null,
+        event_type: 'step_started',
+        payload: { step_index: 1 },
+      });
+      let fullText = '';
+      for (let index = 0; index < 600; index += 1) {
+        const deltaText = `stream ${String(index + 1).padStart(3, '0')}. `;
+        fullText += deltaText;
+        await emitRuntimeEvent({
+          ...common,
+          runtime_event_ref: `harness:test:assistant-delta:${index}`,
+          occurred_at_ms: emittedAtMs + 4 + index,
+          turn_id: runContract.admission.turn_id,
+          step_id: stepId,
+          tool_call_id: null,
+          event_type: 'assistant_text_delta',
+          payload: { message_id: messageId, delta_text: deltaText },
+        });
+      }
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:assistant-completed',
+        occurred_at_ms: emittedAtMs + 604,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: null,
+        event_type: 'assistant_text_completed',
+        payload: {
+          message_id: messageId,
+          text_digest: digestText(fullText),
+          text_bytes: Buffer.byteLength(fullText, 'utf8'),
+        },
+      });
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:step-completed',
+        occurred_at_ms: emittedAtMs + 605,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: null,
+        event_type: 'step_completed',
+        payload: { outcome: 'completed' },
+      });
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:turn-completed',
+        occurred_at_ms: emittedAtMs + 606,
+        turn_id: runContract.admission.turn_id,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'turn_completed',
+        payload: { outcome: 'completed' },
+      });
+      await emitRuntimeEvent({
+        ...common,
+        runtime_event_ref: 'harness:test:run-completed',
+        occurred_at_ms: emittedAtMs + 607,
+        turn_id: null,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'run_completed',
+        payload: { outcome: 'built', checkpoint_status: 'not_applicable' },
+      });
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: resultingSourceTree,
+          assistant_text: fullText,
+          verification_step_id: stepId,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run without a candidate'); },
+    async reconcileRun() { return Object.freeze({ status: 'completed' }); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    onProviderOutputDelta(event) {
+      observed.push(event);
+    },
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  const result = await service.generate(attemptedRequest);
+
+  assert.equal(Object.hasOwn(result, 'draft_id'), true);
+  assert.equal(observed.length, 600);
+  assert.equal(observed.every((event) => event.event_version === 'builder-generation-output.v1'), true);
+  assert.equal(observed.at(0).display_delta_text, 'stream 001. ');
+  assert.equal(observed.at(-1).display_delta_text, 'stream 600. ');
+  assert.equal(lifecycle.calls.programmingRuntime.length, 607);
+  assert.equal(lifecycle.calls.programmingRuntimeBatches.length, 11);
+  assert.deepEqual(
+    lifecycle.calls.programmingRuntimeBatches.map((batch) => batch.runtime_events.length),
+    [1, 1, 1, 128, 128, 128, 128, 89, 1, 1, 1],
+  );
+  assert.equal(
+    Math.max(
+      ...lifecycle.calls.programmingRuntimeBatches
+        .map((batch) => batch.runtime_events.length),
+    ),
+    MAX_APPEND_EVENTS,
+  );
+  assert.equal(
+    lifecycle.calls.programmingRuntimeBatches.some((batch) => batch.runtime_events.length > 1),
+    true,
+  );
+});
+
+test('closes Harness candidate checks when the admitted environment is unavailable', async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer</h1>\n' }],
+  });
+  const resultingSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer updated</h1>\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const reconciliationStatuses = [];
+  let repairCount = 0;
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract, event_sink: eventSink }) {
+      const stepId = `builder-run-step:${UUIDS[7]}`;
+      await eventSink.emit({
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+        runtime_event_ref: 'harness:test:env-run-started',
+        occurred_at_ms: 101,
+        turn_id: null,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'run_started',
+        payload: { mode: 'build' },
+      });
+      await eventSink.emit({
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+        runtime_event_ref: 'harness:test:env-turn-started',
+        occurred_at_ms: 102,
+        turn_id: runContract.admission.turn_id,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'turn_started',
+        payload: { message_id: runContract.input.message_id },
+      });
+      await eventSink.emit({
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+        runtime_event_ref: 'harness:test:env-step-started',
+        occurred_at_ms: 103,
+        turn_id: runContract.admission.turn_id,
+        step_id: stepId,
+        tool_call_id: null,
+        event_type: 'step_started',
+        payload: { step_index: 1 },
+      });
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: resultingSourceTree,
+          assistant_text: 'Updated the focus timer.',
+          verification_step_id: stepId,
+        })),
+      });
+    },
+    async repairRun() {
+      repairCount += 1;
+      throw new Error('repair must not run for unavailable check environments');
+    },
+    async reconcileRun(_handle, { checkpoint_status: checkpointStatus }) {
+      reconciliationStatuses.push(checkpointStatus);
+      return Object.freeze({ status: 'completed' });
+    },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    codingLoopCheckCoordinator: {
+      coordinator_version: 'builder-coding-loop-check-coordinator.v1',
+      async run_automatic_candidate_check() {
+        return Object.freeze({
+          status: 'completed',
+          profile: Object.freeze({
+            command_profile_id: 'builder-check-profile:npm-test',
+            command_kind: 'test',
+            command_display: 'npm test',
+          }),
+          check_run_status_projection: Object.freeze({
+            status: 'incomplete',
+            label: 'Check unavailable',
+            summary: 'The admitted check workspace needs prepared dependencies or local toolchain access before this check can run.',
+          }),
+          duration_ms: 120,
+        });
+      },
+    },
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  const result = await service.generate(attemptedRequest);
+
+  assert.equal(Object.hasOwn(result, 'draft_id'), true);
+  assert.equal(result.title, 'Project update needs check environment');
+  assert.match(result.summary, /does not prove your machine lacks dependencies/u);
+  assert.equal(repairCount, 0);
+  assert.deepEqual(reconciliationStatuses, ['created']);
+  const completedContext = lifecycle.calls.candidate[0].context;
+  const stream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: completedContext.conversation.conversation_id,
+      created_at_ms: completedContext.conversation.created_at_ms,
+      events: completedContext.events,
+    },
+  });
+  const commandFacts = stream.conversation.items.filter((item) => (
+    item.item_kind === 'programming_runtime_tool_activity'
+    && item.tool_kind === 'command'
+    && item.check_result !== null
+  ));
+  assert.equal(commandFacts.length, 2);
+  assert.equal(commandFacts.at(-1).state, 'failed');
+  assert.equal(commandFacts.at(-1).failure_class, 'environment_unavailable');
+  assert.equal(commandFacts.at(-1).check_result.status, 'incomplete');
+});
+
+test('preserves interrupted Harness edits as a verified checkpoint without claiming checks ran', async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Before</h1>\n' }],
+  });
+  const resultingSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>After</h1>\n' }],
+  });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const checkpoints = [];
+  let automaticCheckCount = 0;
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract, event_sink: eventSink }) {
+      await eventSink.emit({
+        protocol_version: 'builder-programming-runtime.v1',
+        run_id: runContract.admission.run_id,
+        runtime_event_ref: 'harness:test:interrupted-run-started',
+        occurred_at_ms: 101,
+        turn_id: null,
+        step_id: null,
+        tool_call_id: null,
+        event_type: 'run_started',
+        payload: { mode: 'build' },
+      });
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'failed',
+          runtime_code: 'builder_harness_programming_runtime_idle_timeout',
+          runtime_cause_code: 'builder_harness_programming_runtime_idle_timeout',
+          resulting_source_tree: resultingSourceTree,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run after interruption'); },
+    async reconcileRun() { throw new Error('reconcile must not run after interruption'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: false });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 5_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+      automaticDraftCheckpointService: {
+        record_verified_candidate_checkpoint(input) {
+          checkpoints.push(input);
+          return {
+            status: 'ready',
+            draft_checkpoint: { draft_checkpoint: { checkpoint_sequence: checkpoints.length } },
+          };
+        },
+      },
+      codingLoopCheckCoordinator: {
+        async run_automatic_candidate_check() {
+          automaticCheckCount += 1;
+          throw new Error('check must not run for an interrupted candidate');
+        },
+      },
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  const result = await service.generate(attemptedRequest);
+
+  assert.equal(result.version, 'builder-generation-result.v2');
+  assert.equal(result.source_tree.files[0].content, '<h1>After</h1>\n');
+  assert.match(result.summary, /改动已保留/u);
+  assert.equal(git.receipts.length, 1);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
+  assert.equal(lifecycle.calls.checkpoint.length, 1);
+  assert.equal(lifecycle.calls.checkpoint[0].context.events.at(-1).event_type, 'programming_runtime_event_recorded');
+  assert.equal(automaticCheckCount, 0);
+  assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.match(lifecycle.calls.candidate[0].assistant_text, /本轮编码已结束/u);
+  assert.match(lifecycle.calls.candidate[0].assistant_text, /自动检查/u);
+  assert.match(lifecycle.calls.candidate[0].assistant_text, /下一步/u);
+  assert.doesNotMatch(lifecycle.calls.candidate[0].assistant_text, /自动检查.*已通过/u);
+  assert.equal(lifecycle.calls.failure.length, 0);
+});
+
+test('Harness cancellation cannot publish a late candidate, checkpoint, or retry failure', async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  let resolveStarted;
+  const started = new Promise((resolve) => { resolveStarted = resolve; });
+  let resolveCompletion;
+  let cancelCalls = 0;
+  let cancelReason = null;
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract }) {
+      const completion = new Promise((resolve) => { resolveCompletion = resolve; });
+      const handle = Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion,
+      });
+      setImmediate(resolveStarted);
+      return handle;
+    },
+    async repairRun() { throw new Error('repair must not run after cancellation'); },
+    async reconcileRun() { throw new Error('reconcile must not run after cancellation'); },
+    async cancelRun(handle, reason) {
+      cancelCalls += 1;
+      cancelReason = reason;
+      resolveCompletion(Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        run_id: handle.run_id,
+        status: 'cancelled',
+        resulting_source_tree: null,
+      }));
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult() },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  const generation = service.generate(attemptedRequest);
+  await started;
+  assert.deepEqual(service.cancel({ request_id: attemptedRequest.request_digest }), {
+    request_id: attemptedRequest.request_digest,
+    cancelled: true,
+  });
+  assert.equal(lifecycle.calls.completeFailure.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
+
+  await assert.rejects(generation, { code: 'builder_generation_cancelled' });
+  assert.equal(cancelCalls, 1);
+  assert.equal(cancelReason, 'user_requested');
+  assert.equal(git.receipts.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
+  assert.equal(lifecycle.calls.cancel.length, 1);
+});
+
+test('maps Harness supervision boundaries to distinct public retryable diagnostics', async (t) => {
+  for (const [runtimeCode, expectedCode] of [
+    ['builder_harness_programming_runtime_timeout', 'builder_generation_timeout'],
+    ['builder_harness_programming_runtime_idle_timeout', 'builder_generation_runtime_stalled'],
+    ['builder_harness_programming_run_limit_reached', 'builder_generation_run_limit_reached'],
+  ]) await t.test(runtimeCode, async () => {
+  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+  const lifecycle = conversationService();
+  const git = gitAuthority();
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract }) {
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'failed',
+          runtime_code: runtimeCode,
+          runtime_cause_code: runtimeCode,
+          resulting_source_tree: null,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run after timeout'); },
+    async reconcileRun() { throw new Error('reconcile must not run after timeout'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 5_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      gitAuthority: git,
+      projectReadAuthority: { load_current: () => readResult() },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  await assert.rejects(service.generate(attemptedRequest), {
+    code: expectedCode,
+    retryable: true,
+  });
+  assert.equal(lifecycle.calls.failure.length, 1);
+  assert.equal(lifecycle.calls.failure[0].failure_code, expectedCode);
+  assert.equal(git.receipts.length, 0);
+  });
 });
 
 test('records steering intent on an active run without cancelling provider work', async () => {
@@ -5693,7 +7556,7 @@ test('records steering intent on an active run without cancelling provider work'
     lifecycle.calls.candidate[0].context.events.some((event) => event.event_type === 'turn_steered'),
     true,
   );
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 8);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 22);
   assert.doesNotMatch(
     JSON.stringify(lifecycle.calls.steering[0]),
     /credential|source_tree|git_candidate_receipt|tree_oid/iu,
@@ -5764,7 +7627,7 @@ test('records queued follow-up intent on an active run without cancelling provid
     lifecycle.calls.candidate[0].context.events.some((event) => event.event_type === 'turn_followup_queued'),
     true,
   );
-  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 8);
+  assert.equal(lifecycle.calls.candidate[0].context.start_head.sequence, 22);
   assert.doesNotMatch(
     JSON.stringify(lifecycle.calls.queuedFollowup[0]),
     /credential|source_tree|git_candidate_receipt|tree_oid/iu,
@@ -6331,9 +8194,9 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(lifecycle.calls.begin.length, 1);
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.cancel.length, 1);
-  assert.equal(lifecycle.calls.failure.length, 1);
-  assert.equal(lifecycle.calls.failure[0].context.ids.task_id === null, false);
-  assert.equal(lifecycle.calls.completeFailure.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].context.ids.task_id === null, false);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.equal(git.receipts.length, 0);
@@ -6378,9 +8241,9 @@ test('rejects same-digest cross-route concurrency before creating a second conve
   assert.equal(answerLifecycle.calls.begin.length, 0);
   assert.equal(answerLifecycle.calls.question.length, 1);
   assert.equal(answerLifecycle.calls.cancel.length, 1);
-  assert.equal(answerLifecycle.calls.failure.length, 1);
-  assert.equal(answerLifecycle.calls.failure[0].context.ids.task_id, null);
-  assert.equal(answerLifecycle.calls.completeFailure.length, 0);
+  assert.equal(answerLifecycle.calls.failure.length, 0);
+  assert.equal(answerLifecycle.calls.completeFailure.length, 1);
+  assert.equal(answerLifecycle.calls.completeFailure[0].context.ids.task_id, null);
   assert.equal(answerLifecycle.calls.candidate.length, 0);
   assert.equal(answerLifecycle.calls.explanation.length, 0);
   assert.equal(answerGit.receipts.length, 0);
@@ -6462,7 +8325,7 @@ test('uses read authority for existing projects and stores a main-only pending d
   assert.match(pending.git_request_id, /^builder-git-request:/u);
   assert.equal(pending.candidate_proof.candidate_digest, result.candidate.candidate_digest);
   assert.equal(pending.candidate_proof.resulting_tree_digest, result.candidate.resulting_tree_digest);
-  assert.equal(pending.conversation_head.sequence, 9);
+  assert.equal(pending.conversation_head.sequence, 20);
   assert.equal(pending.conversation_event_admission, 'sqlite_recorded');
   assert.equal(pending.restart_restore, 'not_persisted');
 
@@ -6652,7 +8515,7 @@ test('generates a replacement draft from pending candidate source squashed onto 
   const savedSourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'src/app.js', content: 'export const before = true;\n' }],
   });
-  let firstGeneratedSourceTree = null;
+  const verifiedCandidateTrees = new Map();
   const readCurrentCalls = [];
   const transportInputs = [];
   const bindingCalls = [];
@@ -6665,12 +8528,13 @@ test('generates a replacement draft from pending candidate source squashed onto 
       gitAuthority: {
         ...git,
         async read_verified_candidate(receipt) {
-          if (firstGeneratedSourceTree === null) throw new Error(PRIVATE_MARKER);
+          const sourceTree = verifiedCandidateTrees.get(receipt.candidate_id);
+          if (sourceTree === undefined) throw new Error(PRIVATE_MARKER);
           return {
             result_version: 'builder-git-verified-candidate-read-result.v1',
             candidate_receipt: receipt,
             verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
-            source_tree: firstGeneratedSourceTree,
+            source_tree: sourceTree,
             code_authority: 'git_commit_tree',
             read_admission: 'verified',
           };
@@ -6698,51 +8562,75 @@ test('generates a replacement draft from pending candidate source squashed onto 
     transport: async (input) => {
       transportInputs.push(input);
       if (transportInputs.length === 2) assert.equal(bindingCalls.length, 1);
+      if (transportInputs.length === 3) assert.equal(bindingCalls.length, 2);
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
-        generated_text: JSON.stringify(transportInputs.length === 1
-          ? providerOutput({
+        generated_text: JSON.stringify(providerOutput(transportInputs.length === 1
+          ? {
             operations: [
               { operation: 'upsert', path: 'src/app.js', content: 'export const before = false;\n' },
               { operation: 'upsert', path: 'src/draft.js', content: 'export const draft = true;\n' },
             ],
-          })
-          : providerOutput({
+          }
+          : transportInputs.length === 2
+            ? {
             title: 'Calmer draft',
             summary: 'The pending draft was revised before saving.',
             operations: [
               { operation: 'upsert', path: 'src/draft.js', content: 'export const draft = "calm";\n' },
               { operation: 'upsert', path: 'styles.css', content: 'body { color: #123; }\n' },
             ],
-          })),
+          }
+            : {
+              title: 'Polished draft',
+              summary: 'The replacement draft was revised again before saving.',
+              operations: [
+                { operation: 'upsert', path: 'src/draft.js', content: 'export const draft = "polished";\n' },
+                { operation: 'upsert', path: 'styles.css', content: 'body { color: #234; }\n' },
+              ],
+            })),
       };
     },
   });
 
   const first = await service.generate(request({ existingProjectId: PROJECT_ID }));
-  firstGeneratedSourceTree = createBuilderProjectSourceTree({
+  verifiedCandidateTrees.set(first.candidate.candidate_id, createBuilderProjectSourceTree({
     files: first.source_tree.files.map((file) => ({
       path: file.path,
       content: file.content,
     })),
-  });
+  }));
   const replacement = await service.generate_draft_continuation({
     draft_id: first.draft_id,
     instruction: 'Make this pending draft calmer before saving.',
   });
+  verifiedCandidateTrees.set(replacement.candidate.candidate_id, createBuilderProjectSourceTree({
+    files: replacement.source_tree.files.map((file) => ({
+      path: file.path,
+      content: file.content,
+    })),
+  }));
+  const secondReplacement = await service.generate_draft_continuation({
+    draft_id: replacement.draft_id,
+    instruction: 'Polish the replacement draft once more before saving.',
+  });
 
-  assert.equal(transportInputs.length, 2);
+  assert.equal(transportInputs.length, 3);
   assert.match(transportInputs[1].messages[1].content, /Make this pending draft calmer/u);
   assert.match(transportInputs[1].messages[1].content, /export const draft = true/u);
   assert.match(transportInputs[1].messages[1].content, /export const before = false/u);
   assert.doesNotMatch(transportInputs[1].messages[1].content, /export const before = true/u);
-  assert.deepEqual(readCurrentCalls, [{ project_id: PROJECT_ID }, { project_id: PROJECT_ID }]);
+  assert.deepEqual(readCurrentCalls, [
+    { project_id: PROJECT_ID },
+    { project_id: PROJECT_ID },
+    { project_id: PROJECT_ID },
+  ]);
   assert.equal(lifecycle.calls.begin.length, 1);
-  assert.equal(lifecycle.calls.draftContinuationWork.length, 1);
+  assert.equal(lifecycle.calls.draftContinuationWork.length, 2);
   assert.equal(lifecycle.calls.draftContinuationWork[0].admission.draft_id, first.draft_id);
   assert.equal(lifecycle.calls.draftContinuationWork[0].instruction, 'Make this pending draft calmer before saving.');
   assert.equal(lifecycle.calls.draftContinuationWork[0].request_digest, replacement.request_id);
-  assert.equal(bindingCalls.length, 1);
+  assert.equal(bindingCalls.length, 2);
   assert.equal(bindingCalls[0].context.mode, 'work');
   assert.equal(bindingCalls[0].draft_continuation.project_id, PROJECT_ID);
   assert.equal(bindingCalls[0].draft_continuation.conversation_id, lifecycle.calls.draftContinuationWork[0].admission.conversation_id);
@@ -6753,7 +8641,7 @@ test('generates a replacement draft from pending candidate source squashed onto 
   assert.equal(bindingCalls[0].draft_continuation.continuation_id, lifecycle.calls.draftContinuationWork[0].admission.continuation_id);
   assert.equal(bindingCalls[0].draft_continuation.admission_digest, lifecycle.calls.draftContinuationWork[0].admission.admission_digest);
   assert.equal(bindingCalls[0].draft_continuation.candidate_digest, lifecycle.calls.draftContinuationWork[0].admission.candidate_digest);
-  assert.equal(lifecycle.calls.candidate.length, 2);
+  assert.equal(lifecycle.calls.candidate.length, 3);
   assert.equal(lifecycle.calls.candidate[1].context.events[0].payload.task.title, 'Revise unsaved draft');
   assert.deepEqual(lifecycle.calls.progress.map((call) => call.stage), [
     'context_ready',
@@ -6764,10 +8652,15 @@ test('generates a replacement draft from pending candidate source squashed onto 
     'provider_request_started',
     'provider_response_received',
     'result_preparing',
+    'context_ready',
+    'provider_request_started',
+    'provider_response_received',
+    'result_preparing',
   ]);
-  assert.equal(git.receipts.length, 2);
+  assert.equal(git.receipts.length, 3);
   assert.equal(git.receipts[0].expected_base_oid, '2'.repeat(40));
   assert.equal(git.receipts[1].expected_base_oid, '2'.repeat(40));
+  assert.equal(git.receipts[2].expected_base_oid, '2'.repeat(40));
   assert.equal(replacement.version, 'builder-generation-result.v2');
   assert.equal(replacement.project_id, PROJECT_ID);
   assert.equal(replacement.existing_project_id, PROJECT_ID);
@@ -6788,6 +8681,20 @@ test('generates a replacement draft from pending candidate source squashed onto 
     replacement.source_tree.files.find((file) => file.path === 'styles.css').content,
     'body { color: #123; }\n',
   );
+  assert.equal(secondReplacement.title, 'Polished draft');
+  assert.notEqual(
+    secondReplacement.source_tree.source_tree_digest,
+    replacement.source_tree.source_tree_digest,
+  );
+  assert.equal(
+    secondReplacement.source_tree.files.find((file) => file.path === 'src/draft.js').content,
+    'export const draft = "polished";\n',
+  );
+  assert.equal(
+    secondReplacement.source_tree.files.find((file) => file.path === 'styles.css').content,
+    'body { color: #234; }\n',
+  );
+  assert.notEqual(secondReplacement.draft_id, replacement.draft_id);
   const pending = await service.read_pending_draft({ draft_id: replacement.draft_id });
   assert.equal(pending.candidate_proof.candidate_digest, replacement.candidate.candidate_digest);
   assert.equal(pending.candidate_proof.expected_base_oid, '2'.repeat(40));
@@ -6795,6 +8702,130 @@ test('generates a replacement draft from pending candidate source squashed onto 
     JSON.stringify(replacement),
     /git_candidate_receipt|verification_receipt|operations|provider\.example|credential|secret|Authorization|Bearer/iu,
   );
+});
+
+test('continues an automatically materialized draft against its verified workspace baseline', async () => {
+  const savedSourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'src/app.js', content: 'export const state = "saved";\n' }],
+  });
+  let observedWorkspace = savedSourceTree;
+  const candidateTrees = new Map();
+  const projections = [];
+  const transportInputs = [];
+  const baseGit = gitAuthority();
+  const git = {
+    ...baseGit,
+    async persist_candidate_commit(input) {
+      const receipt = await baseGit.persist_candidate_commit(input);
+      candidateTrees.set(receipt.candidate_id, input.candidate.resulting_source_tree);
+      return receipt;
+    },
+    async read_verified_candidate(receipt) {
+      const sourceTree = candidateTrees.get(receipt.candidate_id);
+      if (sourceTree === undefined) throw new Error(PRIVATE_MARKER);
+      return {
+        result_version: 'builder-git-verified-candidate-read-result.v1',
+        candidate_receipt: receipt,
+        verification_receipt: createBuilderGitCandidateVerificationReceipt(receipt),
+        source_tree: sourceTree,
+        code_authority: 'git_commit_tree',
+        read_admission: 'verified',
+      };
+    },
+  };
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      gitAuthority: git,
+      projectReadAuthority: {
+        load_current() { return readResult(savedSourceTree); },
+      },
+      workspaceReadAuthority: {
+        load_fresh_workspace() { return localWorkspaceReadResult(observedWorkspace); },
+      },
+      currentProjection: {
+        project_current(input) {
+          projections.push(structuredClone(input));
+          observedWorkspace = candidateTrees.get(input.candidate_receipt.candidate_id);
+          return {
+            result_version: 'builder-git-current-projection-result.v1',
+            project_id: input.candidate_receipt.project_id,
+            commit_oid: input.candidate_receipt.commit_oid,
+            tree_oid: input.candidate_receipt.tree_oid,
+            expected_base_oid: input.candidate_receipt.expected_base_oid,
+            previous_main_oid: input.candidate_receipt.expected_base_oid,
+            main_ref: input.projection_mode === 'base_cas' ? 'updated' : 'repaired',
+            worktree: 'materialized',
+            worktree_file_count: observedWorkspace.files.length,
+            projection_authority: 'git_main_ref_and_materialized_worktree',
+            source_admission: 'git_verified_candidate',
+          };
+        },
+      },
+    }),
+    transport: async () => {
+      transportInputs.push(true);
+      const operations = transportInputs.length === 1
+        ? [
+          { operation: 'upsert', path: 'src/app.js', content: 'export const state = "draft";\n' },
+          { operation: 'upsert', path: 'src/draft.js', content: 'export const ready = true;\n' },
+        ]
+        : transportInputs.length === 2
+          ? [
+            { operation: 'upsert', path: 'src/app.js', content: 'export const state = "revised";\n' },
+            { operation: 'upsert', path: 'src/draft.js', content: 'export const ready = true;\n' },
+          ]
+          : [
+            { operation: 'upsert', path: 'src/app.js', content: 'export const state = "polished";\n' },
+            { operation: 'upsert', path: 'src/draft.js', content: 'export const ready = true;\n' },
+          ];
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: JSON.stringify(providerOutput({ operations })),
+      };
+    },
+  });
+
+  const first = await service.generate(request({ existingProjectId: PROJECT_ID }));
+  const replacement = await service.generate_draft_continuation({
+    draft_id: first.draft_id,
+    instruction: 'Revise the materialized draft.',
+  });
+  const secondReplacement = await service.generate_draft_continuation({
+    draft_id: replacement.draft_id,
+    instruction: 'Polish the materialized draft again.',
+  });
+
+  assert.equal(projections.length, 3);
+  assert.equal(projections[0].projection_mode, 'base_cas');
+  assert.equal(projections[0].expected_workspace_source_tree_digest, savedSourceTree.source_tree_digest);
+  assert.equal(projections[1].projection_mode, 'sqlite_current_repair');
+  assert.equal(projections[1].expected_workspace_source_tree_digest, first.source_tree.source_tree_digest);
+  assert.equal(projections[2].projection_mode, 'sqlite_current_repair');
+  assert.equal(
+    projections[2].expected_workspace_source_tree_digest,
+    replacement.source_tree.source_tree_digest,
+  );
+  assert.equal(observedWorkspace.source_tree_digest, secondReplacement.source_tree.source_tree_digest);
+  assert.notEqual(secondReplacement.source_tree.source_tree_digest, replacement.source_tree.source_tree_digest);
+  assert.equal(
+    secondReplacement.source_tree.files.find((file) => file.path === 'src/app.js').content,
+    'export const state = "polished";\n',
+  );
+  assert.equal(git.receipts[0].expected_base_oid, '2'.repeat(40));
+  assert.equal(git.receipts[1].expected_base_oid, '2'.repeat(40));
+  assert.equal(git.receipts[2].expected_base_oid, '2'.repeat(40));
+
+  observedWorkspace = createBuilderProjectSourceTree({
+    files: [{ path: 'external.txt', content: 'user edit\n' }],
+  });
+  await assert.rejects(
+    service.generate_draft_continuation({
+      draft_id: secondReplacement.draft_id,
+      instruction: 'Try another revision.',
+    }),
+    { code: 'builder_generation_workspace_changed' },
+  );
+  assert.equal(projections.length, 3);
 });
 
 test('fails closed before provider dispatch when draft continuation Task Address binding fails', async () => {

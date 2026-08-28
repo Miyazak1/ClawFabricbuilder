@@ -7,16 +7,18 @@ const test = require('node:test');
 
 const {
   READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL,
+  DECIDE_DEV_SERVER_APPROVAL_CHANNEL,
   RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL,
   REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL,
   STOP_CURRENT_LIVE_PREVIEW_CHANNEL,
+  UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL,
   BuilderLivePreviewIpcError,
   createBuilderLivePreviewIpcAdapter,
 } = require('../electron/builder-live-preview-ipc-adapter.cjs');
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID = `builder-conversation:${UUID}:223e4567-e89b-42d3-a456-426614174000`;
 const DRAFT_ID = `builder-generation-draft:${'d'.repeat(64)}`;
 
 function windowAuthority() {
@@ -67,6 +69,7 @@ function status(overrides = {}) {
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
     preview_kind: 'live_static_web',
+    entry_url: null,
     status: 'unavailable',
     can_start: false,
     can_reload: false,
@@ -78,6 +81,7 @@ function status(overrides = {}) {
     download_block_count: 0,
     window_open_block_count: 0,
     message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
+    dev_server_approval: null,
     unavailable_reason: 'preview_source_resolver_not_connected',
     updated_at_ms: 50,
     authority: authority(),
@@ -97,6 +101,8 @@ function adapter(overrides = {}) {
     reloadCurrentLivePreview: overrides.reloadCurrentLivePreview ?? service,
     stopCurrentLivePreview: overrides.stopCurrentLivePreview ?? service,
     readCurrentLivePreviewStatus: overrides.readCurrentLivePreviewStatus ?? service,
+    updateCurrentLivePreviewLayout: overrides.updateCurrentLivePreviewLayout ?? service,
+    decideDevServerApproval: overrides.decideDevServerApproval ?? service,
     mainWindowRef: active.mainWindowRef,
   });
   return { active, calls, value };
@@ -113,12 +119,16 @@ test('live preview adapter exposes fixed current-preview channels only', async (
     'reloadCurrentPreview',
     'stopCurrentPreview',
     'readCurrentPreviewStatus',
+    'updateCurrentPreviewLayout',
+    'decideDevServerApproval',
   ]);
   assert.deepEqual(Object.keys(value.channels), [
     'requestCurrentDraftPreview',
     'reloadCurrentPreview',
     'stopCurrentPreview',
     'readCurrentPreviewStatus',
+    'updateCurrentPreviewLayout',
+    'decideDevServerApproval',
   ]);
   assert.equal(
     value.channels.requestCurrentDraftPreview.channel,
@@ -127,6 +137,8 @@ test('live preview adapter exposes fixed current-preview channels only', async (
   assert.equal(value.channels.reloadCurrentPreview.channel, RELOAD_CURRENT_LIVE_PREVIEW_CHANNEL);
   assert.equal(value.channels.stopCurrentPreview.channel, STOP_CURRENT_LIVE_PREVIEW_CHANNEL);
   assert.equal(value.channels.readCurrentPreviewStatus.channel, READ_CURRENT_LIVE_PREVIEW_STATUS_CHANNEL);
+  assert.equal(value.channels.updateCurrentPreviewLayout.channel, UPDATE_CURRENT_LIVE_PREVIEW_LAYOUT_CHANNEL);
+  assert.equal(value.channels.decideDevServerApproval.channel, DECIDE_DEV_SERVER_APPROVAL_CHANNEL);
   assert.equal(value.authority.active_renderer_required, true);
   assert.equal(value.authority.source_tree_from_renderer, false);
   assert.equal(value.authority.provider_dispatch, false);
@@ -146,8 +158,9 @@ test('live preview adapter exposes fixed current-preview channels only', async (
   assert.equal(Object.isFrozen(projected.authority), true);
   assert.doesNotMatch(
     JSON.stringify(projected),
-    /"source_tree":|content_digest|entry_url|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
+    /"source_tree":|content_digest|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
   );
+  assert.equal(projected.entry_url, null);
 });
 
 test('live preview adapter preserves bounded runtime block counts', async () => {
@@ -176,6 +189,29 @@ test('live preview adapter preserves bounded runtime block counts', async () => 
   assert.equal(projected.window_open_block_count, 1);
 });
 
+test('live preview adapter preserves fixed failure reasons from the main preview service', async () => {
+  for (const unavailableReason of [
+    'live_preview_static_server_unavailable',
+    'live_preview_view_attachment_failed',
+    'live_preview_dev_server_unavailable',
+  ]) {
+    const { active, value } = adapter({
+      result: {
+        status: 'failed',
+        can_start: true,
+        message: 'Live preview could not start for the current draft.',
+        unavailable_reason: unavailableReason,
+      },
+    });
+
+    const projected = await value.channels.requestCurrentDraftPreview.invoke(active.event, request());
+
+    assert.equal(projected.status, 'failed');
+    assert.equal(projected.unavailable_reason, unavailableReason);
+    assert.doesNotMatch(JSON.stringify(projected), /private|content_digest|preview_origin/iu);
+  }
+});
+
 test('live preview adapter supports read, reload, and stop through the same exact request shape', async () => {
   const names = [
     'readCurrentPreviewStatus',
@@ -192,6 +228,80 @@ test('live preview adapter supports read, reload, and stop through the same exac
     assert.deepEqual(calls, [request()]);
     assert.equal(projected.project_id, PROJECT_ID);
     assert.equal(projected.conversation_id, CONVERSATION_ID);
+  }
+});
+
+test('live preview adapter forwards only an exact one-time development-server decision', async () => {
+  const approvalRequestId =
+    'builder-live-preview-dev-server-approval-request:323e4567-e89b-42d3-a456-426614174000';
+  const { active, calls, value } = adapter({
+    result: {
+      preview_kind: 'live_dev_server_web',
+      status: 'approval_required',
+      message: 'Allow this project development server to run once.',
+      dev_server_approval: {
+        request_version: 'builder-live-preview-dev-server-approval-request.v1',
+        approval_request_id: approvalRequestId,
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        command_display: 'npm run dev',
+        source_tree_digest: `sha256:${'a'.repeat(64)}`,
+        risk_notice: 'This project script may modify files or use the network.',
+        requested_at_ms: 100,
+        expires_at_ms: 300_100,
+        decisions: ['allow_once', 'deny'],
+      },
+      authority: { ...authority(), command_execution: true },
+      unavailable_reason: null,
+    },
+  });
+  const decision = {
+    ...request(),
+    approval_request_id: approvalRequestId,
+    decision: 'allow_once',
+  };
+
+  const projected = await value.channels.decideDevServerApproval.invoke(active.event, decision);
+  assert.deepEqual(calls, [decision]);
+  assert.equal(projected.status, 'approval_required');
+  assert.equal(projected.dev_server_approval.command_display, 'npm run dev');
+
+  for (const invalid of [
+    { ...decision, decision: 'always_allow' },
+    { ...decision, port: 5173 },
+    { ...decision, command: 'npm run dev' },
+    { ...decision, approval_request_id: 'bad' },
+  ]) {
+    await assert.rejects(
+      value.channels.decideDevServerApproval.invoke(active.event, invalid),
+      { code: 'builder_live_preview_invalid' },
+    );
+  }
+});
+
+test('live preview adapter accepts only bounded UI geometry on the dedicated layout channel', async () => {
+  const { active, calls, value } = adapter({
+    result: { status: 'ready', message: 'Live preview is ready.', unavailable_reason: null },
+  });
+  const layout = request({ view_bounds: { x: 820, y: 180, width: 420, height: 520 } });
+  const projected = await value.channels.updateCurrentPreviewLayout.invoke(active.event, layout);
+  assert.deepEqual(calls, [layout]);
+  assert.equal(projected.status, 'ready');
+
+  const hidden = request({ view_bounds: null });
+  await value.channels.updateCurrentPreviewLayout.invoke(active.event, hidden);
+  assert.deepEqual(calls, [layout, hidden]);
+
+  for (const invalid of [
+    request({ view_bounds: { x: -1, y: 0, width: 20, height: 20 } }),
+    request({ view_bounds: { x: 0, y: 0, width: 0, height: 20 } }),
+    request({ view_bounds: { x: 0, y: 0, width: 20, height: 20, extra: true } }),
+    request({ view_bounds: { x: 0, y: 0, width: 20.5, height: 20 } }),
+  ]) {
+    await assert.rejects(
+      value.channels.updateCurrentPreviewLayout.invoke(active.event, invalid),
+      { code: 'builder_live_preview_invalid' },
+    );
   }
 });
 
@@ -280,6 +390,8 @@ test('live preview adapter rejects malformed options without invoking getters or
     reloadCurrentLivePreview: async () => status(),
     stopCurrentLivePreview: async () => status(),
     readCurrentLivePreviewStatus: async () => status(),
+    updateCurrentLivePreviewLayout: async () => status(),
+    decideDevServerApproval: async () => status(),
   };
   Object.defineProperty(accessorOptions, 'mainWindowRef', {
     enumerable: true,
@@ -324,6 +436,6 @@ test('live preview adapter source has no provider, tool, source, Git, storage, o
   assert.match(source, /direct_preload_exposure:\s*false/u);
   assert.doesNotMatch(
     source,
-    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|WebContentsView|safeStorage|node:sqlite|DatabaseSync|builder-git-|fetch\s*\(|https?:|saveDraft|generate|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
+    /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|WebContentsView|safeStorage|node:sqlite|DatabaseSync|builder-git-|fetch\s*\(|saveDraft|generate|persist_candidate_commit|write_current|local-provider-executor|chat_planner|ChatCreatePage|Canvas|JobMeta/iu,
   );
 });

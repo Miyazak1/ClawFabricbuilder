@@ -21,7 +21,7 @@ const MAX_CONTEXT_FILES = 8;
 const MAX_CONTEXT_FILE_BYTES = 16 * 1024;
 const MAX_CONTEXT_TOTAL_BYTES = MAX_CONTEXT_FILES * MAX_CONTEXT_FILE_BYTES;
 const MAX_EVENT_SEQUENCE = 4_096;
-const MAX_CONTEXT_EVENTS = 64;
+const MAX_CONTEXT_EVENTS = MAX_EVENT_SEQUENCE;
 const INPUT_KEYS = Object.freeze([
   'supervised_action_admission',
   'source_context_result',

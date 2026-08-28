@@ -73,7 +73,7 @@ const PROJECT_READ_KEYS = Object.freeze([
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
@@ -137,8 +137,12 @@ function safeProjectId(value) {
   return safePattern(value, PROJECT_ID_PATTERN);
 }
 
-function safeConversationId(value) {
-  return safePattern(value, CONVERSATION_ID_PATTERN);
+function safeConversationId(value, projectId) {
+  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
+  if (!conversationId.startsWith(
+    `builder-conversation:${projectId.slice('builder-project:'.length)}:`,
+  )) fail();
+  return conversationId;
 }
 
 function safeDigest(value) {
@@ -252,11 +256,9 @@ function sanitizeProjectReadResult(value, request) {
   );
   if (
     valueAt(receipt, 'project_id') !== request.project_id
-    || valueAt(receipt, 'conversation_id') !== request.conversation_id
     || valueAt(receipt, 'revision_receipt_digest') !== request.revision_receipt_digest
     || valueAt(receipt, 'resulting_tree_digest') !== sourceTree.source_tree_digest
     || gitPair.candidate_receipt.project_id !== request.project_id
-    || gitPair.candidate_receipt.conversation_id !== request.conversation_id
     || gitPair.candidate_receipt.resulting_tree_digest !== sourceTree.source_tree_digest
     || gitPair.candidate_receipt.commit_oid !== valueAt(receipt, 'commit_oid')
     || gitPair.candidate_receipt.tree_oid !== valueAt(receipt, 'tree_oid')
@@ -318,7 +320,10 @@ function createBuilderLivePreviewSourceResolver(rawOptions) {
       );
       const receipt = pair.candidate_receipt;
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
-      const conversationId = safeConversationId(valueAt(rawRequest, 'conversation_id'));
+      const conversationId = safeConversationId(
+        valueAt(rawRequest, 'conversation_id'),
+        projectId,
+      );
       if (receipt.project_id !== projectId || receipt.conversation_id !== conversationId) fail();
       const verifyCheckpoint = ownMethod(checkpointService, 'verify_current_candidate_checkpoint');
       const readVerifiedCandidate = ownMethod(gitAuthority, 'read_verified_candidate');
@@ -378,9 +383,10 @@ function createBuilderLivePreviewSourceResolver(rawOptions) {
 
     async resolveSavedRevisionPreviewSource(rawRequest) {
       exactObject(rawRequest, SAVED_REVISION_KEYS);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
       const request = freezeDeep({
-        project_id: safeProjectId(valueAt(rawRequest, 'project_id')),
-        conversation_id: safeConversationId(valueAt(rawRequest, 'conversation_id')),
+        project_id: projectId,
+        conversation_id: safeConversationId(valueAt(rawRequest, 'conversation_id'), projectId),
         revision_receipt_digest: safeDigest(valueAt(rawRequest, 'revision_receipt_digest')),
       });
       const loadRevision = ownMethod(projectReadAuthority, 'load_revision');

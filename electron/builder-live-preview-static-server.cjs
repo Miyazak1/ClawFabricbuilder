@@ -30,7 +30,7 @@ const HTML_CSP = [
   "frame-ancestors 'none'",
   "img-src 'self' data:",
   "object-src 'none'",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
 ].join('; ');
 const TEXT_ENCODER = new TextEncoder();

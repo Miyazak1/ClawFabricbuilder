@@ -8,6 +8,9 @@ import type { BuilderTaskStreamPort } from './builderPorts';
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
 const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174000';
+const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
+const OTHER_TASK_ADDRESS_ID = 'builder-task-address:223e4567-e89b-42d3-a456-426614174001';
+const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174000';
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const OTHER_UUID = '223e4567-e89b-42d3-a456-426614174000';
 
@@ -37,7 +40,8 @@ function readyWire(projectId = PROJECT_ID, uuid = UUID): unknown {
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: projectId,
     conversation: {
-      conversation_id: `builder-conversation:${uuid}`,
+      conversation_id:
+        `builder-conversation:${uuid}:323e4567-e89b-42d3-a456-426614174000`,
       created_at_ms: 1,
       head_sequence: 4,
       recorded_active_turn_id: null,
@@ -134,13 +138,31 @@ function setupChanged(read: BuilderTaskStreamPort['read'] = async () => readyWir
         project_id: projectId,
       }));
     },
+    emitLiveChanged(projectId = PROJECT_ID, cursor = 1) {
+      if (listener === null) throw new Error('missing changed listener');
+      listener(Object.freeze({
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: projectId,
+        change_kind: 'live_only',
+        cursor,
+      }));
+    },
+    emitDurableChanged(projectId = PROJECT_ID, cursor = 1) {
+      if (listener === null) throw new Error('missing changed listener');
+      listener(Object.freeze({
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: projectId,
+        change_kind: 'durable_append',
+        cursor,
+      }));
+    },
   };
 }
 
 async function flushController(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 176));
 }
 
 describe('Builder conversation controller', () => {
@@ -151,7 +173,7 @@ describe('Builder conversation controller', () => {
     });
     const { controller, read } = setup(async () => pending);
 
-    const operation = controller.load(PROJECT_ID);
+    const operation = controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     expect(controller.getSnapshot()).toMatchObject({
       status: 'loading',
       project_id: PROJECT_ID,
@@ -161,7 +183,7 @@ describe('Builder conversation controller', () => {
     resolve(readyWire());
     const result = await operation;
 
-    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(result.status).toBe('ready');
     expect(result.conversation?.state).toBe('ready');
     if (result.conversation?.state !== 'ready') throw new Error('expected ready stream');
@@ -171,7 +193,7 @@ describe('Builder conversation controller', () => {
 
   it('represents an absent conversation as a durable read result', async () => {
     const { controller } = setup(async () => absentWire());
-    const result = await controller.load(PROJECT_ID);
+    const result = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 
     expect(result.status).toBe('absent');
     expect(result.conversation?.state).toBe('absent');
@@ -185,17 +207,17 @@ describe('Builder conversation controller', () => {
     });
     const { controller, read } = setup(async () => pending);
 
-    const first = controller.load(PROJECT_ID);
-    const second = controller.load(PROJECT_ID);
+    const first = controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    const second = controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     resolve(absentWire());
 
     expect(await first).toBe(await second);
-    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
+    expect(read).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
   });
 
   it('retains the previous stream during manual refresh and marks it stale on failure', async () => {
     const { controller, read } = setup(async () => readyWire());
-    await controller.load(PROJECT_ID);
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     read.mockImplementation(async () => {
       throw new Error('private local database marker');
     });
@@ -214,7 +236,42 @@ describe('Builder conversation controller', () => {
     expect(JSON.stringify(result)).not.toContain('private local database marker');
   });
 
-  it('refreshes the current project from changed hints without blanking visible activity', async () => {
+  it('retains visible activity when the same project is loaded again', async () => {
+    let resolveReload!: (value: unknown) => void;
+    const reload = new Promise<unknown>((resolve) => {
+      resolveReload = resolve;
+    });
+    const { controller, read } = setup(async () => readyWire());
+    const loaded = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockImplementationOnce(async () => reload);
+
+    const operation = controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'refreshing',
+      project_id: PROJECT_ID,
+      conversation: loaded.conversation,
+    });
+
+    resolveReload(readyWire());
+    expect((await operation).status).toBe('ready');
+  });
+
+  it('probes activity without publishing visible loading or replacing the current project', async () => {
+    const { controller, read } = setup(async () => readyWire());
+    const loaded = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockImplementationOnce(async () => absentWire(OTHER_PROJECT_ID));
+    const listener = vi.fn();
+    controller.subscribe(listener);
+
+    const result = await controller.probe(OTHER_PROJECT_ID, OTHER_TASK_ADDRESS_ID);
+
+    expect(result.status).toBe('absent');
+    expect(result.project_id).toBe(OTHER_PROJECT_ID);
+    expect(controller.getSnapshot()).toBe(loaded);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('refreshes changed activity in the background and publishes only the new ready snapshot', async () => {
     let resolveRefresh!: (value: unknown) => void;
     const firstWire = readyWire();
     const secondWire = readyWire();
@@ -222,7 +279,9 @@ describe('Builder conversation controller', () => {
       resolveRefresh = resolve;
     });
     const { controller, emitChanged, read, subscribeChanged } = setupChanged(async () => firstWire);
-    const loaded = await controller.load(PROJECT_ID);
+    const loaded = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    const listener = vi.fn();
+    controller.subscribe(listener);
     read.mockImplementationOnce(async () => refresh);
 
     emitChanged(PROJECT_ID);
@@ -230,19 +289,100 @@ describe('Builder conversation controller', () => {
 
     expect(subscribeChanged).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledTimes(2);
-    expect(controller.getSnapshot().status).toBe('refreshing');
-    expect(controller.getSnapshot().conversation).toBe(loaded.conversation);
+    expect(controller.getSnapshot()).toBe(loaded);
+    expect(listener).not.toHaveBeenCalled();
 
     resolveRefresh(secondWire);
     await flushController();
 
     expect(controller.getSnapshot().status).toBe('ready');
     expect(controller.getSnapshot().conversation?.state).toBe('ready');
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('does not publish when a cursor refresh resolves to the normalized unchanged snapshot', async () => {
+    const { controller, emitDurableChanged, read } = setupChanged(async () => readyWire());
+    const loaded = await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    const listener = vi.fn();
+    controller.subscribe(listener);
+    read.mockResolvedValueOnce(loaded.conversation);
+
+    emitDurableChanged(PROJECT_ID, 12);
+    await flushController();
+
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toBe(loaded);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('does not reacquire the durable task stream for 100 live-only delta hints', async () => {
+    const { controller, emitLiveChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockClear();
+
+    for (let cursor = 12; cursor < 112; cursor += 1) {
+      emitLiveChanged(PROJECT_ID, cursor);
+    }
+    await flushController();
+
+    expect(read).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().status).toBe('ready');
+  });
+
+  it('coalesces a synchronous burst of durable changed hints into one refresh', async () => {
+    const { controller, emitChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockClear();
+
+    for (let index = 0; index < 100; index += 1) emitChanged(PROJECT_ID);
+    await flushController();
+
+    expect(read).toHaveBeenCalledOnce();
+    expect(controller.getSnapshot().status).toBe('ready');
+  });
+
+  it('cancels a queued durable changed refresh when a foreground refresh starts', async () => {
+    const { controller, emitDurableChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockClear();
+
+    emitDurableChanged(PROJECT_ID, 12);
+    const refreshed = await controller.refresh();
+
+    expect(refreshed.status).toBe('ready');
+    expect(read).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    });
+
+    await flushController();
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('drops duplicate or older typed durable cursors after the latest refresh', async () => {
+    const { controller, emitDurableChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockClear();
+
+    emitDurableChanged(PROJECT_ID, 12);
+    emitDurableChanged(PROJECT_ID, 12);
+    emitDurableChanged(PROJECT_ID, 11);
+    await flushController();
+    expect(read).toHaveBeenCalledOnce();
+
+    read.mockClear();
+    emitDurableChanged(PROJECT_ID, 12);
+    await flushController();
+    expect(read).not.toHaveBeenCalled();
+
+    emitDurableChanged(PROJECT_ID, 13);
+    await flushController();
+    expect(read).toHaveBeenCalledOnce();
   });
 
   it('ignores other-project changed hints and unsubscribes on dispose', async () => {
     const { controller, emitChanged, read, unsubscribe } = setupChanged(async () => readyWire());
-    await controller.load(PROJECT_ID);
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     read.mockClear();
 
     emitChanged(OTHER_PROJECT_ID);
@@ -266,7 +406,7 @@ describe('Builder conversation controller', () => {
       resolveSecondRefresh = resolve;
     });
     const { controller, emitChanged, read } = setupChanged(async () => readyWire());
-    await controller.load(PROJECT_ID);
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     read.mockImplementationOnce(async () => firstRefresh);
     read.mockImplementationOnce(async () => secondRefresh);
 
@@ -294,10 +434,10 @@ describe('Builder conversation controller', () => {
       resolveFirst = resolve;
     });
     const { controller, read } = setup(async () => first);
-    const firstLoad = controller.load(PROJECT_ID);
+    const firstLoad = controller.load(PROJECT_ID, TASK_ADDRESS_ID);
     read.mockImplementation(async () => readyWire(OTHER_PROJECT_ID, OTHER_UUID));
 
-    const second = await controller.load(OTHER_PROJECT_ID);
+    const second = await controller.load(OTHER_PROJECT_ID, OTHER_TASK_ADDRESS_ID);
     resolveFirst(readyWire());
     await firstLoad;
 
@@ -323,5 +463,46 @@ describe('Builder conversation controller', () => {
       conversation: null,
       error: null,
     });
+  });
+
+  it('loads and refreshes the projectless Agent conversation by Agent identity', async () => {
+    let changedListener: Parameters<BuilderTaskStreamPort['subscribeChanged']>[0] = () => undefined;
+    const wire = {
+      stream_version: 'builder-task-stream-read-result.v1',
+      scope_kind: 'agent_conversation',
+      agent_id: AGENT_ID,
+      project_id: null,
+      conversation: null,
+      authority: {
+        conversation: 'sqlite_canonical_agent_conversation',
+        project_source: 'not_included',
+        candidate_source: 'not_loaded',
+        project_revision: 'not_inferred',
+      },
+    };
+    const read = vi.fn(async () => wire);
+    const controller = createBuilderConversationController({
+      read,
+      subscribeChanged(listener) {
+        changedListener = listener;
+        return () => undefined;
+      },
+    });
+
+    const loaded = await controller.load(null, null, AGENT_ID);
+    expect(loaded).toMatchObject({
+      status: 'absent',
+      agent_id: AGENT_ID,
+      project_id: null,
+      task_address_id: null,
+    });
+    expect(read).toHaveBeenCalledExactlyOnceWith({ agent_id: AGENT_ID });
+
+    changedListener({
+      event_version: 'builder-task-stream-changed.v1',
+      agent_id: AGENT_ID,
+    });
+    await flushController();
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

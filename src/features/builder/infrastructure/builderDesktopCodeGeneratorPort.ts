@@ -2,6 +2,8 @@ import {
   BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY,
   BuilderGenerationDiagnosticError,
   type BuilderCodeGeneratorPort,
+  type BuilderCommandApprovalRequest,
+  type BuilderCommandOutputEvent,
   type BuilderGenerationOutputEvent,
   type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
@@ -28,9 +30,11 @@ type BuilderCodeGeneratorBridge = Readonly<{
   approveCurrentProjectWrite(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
+  answerPlan(request: unknown): Promise<unknown>;
   answerDraft(request: unknown): Promise<unknown>;
   restoreDraft(request: unknown): Promise<unknown>;
   restoreRevisionAsDraft(request: unknown): Promise<unknown>;
+  restorePreviousCheckpointAsDraft(request: unknown): Promise<unknown>;
   rejectDraft(request: unknown): Promise<unknown>;
   cancel(request: unknown): Promise<unknown>;
   steer(request: unknown): Promise<unknown>;
@@ -38,6 +42,9 @@ type BuilderCodeGeneratorBridge = Readonly<{
   availability(): Promise<unknown>;
   subscribeStarted(listener: (event: unknown) => void): () => void;
   subscribeOutput(listener: (event: unknown) => void): () => void;
+  decideCommandApproval?(request: unknown): Promise<unknown>;
+  subscribeCommandApproval?(listener: (event: unknown) => void): () => void;
+  subscribeCommandOutput?(listener: (event: unknown) => void): () => void;
 }>;
 
 const REQUIRED_BRIDGE_KEYS = new Set([
@@ -52,9 +59,11 @@ const REQUIRED_BRIDGE_KEYS = new Set([
   'approveCurrentProjectWrite',
   'retry',
   'answer',
+  'answerPlan',
   'answerDraft',
   'restoreDraft',
   'restoreRevisionAsDraft',
+  'restorePreviousCheckpointAsDraft',
   'rejectDraft',
   'cancel',
   'steer',
@@ -66,6 +75,9 @@ const REQUIRED_BRIDGE_KEYS = new Set([
 const BRIDGE_KEYS = new Set([
   ...REQUIRED_BRIDGE_KEYS,
   'classifyIntent',
+  'decideCommandApproval',
+  'subscribeCommandApproval',
+  'subscribeCommandOutput',
 ]);
 const MAX_DATA_GRAPH_NODES = 20_000;
 const MAX_DATA_GRAPH_ENTRIES = 20_000;
@@ -76,14 +88,20 @@ const UTF8_ENCODER = new TextEncoder();
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const GENERATION_STARTED_EVENT_VERSION = 'builder-generation-started.v1';
 const GENERATION_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
+const GENERATION_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v1';
+const GENERATION_OUTPUT_RESET_EVENT_VERSION = 'builder-generation-output-reset.v1';
 const FAILURE_CODES = new Set<BuilderGenerationDiagnosticCode>(
   Object.keys(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY) as BuilderGenerationDiagnosticCode[],
 );
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const TASK_ADDRESS_ID_PATTERN =
+  /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONVERSATION_ID_PATTERN =
-  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^builder-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const AGENT_CONVERSATION_ID_PATTERN =
+  /^builder-agent-conversation:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TURN_ID_PATTERN =
   /^builder-turn:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ID_PATTERN =
@@ -93,6 +111,9 @@ const RUN_ID_PATTERN =
 const MESSAGE_ID_PATTERN =
   /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
+const COMMAND_APPROVAL_REQUEST_ID_PATTERN =
+  /^builder-controlled-command-approval-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const COMMAND_PROFILE_ID_PATTERN = /^builder-command-profile:[0-9a-f]{32}$/u;
 
 function portError(
   code: BuilderGenerationDiagnosticCode = 'builder_generation_failed',
@@ -198,8 +219,10 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
     if (prototype !== Object.prototype && prototype !== null) throw portError();
     const keys = Reflect.ownKeys(value);
     if (
-      (keys.length !== REQUIRED_BRIDGE_KEYS.size && keys.length !== BRIDGE_KEYS.size)
+      keys.length < REQUIRED_BRIDGE_KEYS.size
+      || keys.length > BRIDGE_KEYS.size
       || keys.some((key) => typeof key !== 'string' || !BRIDGE_KEYS.has(key))
+      || [...REQUIRED_BRIDGE_KEYS].some((key) => !keys.includes(key))
     ) {
       throw portError();
     }
@@ -216,19 +239,32 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       ) throw portError();
       methods[key] = descriptor.value as (...args: unknown[]) => unknown;
     }
-    const classifyIntentDescriptor = descriptors.classifyIntent;
-    if (classifyIntentDescriptor !== undefined) {
+    for (const key of [...BRIDGE_KEYS].filter((candidate) => !REQUIRED_BRIDGE_KEYS.has(candidate))) {
+      const descriptor = descriptors[key];
+      if (descriptor === undefined) continue;
       if (
-        !classifyIntentDescriptor.enumerable
-        || 'get' in classifyIntentDescriptor
-        || 'set' in classifyIntentDescriptor
-        || typeof classifyIntentDescriptor.value !== 'function'
+        !descriptor.enumerable
+        || 'get' in descriptor
+        || 'set' in descriptor
+        || typeof descriptor.value !== 'function'
       ) throw portError();
-      methods.classifyIntent = classifyIntentDescriptor.value as (...args: unknown[]) => unknown;
+      methods[key] = descriptor.value as (...args: unknown[]) => unknown;
     }
     return Object.freeze({
       ...(methods.classifyIntent === undefined ? {} : {
         classifyIntent: methods.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>,
+      }),
+      ...(methods.decideCommandApproval === undefined ? {} : {
+        decideCommandApproval:
+          methods.decideCommandApproval as NonNullable<BuilderCodeGeneratorBridge['decideCommandApproval']>,
+      }),
+      ...(methods.subscribeCommandApproval === undefined ? {} : {
+        subscribeCommandApproval:
+          methods.subscribeCommandApproval as NonNullable<BuilderCodeGeneratorBridge['subscribeCommandApproval']>,
+      }),
+      ...(methods.subscribeCommandOutput === undefined ? {} : {
+        subscribeCommandOutput:
+          methods.subscribeCommandOutput as NonNullable<BuilderCodeGeneratorBridge['subscribeCommandOutput']>,
       }),
       submit: methods.submit as BuilderCodeGeneratorBridge['submit'],
       generate: methods.generate as BuilderCodeGeneratorBridge['generate'],
@@ -245,10 +281,13 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
         methods.approveCurrentProjectWrite as BuilderCodeGeneratorBridge['approveCurrentProjectWrite'],
       retry: methods.retry as BuilderCodeGeneratorBridge['retry'],
       answer: methods.answer as BuilderCodeGeneratorBridge['answer'],
+      answerPlan: methods.answerPlan as BuilderCodeGeneratorBridge['answerPlan'],
       answerDraft: methods.answerDraft as BuilderCodeGeneratorBridge['answerDraft'],
       restoreDraft: methods.restoreDraft as BuilderCodeGeneratorBridge['restoreDraft'],
       restoreRevisionAsDraft:
         methods.restoreRevisionAsDraft as BuilderCodeGeneratorBridge['restoreRevisionAsDraft'],
+      restorePreviousCheckpointAsDraft:
+        methods.restorePreviousCheckpointAsDraft as BuilderCodeGeneratorBridge['restorePreviousCheckpointAsDraft'],
       rejectDraft: methods.rejectDraft as BuilderCodeGeneratorBridge['rejectDraft'],
       cancel: methods.cancel as BuilderCodeGeneratorBridge['cancel'],
       steer: methods.steer as BuilderCodeGeneratorBridge['steer'],
@@ -609,12 +648,23 @@ function queuedFollowupPayload(value: BuilderQueuedFollowupReference | null | un
 
 function instructionRequestPayload(
   instruction: string,
+  taskAddressId: string | null,
   queuedFollowup: BuilderQueuedFollowupReference | null | undefined,
 ) {
+  if (taskAddressId !== null && !TASK_ADDRESS_ID_PATTERN.test(taskAddressId)) throw portError();
   const queued = queuedFollowupPayload(queuedFollowup);
   return queued === undefined
-    ? { instruction }
-    : { instruction, queued_followup: queued };
+    ? { instruction, task_address_id: taskAddressId }
+    : { instruction, task_address_id: taskAddressId, queued_followup: queued };
+}
+
+function approvalRequestPayload(projectId: string, taskAddressId: string | null | undefined) {
+  if (taskAddressId !== null && taskAddressId !== undefined && !TASK_ADDRESS_ID_PATTERN.test(taskAddressId)) {
+    throw portError();
+  }
+  return taskAddressId === undefined
+    ? { project_id: projectId }
+    : { project_id: projectId, task_address_id: taskAddressId };
 }
 
 function sanitizeStartedEvent(value: unknown): BuilderGenerationStartedEvent {
@@ -623,8 +673,10 @@ function sanitizeStartedEvent(value: unknown): BuilderGenerationStartedEvent {
     event.event_version !== GENERATION_STARTED_EVENT_VERSION
     || typeof event.request_id !== 'string'
     || !DIGEST_PATTERN.test(event.request_id)
-    || typeof event.project_id !== 'string'
-    || !PROJECT_ID_PATTERN.test(event.project_id)
+    || (event.project_id !== null && (
+      typeof event.project_id !== 'string'
+      || !PROJECT_ID_PATTERN.test(event.project_id)
+    ))
   ) throw portError();
   return Object.freeze({
     event_version: GENERATION_STARTED_EVENT_VERSION,
@@ -643,42 +695,209 @@ function safeDisplayDeltaText(value: unknown): string {
   return value;
 }
 
-function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
-  const event = exactDataRecord(value, [
-    'event_version',
-    'request_id',
-    'project_id',
-    'conversation_id',
-    'turn_id',
-    'task_id',
-    'run_id',
-    'display_delta_text',
-  ]);
+function safeActivityText(value: unknown): string {
   if (
-    event.event_version !== GENERATION_OUTPUT_EVENT_VERSION
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 160
+    || value.normalize('NFC') !== value
+    || /[\r\n\t\p{Cf}\p{Bidi_Control}]/u.test(value)
+    || UTF8_ENCODER.encode(value).byteLength > 640
+  ) throw portError();
+  return value;
+}
+
+function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
+  const reset = Object.hasOwn(value as object, 'retain_text_bytes');
+  const activity = Object.hasOwn(value as object, 'activity_text');
+  const version = exactDataRecord(value, reset
+    ? [
+      'event_version',
+      'request_id',
+      'project_id',
+      'conversation_id',
+      'turn_id',
+      'task_id',
+      'run_id',
+      'retain_text_bytes',
+    ]
+    : activity ? [
+      'event_version',
+      'request_id',
+      'project_id',
+      'conversation_id',
+      'turn_id',
+      'task_id',
+      'run_id',
+      'activity_text',
+    ] : [
+      'event_version',
+      'request_id',
+      'project_id',
+      'conversation_id',
+      'turn_id',
+      'task_id',
+      'run_id',
+      'display_delta_text',
+    ]);
+  const event = version;
+  if (
+    ![
+      GENERATION_OUTPUT_EVENT_VERSION,
+      GENERATION_ACTIVITY_EVENT_VERSION,
+      GENERATION_OUTPUT_RESET_EVENT_VERSION,
+    ].includes(
+      event.event_version as string,
+    )
     || typeof event.request_id !== 'string'
     || !DIGEST_PATTERN.test(event.request_id)
-    || typeof event.project_id !== 'string'
-    || !PROJECT_ID_PATTERN.test(event.project_id)
+    || (event.project_id !== null && (
+      typeof event.project_id !== 'string'
+      || !PROJECT_ID_PATTERN.test(event.project_id)
+    ))
     || typeof event.conversation_id !== 'string'
-    || !CONVERSATION_ID_PATTERN.test(event.conversation_id)
-    || event.conversation_id.slice('builder-conversation:'.length)
-      !== event.project_id.slice('builder-project:'.length)
+    || !(event.project_id === null
+      ? AGENT_CONVERSATION_ID_PATTERN
+      : CONVERSATION_ID_PATTERN).test(event.conversation_id)
     || typeof event.turn_id !== 'string'
     || !TURN_ID_PATTERN.test(event.turn_id)
     || (event.task_id !== null && (typeof event.task_id !== 'string' || !TASK_ID_PATTERN.test(event.task_id)))
     || typeof event.run_id !== 'string'
     || !RUN_ID_PATTERN.test(event.run_id)
   ) throw portError();
-  return Object.freeze({
-    event_version: GENERATION_OUTPUT_EVENT_VERSION,
+  const common = {
     request_id: event.request_id,
     project_id: event.project_id,
     conversation_id: event.conversation_id,
     turn_id: event.turn_id,
     task_id: event.task_id,
     run_id: event.run_id,
+  };
+  if (event.event_version === GENERATION_OUTPUT_RESET_EVENT_VERSION) {
+    if (!Number.isSafeInteger(event.retain_text_bytes) || (event.retain_text_bytes as number) < 0) {
+      throw portError();
+    }
+    return Object.freeze({
+      event_version: GENERATION_OUTPUT_RESET_EVENT_VERSION,
+      ...common,
+      retain_text_bytes: event.retain_text_bytes as number,
+    });
+  }
+  if (event.event_version === GENERATION_ACTIVITY_EVENT_VERSION) {
+    return Object.freeze({
+      event_version: GENERATION_ACTIVITY_EVENT_VERSION,
+      ...common,
+      activity_text: safeActivityText(event.activity_text),
+    });
+  }
+  return Object.freeze({
+    event_version: GENERATION_OUTPUT_EVENT_VERSION,
+    ...common,
     display_delta_text: safeDisplayDeltaText(event.display_delta_text),
+  });
+}
+
+function safeCommandText(value: unknown, maximum = 1_024): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.trim() !== value
+    || value.normalize('NFC') !== value
+    || /[\0\p{Cf}\p{Bidi_Control}]/u.test(value)
+    || UTF8_ENCODER.encode(value).byteLength > maximum
+  ) throw portError();
+  return value;
+}
+
+function safeCommandOutputText(value: unknown, maximum: number): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || /[\0\p{Cf}\p{Bidi_Control}]/u.test(value)
+    || UTF8_ENCODER.encode(value).byteLength > maximum
+  ) throw portError();
+  return value;
+}
+
+function sanitizeCommandApproval(value: unknown): BuilderCommandApprovalRequest {
+  const event = exactDataRecord(value, [
+    'request_version', 'approval_request_id', 'project_id', 'conversation_id',
+    'turn_id', 'task_id', 'run_id', 'command_profile_id', 'command_kind',
+    'command_display', 'description', 'source_tree_digest', 'requested_at_ms',
+    'expires_at_ms', 'risk_notice', 'decisions',
+  ]);
+  if (
+    event.request_version !== 'builder-controlled-command-approval-request.v1'
+    || typeof event.approval_request_id !== 'string'
+    || !COMMAND_APPROVAL_REQUEST_ID_PATTERN.test(event.approval_request_id)
+    || typeof event.project_id !== 'string' || !PROJECT_ID_PATTERN.test(event.project_id)
+    || typeof event.conversation_id !== 'string' || !CONVERSATION_ID_PATTERN.test(event.conversation_id)
+    || typeof event.turn_id !== 'string' || !TURN_ID_PATTERN.test(event.turn_id)
+    || typeof event.task_id !== 'string' || !TASK_ID_PATTERN.test(event.task_id)
+    || typeof event.run_id !== 'string' || !RUN_ID_PATTERN.test(event.run_id)
+    || typeof event.command_profile_id !== 'string' || !COMMAND_PROFILE_ID_PATTERN.test(event.command_profile_id)
+    || !['lint', 'typecheck', 'test', 'build'].includes(event.command_kind as string)
+    || typeof event.source_tree_digest !== 'string' || !DIGEST_PATTERN.test(event.source_tree_digest)
+    || !Number.isSafeInteger(event.requested_at_ms) || !Number.isSafeInteger(event.expires_at_ms)
+    || (event.expires_at_ms as number) <= (event.requested_at_ms as number)
+    || event.risk_notice !== 'This project script may modify files or use the network.'
+    || !Array.isArray(event.decisions)
+    || event.decisions.length !== 2
+    || event.decisions[0] !== 'allow_once'
+    || event.decisions[1] !== 'deny'
+  ) throw portError();
+  return Object.freeze({
+    request_version: 'builder-controlled-command-approval-request.v1',
+    approval_request_id: event.approval_request_id,
+    project_id: event.project_id,
+    conversation_id: event.conversation_id,
+    turn_id: event.turn_id,
+    task_id: event.task_id,
+    run_id: event.run_id,
+    command_profile_id: event.command_profile_id,
+    command_kind: event.command_kind as BuilderCommandApprovalRequest['command_kind'],
+    command_display: safeCommandText(event.command_display, 512),
+    description: safeCommandText(event.description, 1_024),
+    source_tree_digest: event.source_tree_digest,
+    requested_at_ms: event.requested_at_ms as number,
+    expires_at_ms: event.expires_at_ms as number,
+    risk_notice: 'This project script may modify files or use the network.',
+    decisions: ['allow_once', 'deny'] as const,
+  });
+}
+
+function sanitizeCommandOutput(value: unknown): BuilderCommandOutputEvent {
+  const event = exactDataRecord(value, [
+    'event_version', 'project_id', 'conversation_id', 'turn_id', 'task_id',
+    'run_id', 'command_profile_id', 'chunks',
+  ]);
+  if (
+    event.event_version !== 'builder-controlled-command-output.v1'
+    || typeof event.project_id !== 'string' || !PROJECT_ID_PATTERN.test(event.project_id)
+    || typeof event.conversation_id !== 'string' || !CONVERSATION_ID_PATTERN.test(event.conversation_id)
+    || typeof event.turn_id !== 'string' || !TURN_ID_PATTERN.test(event.turn_id)
+    || typeof event.task_id !== 'string' || !TASK_ID_PATTERN.test(event.task_id)
+    || typeof event.run_id !== 'string' || !RUN_ID_PATTERN.test(event.run_id)
+    || typeof event.command_profile_id !== 'string' || !COMMAND_PROFILE_ID_PATTERN.test(event.command_profile_id)
+    || !Array.isArray(event.chunks) || event.chunks.length > 256
+  ) throw portError();
+  const chunks = event.chunks.map((rawChunk) => {
+    const chunk = exactDataRecord(rawChunk, ['stream', 'text']);
+    if (!['stdout', 'stderr'].includes(chunk.stream as string)) throw portError();
+    return Object.freeze({
+      stream: chunk.stream as 'stdout' | 'stderr',
+      text: safeCommandOutputText(chunk.text, 64 * 1_024),
+    });
+  });
+  return Object.freeze({
+    event_version: 'builder-controlled-command-output.v1',
+    project_id: event.project_id,
+    conversation_id: event.conversation_id,
+    turn_id: event.turn_id,
+    task_id: event.task_id,
+    run_id: event.run_id,
+    command_profile_id: event.command_profile_id,
+    chunks,
   });
 }
 
@@ -688,15 +907,18 @@ export function createBuilderDesktopCodeGeneratorPort(
   const bridge = sanitizeBridge(value);
   return Object.freeze({
     ...(bridge.classifyIntent === undefined ? {} : {
-      classifyIntent(request: Readonly<{ instruction: string }>) {
-        return callBridge(bridge, bridge.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>, [{
-          instruction: request.instruction,
-        }]).then((result) => unwrapSemanticRouteClassification(unwrapGenerationEnvelope(result)));
+      classifyIntent(request: Readonly<{ instruction: string; task_address_id: string | null }>) {
+        return callBridge(
+          bridge,
+          bridge.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>,
+          [instructionRequestPayload(request.instruction, request.task_address_id, undefined)],
+        ).then((result) => unwrapSemanticRouteClassification(unwrapGenerationEnvelope(result)));
       },
     }),
     generate(request: Parameters<BuilderCodeGeneratorPort['generate']>[0]) {
       return callBridge(bridge, bridge.generate, [{
         instruction: request.instruction,
+        task_address_id: request.task_address_id,
       }]).then(unwrapGenerationEnvelope);
     },
     continueDraft(request: Parameters<BuilderCodeGeneratorPort['continueDraft']>[0]) {
@@ -718,24 +940,27 @@ export function createBuilderDesktopCodeGeneratorPort(
     proposePlan(request: Parameters<BuilderCodeGeneratorPort['proposePlan']>[0]) {
       return callBridge(bridge, bridge.proposePlan, [{
         instruction: request.instruction,
+        task_address_id: request.task_address_id,
       }]).then(unwrapGenerationEnvelope);
     },
     preparePlanSourceReadApproval(
       request: Parameters<BuilderCodeGeneratorPort['preparePlanSourceReadApproval']>[0],
     ) {
       const projectId = safeProjectId(request.project_id);
-      return callBridge(bridge, bridge.preparePlanSourceReadApproval, [{
-        project_id: projectId,
-      }]).then((result) => unwrapPlanSourceReadApprovalStatus(
+      return callBridge(bridge, bridge.preparePlanSourceReadApproval, [approvalRequestPayload(
+        projectId,
+        request.task_address_id,
+      )]).then((result) => unwrapPlanSourceReadApprovalStatus(
         unwrapGenerationEnvelope(result),
         projectId,
       ));
     },
     approvePlanSourceRead(request: Parameters<BuilderCodeGeneratorPort['approvePlanSourceRead']>[0]) {
       const projectId = safeProjectId(request.project_id);
-      return callBridge(bridge, bridge.approvePlanSourceRead, [{
-        project_id: projectId,
-      }]).then((result) => unwrapPlanSourceReadApprovalResult(
+      return callBridge(bridge, bridge.approvePlanSourceRead, [approvalRequestPayload(
+        projectId,
+        request.task_address_id,
+      )]).then((result) => unwrapPlanSourceReadApprovalResult(
         unwrapGenerationEnvelope(result),
         projectId,
       ));
@@ -744,9 +969,10 @@ export function createBuilderDesktopCodeGeneratorPort(
       request: Parameters<BuilderCodeGeneratorPort['prepareCurrentProjectWriteApproval']>[0],
     ) {
       const projectId = safeProjectId(request.project_id);
-      return callBridge(bridge, bridge.prepareCurrentProjectWriteApproval, [{
-        project_id: projectId,
-      }]).then((result) => unwrapCurrentProjectWriteApprovalStatus(
+      return callBridge(bridge, bridge.prepareCurrentProjectWriteApproval, [approvalRequestPayload(
+        projectId,
+        request.task_address_id,
+      )]).then((result) => unwrapCurrentProjectWriteApprovalStatus(
         unwrapGenerationEnvelope(result),
         projectId,
       ));
@@ -755,26 +981,33 @@ export function createBuilderDesktopCodeGeneratorPort(
       request: Parameters<BuilderCodeGeneratorPort['approveCurrentProjectWrite']>[0],
     ) {
       const projectId = safeProjectId(request.project_id);
-      return callBridge(bridge, bridge.approveCurrentProjectWrite, [{
-        project_id: projectId,
-      }]).then((result) => unwrapCurrentProjectWriteApprovalResult(
+      return callBridge(bridge, bridge.approveCurrentProjectWrite, [approvalRequestPayload(
+        projectId,
+        request.task_address_id,
+      )]).then((result) => unwrapCurrentProjectWriteApprovalResult(
         unwrapGenerationEnvelope(result),
         projectId,
       ));
     },
     submit(request: Parameters<BuilderCodeGeneratorPort['submit']>[0]) {
       return callBridge(bridge, bridge.submit, [
-        instructionRequestPayload(request.instruction, request.queued_followup),
+        instructionRequestPayload(request.instruction, request.task_address_id, request.queued_followup),
       ]).then(unwrapGenerationEnvelope);
     },
     retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
       return callBridge(bridge, bridge.retry, [{
         instruction: request.instruction,
+        task_address_id: request.task_address_id,
       }]).then(unwrapGenerationEnvelope);
     },
     answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
       return callBridge(bridge, bridge.answer, [
-        instructionRequestPayload(request.instruction, request.queued_followup),
+        instructionRequestPayload(request.instruction, request.task_address_id, request.queued_followup),
+      ]).then(unwrapGenerationEnvelope);
+    },
+    answerPlan(request: Parameters<NonNullable<BuilderCodeGeneratorPort['answerPlan']>>[0]) {
+      return callBridge(bridge, bridge.answerPlan, [
+        instructionRequestPayload(request.instruction, request.task_address_id, request.queued_followup),
       ]).then(unwrapGenerationEnvelope);
     },
     answerDraft(request: Parameters<BuilderCodeGeneratorPort['answerDraft']>[0]) {
@@ -794,6 +1027,13 @@ export function createBuilderDesktopCodeGeneratorPort(
       return callBridge(bridge, bridge.restoreRevisionAsDraft, [{
         project_id: projectId,
         revision_receipt_digest: revisionReceiptDigest,
+      }]).then(unwrapGenerationEnvelope);
+    },
+    restorePreviousCheckpointAsDraft(
+      request: Parameters<NonNullable<BuilderCodeGeneratorPort['restorePreviousCheckpointAsDraft']>>[0],
+    ) {
+      return callBridge(bridge, bridge.restorePreviousCheckpointAsDraft, [{
+        draft_id: safeDraftId(request.draft_id),
       }]).then(unwrapGenerationEnvelope);
     },
     rejectDraft(request: Parameters<BuilderCodeGeneratorPort['rejectDraft']>[0]) {
@@ -858,5 +1098,34 @@ export function createBuilderDesktopCodeGeneratorPort(
         unsubscribe();
       };
     },
+    ...(bridge.decideCommandApproval === undefined ? {} : {
+      decideCommandApproval(request: Parameters<NonNullable<BuilderCodeGeneratorPort['decideCommandApproval']>>[0]) {
+        return callBridge(bridge, bridge.decideCommandApproval as NonNullable<BuilderCodeGeneratorBridge['decideCommandApproval']>, [request])
+          .then((result) => {
+            const envelope = unwrapGenerationEnvelope(result);
+            const value = exactDataRecord(envelope, ['result_version', 'operation']);
+            if (
+              value.result_version !== 'builder-controlled-command-approval-decision-result.v1'
+              || value.operation !== 'command_approval_decided'
+            ) throw portError();
+          });
+      },
+    }),
+    ...(bridge.subscribeCommandApproval === undefined ? {} : {
+      subscribeCommandApproval(listener: (event: BuilderCommandApprovalRequest) => void) {
+        if (typeof listener !== 'function') throw portError();
+        return bridge.subscribeCommandApproval!((event) => {
+          try { listener(sanitizeCommandApproval(event)); } catch { /* invalid events are ignored */ }
+        });
+      },
+    }),
+    ...(bridge.subscribeCommandOutput === undefined ? {} : {
+      subscribeCommandOutput(listener: (event: BuilderCommandOutputEvent) => void) {
+        if (typeof listener !== 'function') throw portError();
+        return bridge.subscribeCommandOutput!((event) => {
+          try { listener(sanitizeCommandOutput(event)); } catch { /* invalid events are ignored */ }
+        });
+      },
+    }),
   });
 }

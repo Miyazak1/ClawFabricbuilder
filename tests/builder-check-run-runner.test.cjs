@@ -30,13 +30,19 @@ const { checkRuntimeIdentity } = require('./helpers/builder-check-runtime-identi
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PROJECT_ID = `builder-project:${UUID}`;
 
-function admittedCheck(manager = 'npm', kind = 'test', runtimeOverrides = {}) {
+function admittedCheck(manager = 'npm', kind = 'test', runtimeOverrides = {}, packageJsonOverrides = {}) {
   const lock = manager === 'pnpm' ? 'pnpm-lock.yaml'
     : manager === 'yarn' ? 'yarn.lock'
       : manager === 'bun' ? 'bun.lock' : null;
   const files = [{
     path: 'package.json',
-    content: `${JSON.stringify({ scripts: { [kind]: 'fixed-script' } })}\n`,
+    content: `${JSON.stringify({
+      ...packageJsonOverrides,
+      scripts: {
+        ...(packageJsonOverrides.scripts ?? {}),
+        [kind]: 'fixed-script',
+      },
+    })}\n`,
   }];
   if (lock) files.push({ path: lock, content: 'lock\n' });
   const tree = createBuilderProjectSourceTree({ files });
@@ -51,7 +57,7 @@ function admittedCheck(manager = 'npm', kind = 'test', runtimeOverrides = {}) {
     receipt_version: 'builder-git-candidate-receipt.v1',
     repository_version: 'builder-git-project-repository.v1',
     project_id: PROJECT_ID,
-    conversation_id: `builder-conversation:${UUID}`,
+    conversation_id: `builder-conversation:${UUID}:${UUID}`,
     turn_id: `builder-turn:${UUID}`,
     task_id: `builder-task:${UUID}`,
     run_id: `builder-run:${UUID}`,
@@ -130,6 +136,7 @@ function harness(selected = admittedCheck(), overrides = {}) {
   let spawnCall = null;
   let cleaned = 0;
   const child = childProcess();
+  const workspacePath = overrides.workspacePath ?? path.resolve('C:\\checks\\candidate');
   const workspace = {
     admission_version: 'builder-check-workspace-admission.v1',
     admission_kind: 'builder_check_workspace_admission',
@@ -163,8 +170,18 @@ function harness(selected = admittedCheck(), overrides = {}) {
       clear_timeout(timerId) { timers.delete(timerId); },
     },
     workspace_materializer: {
-      read_workspace_path: () => path.resolve('C:\\checks\\candidate'),
-      cleanup() { cleaned += 1; },
+      read_workspace_path: () => workspacePath,
+      ...(overrides.readinessSnapshot
+        ? {
+          read_workspace_readiness_snapshot(input) {
+            return overrides.readinessSnapshot(input);
+          },
+        }
+        : {}),
+      cleanup() {
+        cleaned += 1;
+        if (overrides.cleanupError) throw new Error('cleanup failed');
+      },
     },
     runtime_registry: {
       read_private_runtime: ({ runtime_identity: identity }) => ({
@@ -251,6 +268,39 @@ test('uses a minimal environment and strips inherited secrets', async () => {
   delete process.env.CLAWFABRIC_TEST_API_KEY;
 });
 
+test('passes the full readiness snapshot contract during runner workspace verification', async () => {
+  let readinessInput = null;
+  const h = harness(undefined, {
+    readinessSnapshot(input) {
+      readinessInput = input;
+      return Object.freeze({ ok: true });
+    },
+  });
+  const pending = h.runner.run_check(runInput(h));
+  h.child.emit('close', 0, null);
+  const result = await pending;
+  assert.equal(result.status, 'passed');
+  assert.deepEqual(
+    Object.keys(readinessInput).sort(),
+    [
+      'check_run_admission',
+      'host_toolchain_state',
+      'install_permission',
+      'project_root_path',
+      'toolchain_probe',
+      'updated_at_ms',
+      'workspace_admission',
+    ].sort(),
+  );
+  assert.deepEqual(readinessInput.check_run_admission, h.selected.admission);
+  assert.equal(readinessInput.workspace_admission, h.workspace);
+  assert.equal(readinessInput.project_root_path, null);
+  assert.equal(readinessInput.host_toolchain_state, 'visible');
+  assert.equal(readinessInput.toolchain_probe, null);
+  assert.equal(readinessInput.install_permission, 'not_requested');
+  assert.equal(readinessInput.updated_at_ms, 102);
+});
+
 test('enables Electron Node mode only for the verified packaged runtime', async () => {
   const packaged = harness(admittedCheck('npm', 'test', {
     resolution_source: 'packaged_runtime',
@@ -310,6 +360,39 @@ test('records timeout, cancellation, and output overflow after process-tree term
   assert.equal(overflow.cleaned, 1);
 });
 
+test('classifies missing declared dependencies as an unavailable check environment', async () => {
+  const h = harness(admittedCheck('npm', 'test', {}, {
+    devDependencies: { vite: '^5.0.0' },
+  }), { workspacePath: process.cwd() });
+  const pending = h.runner.run_check(runInput(h));
+  h.child.stderr.emit(
+    'data',
+    Buffer.from("'vite' is not recognized as an internal or external command,\r\n"),
+  );
+  h.child.emit('close', 1, null);
+
+  const result = await pending;
+  assert.equal(result.status, 'environment_unavailable');
+  assert.equal(result.failure_class, 'environment_unavailable');
+  assert.equal(result.exit_code, null);
+  assert.equal(h.cleaned, 1);
+});
+
+test('keeps ordinary missing local modules as failed checks', async () => {
+  const h = harness(admittedCheck('npm', 'test', {}, {
+    devDependencies: { vite: '^5.0.0' },
+  }), { workspacePath: process.cwd() });
+  const pending = h.runner.run_check(runInput(h));
+  h.child.stderr.emit('data', Buffer.from("Error: Cannot find module './src/missing.js'\n"));
+  h.child.emit('close', 1, null);
+
+  const result = await pending;
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure_class, 'command_failed');
+  assert.equal(result.exit_code, 1);
+  assert.equal(h.cleaned, 1);
+});
+
 test('records spawn and termination failures with fixed redacted results', async () => {
   const spawn = harness(admittedCheck(), { spawnError: true });
   assert.equal((await spawn.runner.run_check(runInput(spawn))).status, 'spawn_failed');
@@ -339,6 +422,21 @@ test('records spawn and termination failures with fixed redacted results', async
   hangingTerminator.fireTimer(15_000);
   assert.equal((await hangingPending).status, 'termination_failed');
   assert.equal(hangingTerminator.cleaned, 0);
+});
+
+test('keeps a terminal check result when safe workspace cleanup fails afterward', async () => {
+  const h = harness(admittedCheck(), { cleanupError: true });
+  const pending = h.runner.run_check(runInput(h));
+  h.child.emit('close', 0, null);
+
+  const result = await pending;
+  assert.equal(result.status, 'passed');
+  assert.equal(result.failure_class, 'none');
+  assert.equal(h.cleaned, 1);
+  const guard = h.activityRegistry.acquire_candidate_save({
+    current_candidate: currentCandidate(h.selected.admission),
+  });
+  assert.equal(h.activityRegistry.release_candidate_save({ save_guard: guard }), true);
 });
 
 test('hashes bounded stdout and stderr independently of stream chunking', async () => {

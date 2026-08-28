@@ -5,6 +5,7 @@ const { types: utilTypes } = require('node:util');
 
 const {
   CONVERSATION_AUTHORITY,
+  MAX_EVENT_SEQUENCE,
   createBuilderConversationPlanAdmission,
   createBuilderConversationEvent,
   sanitizeBuilderConversationEvent,
@@ -45,7 +46,11 @@ const {
 const {
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
+  projectBuilderTaskStreamFromAuthorityState,
 } = require('./builder-task-stream-projection.cjs');
+const {
+  isTrustedConversationAuthorityResult,
+} = require('./builder-product-metadata-database.cjs');
 const {
   projectBuilderReviewState,
 } = require('./builder-review-state-projection.cjs');
@@ -61,6 +66,9 @@ const {
 const {
   createBuilderApprovedPlanContinuationAdmission,
 } = require('./builder-approved-plan-continuation-admission.cjs');
+const {
+  APPROVED_PLAN_EXECUTION_INSTRUCTION,
+} = require('./builder-approved-plan-execution.cjs');
 const {
   sanitizeBuilderDraftContinuationAdmission,
 } = require('./builder-draft-continuation-admission.cjs');
@@ -79,6 +87,14 @@ const {
 const {
   sanitizeBuilderAgentStepProgressConversationAdmission,
 } = require('./builder-agent-step-progress-conversation-admission.cjs');
+const {
+  admitBuilderProgrammingRuntimeEventContinuation,
+  sanitizeBuilderProgrammingRuntimeEvent,
+} = require('./builder-programming-runtime-events.cjs');
+const {
+  MAX_APPEND_EVENTS,
+} = require('./builder-conversation-authority-contract.cjs');
+const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
 
 const BUILDER_CONVERSATION_MAIN_SERVICE_VERSION = 'builder-conversation-main-service.v1';
 const AUTHORITY_RESULT_VERSION = 'builder-conversation-authority-result.v1';
@@ -87,13 +103,16 @@ const REQUIRED_OPTION_KEYS = Object.freeze(['metadataAuthority', 'createUuid', '
 const OPTION_KEYS = Object.freeze([
   ...REQUIRED_OPTION_KEYS,
   'onTaskStreamChanged',
+  'onTaskStreamReadFailure',
   'workingContextStateService',
   'providerContextDisclosureStatusService',
   'automaticDraftCheckpointService',
   'checkRunStatusService',
   'checkRunActivityRegistry',
+  'transcriptArchive',
+  'contextCompactionRecordingService',
 ]);
-const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v1';
+const TASK_STREAM_CHANGED_EVENT_VERSION = 'builder-task-stream-changed.v2';
 const ROUTE_DECISION_VERSION = 'builder-composer-route-decision.v1';
 const ROUTE_DECISION_HINT_KEYS = Object.freeze([
   'route', 'confidence', 'matched_signals', 'downgraded_from',
@@ -131,7 +150,10 @@ const RUN_PROGRESS_STAGES = Object.freeze([
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'u');
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:(${UUID_SOURCE})$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
@@ -144,6 +166,9 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const TRUSTED_CONTEXTS = new WeakSet();
+const TRUSTED_CONTEXT_REPLAY_SNAPSHOTS = new WeakMap();
+const MAX_PROJECTION_BYTE_DEPTH = 64;
+const MAX_PROJECTION_BYTE_NODES = 20_000;
 
 class BuilderConversationMainServiceError extends Error {
   constructor() {
@@ -184,6 +209,23 @@ function exactObject(value, keys) {
   return value;
 }
 
+function exactObjectWithOptional(value, requiredKeys, optionalKeys) {
+  if (!isPlainObject(value)) fail();
+  const allowedKeys = [...requiredKeys, ...optionalKeys];
+  const actual = Reflect.ownKeys(value);
+  if (
+    actual.length < requiredKeys.length
+    || actual.length > allowedKeys.length
+    || requiredKeys.some((key) => !actual.includes(key))
+    || actual.some((key) => typeof key !== 'string' || !allowedKeys.includes(key))
+  ) fail();
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
+  }
+  return value;
+}
+
 function valueAt(value, key) {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) fail();
@@ -194,6 +236,14 @@ function ownMethod(value, key) {
   if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'function') fail();
+  return descriptor.value;
+}
+
+function optionalOwnMethod(value, key) {
+  if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+  if (typeof descriptor.value !== 'function') fail();
   return descriptor.value;
 }
 
@@ -217,6 +267,54 @@ function canonicalJson(value) {
     ).join(',')}}`;
   }
   fail();
+}
+
+function accountProjectionBytes(value, state, depth = 0) {
+  if (value === null) {
+    state.bytes += 4;
+    return;
+  }
+  if (typeof value === 'boolean' || typeof value === 'number') {
+    state.bytes += Buffer.byteLength(String(value), 'utf8');
+    return;
+  }
+  if (typeof value === 'string') {
+    state.bytes += Buffer.byteLength(value, 'utf8');
+    return;
+  }
+  if (
+    typeof value !== 'object'
+    || utilTypes.isProxy(value)
+    || state.seen.has(value)
+    || depth > MAX_PROJECTION_BYTE_DEPTH
+    || state.nodes >= MAX_PROJECTION_BYTE_NODES
+  ) return;
+  state.seen.add(value);
+  state.nodes += 1;
+  const isArray = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    (isArray && prototype !== Array.prototype)
+    || (!isArray && prototype !== Object.prototype && prototype !== null)
+  ) return;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string' || (isArray && key === 'length')) continue;
+    const descriptor = descriptors[key];
+    if (
+      !descriptor
+      || descriptor.enumerable !== true
+      || !Object.hasOwn(descriptor, 'value')
+    ) continue;
+    if (!isArray) state.bytes += Buffer.byteLength(key, 'utf8');
+    accountProjectionBytes(descriptor.value, state, depth + 1);
+  }
+}
+
+function projectionUtf8Bytes(value) {
+  const state = { bytes: 0, nodes: 0, seen: new WeakSet() };
+  accountProjectionBytes(value, state);
+  return state.bytes;
 }
 
 function sha256Canonical(value) {
@@ -243,7 +341,7 @@ function safeDigest(value) {
 function safeHead(value) {
   exactObject(value, ['sequence', 'event_id', 'event_digest']);
   const sequence = valueAt(value, 'sequence');
-  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 1_024) fail();
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > MAX_EVENT_SEQUENCE) fail();
   return freezeDeep({
     sequence,
     event_id: safePattern(valueAt(value, 'event_id'), EVENT_ID_PATTERN),
@@ -312,10 +410,32 @@ function safeText(value, maximumCodePoints, maximumBytes) {
   return value;
 }
 
-function projectUuid(projectId) {
-  const match = PROJECT_ID_PATTERN.exec(projectId);
-  if (!match) fail();
-  return match[1];
+function sanitizeCurrentMaterialization(value) {
+  if (!isPlainObject(value)) fail();
+  const status = valueAt(value, 'status');
+  if (status === 'materialized') {
+    exactObject(value, ['status']);
+    return { status };
+  }
+  if (status === 'not_materialized' || status === 'not_attempted') {
+    exactObject(value, ['status', 'reason']);
+    const reason = valueAt(value, 'reason');
+    if (
+      (status === 'not_materialized' && reason !== 'current_projection_unavailable')
+      || (status === 'not_attempted' && reason !== 'current_projection_not_configured')
+    ) fail();
+    return { status, reason };
+  }
+  fail();
+}
+
+function safeConversationIdForProject(value, projectId) {
+  const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
+  try {
+    return sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
 }
 
 function newId(createUuid, prefix) {
@@ -509,10 +629,49 @@ function eventAt({
 }
 
 function denseEvents(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || value.length < 1 || value.length > 1_024) fail();
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || value.length < 1
+    || value.length > MAX_EVENT_SEQUENCE
+  ) fail();
   const keys = Reflect.ownKeys(value);
   if (keys.length !== value.length + 1 || keys.some((key) => typeof key === 'symbol')) fail();
   return freezeDeep(value.map((event) => sanitizeBuilderConversationEvent(event)));
+}
+
+function trustedDenseEvents(value) {
+  if (
+    !Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || !Object.isFrozen(value)
+    || value.length < 1
+    || value.length > MAX_EVENT_SEQUENCE
+  ) fail();
+  return value;
+}
+
+function trustedSnapshot(value, expectedProjectId, expectedConversationId, events, currentHead) {
+  if (!isPlainObject(value) || !Object.isFrozen(value)) fail();
+  exactObject(value, [
+    'replay_version',
+    'project_id',
+    'conversation_id',
+    'event_count',
+    'head',
+    'active_turn_id',
+    'turns',
+    'authority',
+  ]);
+  if (
+    valueAt(value, 'replay_version') !== 'builder-conversation-replay.v2'
+    || valueAt(value, 'project_id') !== expectedProjectId
+    || valueAt(value, 'conversation_id') !== expectedConversationId
+    || valueAt(value, 'event_count') !== events.length
+  ) fail();
+  const head = valueAt(value, 'head');
+  if (!sameHead(head, currentHead) || head?.sequence !== events.length) fail();
+  return value;
 }
 
 function sanitizeAuthorityResult(value, expectedProjectId, expectedConversationId) {
@@ -537,6 +696,27 @@ function sanitizeAuthorityResult(value, expectedProjectId, expectedConversationI
     safeProjectId(valueAt(conversation, 'project_id')) !== expectedProjectId
     || valueAt(conversation, 'conversation_id') !== expectedConversationId
   ) fail();
+  if (isTrustedConversationAuthorityResult(value)) {
+    const events = trustedDenseEvents(valueAt(value, 'events'));
+    const currentHead = valueAt(value, 'current_head');
+    const snapshot = trustedSnapshot(
+      valueAt(value, 'snapshot'),
+      expectedProjectId,
+      expectedConversationId,
+      events,
+      currentHead,
+    );
+    return freezeDeep({
+      conversation: {
+        project_id: expectedProjectId,
+        conversation_id: expectedConversationId,
+        created_at_ms: safeTimestamp(valueAt(conversation, 'created_at_ms')),
+      },
+      head: { ...snapshot.head },
+      events,
+      snapshot,
+    });
+  }
   const events = denseEvents(valueAt(value, 'events'));
   const snapshot = replayBuilderConversation(events);
   const currentHead = valueAt(value, 'current_head');
@@ -583,6 +763,9 @@ function sanitizeOptions(value) {
   const onTaskStreamChanged = keys.includes('onTaskStreamChanged')
     ? valueAt(value, 'onTaskStreamChanged')
     : null;
+  const onTaskStreamReadFailure = keys.includes('onTaskStreamReadFailure')
+    ? valueAt(value, 'onTaskStreamReadFailure')
+    : null;
   const workingContextStateService = keys.includes('workingContextStateService')
     ? valueAt(value, 'workingContextStateService')
     : null;
@@ -598,6 +781,12 @@ function sanitizeOptions(value) {
   const checkRunActivityRegistry = keys.includes('checkRunActivityRegistry')
     ? valueAt(value, 'checkRunActivityRegistry')
     : null;
+  const transcriptArchive = keys.includes('transcriptArchive')
+    ? valueAt(value, 'transcriptArchive')
+    : null;
+  const contextCompactionRecordingService = keys.includes('contextCompactionRecordingService')
+    ? valueAt(value, 'contextCompactionRecordingService')
+    : null;
   if (
     typeof createUuid !== 'function'
     || utilTypes.isProxy(createUuid)
@@ -606,6 +795,10 @@ function sanitizeOptions(value) {
     || (
       onTaskStreamChanged !== null
       && (typeof onTaskStreamChanged !== 'function' || utilTypes.isProxy(onTaskStreamChanged))
+    )
+    || (
+      onTaskStreamReadFailure !== null
+      && (typeof onTaskStreamReadFailure !== 'function' || utilTypes.isProxy(onTaskStreamReadFailure))
     )
     || (
       workingContextStateService !== null
@@ -630,6 +823,17 @@ function sanitizeOptions(value) {
       checkRunActivityRegistry !== null
       && (!isPlainObject(checkRunActivityRegistry) || utilTypes.isProxy(checkRunActivityRegistry))
     )
+    || (
+      transcriptArchive !== null
+      && (!isPlainObject(transcriptArchive) || utilTypes.isProxy(transcriptArchive))
+    )
+    || (
+      contextCompactionRecordingService !== null
+      && (
+        !isPlainObject(contextCompactionRecordingService)
+        || utilTypes.isProxy(contextCompactionRecordingService)
+      )
+    )
   ) fail();
   return Object.freeze({
     metadataAuthority,
@@ -640,11 +844,14 @@ function sanitizeOptions(value) {
     createUuid,
     nowMs,
     onTaskStreamChanged,
+    onTaskStreamReadFailure,
     workingContextStateService,
     providerContextDisclosureStatusService,
     automaticDraftCheckpointService,
     checkRunStatusService,
     checkRunActivityRegistry,
+    transcriptArchive,
+    contextCompactionRecordingService,
     readCurrentWorkingContextStateForConversation: workingContextStateService === null
       ? null
       : ownMethod(workingContextStateService, 'read_current_working_context_state_for_conversation'),
@@ -658,12 +865,24 @@ function sanitizeOptions(value) {
     readCurrentDraftCheckpointStatus: automaticDraftCheckpointService === null
       ? null
       : ownMethod(automaticDraftCheckpointService, 'read_current_checkpoint_status'),
+    readCurrentDraftCheckpointTimeline: automaticDraftCheckpointService === null
+      ? null
+      : optionalOwnMethod(automaticDraftCheckpointService, 'read_current_checkpoint_timeline'),
     readCurrentCheckRunStatus: checkRunStatusService === null
       ? null
       : ownMethod(checkRunStatusService, 'read_current_check_run_status'),
     readCurrentCandidateActivity: checkRunActivityRegistry === null
       ? null
       : ownMethod(checkRunActivityRegistry, 'read_candidate_activity'),
+    recordCommittedConversationTranscript: transcriptArchive === null
+      ? null
+      : ownMethod(transcriptArchive, 'record_committed_conversation'),
+    readLatestConversationTranscript: transcriptArchive === null
+      ? null
+      : optionalOwnMethod(transcriptArchive, 'read_latest'),
+    recordCommittedConversationCompaction: contextCompactionRecordingService === null
+      ? null
+      : ownMethod(contextCompactionRecordingService, 'record_committed_conversation_compaction'),
   });
 }
 
@@ -756,10 +975,12 @@ function sanitizeBeginRequest(value) {
   const keys = Reflect.ownKeys(value);
   const hasRouteDecisionHint = keys.includes('route_decision_hint');
   exactObject(value, hasRouteDecisionHint
-    ? ['project_id', 'instruction', 'request_digest', 'base_revision', 'route_decision_hint']
-    : ['project_id', 'instruction', 'request_digest', 'base_revision']);
+    ? ['project_id', 'conversation_id', 'instruction', 'request_digest', 'base_revision', 'route_decision_hint']
+    : ['project_id', 'conversation_id', 'instruction', 'request_digest', 'base_revision']);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
   return freezeDeep({
-    project_id: safeProjectId(valueAt(value, 'project_id')),
+    project_id: projectId,
+    conversation_id: safeConversationIdForProject(valueAt(value, 'conversation_id'), projectId),
     instruction: safeText(valueAt(value, 'instruction'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
@@ -782,10 +1003,12 @@ function sanitizeQuestionRequest(value) {
   const keys = Reflect.ownKeys(value);
   const hasRouteDecisionHint = keys.includes('route_decision_hint');
   exactObject(value, hasRouteDecisionHint
-    ? ['project_id', 'question', 'request_digest', 'base_revision', 'route_decision_hint']
-    : ['project_id', 'question', 'request_digest', 'base_revision']);
+    ? ['project_id', 'conversation_id', 'question', 'request_digest', 'base_revision', 'route_decision_hint']
+    : ['project_id', 'conversation_id', 'question', 'request_digest', 'base_revision']);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
   return freezeDeep({
-    project_id: safeProjectId(valueAt(value, 'project_id')),
+    project_id: projectId,
+    conversation_id: safeConversationIdForProject(valueAt(value, 'conversation_id'), projectId),
     question: safeText(valueAt(value, 'question'), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
@@ -799,10 +1022,12 @@ function sanitizeQueuedFollowupBeginRequest(value, textKey) {
   const keys = Reflect.ownKeys(value);
   const hasRouteDecisionHint = keys.includes('route_decision_hint');
   exactObject(value, hasRouteDecisionHint
-    ? ['project_id', textKey, 'request_digest', 'base_revision', 'queued_followup', 'route_decision_hint']
-    : ['project_id', textKey, 'request_digest', 'base_revision', 'queued_followup']);
+    ? ['project_id', 'conversation_id', textKey, 'request_digest', 'base_revision', 'queued_followup', 'route_decision_hint']
+    : ['project_id', 'conversation_id', textKey, 'request_digest', 'base_revision', 'queued_followup']);
+  const projectId = safeProjectId(valueAt(value, 'project_id'));
   return freezeDeep({
-    project_id: safeProjectId(valueAt(value, 'project_id')),
+    project_id: projectId,
+    conversation_id: safeConversationIdForProject(valueAt(value, 'conversation_id'), projectId),
     [textKey]: safeText(valueAt(value, textKey), 12_000, 48_000),
     request_digest: safeDigest(valueAt(value, 'request_digest')),
     base_revision: sanitizeBaseRevision(valueAt(value, 'base_revision')),
@@ -824,8 +1049,7 @@ function sanitizeActiveRunMessageRequest(value) {
 function sanitizePlanRunReference(value) {
   exactObject(value, ['project_id', 'conversation_id', 'turn_id', 'run_id']);
   const projectId = safeProjectId(valueAt(value, 'project_id'));
-  const conversationId = safePattern(valueAt(value, 'conversation_id'), CONVERSATION_ID_PATTERN);
-  if (conversationId !== `builder-conversation:${projectUuid(projectId)}`) fail();
+  const conversationId = safeConversationIdForProject(valueAt(value, 'conversation_id'), projectId);
   return freezeDeep({
     project_id: projectId,
     conversation_id: conversationId,
@@ -930,16 +1154,33 @@ function compactToolSessionCalls(toolCalls) {
 function createBuilderConversationMainService(rawOptions) {
   const options = sanitizeOptions(rawOptions);
 
-  function notifyTaskStreamChanged(projectId) {
+  function notifyTaskStreamChanged(projectId, changeKind, cursor) {
+    builderPerformanceTrace.increment(`main.task_stream.changed.${changeKind}`);
     if (options.onTaskStreamChanged === null) return;
     try {
       Reflect.apply(options.onTaskStreamChanged, undefined, [freezeDeep({
         event_version: TASK_STREAM_CHANGED_EVENT_VERSION,
         project_id: projectId,
+        change_kind: changeKind,
+        cursor,
       })]);
     } catch {
       // Activity notifications are a renderer refresh hint, not Conversation authority.
     }
+  }
+
+  function taskStreamChangeKind(events) {
+    const runtimeOnly = events.every(
+      (event) => event.event_type === 'programming_runtime_event_recorded',
+    );
+    if (!runtimeOnly) return 'durable_append';
+    return events.every(
+      (event) => event.payload.runtime_event.event_type === 'assistant_text_delta',
+    ) ? 'live_only' : 'runtime_append';
+  }
+
+  function shouldRefreshDerivedConversationFacts(events) {
+    return events.some((event) => event.event_type !== 'programming_runtime_event_recorded');
   }
 
   function load(projectId, conversationId) {
@@ -1062,6 +1303,38 @@ function createBuilderConversationMainService(rawOptions) {
         conversation: null,
       });
       return projected.draft_checkpoint_status_projection;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function currentDraftCheckpointTimelineProjection(state, projectId, conversationId) {
+    if (options.readCurrentDraftCheckpointTimeline === null) return undefined;
+    const subject = latestCandidateReviewSubject(state);
+    if (subject === null) return undefined;
+    try {
+      const result = Reflect.apply(
+        options.readCurrentDraftCheckpointTimeline,
+        options.automaticDraftCheckpointService,
+        [{ project_id: projectId, conversation_id: conversationId, candidate_id: subject.candidate_id }],
+      );
+      if (!isPlainObject(result) || utilTypes.isProxy(result)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        result,
+        'draft_checkpoint_timeline_projection',
+      );
+      if (
+        !descriptor
+        || descriptor.enumerable !== true
+        || !Object.hasOwn(descriptor, 'value')
+        || descriptor.value === null
+      ) return undefined;
+      const projected = projectBuilderTaskStream({
+        project_id: projectId,
+        draft_checkpoint_timeline_projection: descriptor.value,
+        conversation: null,
+      });
+      return projected.draft_checkpoint_timeline_projection;
     } catch {
       return undefined;
     }
@@ -1210,7 +1483,6 @@ function createBuilderConversationMainService(rawOptions) {
         valueAt(conversation, 'conversation_id'),
         CONVERSATION_ID_PATTERN,
       );
-      if (conversationId.slice('builder-conversation:'.length) !== projectUuid(projectId)) fail();
       return sanitizeAuthorityResult(result, projectId, conversationId);
     } catch (error) {
       if (ownCode(error) === 'builder_product_metadata_not_found') return null;
@@ -1220,25 +1492,95 @@ function createBuilderConversationMainService(rawOptions) {
 
   function append({ project, conversation, expectedHead, events, recordedAtMs }) {
     try {
-      const result = Reflect.apply(options.appendEvents, options.metadataAuthority, [{
-        project,
-        conversation,
-        expected_head: expectedHead,
-        events,
-        recorded_at_ms: recordedAtMs,
-      }]);
-      const appended = sanitizeAuthorityResult(result, project.project_id, conversation.conversation_id);
-      notifyTaskStreamChanged(project.project_id);
+      if (builderPerformanceTrace.enabled()) {
+        builderPerformanceTrace.observe('main.conversation.append.event_count', events.length);
+        builderPerformanceTrace.observe(
+          'main.conversation.append.event_bytes',
+          Buffer.byteLength(JSON.stringify(events), 'utf8'),
+        );
+      }
+      const appended = builderPerformanceTrace.measureSync(
+        'main.conversation.append.duration_ms',
+        () => {
+          const result = Reflect.apply(options.appendEvents, options.metadataAuthority, [{
+            project,
+            conversation,
+            expected_head: expectedHead,
+            events,
+            recorded_at_ms: recordedAtMs,
+          }]);
+          return sanitizeAuthorityResult(result, project.project_id, conversation.conversation_id);
+        },
+      );
+      notifyTaskStreamChanged(
+        project.project_id,
+        taskStreamChangeKind(events),
+        appended.head.sequence,
+      );
+      if (
+        shouldRefreshDerivedConversationFacts(events)
+        && (
+        options.recordCommittedConversationTranscript !== null
+        || options.recordCommittedConversationCompaction !== null
+        )
+      ) {
+        try {
+          builderPerformanceTrace.measureSync(
+            'main.conversation.derived_refresh.duration_ms',
+            () => {
+              const loaded = Reflect.apply(options.loadConversation, options.metadataAuthority, [{
+                project_id: project.project_id,
+                conversation_id: conversation.conversation_id,
+              }]);
+              if (options.recordCommittedConversationTranscript !== null) {
+                Reflect.apply(
+                  options.recordCommittedConversationTranscript,
+                  options.transcriptArchive,
+                  [{ loaded_conversation: loaded, archived_at_ms: recordedAtMs }],
+                );
+              }
+              if (options.recordCommittedConversationCompaction !== null) {
+                Reflect.apply(
+                  options.recordCommittedConversationCompaction,
+                  options.contextCompactionRecordingService,
+                  [{ loaded_conversation: loaded }],
+                );
+              }
+            },
+          );
+        } catch {
+          // SQLite is authoritative. Transcript archival and compaction are repairable
+          // derived facts, so failures remain non-blocking.
+        }
+      } else if (!shouldRefreshDerivedConversationFacts(events)) {
+        builderPerformanceTrace.increment(
+          'main.conversation.derived_refresh.runtime_append_skipped_count',
+        );
+      }
       return appended;
     } catch {
       fail();
     }
   }
 
+  function replaySnapshotFromContext(context) {
+    const cached = TRUSTED_CONTEXT_REPLAY_SNAPSHOTS.get(context);
+    if (cached !== undefined) {
+      builderPerformanceTrace.increment('main.conversation.context_replay.cache_hit_count');
+      return cached;
+    }
+    const snapshot = builderPerformanceTrace.measureSync(
+      'main.conversation.context_replay.duration_ms',
+      () => replayBuilderConversation(context.events),
+    );
+    TRUSTED_CONTEXT_REPLAY_SNAPSHOTS.set(context, snapshot);
+    return snapshot;
+  }
+
   function activeRunFromContext(context) {
     let snapshot;
     try {
-      snapshot = replayBuilderConversation(context.events);
+      snapshot = replaySnapshotFromContext(context);
     } catch {
       fail();
     }
@@ -1276,7 +1618,7 @@ function createBuilderConversationMainService(rawOptions) {
   function openRunFromContext(context) {
     let snapshot;
     try {
-      snapshot = replayBuilderConversation(context.events);
+      snapshot = replaySnapshotFromContext(context);
     } catch {
       fail();
     }
@@ -1460,9 +1802,8 @@ function createBuilderConversationMainService(rawOptions) {
 
   function beginTurn(request, mode) {
     const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
-    const conversationId = `builder-conversation:${projectUuid(request.project_id)}`;
+    const conversationId = request.conversation_id;
     let state = load(request.project_id, conversationId);
-    if (state === null && request.base_revision !== null) fail();
     if (request.queued_followup !== undefined && state?.snapshot.active_turn_id !== null) fail();
     const project = freezeDeep({
       project_id: request.project_id,
@@ -1638,7 +1979,7 @@ function createBuilderConversationMainService(rawOptions) {
         turn_id: request.turn_id,
         run_id: request.run_id,
       });
-      if (request.instruction !== approvedPlan.approved_plan_public_text) fail();
+      if (request.instruction !== APPROVED_PLAN_EXECUTION_INSTRUCTION) fail();
       const state = load(request.project_id, request.conversation_id);
       if (
         state === null
@@ -1925,6 +2266,12 @@ function createBuilderConversationMainService(rawOptions) {
         ? 'Answering took too long.'
         : 'Making this draft took too long.';
     }
+    if (failureCode === 'builder_generation_runtime_stalled') {
+      return 'The coding runtime stopped making progress. Review the activity, then retry.';
+    }
+    if (failureCode === 'builder_generation_run_limit_reached') {
+      return 'This work paused after a long run. Review the activity, then continue or retry.';
+    }
     if (failureCode === 'builder_generation_structured_response_invalid') {
       return mode === 'question'
         ? 'The answer could not be prepared.'
@@ -1942,7 +2289,11 @@ function createBuilderConversationMainService(rawOptions) {
 
   function failureEvents(context, failureCode, completeTurn) {
     const cancelled = failureCode === 'builder_generation_cancelled';
-    const interrupted = failureCode === 'builder_generation_timeout';
+    const interrupted = [
+      'builder_generation_timeout',
+      'builder_generation_runtime_stalled',
+      'builder_generation_run_limit_reached',
+    ].includes(failureCode);
     const events = [];
     let previous = context.start_head;
     if ((cancelled && !context.cancel_requested) || interrupted) {
@@ -2127,6 +2478,220 @@ function createBuilderConversationMainService(rawOptions) {
       events: appended.events,
     });
     TRUSTED_CONTEXTS.add(progressedContext);
+    TRUSTED_CONTEXT_REPLAY_SNAPSHOTS.set(progressedContext, appended.snapshot);
+    return progressedContext;
+  }
+
+  function recordRecoveryAction(rawRequest) {
+    exactObject(rawRequest, ['context', 'action', 'phase']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
+    const action = valueAt(rawRequest, 'action');
+    const phase = valueAt(rawRequest, 'phase');
+    if (
+      !['restore_checkpoint', 'restore_revision'].includes(action)
+      || !['requested', 'completed', 'failed'].includes(phase)
+    ) fail();
+    openRunFromContext(context);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'recovery_action_recorded',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        action,
+        phase,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const recordedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(recordedContext);
+    return recordedContext;
+  }
+
+  function recordCheckpoint(rawRequest) {
+    exactObject(rawRequest, [
+      'context', 'status', 'changed_file_count', 'verification_status',
+    ]);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (context.run_terminal_failure_code !== null || context.cancel_requested) fail();
+    const status = valueAt(rawRequest, 'status');
+    const changedFileCount = valueAt(rawRequest, 'changed_file_count');
+    const verificationStatus = valueAt(rawRequest, 'verification_status');
+    if (
+      !['created', 'updated', 'failed'].includes(status)
+      || !Number.isSafeInteger(changedFileCount)
+      || changedFileCount < 0
+      || changedFileCount > 50_000
+      || !['candidate_verified', 'candidate_verified_with_warnings'].includes(verificationStatus)
+    ) fail();
+    openRunFromContext(context);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'checkpoint_recorded',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        status,
+        changed_file_count: changedFileCount,
+        verification_status: verificationStatus,
+      },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const recordedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(recordedContext);
+    return recordedContext;
+  }
+
+  function recordProgrammingRuntimeEvent(rawRequest) {
+    exactObject(rawRequest, ['context', 'runtime_event']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (
+      context.run_terminal_failure_code !== null
+      || context.cancel_requested
+    ) fail();
+    const runtimeEvent = sanitizeBuilderProgrammingRuntimeEvent(
+      valueAt(rawRequest, 'runtime_event'),
+    );
+    const { turn, run } = openRunFromContext(context);
+    if (
+      runtimeEvent.project_id !== context.project.project_id
+      || runtimeEvent.conversation_id !== context.conversation.conversation_id
+      || runtimeEvent.run_id !== run.run_id
+      || (runtimeEvent.turn_id !== null && runtimeEvent.turn_id !== turn.turn_id)
+    ) fail();
+    try {
+      admitBuilderProgrammingRuntimeEventContinuation(
+        run.runtime_events.at(-1) ?? null,
+        runtimeEvent,
+      );
+    } catch {
+      fail();
+    }
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    if (runtimeEvent.normalized_at_ms > recordedAtMs) fail();
+    const recorded = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: newId(options.createUuid, 'builder-command'),
+      eventType: 'programming_runtime_event_recorded',
+      previous: context.start_head,
+      payload: { runtime_event: runtimeEvent },
+    });
+    const appended = append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [recorded],
+      recordedAtMs,
+    });
+    const progressedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(progressedContext);
+    TRUSTED_CONTEXT_REPLAY_SNAPSHOTS.set(progressedContext, appended.snapshot);
+    return progressedContext;
+  }
+
+  function recordProgrammingRuntimeEvents(rawRequest) {
+    exactObject(rawRequest, ['context', 'runtime_events']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (
+      context.run_terminal_failure_code !== null
+      || context.cancel_requested
+    ) fail();
+    const rawRuntimeEvents = valueAt(rawRequest, 'runtime_events');
+    if (!Array.isArray(rawRuntimeEvents) || rawRuntimeEvents.length < 1 || rawRuntimeEvents.length > 1_024) {
+      fail();
+    }
+    const { turn, run } = openRunFromContext(context);
+    let previousRuntimeEvent = run.runtime_events.at(-1) ?? null;
+    let previousConversationHead = context.start_head;
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const events = rawRuntimeEvents.map((rawRuntimeEvent) => {
+      const runtimeEvent = sanitizeBuilderProgrammingRuntimeEvent(rawRuntimeEvent);
+      if (
+        runtimeEvent.project_id !== context.project.project_id
+        || runtimeEvent.conversation_id !== context.conversation.conversation_id
+        || runtimeEvent.run_id !== run.run_id
+        || (runtimeEvent.turn_id !== null && runtimeEvent.turn_id !== turn.turn_id)
+        || runtimeEvent.normalized_at_ms > recordedAtMs
+      ) fail();
+      try {
+        admitBuilderProgrammingRuntimeEventContinuation(previousRuntimeEvent, runtimeEvent);
+      } catch {
+        fail();
+      }
+      const recorded = eventAt({
+        projectId: context.project.project_id,
+        conversationId: context.conversation.conversation_id,
+        sequence: previousConversationHead.sequence + 1,
+        commandId: newId(options.createUuid, 'builder-command'),
+        eventType: 'programming_runtime_event_recorded',
+        previous: previousConversationHead,
+        payload: { runtime_event: runtimeEvent },
+      });
+      previousRuntimeEvent = runtimeEvent;
+      previousConversationHead = {
+        sequence: recorded.sequence,
+        event_id: recorded.event_id,
+        event_digest: recorded.event_digest,
+      };
+      return recorded;
+    });
+    let appended = null;
+    let expectedHead = context.start_head;
+    for (let index = 0; index < events.length; index += MAX_APPEND_EVENTS) {
+      const chunk = events.slice(index, index + MAX_APPEND_EVENTS);
+      appended = append({
+        project: context.project,
+        conversation: context.conversation,
+        expectedHead,
+        events: chunk,
+        recordedAtMs,
+      });
+      expectedHead = appended.head;
+    }
+    const progressedContext = freezeDeep({
+      ...context,
+      start_head: { ...appended.head },
+      events: appended.events,
+    });
+    TRUSTED_CONTEXTS.add(progressedContext);
+    TRUSTED_CONTEXT_REPLAY_SNAPSHOTS.set(progressedContext, appended.snapshot);
     return progressedContext;
   }
 
@@ -2303,15 +2868,18 @@ function createBuilderConversationMainService(rawOptions) {
     exactObject(rawRequest, ['context', 'candidate_result', 'assistant_text']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
     if (context.mode !== 'work' || context.ids.task_id === null) fail();
-    const candidateResult = exactObject(valueAt(rawRequest, 'candidate_result'), [
+    const candidateResult = exactObjectWithOptional(valueAt(rawRequest, 'candidate_result'), [
       'draft_id', 'title', 'summary', 'git_candidate_receipt',
-    ]);
+    ], ['current_materialization']);
     const gitCandidateReceipt = sanitizeBuilderGitCandidateReceipt(
       valueAt(candidateResult, 'git_candidate_receipt'),
     );
     const draftId = safePattern(valueAt(candidateResult, 'draft_id'), DRAFT_ID_PATTERN);
     const title = safeText(valueAt(candidateResult, 'title'), 160, 1_024);
     const summary = safeText(valueAt(candidateResult, 'summary'), 2_000, 8_192);
+    const currentMaterialization = Object.hasOwn(candidateResult, 'current_materialization')
+      ? sanitizeCurrentMaterialization(valueAt(candidateResult, 'current_materialization'))
+      : { status: 'not_attempted', reason: 'current_projection_not_configured' };
     if (
       gitCandidateReceipt.project_id !== context.project.project_id
       || gitCandidateReceipt.conversation_id !== context.conversation.conversation_id
@@ -2343,6 +2911,7 @@ function createBuilderConversationMainService(rawOptions) {
           title,
           summary,
           git_candidate_receipt: gitCandidateReceipt,
+          current_materialization: currentMaterialization,
         },
         plan_admission: null,
       },
@@ -2370,13 +2939,19 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function publicPlanMessage(planRecord) {
+    function markdownText(value) {
+      return safeText(value, 4_000, 16_000).replace(/[\\`*_[\]<>#|]/gu, '\\$&');
+    }
     const lines = [
-      planRecord.title,
+      `## ${markdownText(planRecord.title)}`,
       '',
-      planRecord.summary,
-      '',
-      'Plan:',
-      ...planRecord.steps.map((step, index) => `${index + 1}. ${step.title}`),
+      markdownText(planRecord.summary),
+      ...planRecord.steps.flatMap((step, index) => [
+        '',
+        `${index + 1}. **${markdownText(step.title)}**`,
+        `   - **Purpose:** ${markdownText(step.purpose)}`,
+        `   - **Expected change:** ${markdownText(step.expected_change)}`,
+      ]),
     ];
     return safeText(lines.join('\n'), 4_000, 16_000);
   }
@@ -2835,6 +3410,72 @@ function createBuilderConversationMainService(rawOptions) {
     });
   }
 
+  function completeWorkResponse(rawRequest) {
+    exactObject(rawRequest, ['context', 'assistant_text']);
+    const context = trustedContext(valueAt(rawRequest, 'context'));
+    if (
+      context.mode !== 'work'
+      || context.ids.task_id === null
+      || context.run_terminal_failure_code !== null
+      || context.cancel_requested
+    ) fail();
+    const { run } = openRunFromContext(context);
+    if (
+      run.cancel_request_id !== null
+      || run.interrupt_request_id !== null
+      || run.tool_calls.some((toolCall) => toolCall.tool_result_record === null)
+    ) fail();
+    const assistantText = safeText(valueAt(rawRequest, 'assistant_text'), 8_000, 32_000);
+    const recordedAtMs = safeTimestamp(Reflect.apply(options.nowMs, undefined, []));
+    const resultDigest = sha256Canonical({
+      work_response_version: BUILDER_CONVERSATION_MAIN_SERVICE_VERSION,
+      request_digest: context.request_digest,
+      run_id: context.ids.run_id,
+      assistant_text: assistantText,
+    });
+    const first = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: context.start_head.sequence + 1,
+      commandId: context.ids.terminal_command_id,
+      eventType: 'run_completed',
+      previous: context.start_head,
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        terminal_status: 'succeeded',
+        result_kind: 'explanation',
+        result_digest: resultDigest,
+        assistant_message: {
+          message_id: context.ids.assistant_message_id,
+          text: assistantText,
+        },
+        candidate_result: null,
+        plan_admission: null,
+      },
+    });
+    const second = eventAt({
+      projectId: context.project.project_id,
+      conversationId: context.conversation.conversation_id,
+      sequence: first.sequence + 1,
+      commandId: context.ids.turn_terminal_command_id,
+      eventType: 'turn_completed',
+      previous: eventHead(first),
+      payload: {
+        turn_id: context.ids.turn_id,
+        run_id: context.ids.run_id,
+        outcome: 'responded',
+      },
+    });
+    return append({
+      project: context.project,
+      conversation: context.conversation,
+      expectedHead: context.start_head,
+      events: [first, second],
+      recordedAtMs,
+    });
+  }
+
   function requestCancel(rawRequest) {
     exactObject(rawRequest, ['context']);
     const context = trustedContext(valueAt(rawRequest, 'context'));
@@ -2979,7 +3620,6 @@ function createBuilderConversationMainService(rawOptions) {
     const runId = safePattern(valueAt(rawRequest, 'run_id'), RUN_ID_PATTERN);
     const candidateDigest = safeDigest(valueAt(rawRequest, 'candidate_digest'));
     const expectedHead = safeHead(valueAt(rawRequest, 'conversation_head'));
-    if (conversationId.slice('builder-conversation:'.length) !== projectUuid(projectId)) fail();
     const state = load(projectId, conversationId);
     if (state === null || expectedHead.sequence > state.events.length) fail();
     const selectedEvent = state.events[expectedHead.sequence - 1];
@@ -3085,12 +3725,13 @@ function createBuilderConversationMainService(rawOptions) {
       run_id: run.run_id,
       candidate_digest: receipt.candidate_digest,
       base_revision: turn.base_revision === null ? null : { ...turn.base_revision },
-      conversation_head: eventHead(turnCompleted),
+      conversation_head: { ...state.head },
       candidate_result: {
         draft_id: candidateResult.draft_id,
         title: candidateResult.title,
         summary: candidateResult.summary,
         git_candidate_receipt: { ...receipt },
+        current_materialization: { ...candidateResult.current_materialization },
       },
       verification_admission: 'sqlite_replay_verified',
     });
@@ -3299,7 +3940,6 @@ function createBuilderConversationMainService(rawOptions) {
       exactObject(rawRequest, ['project_id', 'conversation_id', 'turn_id', 'run_id', 'decision']);
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
       const conversationId = safePattern(valueAt(rawRequest, 'conversation_id'), CONVERSATION_ID_PATTERN);
-      if (conversationId !== `builder-conversation:${projectUuid(projectId)}`) fail();
       const turnId = safePattern(valueAt(rawRequest, 'turn_id'), TURN_ID_PATTERN);
       const runId = safePattern(valueAt(rawRequest, 'run_id'), RUN_ID_PATTERN);
       const decision = valueAt(rawRequest, 'decision');
@@ -3365,29 +4005,94 @@ function createBuilderConversationMainService(rawOptions) {
   }
 
   function readStream(rawRequest) {
+    let failureStage = 'request';
+    let readFailureRecorded = false;
+    function recordReadFailure(stage) {
+      if (readFailureRecorded) return;
+      readFailureRecorded = true;
+      try {
+        Reflect.apply(options.onTaskStreamReadFailure ?? (() => {}), undefined, [{
+          diagnostic_version: 'builder-task-stream-read-failure.v1',
+          stage,
+        }]);
+      } catch {
+        // Main-only diagnostics must never change the public read failure.
+      }
+    }
+    function transcriptFallback(projectId, conversationId) {
+      if (options.readLatestConversationTranscript === null) return null;
+      const transcript = Reflect.apply(
+        options.readLatestConversationTranscript,
+        options.transcriptArchive,
+        [{ project_id: projectId, conversation_id: conversationId }],
+      );
+      if (
+        transcript === null
+        || typeof transcript !== 'object'
+        || valueAt(transcript, 'operation') !== 'archive_read'
+        || valueAt(transcript, 'project_id') !== projectId
+        || valueAt(transcript, 'conversation_id') !== conversationId
+      ) return null;
+      const latest = valueAt(transcript, 'latest');
+      if (latest === null || typeof latest !== 'object') return null;
+      return projectBuilderTaskStream({
+        project_id: projectId,
+        conversation: {
+          conversation_id: conversationId,
+          created_at_ms: valueAt(latest, 'archived_at_ms'),
+          head_sequence: valueAt(latest, 'sequence'),
+          source: 'sqlite_derived_public_transcript',
+          public_entries: valueAt(transcript, 'public_entries'),
+        },
+      });
+    }
     try {
-      exactObject(rawRequest, ['project_id']);
+      exactObject(rawRequest, ['project_id', 'conversation_id']);
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
-      const conversationId = `builder-conversation:${projectUuid(projectId)}`;
-      const state = load(projectId, conversationId);
+      const conversationId = safePattern(valueAt(rawRequest, 'conversation_id'), CONVERSATION_ID_PATTERN);
+      failureStage = 'conversation_load';
+      let state;
+      try {
+        state = load(projectId, conversationId);
+      } catch {
+        recordReadFailure(failureStage);
+        try {
+          const fallback = transcriptFallback(projectId, conversationId);
+          if (fallback !== null) return fallback;
+        } catch {
+          // Fall through to the canonical public read failure below.
+        }
+        throw new BuilderTaskStreamProjectionError();
+      }
+      failureStage = 'context_status';
       const contextStatusProjection = state === null
         ? undefined
         : currentContextStatusProjection(projectId, conversationId);
+      failureStage = 'provider_context_status';
       const providerContextDisclosureStatusProjection = state === null
         ? undefined
         : currentProviderContextDisclosureStatusProjection(projectId, conversationId);
+      failureStage = 'draft_checkpoint_status';
       const draftCheckpointStatusProjection = state === null
         ? undefined
         : currentDraftCheckpointStatusProjection(state, projectId, conversationId);
+      failureStage = 'draft_checkpoint_timeline';
+      const draftCheckpointTimelineProjection = state === null
+        ? undefined
+        : currentDraftCheckpointTimelineProjection(state, projectId, conversationId);
+      failureStage = 'check_run_status';
       const checkRunStatus = state === null
         ? undefined
         : currentCheckRunStatusProjection(state, projectId);
+      failureStage = 'candidate_activity';
       const candidateActivity = state === null
         ? undefined
         : currentCandidateActivity(state, projectId);
+      failureStage = 'check_run_outcome';
       const checkRunOutcomeProjection = state === null
         ? undefined
         : currentCheckRunOutcomeProjection(state, projectId, checkRunStatus, candidateActivity);
+      failureStage = 'review_state';
       const reviewStateProjection = state === null
         ? undefined
         : currentReviewStateProjection(
@@ -3397,7 +4102,8 @@ function createBuilderConversationMainService(rawOptions) {
           checkRunStatus,
           candidateActivity,
         );
-      return projectBuilderTaskStream({
+      failureStage = 'task_stream_projection';
+      const projectionRequest = {
         project_id: projectId,
         ...(contextStatusProjection === undefined
           ? {}
@@ -3411,6 +4117,9 @@ function createBuilderConversationMainService(rawOptions) {
         ...(draftCheckpointStatusProjection === undefined
           ? {}
           : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
+        ...(draftCheckpointTimelineProjection === undefined
+          ? {}
+          : { draft_checkpoint_timeline_projection: draftCheckpointTimelineProjection }),
         ...(reviewStateProjection === undefined
           ? {}
           : { review_state_projection: reviewStateProjection }),
@@ -3425,8 +4134,22 @@ function createBuilderConversationMainService(rawOptions) {
           created_at_ms: state.conversation.created_at_ms,
           events: state.events,
         },
-      });
+      };
+      const projected = builderPerformanceTrace.measureSync(
+        'main.task_stream.projection.duration_ms',
+        () => (state === null
+          ? projectBuilderTaskStream(projectionRequest)
+          : projectBuilderTaskStreamFromAuthorityState(projectionRequest, state)),
+      );
+      if (builderPerformanceTrace.enabled()) {
+        builderPerformanceTrace.observe(
+          'main.task_stream.projection.result_bytes',
+          projectionUtf8Bytes(projected),
+        );
+      }
+      return projected;
     } catch {
+      recordReadFailure(failureStage);
       throw new BuilderTaskStreamProjectionError();
     }
   }
@@ -3441,12 +4164,17 @@ function createBuilderConversationMainService(rawOptions) {
     record_run_context_snapshot: recordRunContextSnapshot,
     record_programming_run_admission: recordProgrammingRunAdmission,
     record_run_progress: recordRunProgress,
+    record_checkpoint: recordCheckpoint,
+    record_recovery_action: recordRecoveryAction,
+    record_programming_runtime_event: recordProgrammingRuntimeEvent,
+    record_programming_runtime_events: recordProgrammingRuntimeEvents,
     record_agent_step_progress: recordAgentStepProgress,
     retry_after_failure: retryAfterFailure,
     begin_approved_plan_work: beginApprovedPlanWork,
     begin_draft_continuation_work: beginDraftContinuationWork,
     complete_candidate: completeCandidate,
     complete_explanation: completeExplanation,
+    complete_work_response: completeWorkResponse,
     complete_plan: completePlan,
     complete_failure: completeFailure,
     record_tool_call_request: recordToolCallRequest,
@@ -3472,8 +4200,11 @@ function createBuilderConversationMainService(rawOptions) {
       restart_running_recovery: 'interrupted_without_provider_redispatch',
       candidate_draft_restore: 'sqlite_index_replay_verified',
       question_explanation: 'sqlite_event_chain_without_git_revision',
+      work_response: 'sqlite_event_chain_without_candidate_or_checkpoint',
       run_context_snapshot_recording: 'main_only_digest_bound_event',
       run_progress_recording: 'main_only_fixed_stage_event',
+      checkpoint_recording: 'main_only_bounded_checkpoint_fact_without_source_identity',
+      recovery_action_recording: 'main_only_bounded_lifecycle_event_without_target_identity',
       agent_step_progress_recording: 'main_only_admitted_progress_event',
       run_steering_recording: 'main_only_active_run_message_no_provider_mutation',
       run_followup_queue_recording: 'main_only_active_run_message_no_provider_mutation',

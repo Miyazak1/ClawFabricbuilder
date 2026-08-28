@@ -5,8 +5,13 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const BUILDER_ROOT = join(process.cwd(), 'src', 'features', 'builder');
+const BUILDER_APP_PATH = join(process.cwd(), 'src', 'app', 'BuilderApp.tsx');
 const EXPECTED_PRODUCTION_FILES = Object.freeze([
+  'application/builderAgentWorkbenchController.ts',
+  'application/builderAgentProjectTreeController.ts',
   'application/builderGeneration.ts',
+  'application/builderCommandOutputStore.ts',
+  'application/builderLiveOutputStore.ts',
   'application/builderComposerIntent.ts',
   'application/builderConversationController.ts',
   'application/builderPorts.ts',
@@ -15,10 +20,14 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderProjectController.ts',
   'components/BuilderStaticPreview.tsx',
   'domain/builderAgentActivityProjection.ts',
+  'domain/builderAgentProjectTreeProjection.ts',
+  'domain/builderAgentTaskMonitorProjection.ts',
+  'domain/builderAgentWorkbenchProjection.ts',
   'domain/builderCheckRunOutcomeProjection.ts',
   'domain/builderContextStatusProjection.ts',
   'domain/builderConversationSnapshot.ts',
   'domain/builderDraftCheckpointStatusProjection.ts',
+  'domain/builderDraftCheckpointTimelineProjection.ts',
   'domain/builderProjectCatalog.ts',
   'domain/builderProjectHistory.ts',
   'domain/builderProjectSnapshot.ts',
@@ -27,11 +36,15 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderReviewStateProjection.ts',
   'domain/builderSourceTreeChanges.ts',
   'hooks/useBuilderConversationController.ts',
+  'hooks/useBuilderAgentProjectTreeController.ts',
+  'hooks/useBuilderAgentWorkbenchController.ts',
   'hooks/useBuilderProjectCatalogController.ts',
   'hooks/useBuilderProjectHistoryController.ts',
   'hooks/useBuilderProjectController.ts',
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCheckRunPort.ts',
+  'infrastructure/builderDesktopAgentProjectTreePort.ts',
+  'infrastructure/builderDesktopAgentWorkbenchPort.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
   'infrastructure/builderDesktopLivePreviewPort.ts',
   'infrastructure/builderDesktopPlanReviewPort.ts',
@@ -41,7 +54,10 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'infrastructure/builderDesktopSideWorkspaceFilesPort.ts',
   'infrastructure/builderDesktopTaskStreamPort.ts',
   'presentation/BuilderChangesPanel.tsx',
+  'presentation/BuilderAgentSidebar.tsx',
+  'presentation/BuilderAgentRoster.tsx',
   'presentation/BuilderComposer.tsx',
+  'presentation/BuilderConversationMarkdown.tsx',
   'presentation/BuilderPage.tsx',
   'presentation/BuilderProjectCatalog.tsx',
   'presentation/BuilderProviderSettingsPanel.tsx',
@@ -176,10 +192,11 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toMatch(/continueDraft\(request: Readonly<\{[\s\S]*?draft_id: string;[\s\S]*?instruction: string;[\s\S]*?queued_followup\?: BuilderQueuedFollowupReference \| null;[\s\S]*?\}>\)/u);
     expect(ports).toContain('answer(request: BuilderGenerationTurnRequest)');
     expect(ports).toContain('answerDraft(request: Readonly<{ draft_id: string; instruction: string }>)');
-    expect(ports).toMatch(/preparePlanSourceReadApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
-    expect(ports).toMatch(/approvePlanSourceRead\(\s*request: Readonly<\{ project_id: string \}>/u);
-    expect(ports).toMatch(/prepareCurrentProjectWriteApproval\(\s*request: Readonly<\{ project_id: string \}>/u);
-    expect(ports).toMatch(/approveCurrentProjectWrite\(\s*request: Readonly<\{ project_id: string \}>/u);
+    const taskScopedApproval = /request: Readonly<\{ project_id: string; task_address_id\?: string \| null \}>/u;
+    expect(ports.match(/preparePlanSourceReadApproval\([\s\S]*?\): Promise/u)?.[0]).toMatch(taskScopedApproval);
+    expect(ports.match(/approvePlanSourceRead\([\s\S]*?\): Promise/u)?.[0]).toMatch(taskScopedApproval);
+    expect(ports.match(/prepareCurrentProjectWriteApproval\([\s\S]*?\): Promise/u)?.[0]).toMatch(taskScopedApproval);
+    expect(ports.match(/approveCurrentProjectWrite\([\s\S]*?\): Promise/u)?.[0]).toMatch(taskScopedApproval);
     expect(ports).toContain('retry(request: BuilderGenerationRequest)');
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toMatch(/restoreRevisionAsDraft\(\s*request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>/u);
@@ -192,6 +209,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('reloadCurrentPreview(request: BuilderLivePreviewRequest)');
     expect(ports).toContain('stopCurrentPreview(request: BuilderLivePreviewRequest)');
     expect(ports).toContain('readCurrentPreviewStatus(request: BuilderLivePreviewRequest)');
+    expect(ports).toContain('updateCurrentPreviewLayout(request: BuilderLivePreviewLayoutRequest)');
     expect(ports).toContain('evaluate(request: BuilderPermissionRequest)');
     const portsWithoutLoadRevision = ports.replace(
       / {2}loadRevision\(request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>\): Promise<unknown>;\r?\n/u,
@@ -244,9 +262,12 @@ describe('Builder v2 architecture boundary', () => {
       /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|source_tree|credential|plan_result_digest|review_id|reviewer_id|reviewed_at_ms/u,
     );
     expect(livePreviewPort).toContain("'requestCurrentDraftPreview'");
+    expect(livePreviewPort).toContain("'updateCurrentPreviewLayout'");
+    expect(livePreviewPort).toContain("'decideDevServerApproval'");
+    expect(livePreviewPort).toContain('/^http:\\/\\/127\\.0\\.0\\.1:');
     expect(livePreviewPort).toContain("source_tree_from_renderer: 'not_accepted'");
     expect(livePreviewPort).not.toMatch(
-      /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|credential|entry_url|preview_origin|permission_id|revision_receipt/u,
+      /saveDraft|generate|projectWorkspace|providerSettings|commit_oid|tree_oid|credential|preview_origin|permission_id|revision_receipt/u,
     );
     expect(sideWorkspaceFilesPort).toContain("'readCurrentDraftFileTree'");
     expect(sideWorkspaceFilesPort).toContain("'readCurrentDraftFileContent'");
@@ -255,7 +276,8 @@ describe('Builder v2 architecture boundary', () => {
     expect(sideWorkspaceFilesPort).not.toMatch(
       /saveDraft|generate|projectWorkspace|providerSettings|credential|entry_url|preview_origin|permission_id|revision_receipt/u,
     );
-    expect(conversationController).toContain("port.read({ project_id: projectId })");
+    expect(conversationController).toContain("project_id: projectId,");
+    expect(conversationController).toContain("task_address_id: taskAddressId,");
     expect(conversationController).not.toMatch(/saveDraft|generate|optimistic|draft_id|source_tree/u);
     expect(historyController).toContain("port.listHistory({");
     expect(historyController).toContain('limit: BUILDER_PROJECT_HISTORY_LIMIT');
@@ -264,5 +286,40 @@ describe('Builder v2 architecture boundary', () => {
     expect(historyHook).not.toMatch(/saveDraft|generate|source_tree|ipcRenderer|localStorage/u);
     expect(sourceTreeChanges).toContain('createBuilderSourceTreeChanges');
     expect(sourceTreeChanges).not.toMatch(/ipcRenderer|saveDraft|generate|commit_oid|tree_oid|receipt|localStorage/u);
+  });
+
+  it('keeps automatic check command execution out of the renderer application', () => {
+    const app = readFileSync(BUILDER_APP_PATH, 'utf8');
+
+    expect(app).toContain('checkRunStatus={null}');
+    expect(app).not.toMatch(/ports\.checkRun\.approveAndRunCurrentDraftCheck\s*\(/u);
+  });
+
+  it('cuts the product shell directly to Agent-first navigation', () => {
+    const app = readFileSync(BUILDER_APP_PATH, 'utf8');
+    const sidebar = readFileSync(
+      join(BUILDER_ROOT, 'presentation', 'BuilderAgentSidebar.tsx'),
+      'utf8',
+    );
+    const roster = readFileSync(
+      join(BUILDER_ROOT, 'presentation', 'BuilderAgentRoster.tsx'),
+      'utf8',
+    );
+    const port = readFileSync(
+      join(BUILDER_ROOT, 'infrastructure', 'builderDesktopAgentProjectTreePort.ts'),
+      'utf8',
+    );
+
+    expect(app).toContain("id: 'agents'");
+    expect(app).toContain('<BuilderAgentRoster');
+    expect(app).toContain('<BuilderAgentSidebar');
+    expect(app).not.toContain("id: 'projects'");
+    expect(app).not.toContain('<BuilderProjectCatalog');
+    expect(sidebar).toContain('data-builder-task-address-id={task.task_address_id}');
+    expect(sidebar).not.toMatch(/synthetic|fallback|legacy/iu);
+    expect(roster).toContain('data-builder-agent-id={tree.agent_id}');
+    expect(roster).not.toMatch(/project_id|task_address_id|saveDraft|generate/iu);
+    expect(port).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
+    expect(port).not.toMatch(/saveDraft|generate|permission|source_tree|commit_oid|tree_oid/iu);
   });
 });

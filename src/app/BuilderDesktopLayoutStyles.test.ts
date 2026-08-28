@@ -35,6 +35,15 @@ function styleBlockContaining(source: string, selector: string, expected: string
 }
 
 describe('Builder desktop layout styles', () => {
+  it('keeps Agent Workbench filters visible while its timeline scrolls', () => {
+    const filters = styleBlock(styles(), '.cf-builder-agent-workbench-filters');
+
+    expect(filters).toContain('position: sticky;');
+    expect(filters).toContain('top: 0;');
+    expect(filters).toContain('z-index: 4;');
+    expect(filters).toContain('background: var(--cf-app-bg);');
+  });
+
   it('pins the desktop shell and lets only the conversation body scroll', () => {
     const source = styles();
     const root = styleBlock(source, 'html,\nbody,\n#root');
@@ -44,6 +53,7 @@ describe('Builder desktop layout styles', () => {
     const surfaceBody = styleBlock(source, '.cf-builder-surface-body');
     const chatMain = styleBlock(source, '.cf-builder-chat-main');
     const chatScroll = styleBlock(source, '.cf-builder-chat-scroll');
+    const chatFlowColumn = styleBlock(source, '.cf-builder-chat-flow-column');
     const chatTail = styleBlock(source, '.cf-builder-chat-tail');
 
     expect(root).toContain('height: 100%;');
@@ -52,6 +62,12 @@ describe('Builder desktop layout styles', () => {
     expect(desktopShell).toContain('overflow: hidden;');
     expect(builderShell).toContain('height: 100%;');
     expect(builderShell).toContain('overflow: hidden;');
+    expect(builderShell).toContain('grid-template-columns: 72px 144px 248px minmax(0, 1fr);');
+    expect(source).toContain('.cf-builder-shell[data-builder-projects="absent"],');
+    expect(source).toContain('.cf-builder-shell[data-builder-projects="collapsed"]');
+    expect(source).toContain('grid-template-columns: 72px 144px minmax(0, 1fr);');
+    expect(source).toContain('.cf-builder-agent-roster-column');
+    expect(source).toContain('.cf-builder-shell[data-builder-view="settings"]');
     expect(workbenchFrame).toContain('height: 100%;');
     expect(workbenchFrame).toContain('overflow: hidden;');
     expect(workbenchFrame).toContain('border: 1px solid var(--cf-border);');
@@ -62,18 +78,19 @@ describe('Builder desktop layout styles', () => {
     expect(surfaceBody).not.toContain('overflow: auto;');
     expect(chatMain).toContain('grid-template-rows: minmax(0, 1fr) auto;');
     expect(chatMain).toContain('overflow: hidden;');
-    expect(chatScroll).toContain('display: flex;');
-    expect(chatScroll).toContain('flex-direction: column;');
-    expect(chatScroll).toContain('align-items: center;');
     expect(chatScroll).toContain('overflow: auto;');
-    expect(chatScroll).toContain('padding: 14px 14px 28px;');
-    expect(chatScroll).toContain('scroll-padding-block-end: 44px;');
+    expect(chatScroll).toContain('padding: 14px;');
+    expect(chatScroll).toContain('scroll-padding-block-end: 24px;');
     expect(chatScroll).toContain('scrollbar-width: none;');
     expect(chatScroll).toContain('-ms-overflow-style: none;');
-    expect(chatTail).toContain('min-height: 32px;');
+    expect(chatTail).toContain('min-height: 24px;');
     expect(source).toContain('.cf-builder-chat-scroll::-webkit-scrollbar');
     expect(styleBlock(source, '.cf-builder-chat-scroll::-webkit-scrollbar')).toContain('display: none;');
     expect(chatScroll).not.toContain('display: grid;');
+    expect(chatFlowColumn).toContain('display: flex;');
+    expect(chatFlowColumn).toContain('flex-direction: column;');
+    expect(chatFlowColumn).toContain('align-items: center;');
+    expect(chatFlowColumn).toContain('width: 100%;');
   });
 
   it('keeps the desktop artifact sidebar resizable without taking over the chat shell', () => {
@@ -83,7 +100,9 @@ describe('Builder desktop layout styles', () => {
     const body = styleBlock(source, '.cf-builder-artifact-body');
 
     expect(source).toContain('.cf-builder-chat-shell {');
-    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(360px, var(--cf-builder-artifact-width, 480px));');
+    expect(source).toContain('grid-template-columns: minmax(0, 1fr) minmax(320px, var(--cf-builder-artifact-width, 480px));');
+    expect(source).toContain('.cf-builder-chat-main .cf-builder-composer-card');
+    expect(source).toContain('padding-inline: 14px;');
     expect(source).toContain('.cf-builder-chat-shell[data-builder-artifact-sidebar-visible="false"]');
     expect(sidebar).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(sidebar).toContain('overflow: hidden;');
@@ -134,26 +153,18 @@ describe('Builder desktop layout styles', () => {
     );
   });
 
-  it('keeps chat artifact summaries compact while changes expand in the artifact drawer', () => {
+  it('keeps result summaries out of chat while review tools expand in the artifact drawer', () => {
     const source = styles();
-    const draftLanding = styleBlock(source, '.cf-builder-draft-landing');
-    const draftLandingSurfaces = styleBlock(source, '.cf-builder-draft-landing > .cf-builder-chat-flow-surface');
-    const artifactSummary = styleBlock(source, '.cf-builder-artifact-summary');
     const summaryRow = styleBlock(source, '.cf-builder-changes-summary-row');
     const summaryMain = styleBlock(source, '.cf-builder-changes-summary-main');
     const summaryText = styleBlock(source, '.cf-builder-changes-summary');
     const changesFlow = styleBlock(source, '.cf-builder-artifact-changes');
     const changesPanel = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-changes-panel');
     const changesDisclosure = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-changes-disclosure[open]');
-    const artifactLogs = styleBlock(source, '.cf-builder-artifact-logs');
-    const artifactLogsIntro = styleBlock(source, '.cf-builder-artifact-logs-intro');
-    const artifactLogsList = styleBlock(source, '.cf-builder-artifact-logs-list');
-    const artifactLogsContent = styleBlock(source, '.cf-builder-artifact-logs .cf-builder-activity-content');
     const permissions = styleBlock(source, '.cf-builder-artifact-permissions');
     const permissionsIntro = styleBlock(source, '.cf-builder-artifact-permissions-intro');
     const permissionsList = styleBlock(source, '.cf-builder-permission-list');
     const permissionsRow = styleBlock(source, '.cf-builder-permission-row');
-    const currentDirection = styleBlock(source, '.cf-builder-current-direction');
     const summaryRowOverride = styleBlock(source, '.cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const artifactSummaryRow = styleBlock(source, '.cf-builder-artifact-changes .cf-builder-panel-toolbar.cf-builder-changes-summary-row');
     const changesBody = styleBlock(source, '.cf-builder-changes-body');
@@ -162,23 +173,8 @@ describe('Builder desktop layout styles', () => {
     const firstChangeItem = styleBlock(source, '.cf-builder-change-item:first-child');
     const changeDiff = styleBlock(source, '.cf-builder-change-diff');
 
-    expect(draftLanding).toContain('display: grid;');
-    expect(draftLanding).toContain('position: relative;');
-    expect(draftLanding).toContain('grid-template-columns: minmax(0, 1fr);');
-    expect(draftLanding).toContain('width: min(860px, 100%);');
-    expect(draftLanding).toContain('gap: 14px;');
-    expect(draftLanding).toContain('isolation: isolate;');
-    expect(draftLanding).toContain('margin-top: 4px;');
-    expect(draftLanding).toContain('scroll-margin-block-start: 12px;');
-    expect(draftLanding).not.toContain('border:');
-    expect(draftLanding).not.toContain('border-radius');
-    expect(draftLandingSurfaces).toContain('width: 100%;');
-    expect(artifactSummary).toContain('grid-template-columns: minmax(0, 1fr);');
-    expect(artifactSummary).toContain('align-items: start;');
-    expect(artifactSummary).toContain('border-top: 1px solid var(--cf-border);');
-    expect(artifactSummary).toContain('border-bottom: 1px solid var(--cf-border);');
-    expect(artifactSummary).not.toContain('border-radius');
-    expect(source).not.toContain('.cf-builder-artifact-summary-actions');
+    expect(source).not.toContain('.cf-builder-draft-landing');
+    expect(source).not.toContain('.cf-builder-artifact-summary');
     expect(changesFlow).toContain('display: grid;');
     expect(changesFlow).toContain('overflow: hidden;');
     expect(changesPanel).toContain('height: 100%;');
@@ -187,10 +183,6 @@ describe('Builder desktop layout styles', () => {
     expect(changesDisclosure).toContain('max-height: none;');
     expect(changesPanel).not.toContain('border-radius: 8px;');
     expect(changesPanel).not.toContain('box-shadow: var(--cf-shadow-sm);');
-    expect(artifactLogs).toContain('height: 100%;');
-    expect(artifactLogs).toContain('grid-template-rows: auto auto minmax(0, 1fr);');
-    expect(artifactLogs).toContain('overflow: hidden;');
-    expect(artifactLogsIntro).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(permissions).toContain('height: 100%;');
     expect(permissions).toContain('grid-template-rows: auto minmax(0, 1fr);');
     expect(permissions).toContain('overflow: hidden;');
@@ -199,12 +191,6 @@ describe('Builder desktop layout styles', () => {
     expect(permissionsRow).toContain('grid-template-columns: 112px minmax(0, 1fr);');
     expect(permissionsRow).toContain('border-bottom: 1px solid var(--cf-border);');
     expect(permissionsRow).not.toContain('border-radius');
-    expect(currentDirection).toContain('border-top: 1px solid var(--cf-border);');
-    expect(currentDirection).toContain('border-bottom: 1px solid var(--cf-border);');
-    expect(currentDirection).not.toContain('border-radius');
-    expect(currentDirection).not.toContain('box-shadow');
-    expect(artifactLogsList).toContain('overflow: auto;');
-    expect(artifactLogsContent).toContain('max-width: 100%;');
     expect(summaryRow).toContain('grid-template-columns: 20px minmax(0, 1fr);');
     expect(summaryRowOverride).toContain('display: grid;');
     expect(summaryRowOverride).toContain('background: transparent;');
@@ -334,6 +320,10 @@ describe('Builder desktop layout styles', () => {
     const activityList = styleBlock(source, '.cf-builder-activity-list');
     const activityItem = styleBlock(source, '.cf-builder-activity-item');
     const activityContent = styleBlock(source, '.cf-builder-activity-content');
+    const userActivityContent = styleBlock(
+      source,
+      '.cf-builder-activity-item[data-builder-activity-role="user"] > .cf-builder-activity-content',
+    );
 
     expect(activityPanel).toContain('display: grid;');
     expect(activityPanel).toContain('position: relative;');
@@ -352,13 +342,123 @@ describe('Builder desktop layout styles', () => {
     expect(activityBody).toContain('padding: 0;');
     expect(activityList).toContain('display: flex;');
     expect(activityList).toContain('position: relative;');
+    expect(activityList).toContain('width: 100%;');
     expect(activityList).toContain('flex-direction: column;');
     expect(activityList).toContain('margin: 0;');
     expect(activityList).toContain('padding: 0;');
     expect(activityList).toContain('list-style: none;');
     expect(activityItem).toContain('position: relative;');
+    expect(activityItem).toContain('width: 100%;');
     expect(activityContent).toContain('display: grid;');
+    expect(activityContent).toContain('width: 100%;');
     expect(activityContent).toContain('min-width: 0;');
+    expect(userActivityContent).toContain('width: fit-content;');
+    expect(userActivityContent).toContain('max-width: min(640px, 84%);');
+    expect(userActivityContent).toContain('justify-self: end;');
+    expect(source).toContain(
+      '.cf-builder-activity-item[data-builder-activity-role="assistant"] > .cf-builder-activity-icon',
+    );
+    expect(source).not.toContain(
+      '.cf-builder-activity-item[data-builder-activity-role="assistant"] .cf-builder-activity-icon',
+    );
+  });
+
+  it('keeps tool evidence rows from collapsing to their minimum-content width', () => {
+    const source = styles();
+    const historyAction = styleBlock(source, '.cf-builder-run-history-action');
+    const evidence = styleBlock(source, '.cf-builder-tool-evidence-details');
+    const evidenceSummary = styleBlock(source, '.cf-builder-tool-evidence-details > summary');
+
+    expect(historyAction).toContain('width: 100%;');
+    expect(historyAction).toContain('min-width: 0;');
+    expect(evidence).toContain('width: 100%;');
+    expect(evidenceSummary).toContain('width: 100%;');
+  });
+
+  it('keeps the draft decision card in normal flow at the composer width', () => {
+    const source = styles();
+    const baseStack = styleBlock(source, '.cf-builder-composer-stack');
+    const stack = styleBlock(source, '.cf-builder-chat-main .cf-builder-composer-stack');
+    const decision = styleBlock(source, '.cf-builder-chat-main .cf-builder-composer-version-decision');
+
+    expect(baseStack).toContain('position: relative;');
+    expect(baseStack).toContain('gap: 8px;');
+    expect(stack).toContain('width: min(860px, 100%);');
+    expect(stack).toContain('justify-self: center;');
+    expect(decision).not.toContain('position: absolute;');
+    expect(decision).not.toContain('bottom:');
+    expect(decision).toContain('width: 100%;');
+    expect(decision).toContain('margin-inline: 0;');
+  });
+
+  it('keeps completed run history and result actions compact while live progress stays active', () => {
+    const source = styles();
+    const historyList = styleBlock(source, '.cf-builder-run-history-list');
+    const list = styleBlock(source, '.cf-builder-completion-work-list');
+    const actionText = styleBlock(source, '.cf-builder-completion-work-action strong,\n.cf-builder-completion-work-action small');
+    const addedDelta = styleBlock(source, '.cf-builder-change-line-delta [data-builder-delta-added="true"]');
+    const removedDelta = styleBlock(source, '.cf-builder-change-line-delta [data-builder-delta-removed="true"]');
+    const spinner = styleBlock(source, '.cf-builder-activity-spinner');
+
+    expect(source).toContain('.cf-builder-run-history > summary');
+    expect(source).toContain('.cf-builder-completed-actions > summary');
+    expect(historyList).toContain('border-top: 1px solid var(--cf-border);');
+    expect(historyList).toContain('list-style: none;');
+    expect(list).toContain('display: grid;');
+    expect(list).toContain('list-style: none;');
+    expect(actionText).toContain('font-size: 12px;');
+    expect(actionText).toContain('line-height: 18px;');
+    expect(addedDelta).toContain('color: var(--cf-success-text);');
+    expect(removedDelta).toContain('color: var(--cf-danger-text);');
+    expect(spinner).toContain('animation: cf-builder-activity-spin 900ms linear infinite;');
+    expect(source).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('keeps the Agent task monitor stable, independently scrollable, and motion-safe', () => {
+    const source = styles();
+    const monitor = styleBlock(source, '.cf-builder-task-monitor');
+    const list = styleBlock(source, '.cf-builder-task-monitor-list');
+    const item = styleBlock(source, '.cf-builder-task-monitor-list li > button');
+    const spinner = styleBlock(source, '.cf-builder-task-monitor-spin');
+
+    expect(monitor).toContain('grid-template-rows: auto minmax(0, 1fr) auto;');
+    expect(monitor).toContain('overflow: hidden;');
+    expect(list).toContain('overflow: auto;');
+    expect(list).toContain('scrollbar-gutter: stable;');
+    expect(item).toContain('grid-template-columns: 20px minmax(0, 1fr) auto;');
+    expect(spinner).toContain('animation: cf-builder-task-monitor-spin 1.2s linear infinite;');
+    expect(source).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.cf-builder-task-monitor-spin \{[\s\S]*?animation: none;/u,
+    );
+  });
+
+  it('restores semantic Markdown list markers and gives Plan headings a restrained accent', () => {
+    const source = styles();
+    const markdown = styleBlock(source, '.cf-builder-markdown');
+    const markdownFallback = styleBlockContaining(source, '.cf-builder-markdown-fallback', 'white-space: pre-wrap;');
+    const orderedList = styleBlockContaining(source, '.cf-builder-markdown ol', 'list-style: decimal outside;');
+    const unorderedList = styleBlockContaining(source, '.cf-builder-markdown ul', 'list-style: disc outside;');
+    const marker = styleBlock(source, '.cf-builder-markdown li::marker');
+    const planHeading = styleBlock(
+      source,
+      '.cf-builder-markdown[data-builder-markdown-variant="plan"] h1,\n.cf-builder-markdown[data-builder-markdown-variant="plan"] h2',
+    );
+
+    expect(orderedList).toContain('list-style: decimal outside;');
+    expect(unorderedList).toContain('list-style: disc outside;');
+    expect(marker).toContain('color: var(--cf-primary-text);');
+    expect(planHeading).toContain('color: var(--cf-primary-text);');
+    expect(markdown).toContain('white-space: normal;');
+    expect(markdownFallback).toContain('white-space: pre-wrap;');
+  });
+
+  it('keeps optimistic and durable user bubbles still during identity handoff', () => {
+    const userMessage = styleBlock(
+      styles(),
+      '.cf-builder-activity-item[data-builder-activity-role="user"]',
+    );
+
+    expect(userMessage).toContain('animation: none;');
   });
 
   it('keeps the result flow unframed so preview is not nested inside another card', () => {
@@ -479,26 +579,31 @@ describe('Builder desktop layout styles', () => {
 
   it('presents side workspace files as an editor-like code viewer', () => {
     const source = styles();
+    const files = styleBlock(source, '.cf-builder-artifact-files');
     const filesBody = styleBlock(source, '.cf-builder-artifact-files-body');
     const fileBrowser = styleBlock(source, '.cf-builder-artifact-file-browser');
-    const fileCount = styleBlockContaining(source, '.cf-builder-artifact-files-count', 'border: 0;');
     const fileHeader = styleBlock(source, '.cf-builder-artifact-file-content-header');
     const fileHeaderMeta = styleBlock(source, '.cf-builder-artifact-file-content-header span');
     const codeViewer = styleBlock(source, '.cf-builder-artifact-file-code');
+    const loading = styleBlock(source, '.cf-builder-artifact-file-loading');
+    const loadingLines = styleBlock(source, '.cf-builder-artifact-file-loading-lines');
     const codeLine = styleBlock(source, '.cf-builder-artifact-file-code-line');
     const codeNumber = styleBlock(source, '.cf-builder-artifact-file-code-number');
     const codeText = styleBlock(source, '.cf-builder-artifact-file-code code');
 
+    expect(files).toContain('grid-template-rows: minmax(0, 1fr);');
     expect(filesBody).toContain('grid-template-columns: minmax(0, 1fr) clamp(190px, 34%, 260px);');
     expect(fileBrowser).toContain('background: color-mix(in srgb, var(--cf-bg) 84%, var(--cf-surface));');
-    expect(fileCount).toContain('border: 0;');
-    expect(fileCount).toContain('background: transparent;');
     expect(fileHeader).toContain('display: grid;');
     expect(fileHeader).toContain('grid-template-columns: minmax(0, 1fr) auto;');
     expect(fileHeaderMeta).toContain('border-radius: 999px;');
     expect(codeViewer).toContain('display: grid;');
     expect(codeViewer).toContain('font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;');
     expect(codeViewer).toContain('white-space: pre;');
+    expect(codeViewer).toContain('animation: cf-builder-file-content-enter 150ms ease-out both;');
+    expect(loading).toContain('position: relative;');
+    expect(loading).toContain('overflow: hidden;');
+    expect(loadingLines).toContain('padding: 13px 14px 18px 54px;');
     expect(codeLine).toContain('grid-template-columns: 44px minmax(0, 1fr);');
     expect(codeLine).toContain('min-width: max-content;');
     expect(codeNumber).toContain('position: sticky;');
@@ -506,19 +611,41 @@ describe('Builder desktop layout styles', () => {
     expect(codeText).toContain('font: inherit;');
   });
 
-  it('keeps the draft-gated composer as a lightweight status row', () => {
+  it('keeps wrapped project status labels clear of the toolbar edges', () => {
     const source = styles();
-    const reviewGate = styleBlock(source, '.cf-builder-composer-review-gate');
-    const reviewLink = styleBlock(source, '.cf-builder-composer-review-link');
+    const toolbar = styleBlock(source, '.cf-builder-surface-toolbar');
+    const actions = styleBlock(source, '.cf-builder-toolbar-actions');
 
-    expect(reviewGate).toContain('display: flex;');
-    expect(reviewGate).toContain('justify-content: space-between;');
-    expect(reviewGate).toContain('color: var(--cf-text-muted);');
-    expect(reviewGate).not.toContain('border:');
-    expect(reviewGate).not.toContain('border-radius');
-    expect(reviewLink).toContain('border: 0;');
-    expect(reviewLink).toContain('background: transparent;');
-    expect(reviewLink).toContain('color: var(--cf-primary-text);');
+    expect(toolbar).toContain('padding: 8px 18px;');
+    expect(actions).toContain('align-content: center;');
+    expect(actions).toContain('row-gap: 6px;');
+  });
+
+  it('keeps the last stable workspace visible but subdued while another project opens', () => {
+    const source = styles();
+    const openingShell = styleBlock(
+      source,
+      '.cf-builder-page[data-builder-project-status="opening"] .cf-builder-chat-shell',
+    );
+
+    expect(openingShell).toContain('opacity: 0.72;');
+    expect(openingShell).toContain('transition: opacity 140ms ease;');
+  });
+
+  it('keeps draft review state in the workspace toolbar instead of composer chrome', () => {
+    const source = styles();
+    const checkStatus = styleBlock(source, '.cf-builder-workspace-check-status');
+    const moreWrap = styleBlock(source, '.cf-builder-workspace-draft-more-wrap');
+
+    expect(source).not.toContain('.cf-builder-composer-review-gate');
+    expect(source).not.toContain('.cf-builder-composer-review-link');
+    expect(checkStatus).toContain('display: inline-flex;');
+    expect(checkStatus).toContain('max-width: 150px;');
+    expect(moreWrap).toContain('width: 30px;');
+    expect(moreWrap).toContain('height: 30px;');
+    expect(moreWrap).toContain('flex: 0 0 30px;');
+    expect(moreWrap).toContain('align-items: center;');
+    expect(moreWrap).toContain('line-height: 0;');
   });
 
   it('keeps the composer textarea from covering the shell rounded corners', () => {

@@ -20,7 +20,8 @@ const {
 } = require('../electron/builder-project-source-tree.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174001';
+const CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174000:123e4567-e89b-42d3-a456-426614174001';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174002';
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174003';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174004';
@@ -335,7 +336,7 @@ test('resolves saved revision source through project read authority without rend
   }]);
 });
 
-test('rejects saved revision project, conversation, or digest drift', async () => {
+test('accepts a saved revision created by another conversation in the same project', async () => {
   const sourceTree = tree();
   const pair = candidatePair(sourceTree);
   const resolver = createBuilderLivePreviewSourceResolver({
@@ -345,21 +346,22 @@ test('rejects saved revision project, conversation, or digest drift', async () =
       load_revision() {
         return projectReadResult(sourceTree, pair.receipt, pair.verification, {
           product_revision_receipt: {
-            conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174099',
+            conversation_id:
+              'builder-conversation:123e4567-e89b-42d3-a456-426614174000:123e4567-e89b-42d3-a456-426614174099',
           },
         });
       },
     },
   });
 
-  await assert.rejects(
-    resolver.resolveSavedRevisionPreviewSource({
-      project_id: PROJECT_ID,
-      conversation_id: CONVERSATION_ID,
-      revision_receipt_digest: REVISION_DIGEST,
-    }),
-    { code: 'builder_live_preview_source_resolver_invalid' },
-  );
+  const result = await resolver.resolveSavedRevisionPreviewSource({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    revision_receipt_digest: REVISION_DIGEST,
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.preview_source_snapshot.source_ref.conversation_id, CONVERSATION_ID);
 });
 
 test('returns unavailable when saved revision authority cannot load the source', async () => {

@@ -48,6 +48,7 @@ const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174200';
 const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174202';
+const OTHER_TASK_ADDRESS_ID = 'builder-task-address:223e4567-e89b-42d3-a456-426614174202';
 const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174203';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174208';
@@ -357,6 +358,11 @@ test('projects the latest task capsule store fact into ready Working Context Sta
   assert.equal(result.evidence.task_capsule_store_authority, 'main_owned_task_capsule_store');
   assert.equal(result.evidence.task_capsule_store_operation, 'latest_task_capsule_ready_read');
   assert.equal(result.latest_context_compaction_summary.status, 'absent');
+  assert.equal(result.latest_context_compaction_summary.summary_id, null);
+  assert.equal(result.latest_context_compaction_summary.summary_digest, null);
+  assert.equal(result.latest_context_compaction_summary.source_range_digest, null);
+  assert.equal(result.latest_context_compaction_summary.summary, null);
+  assert.equal(result.latest_context_compaction_summary.compacted_at_ms, null);
   assert.equal(result.evidence.context_compaction_summary_store_authority, 'not_configured');
   assert.equal(result.evidence.context_compaction_summary_store_operation, 'not_configured');
   assert.deepEqual(result.pending_handoff_packets, {
@@ -458,6 +464,10 @@ test('projects latest compaction summary refs without changing readiness authori
   assert.deepEqual(result.latest_context_compaction_summary, {
     status: 'ready',
     summary_id: compacted.summary_id,
+    summary_digest: compacted.digest,
+    source_range_digest: compacted.source_range_digest,
+    summary: compacted.summary,
+    compacted_at_ms: compacted.created_at_ms,
   });
   assert.deepEqual(result.working_context_state.compaction_refs, [{
     summary_digest: compacted.digest,
@@ -476,6 +486,66 @@ test('projects latest compaction summary refs without changing readiness authori
   assert.equal(result.evidence.source_mutation, false);
   assert.equal(result.evidence.git_mutation, false);
   assert.equal(result.evidence.permission_grant, false);
+});
+
+test('keeps compaction projection scoped to the current task address', (t) => {
+  const item = compactionFixture(t);
+  const currentTaskSummary = compactionSummary({
+    source_event_count: 32,
+    created_at_ms: 1_250,
+    summary: 'Current task summary says the portfolio homepage direction remains active.',
+  });
+  const delayedOlderWindowSummary = compactionSummary({
+    source_event_start_id: eventId('5'),
+    source_event_end_id: eventId('6'),
+    source_event_count: 9,
+    summary: 'Delayed older current-task summary says the old landing page direction remains active.',
+    durable_decisions: ['Use the old landing page direction.'],
+    created_at_ms: 2_500,
+  });
+  const siblingTaskSummary = compactionSummary({
+    task_address_id: OTHER_TASK_ADDRESS_ID,
+    source_event_start_id: eventId('3'),
+    source_event_end_id: eventId('4'),
+    source_event_count: 12,
+    summary: 'Sibling task summary says to switch to a dashboard design.',
+    durable_decisions: ['Use a dashboard direction for the sibling task.'],
+    created_at_ms: 2_000,
+  });
+  item.compactionStore.record_context_compaction_summary({
+    context_compaction_summary: currentTaskSummary,
+  });
+  item.compactionStore.record_context_compaction_summary({
+    context_compaction_summary: delayedOlderWindowSummary,
+  });
+  item.compactionStore.record_context_compaction_summary({
+    context_compaction_summary: siblingTaskSummary,
+  });
+
+  const result = item.service.read_current_working_context_state(request({
+    objective_summary: null,
+    confirmed_constraints: [],
+    rejected_constraints: [],
+    open_questions: [],
+    latest_user_intent: null,
+    source_refs: [sourceRef({ source_kind: 'compaction_summary', source_digest: currentTaskSummary.digest })],
+  }));
+
+  assert.equal(result.status, 'empty');
+  assert.equal(result.latest_context_compaction_summary.status, 'ready');
+  assert.equal(result.latest_context_compaction_summary.summary_id, currentTaskSummary.summary_id);
+  assert.equal(result.latest_context_compaction_summary.summary, currentTaskSummary.summary);
+  assert.notEqual(result.latest_context_compaction_summary.summary_id, delayedOlderWindowSummary.summary_id);
+  assert.notEqual(result.latest_context_compaction_summary.summary_id, siblingTaskSummary.summary_id);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /dashboard design|sibling task|old landing page/iu,
+  );
+  assert.deepEqual(result.working_context_state.compaction_refs, [{
+    summary_digest: currentTaskSummary.digest,
+    source_range_digest: currentTaskSummary.source_range_digest,
+    compacted_at_ms: currentTaskSummary.created_at_ms,
+  }]);
 });
 
 test('projects pending handoff inbox status without adopting context', (t) => {

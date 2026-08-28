@@ -8,6 +8,12 @@ const {
   createBuilderCheckRunCurrentDraftService,
 } = require('./builder-check-run-current-draft-service.cjs');
 const {
+  createBuilderCheckDependencyPreparer,
+} = require('./builder-check-dependency-preparer.cjs');
+const {
+  createBuilderCodingLoopCheckCoordinator,
+} = require('./builder-coding-loop-check-coordinator.cjs');
+const {
   createBuilderCheckSkipCurrentDraftService,
 } = require('./builder-check-skip-current-draft-service.cjs');
 const {
@@ -28,6 +34,9 @@ const {
 const {
   createBuilderPackagedCheckRuntimeResolver,
 } = require('./builder-packaged-check-runtime-resolver.cjs');
+const {
+  createBuilderRuntimeToolchainProbe,
+} = require('./builder-runtime-toolchain-probe.cjs');
 
 const BUILDER_CHECK_RUN_RUNTIME_COMPOSITION_VERSION =
   'builder-check-run-runtime-composition.v1';
@@ -37,6 +46,9 @@ const CREATE_KEYS = Object.freeze([
   'launcher_path',
   'worker_path',
   'process_adapter',
+  'toolchain_probe_spawn_process',
+  'dependency_prepare_spawn_process',
+  'project_workspace_path_service',
   'clock',
   'conversation_service',
   'git_authority',
@@ -109,6 +121,23 @@ function serviceMethod(value, versionKey, expectedVersion, methodKey) {
   return method.value;
 }
 
+function functionValue(value) {
+  if (typeof value !== 'function' || utilTypes.isProxy(value)) fail();
+  return value;
+}
+
+function terminateToolchainProbeProcessTree(rawRequest) {
+  const child = rawRequest?.child;
+  if (child === null || typeof child !== 'object' || typeof child.kill !== 'function') {
+    return false;
+  }
+  try {
+    return child.kill() === true;
+  } catch {
+    return false;
+  }
+}
+
 function createBuilderCheckRunRuntimeComposition(rawOptions) {
   try {
     const options = exactObject(rawOptions, CREATE_KEYS);
@@ -128,6 +157,8 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
       BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION,
       'terminate_process_tree',
     );
+    const toolchainProbeSpawnProcess = functionValue(options.toolchain_probe_spawn_process.value);
+    const dependencyPrepareSpawnProcess = functionValue(options.dependency_prepare_spawn_process.value);
     const clock = options.clock.value;
     serviceMethod(clock, 'clock_version', 'builder-clock.v1', 'now_ms');
     serviceMethod(clock, 'clock_version', 'builder-clock.v1', 'set_timeout');
@@ -144,6 +175,17 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
     const workspaceMaterializer = createBuilderCheckWorkspaceMaterializer({
       checks_root: checksRoot,
     });
+    const toolchainProbeService = createBuilderRuntimeToolchainProbe({
+      spawn_process: toolchainProbeSpawnProcess,
+      terminate_process_tree: terminateToolchainProbeProcessTree,
+      clock,
+    });
+    const dependencyPreparer = createBuilderCheckDependencyPreparer({
+      spawn_process: dependencyPrepareSpawnProcess,
+      terminate_process_tree: terminateToolchainProbeProcessTree,
+      workspace_materializer: workspaceMaterializer,
+      clock,
+    });
     const checkRunRunner = createBuilderCheckRunRunner({
       spawn_process: spawnProcess,
       clock,
@@ -156,8 +198,12 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
       runtime_resolver: runtimeResolver,
       workspace_materializer: workspaceMaterializer,
       check_run_runner: checkRunRunner,
+      dependency_preparer: dependencyPreparer,
+      toolchain_probe_service: toolchainProbeService,
+      project_workspace_path_service: options.project_workspace_path_service.value,
       check_run_store: options.check_run_store.value,
       check_run_status_service: options.check_run_status_service.value,
+      activity_registry: options.activity_registry.value,
       clock,
     });
     const currentDraftService = createBuilderCheckRunCurrentDraftService({
@@ -165,6 +211,13 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
       git_authority: options.git_authority.value,
       automatic_draft_checkpoint_service: options.automatic_draft_checkpoint_service.value,
       check_run_main_service: checkRunMainService,
+      clock,
+    });
+    const codingLoopCheckCoordinator = createBuilderCodingLoopCheckCoordinator({
+      automatic_draft_checkpoint_service: options.automatic_draft_checkpoint_service.value,
+      check_run_main_service: checkRunMainService,
+      check_skip_decision_store: options.check_skip_decision_store.value,
+      activity_registry: options.activity_registry.value,
       clock,
     });
     const currentDraftSkipService = createBuilderCheckSkipCurrentDraftService({
@@ -176,6 +229,7 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
     });
     return Object.freeze({
       composition_version: BUILDER_CHECK_RUN_RUNTIME_COMPOSITION_VERSION,
+      coding_loop_check_coordinator: codingLoopCheckCoordinator,
       current_draft_service: currentDraftService,
       current_draft_skip_service: currentDraftSkipService,
     });

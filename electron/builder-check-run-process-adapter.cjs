@@ -168,9 +168,9 @@ function createBuilderCheckRunProcessAdapter(rawOptions) {
         || !children.has(child)
         || !STOP_REASONS.includes(request.reason.value)
       ) return Promise.resolve(false);
-      let direct = false;
-      try { direct = child.kill() === true; } catch { direct = false; }
       if (platform !== 'win32' || !Number.isSafeInteger(child.pid) || child.pid < 1) {
+        let direct = false;
+        try { direct = child.kill() === true; } catch { direct = false; }
         return Promise.resolve(direct);
       }
       return new Promise((resolve) => {
@@ -181,6 +181,11 @@ function createBuilderCheckRunProcessAdapter(rawOptions) {
           settled = true;
           resolve(value);
         };
+        const directFallback = () => {
+          let direct = false;
+          try { direct = child.kill() === true; } catch { direct = false; }
+          finish(direct);
+        };
         try {
           killer = rawSpawn(taskkillPath, ['/pid', String(child.pid), '/t', '/f'], {
             shell: false,
@@ -188,13 +193,16 @@ function createBuilderCheckRunProcessAdapter(rawOptions) {
             stdio: 'ignore',
           });
           if (killer === null || typeof killer !== 'object' || typeof killer.once !== 'function') {
-            finish(direct);
+            directFallback();
             return;
           }
-          killer.once('error', () => finish(direct));
-          killer.once('close', (code) => finish(code === 0 || direct));
+          killer.once('error', directFallback);
+          killer.once('close', (code) => {
+            if (code === 0) finish(true);
+            else directFallback();
+          });
         } catch {
-          finish(direct);
+          directFallback();
         }
       });
     },

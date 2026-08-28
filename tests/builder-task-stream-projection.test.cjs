@@ -53,7 +53,11 @@ const {
   MAX_PUBLIC_ITEMS,
   BuilderTaskStreamProjectionError,
   projectBuilderTaskStream,
+  projectBuilderTaskStreamFromAuthorityState,
 } = require('../electron/builder-task-stream-projection.cjs');
+const {
+  replayBuilderConversation,
+} = require('../electron/builder-conversation-replay.cjs');
 const {
   projectBuilderCheckRunOutcome,
 } = require('../electron/builder-check-run-outcome-projection.cjs');
@@ -523,6 +527,7 @@ function candidateEvents() {
       title: 'Focused timer',
       summary: 'A focused timer draft.',
       git_candidate_receipt: candidateReceipt(turnId, taskId, runId),
+      current_materialization: { status: 'materialized' },
     },
   }, 8);
   append(events, 'turn_completed', {
@@ -863,6 +868,58 @@ function draftCheckpointStatusProjection(overrides = {}) {
   };
 }
 
+function draftCheckpointTimelineProjection(overrides = {}) {
+  const base = {
+    projection_version: 'builder-draft-checkpoint-timeline-projection.v1',
+    status: 'ready',
+    entries: [
+      {
+        checkpoint_sequence: 2,
+        created_at_ms: 2_000,
+        label: 'Automatic checkpoint',
+        changed_file_count: 3,
+        verification_status: 'candidate_verified',
+        is_current: true,
+      },
+      {
+        checkpoint_sequence: 1,
+        created_at_ms: 1_000,
+        label: 'Automatic checkpoint',
+        changed_file_count: 1,
+        verification_status: 'candidate_verified_with_warnings',
+        is_current: false,
+      },
+    ],
+    truncated: false,
+    authority: {
+      projection_authority: 'main_owned_draft_checkpoint_timeline_projection_v1',
+      checkpoint_store_read: 'verified_task_checkpoint_list',
+      checkpoint_facts: 'bounded_safe_projection',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_read: 'not_present',
+      git_write: false,
+      sqlite_write: false,
+      restore_authority: false,
+      revision_admission: 'not_created',
+      save_authority: false,
+      publication: false,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    authority: {
+      ...base.authority,
+      ...(overrides.authority ?? {}),
+    },
+  };
+}
+
 function reviewStateProjection(overrides = {}) {
   const ready = overrides.status !== 'blocked';
   const base = {
@@ -871,11 +928,11 @@ function reviewStateProjection(overrides = {}) {
     status: ready ? 'ready' : 'blocked',
     label: ready ? 'Ready to review' : 'Review not ready',
     summary: ready
-      ? 'A recoverable draft is ready to inspect and save.'
+      ? 'A recoverable draft is checked and ready to inspect and save.'
       : 'Waiting for a verified draft checkpoint before saving.',
     checkpoint_status: ready ? 'ready' : 'missing',
     preview_status: 'not_recorded',
-    check_status: 'not_run',
+    check_status: ready ? 'passed' : 'not_run',
     changed_file_count: ready ? 3 : null,
     can_save: ready,
     can_discard: true,
@@ -886,7 +943,9 @@ function reviewStateProjection(overrides = {}) {
       checkpoint_evidence: ready
         ? 'verified_latest_candidate_checkpoint'
         : 'missing_or_unverified',
-      check_evidence: 'verified_absence',
+      check_evidence: ready
+        ? 'verified_current_candidate_check_projection'
+        : 'verified_absence',
       renderer_authority: 'not_present',
       ipc_authority: 'projection_only',
       provider_dispatch: false,
@@ -973,6 +1032,7 @@ test('projects canonical events into bounded renderer-safe activity items', () =
     summary: 'A focused timer draft.',
     candidate_state: 'proposed',
     source_availability: 'not_loaded',
+    workspace_materialization: { status: 'materialized' },
   });
   assert.deepEqual(stream.authority, {
     conversation: 'sqlite_canonical_event_replay_or_absent',
@@ -983,6 +1043,29 @@ test('projects canonical events into bounded renderer-safe activity items', () =
   assert.equal(Object.isFrozen(stream), true);
   assert.equal(Object.isFrozen(stream.conversation.items), true);
   assert.equal(Object.isFrozen(stream.conversation.items[2].candidate), true);
+});
+
+test('projects a Main-owned suffix cache identically to complete public replay', () => {
+  const allEvents = candidateEvents();
+  const prefixEvents = Object.freeze(allEvents.slice(0, 2));
+  const prefixState = Object.freeze({
+    events: prefixEvents,
+    snapshot: replayBuilderConversation(prefixEvents),
+  });
+  assert.deepEqual(
+    projectBuilderTaskStreamFromAuthorityState(input(prefixEvents), prefixState),
+    projectBuilderTaskStream(input(prefixEvents)),
+  );
+
+  const completeEvents = Object.freeze([...prefixEvents, ...allEvents.slice(2)]);
+  const completeState = Object.freeze({
+    events: completeEvents,
+    snapshot: replayBuilderConversation(completeEvents),
+  });
+  assert.deepEqual(
+    projectBuilderTaskStreamFromAuthorityState(input(completeEvents), completeState),
+    projectBuilderTaskStream(input(completeEvents)),
+  );
 });
 
 test('projects queued active-run follow-ups as bounded user messages', () => {
@@ -1296,6 +1379,88 @@ test('projects route downgrade facts without exposing private route evidence', (
   );
 });
 
+test('projects bounded recovery action phases without restore target evidence', () => {
+  const events = [];
+  const turnId = id('turn', 250);
+  const taskId = id('task', 251);
+  const runId = id('run', 252);
+  const messageId = id('message', 253);
+  append(events, 'turn_submitted', {
+    message: { message_id: messageId, text: 'Undo the latest AI change.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Restore project work' },
+    base_revision: null,
+  }, 250);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 251);
+  append(events, 'run_context_snapshot_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    snapshot: runContextSnapshot({
+      turnId,
+      taskId,
+      runId,
+      messageId,
+      routeDecisionRecord: events[0].payload.route_decision,
+    }),
+  }, 252);
+  append(events, 'recovery_action_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_revision',
+    phase: 'requested',
+  }, 253);
+  append(events, 'checkpoint_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    status: 'updated',
+    changed_file_count: 3,
+    verification_status: 'candidate_verified_with_warnings',
+  }, 254);
+  append(events, 'recovery_action_recorded', {
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_revision',
+    phase: 'completed',
+  }, 255);
+
+  const stream = projectBuilderTaskStream(input(events));
+  assert.deepEqual(stream.conversation.items.slice(-3), [{
+    item_kind: 'recovery_action_recorded',
+    sequence: 4,
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_revision',
+    phase: 'requested',
+  }, {
+    item_kind: 'checkpoint_recorded',
+    sequence: 5,
+    turn_id: turnId,
+    run_id: runId,
+    status: 'updated',
+    changed_file_count: 3,
+    verification_status: 'candidate_verified_with_warnings',
+  }, {
+    item_kind: 'recovery_action_recorded',
+    sequence: 6,
+    turn_id: turnId,
+    run_id: runId,
+    action: 'restore_revision',
+    phase: 'completed',
+  }]);
+  assert.doesNotMatch(
+    JSON.stringify(stream),
+    /checkpoint_id|revision_receipt|digest|path|source_tree|git_|provider|credential|secret/iu,
+  );
+});
+
 test('represents a missing conversation as a legal empty result', () => {
   assert.deepEqual(projectBuilderTaskStream({
     project_id: PROJECT_ID,
@@ -1311,6 +1476,70 @@ test('represents a missing conversation as a legal empty result', () => {
       project_revision: 'not_inferred',
     },
   });
+});
+
+test('projects a read-only restored public transcript without replay authority', () => {
+  const stream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id: CONVERSATION_ID,
+      created_at_ms: 1_234,
+      head_sequence: 4,
+      source: 'sqlite_derived_public_transcript',
+      public_entries: [
+        {
+          entry_kind: 'turn',
+          turn_id: id('turn', 1),
+          mode: 'question',
+          status: 'completed',
+          task: null,
+          outcome: 'responded',
+        },
+        {
+          entry_kind: 'message',
+          turn_id: id('turn', 1),
+          message_id: id('message', 2),
+          role: 'user',
+          kind: 'submitted',
+          text: 'What did we change?',
+        },
+        {
+          entry_kind: 'run',
+          turn_id: id('turn', 1),
+          run_id: id('run', 3),
+          attempt_number: 1,
+          status: 'completed',
+          terminal_status: 'succeeded',
+          result_kind: 'explanation',
+          progress_stages: [],
+          candidate: null,
+          candidate_review: null,
+        },
+        {
+          entry_kind: 'message',
+          turn_id: id('turn', 1),
+          message_id: id('message', 4),
+          role: 'assistant',
+          kind: 'run_result',
+          text: 'We restored the public transcript.',
+        },
+      ],
+    },
+  });
+
+  assert.equal(stream.authority.conversation, 'sqlite_derived_public_transcript_restore');
+  assert.equal(stream.conversation.source, 'sqlite_derived_public_transcript');
+  assert.deepEqual(stream.conversation.recovery, {
+    recovery_kind: 'transcript_restored',
+    latest_source_sequence: 4,
+    authority: 'sqlite_derived_non_authoritative_transcript',
+  });
+  assert.deepEqual(stream.conversation.items.map((item) => item.item_kind), [
+    'transcript_message',
+    'transcript_message',
+  ]);
+  assert.deepEqual(stream.conversation.items.map((item) => item.role), ['user', 'assistant']);
+  assert.equal(JSON.stringify(stream).includes('source_tree'), false);
 });
 
 test('projects fixed run progress as renderer-safe status items', () => {
@@ -1687,18 +1916,18 @@ test('rejects forged tool result projections before exposing public items', asyn
   assert.throws(() => projectBuilderTaskStream(input(events)), assertProjectionError);
 });
 
-test('replays the complete chain before exposing only the latest 128 items', () => {
-  const events = explanationHistory(33);
+test('replays more than 1024 events before exposing only the latest 512 items', () => {
+  const events = explanationHistory(300);
   const stream = projectBuilderTaskStream(input(events));
-  assert.equal(MAX_PUBLIC_ITEMS, 128);
+  assert.equal(MAX_PUBLIC_ITEMS, 512);
   assert.equal(MAX_PUBLIC_BYTES, 4 * 1_024 * 1_024);
-  assert.equal(stream.conversation.items.length, 128);
+  assert.equal(stream.conversation.items.length, 512);
   assert.deepEqual(stream.conversation.window, {
-    first_sequence: 5,
-    last_sequence: 132,
+    first_sequence: 689,
+    last_sequence: 1200,
     has_earlier: true,
   });
-  assert.equal(stream.conversation.head_sequence, 132);
+  assert.equal(stream.conversation.head_sequence, 1200);
   assert.ok(Buffer.byteLength(JSON.stringify(stream), 'utf8') <= MAX_PUBLIC_BYTES);
 
   const forged = structuredClone(events);
@@ -1767,6 +1996,24 @@ test('carries optional renderer-safe Draft Checkpoint status without exposing ch
   );
 });
 
+test('carries a bounded renderer-safe Draft Checkpoint timeline without restore authority', () => {
+  const stream = projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_timeline_projection: draftCheckpointTimelineProjection(),
+  });
+
+  assert.equal(stream.draft_checkpoint_timeline_projection.status, 'ready');
+  assert.deepEqual(
+    stream.draft_checkpoint_timeline_projection.entries.map((entry) => entry.checkpoint_sequence),
+    [2, 1],
+  );
+  assert.equal(stream.draft_checkpoint_timeline_projection.authority.restore_authority, false);
+  assert.doesNotMatch(
+    JSON.stringify(stream.draft_checkpoint_timeline_projection),
+    /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|sha256:|candidate_digest|commit_oid|tree_oid|database_id/iu,
+  );
+});
+
 test('carries optional main-owned Review State without granting save authority', () => {
   const stream = projectBuilderTaskStream({
     ...input(candidateEvents()),
@@ -1786,6 +2033,44 @@ test('carries optional main-owned Review State without granting save authority',
     JSON.stringify(stream.review_state_projection),
     /builder-draft-checkpoint:|builder-code-change-candidate:|builder-task-address:|builder-conversation:|sha256:|candidate_digest|commit_oid|tree_oid|provider_(?:secret|config|envelope)|credential|source_tree/iu,
   );
+});
+
+test('projects the run-completed boundary before the turn completion is recorded', () => {
+  const stream = projectBuilderTaskStream(input(candidateEvents().slice(0, -1)));
+
+  assert.equal(stream.conversation.recorded_active_turn_id, id('turn', 1));
+  assert.equal(stream.agent_activity_projection.current.phase, 'preparing_review');
+});
+
+test('projects a new active continuation ahead of an earlier draft review state', () => {
+  const events = candidateEvents();
+  const turnId = id('turn', 80);
+  const taskId = id('task', 81);
+  const runId = id('run', 82);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 83), text: 'Continue improving the draft.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Continue draft' },
+    base_revision: null,
+  }, 84);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: DIGEST,
+  }, 85);
+
+  const stream = projectBuilderTaskStream({
+    ...input(events),
+    review_state_projection: reviewStateProjection(),
+  });
+
+  assert.equal(stream.review_state_projection.status, 'ready');
+  assert.equal(stream.agent_activity_projection.current.phase, 'preparing');
+  assert.equal(stream.agent_activity_projection.current.run_id, runId);
 });
 
 test('carries optional renderer-safe CheckRun outcome without exposing check identity', () => {
@@ -1854,6 +2139,25 @@ test('rejects forged optional Draft Checkpoint status projection before exposing
       authority: {
         save_authority: true,
       },
+    }),
+  }), assertProjectionError);
+});
+
+test('rejects forged optional Draft Checkpoint timeline before exposing it', () => {
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_timeline_projection: draftCheckpointTimelineProjection({
+      authority: { restore_authority: true },
+    }),
+  }), assertProjectionError);
+
+  assert.throws(() => projectBuilderTaskStream({
+    ...input(candidateEvents()),
+    draft_checkpoint_timeline_projection: draftCheckpointTimelineProjection({
+      entries: draftCheckpointTimelineProjection().entries.map((entry) => ({
+        ...entry,
+        is_current: true,
+      })),
     }),
   }), assertProjectionError);
 });
@@ -1957,7 +2261,7 @@ test('stays pure and cannot read SQLite, Git, IPC, renderer, provider material, 
     path.join(__dirname, '..', 'electron', 'builder-task-stream-projection.cjs'),
     'utf8',
   );
-  assert.match(source, /MAX_PUBLIC_ITEMS = 128/u);
+  assert.match(source, /MAX_PUBLIC_ITEMS = 512/u);
   assert.match(source, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
   assert.match(source, /replayBuilderConversation/u);
   assert.doesNotMatch(source, /events\.map\(itemFromEvent\)/u);

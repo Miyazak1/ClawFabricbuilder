@@ -6,13 +6,24 @@ const { types: utilTypes } = require('node:util');
 const {
   sanitizeBuilderLivePreviewAdmission,
 } = require('./builder-live-preview-run.cjs');
+const {
+  createBuilderBrowserSession,
+} = require('./builder-browser-session.cjs');
+const {
+  BUILDER_BROWSER_SESSION_REGISTRY_VERSION,
+} = require('./builder-browser-session-registry.cjs');
+const {
+  authorityForBuilderBrowserPreviewPolicy,
+  createBuilderProjectLivePreviewBrowserPolicy,
+  webPreferencesForBuilderBrowserPreviewPolicy,
+} = require('./builder-browser-preview-policy.cjs');
 
 const BUILDER_LIVE_PREVIEW_WEBCONTENTS_VIEW_RUNTIME_VERSION =
   'builder-live-preview-webcontents-view-runtime.v1';
 const BUILDER_LIVE_PREVIEW_WEBCONTENTS_VIEW_HANDLE_VERSION =
   'builder-live-preview-webcontents-view-handle.v1';
 const STATIC_SERVER_VERSION = 'builder-live-preview-static-server.v1';
-const OPTION_KEYS = Object.freeze(['WebContentsView', 'session', 'nowMs']);
+const OPTION_KEYS = Object.freeze(['WebContentsView', 'browserSessionRegistry', 'nowMs']);
 const START_KEYS = Object.freeze(['admission', 'static_server']);
 const STATIC_SERVER_KEYS = Object.freeze([
   'server_version',
@@ -41,6 +52,7 @@ const STATUS_KEYS = Object.freeze([
   'authority',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
+  'browser_policy_version',
   'live_preview_authority',
   'electron_view_creation',
   'renderer_authority',
@@ -62,37 +74,8 @@ const AUTHORITY_KEYS = Object.freeze([
   'new_windows',
   'session_persistence',
 ]);
-const AUTHORITY = Object.freeze({
-  live_preview_authority: 'main_webcontents_view_runtime_v1',
-  electron_view_creation: 'performed_by_preview_runtime',
-  renderer_authority: 'not_present',
-  ipc_authority: 'not_present',
-  provider_dispatch: 'not_performed',
-  tool_dispatch: 'not_performed',
-  command_execution: 'not_performed',
-  source_write: 'not_present',
-  git_mutation: 'not_performed',
-  sqlite_write: 'not_performed',
-  permission_grant: 'not_performed',
-  external_navigation: 'blocked',
-  network_access: 'admitted_preview_origin_only',
-  node_integration: 'disabled',
-  context_isolation: 'enabled',
-  sandbox: 'enabled',
-  preload_script: 'not_configured',
-  downloads: 'blocked',
-  new_windows: 'blocked',
-  session_persistence: 'non_persistent',
-});
-const WEB_PREFERENCES = Object.freeze({
-  nodeIntegration: false,
-  contextIsolation: true,
-  sandbox: true,
-  webSecurity: true,
-  devTools: false,
-  webviewTag: false,
-  allowRunningInsecureContent: false,
-});
+const PROJECT_LIVE_PREVIEW_BROWSER_POLICY = createBuilderProjectLivePreviewBrowserPolicy();
+const AUTHORITY = authorityForBuilderBrowserPreviewPolicy(PROJECT_LIVE_PREVIEW_BROWSER_POLICY);
 const PREVIEW_ORIGIN_PATTERN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u;
 const PREVIEW_URL_PATTERN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/[A-Za-z0-9._~!$&'()*+,;=:@/%-]*$/u;
 const CLEANUP_STEP_TIMEOUT_MS = 1_000;
@@ -186,21 +169,20 @@ function safeOptions(value) {
   try {
     exactObject(value, OPTION_KEYS);
     const WebContentsView = valueAt(value, 'WebContentsView');
-    const session = valueAt(value, 'session');
+    const browserSessionRegistry = valueAt(value, 'browserSessionRegistry');
     const nowMs = valueAt(value, 'nowMs');
     if (
       typeof WebContentsView !== 'function'
       || utilTypes.isProxy(WebContentsView)
-      || session === null
-      || typeof session !== 'object'
-      || utilTypes.isProxy(session)
+      || !isPlainObject(browserSessionRegistry)
+      || browserSessionRegistry.registry_version !== BUILDER_BROWSER_SESSION_REGISTRY_VERSION
       || typeof nowMs !== 'function'
       || utilTypes.isProxy(nowMs)
     ) fail();
     return Object.freeze({
       WebContentsView,
-      session,
-      sessionFromPartition: stableMethod(session, 'fromPartition'),
+      browserSessionRegistry,
+      openBrowserSession: stableMethod(browserSessionRegistry, 'open'),
       nowMs,
     });
   } catch (error) {
@@ -272,10 +254,6 @@ function safeStaticServer(rawServer, admission) {
   });
 }
 
-function sessionPartitionFor(admission) {
-  return `builder-live-preview-${admission.admission_id.slice('builder-live-preview-admission:'.length)}`;
-}
-
 function safeElectronSession(value, partition) {
   if (value === null || typeof value !== 'object' || utilTypes.isProxy(value)) fail();
   const webRequest = value.webRequest;
@@ -285,7 +263,6 @@ function safeElectronSession(value, partition) {
     partition,
     setPermissionRequestHandler: stableMethod(value, 'setPermissionRequestHandler'),
     setPermissionCheckHandler: stableMethod(value, 'setPermissionCheckHandler'),
-    clearStorageData: stableMethod(value, 'clearStorageData'),
     on: stableMethod(value, 'on'),
     onBeforeRequest: stableMethod(webRequest, 'onBeforeRequest'),
     webRequest,
@@ -307,10 +284,10 @@ function safeWebContents(value) {
 function createView(WebContentsView, electronSession) {
   try {
     const view = new WebContentsView({
-      webPreferences: {
-        ...WEB_PREFERENCES,
-        partition: electronSession.partition,
-      },
+      webPreferences: webPreferencesForBuilderBrowserPreviewPolicy(
+        PROJECT_LIVE_PREVIEW_BROWSER_POLICY,
+        electronSession.partition,
+      ),
     });
     if (view === null || typeof view !== 'object' || utilTypes.isProxy(view)) fail();
     return view;
@@ -411,6 +388,7 @@ async function boundedCleanup(operation) {
 
 async function stopHandle(state) {
   if (state.status === 'stopped') return statusFor(state);
+  const closeReason = state.status === 'failed' ? 'interrupted' : 'completed';
   state.status = 'stopped';
   state.stopped_at_ms = safeTimestamp(Reflect.apply(state.nowMs, undefined, []));
   let cleanupFailed = false;
@@ -421,10 +399,10 @@ async function stopHandle(state) {
   } catch {
     cleanupFailed = true;
   }
-  const storageCleared = await boundedCleanup(
-    () => Reflect.apply(state.clearStorageData, state.electronSession, [{}]),
+  const sessionClosed = await boundedCleanup(
+    () => state.browserSessionHandle.close({ reason: closeReason }),
   );
-  if (storageCleared === false) cleanupFailed = true;
+  if (sessionClosed === false) cleanupFailed = true;
   const serverStopped = await boundedCleanup(
     () => Reflect.apply(state.stopServer, undefined, []),
   );
@@ -444,14 +422,37 @@ async function startPreview(options, activeMap, rawInput) {
       fail('builder_live_preview_webcontents_view_runtime_conflict');
     }
     const staticServer = safeStaticServer(valueAt(rawInput, 'static_server'), admission);
-    const partition = sessionPartitionFor(admission);
-    const electronSession = safeElectronSession(Reflect.apply(
-      options.sessionFromPartition,
-      options.session,
-      [partition],
-    ), partition);
-    const view = createView(options.WebContentsView, electronSession);
-    const safeContents = safeWebContents(view.webContents);
+    const browserSession = createBuilderBrowserSession({
+      session_class: 'project_preview',
+      project_id: admission.project_id,
+      owner_run_id: null,
+      profile_id: null,
+      admitted_origins: [staticServer.preview_origin],
+      persistence: 'ephemeral',
+      created_at_ms: now,
+      expires_at_ms: admission.expires_at_ms,
+    });
+    const browserSessionHandle = await Reflect.apply(
+      options.openBrowserSession,
+      options.browserSessionRegistry,
+      [{ browser_session: browserSession }],
+    );
+    let partition;
+    let electronSession;
+    let view;
+    let safeContents;
+    try {
+      partition = browserSessionHandle.readMainOnlyPartition();
+      electronSession = safeElectronSession(
+        browserSessionHandle.readMainOnlyElectronSession(),
+        partition,
+      );
+      view = createView(options.WebContentsView, electronSession);
+      safeContents = safeWebContents(view.webContents);
+    } catch {
+      try { await browserSessionHandle.close({ reason: 'interrupted' }); } catch { /* fixed failure below */ }
+      fail('builder_live_preview_webcontents_view_runtime_failed');
+    }
     const state = {
       admission_id: admission.admission_id,
       project_id: admission.project_id,
@@ -470,9 +471,9 @@ async function startPreview(options, activeMap, rawInput) {
       view,
       webContents: safeContents.webContents,
       electronSession: electronSession.session,
+      browserSessionHandle,
       destroy: safeContents.destroy,
       isDestroyed: safeContents.isDestroyed,
-      clearStorageData: electronSession.clearStorageData,
       stopServer: staticServer.stop,
       nowMs: options.nowMs,
       activeMap,

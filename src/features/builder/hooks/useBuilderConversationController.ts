@@ -17,11 +17,14 @@ export type UseBuilderConversationControllerResult = Readonly<{
   snapshot: BuilderConversationControllerSnapshot;
   load: BuilderConversationController['load'];
   refresh(): Promise<BuilderConversationControllerSnapshot>;
+  probe: BuilderConversationController['probe'];
 }>;
 
 export function useBuilderConversationController(
   port: BuilderTaskStreamPort,
   projectId?: string | null,
+  taskAddressId?: string | null,
+  agentId?: string | null,
 ): UseBuilderConversationControllerResult {
   const read = port.read;
   const subscribeChanged = port.subscribeChanged;
@@ -38,9 +41,21 @@ export function useBuilderConversationController(
 
   useLayoutEffect(() => {
     const selectedProjectId = projectId ?? null;
-    if (controller.getSnapshot().project_id === selectedProjectId) return;
-    void controller.load(selectedProjectId).catch(() => undefined);
-  }, [controller, projectId]);
+    const selectedTaskAddressId = taskAddressId ?? null;
+    const selectedAgentId = selectedProjectId === null ? (agentId ?? null) : null;
+    const current = controller.getSnapshot();
+    if (
+      current.agent_id === selectedAgentId
+      &&
+      current.project_id === selectedProjectId
+      && current.task_address_id === selectedTaskAddressId
+    ) return;
+    void controller.load(
+      selectedProjectId,
+      selectedTaskAddressId,
+      selectedAgentId,
+    ).catch(() => undefined);
+  }, [agentId, controller, projectId, taskAddressId]);
 
   useLayoutEffect(() => {
     const token = {};
@@ -56,9 +71,16 @@ export function useBuilderConversationController(
   }, [controller]);
 
   const load = useCallback<BuilderConversationController['load']>(
-    (nextProjectId) => controller.load(nextProjectId).catch(() => controller.getSnapshot()),
+    (nextProjectId, nextTaskAddressId, nextAgentId) => (
+      controller.load(nextProjectId, nextTaskAddressId, nextAgentId)
+        .catch(() => controller.getSnapshot())
+    ),
     [controller],
   );
   const refresh = useCallback(() => controller.refresh(), [controller]);
-  return useMemo(() => Object.freeze({ snapshot, load, refresh }), [load, refresh, snapshot]);
+  const probe = useCallback<BuilderConversationController['probe']>(
+    (nextProjectId, nextTaskAddressId) => controller.probe(nextProjectId, nextTaskAddressId),
+    [controller],
+  );
+  return useMemo(() => Object.freeze({ snapshot, load, probe, refresh }), [load, probe, refresh, snapshot]);
 }

@@ -14,6 +14,7 @@ const {
   CANARY_INPUT_VERSION,
   CANARY_QUESTION,
   CANARY_RESULT_VERSION,
+  CANARY_SAVED_PROJECT_CONTEXT_ANSWER,
   PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY,
   PACKAGED_CANARY_PROJECT_ROOT_PATH,
   PACKAGED_CANARY_USER_DATA_PREFIX,
@@ -25,6 +26,7 @@ const {
   assertTaskStreamCandidateFacts,
   assertTaskStreamExplanationFacts,
   assertTaskStreamPendingCandidateFacts,
+  assertTaskStreamPendingExplanationFacts,
   assertTaskStreamPlanFacts,
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
@@ -35,6 +37,7 @@ const {
   askRejectedPlanContextualSubmitViaUi,
   captureSavedActivityEvidence,
   capturePreviewEvidence,
+  waitForChangedPreviewEvidence,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
   createCanaryProjectRoot,
@@ -52,6 +55,7 @@ const {
   readStdin,
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
+  readSanitizedTaskStreamEvidence,
   retryFailedDraftViaUi,
   rejectPlanViaUi,
   runCli,
@@ -64,11 +68,17 @@ const {
 const {
   createLocalCanaryProviderServer,
 } = require('../scripts/verify-packaged-canary-default.cjs');
+const {
+  DEFAULT_BUILDER_AGENT_ID,
+} = require('../electron/builder-default-agent-bootstrap.cjs');
 
 const SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary.cjs');
 const DEFAULT_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-canary-default.cjs');
+const HARNESS_UI_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-harness-ui-canary.cjs');
 const PLAN_MODE_SOURCE_PATH = path.join(__dirname, '..', 'scripts', 'verify-packaged-plan-mode-canary.cjs');
 const PRELOAD_SOURCE_PATH = path.join(__dirname, '..', 'electron', 'preload.cjs');
+const FAKE_PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
+const FAKE_TASK_ADDRESS_ID = 'builder-task-address:22222222-2222-4222-8222-222222222222';
 
 const FAKE_CANARY_BRIEF_CORRECTION_PATTERNS = Object.freeze([
   /^(?:等一下|等等|先等等|先别|先不要|不要|别).{0,64}(?:按|照|做|写|执行|实现|开始|这个|刚才|方案|计划|方向|目标|需求).*/u,
@@ -140,8 +150,9 @@ function submitFakeCanaryInstruction(page) {
       || (!page.draftSaved && page.savedRevision <= 0)
     )
   ) {
-    page.workspacePickerVisible = true;
-    page.pendingWorkspaceGateInstruction = instruction;
+    page.agentTaskProposalVisible = true;
+    page.lastTaskProposalObjective = instruction;
+    page.values.set(SELECTORS.idea, '');
   } else if (
     page.requireCurrentProjectWriteApproval === true
     && page.currentProjectWriteApproved !== true
@@ -149,46 +160,77 @@ function submitFakeCanaryInstruction(page) {
     page.currentProjectWriteApprovalVisible = true;
     page.pendingCurrentProjectWriteInstruction = instruction;
   } else {
-    page.recordCandidateAttempt(Math.max(page.savedRevision + 1, 1));
+    page.recordCandidateAttempt(Math.max(page.savedRevision + 1, page.candidateTurns + 1, 1));
   }
 }
 
 function reviewDiffEvidence() {
   return {
-    activity_review_do_not_overlap: true,
-    artifact_preview_default_visible: true,
+    activity_stays_in_chat: true,
+    artifact_sidebar_default_hidden: true,
+    artifact_sidebar_opened_on_user_request: true,
     artifact_resize_handle_visible: true,
-    artifact_sidebar_visible: true,
-    chat_summary_compact_visible: true,
+    chat_terminal_response_compact_visible: true,
+    compact_check_status_in_workspace_toolbar: true,
     changes_diff_nested_in_panel: true,
     changes_panel_in_artifact_sidebar: true,
     changes_panel_visible: true,
-    completion_landing_review_and_artifact_preview_visible: true,
+    duplicate_result_summary_hidden: true,
+    duplicate_review_checkpoint_hidden: true,
+    mechanical_completion_summary_hidden: true,
+    factual_candidate_change_in_chat: true,
+    factual_command_in_chat: true,
+    final_response_has_no_work_details: true,
+    result_action_types_separate: true,
+    single_result_actions_not_collapsed: true,
+    side_workspace_file_content_loaded: true,
+    command_details_opened_from_chat: true,
+    provider_lifecycle_steps_hidden: true,
     inline_diff_visible: true,
     internal_evidence_hidden: true,
-    draft_actions_in_workspace_toolbar: true,
-    review_changes_do_not_overlap: true,
-    review_checkpoint_visible: true,
-    review_internal_layout_stable: true,
-    review_status_only_layout_stable: true,
+    draft_actions_in_workspace_toolbar: false,
   };
 }
 
 function workspaceGateEvidence() {
   return {
+    agent_task_proposal_visible: true,
+    agent_workbench_build_mode_hidden: true,
+    agent_workbench_files_hidden: true,
+    agent_workbench_plan_mode_available: true,
     build_without_workspace_blocked: true,
-    build_continued_after_workspace_bound: true,
-    composer_text_preserved_until_workspace_bound: true,
+    build_continued_after_task_materialized: true,
     source_folder_required: true,
-    workspace_picker_visible: true,
+    task_started_only_after_user_submit: true,
+  };
+}
+
+function workbenchTaskReturnEvidence() {
+  return {
+    open_task_returned_to_original_task: true,
+    result_message_visible: true,
+    task_monitor_visible: true,
   };
 }
 
 function liveOutputEvidence() {
   return {
+    fixed_work_status_hidden: true,
     internal_evidence_hidden: true,
-    live_output_visible: true,
-    user_facing_work_status_visible: true,
+    live_output_visible: false,
+    progress_kind: 'draft_ready',
+    structured_provider_output_hidden: true,
+    user_facing_work_status_visible: false,
+  };
+}
+
+function streamingOutputObservation(page) {
+  page.liveOutputVisible = false;
+  return {
+    maximum_text_length: 96,
+    message_node_replacements: 0,
+    structured_json_visible: false,
+    text_content_updates: 8,
   };
 }
 
@@ -196,9 +238,18 @@ function automaticCheckRunEvidence() {
   return {
     agent_ran_check_automatically: true,
     command_profile_selected_by_main: true,
+    evidence_source: 'task_stream_check_projection',
     manual_check_controls_hidden: true,
     packaged_runtime_executed: true,
     status: 'passed',
+  };
+}
+
+function fakeWaitForFunctionHandle(value) {
+  return {
+    async jsonValue() {
+      return value;
+    },
   };
 }
 
@@ -256,10 +307,27 @@ class FakeLocator {
     if (this.selector === SELECTORS.workspaceNewProject) {
       this.page.workspacePickerVisible = true;
       this.page.newProjectPanelVisible = true;
+      this.page.resetNewProjectConversation();
+    }
+    if (this.selector === SELECTORS.agentTaskProposalNewProject) {
+      if (this.page.agentTaskProposalVisible !== true) {
+        throw new Error('Agent task proposal unavailable');
+      }
+      this.page.agentTaskProposalVisible = false;
+      this.page.agentWorkbenchVisible = false;
+      this.page.resetNewProjectConversation();
+      this.page.workspaceBound = true;
+      this.page.forceWorkspaceGateForNextBuild = false;
+      this.page.projectStatus = 'ready';
     }
     if (this.selector === SELECTORS.composerAddMenuButton) {
-      this.page.composerAddMenuVisible = true;
+      this.page.composerAddMenuVisible = !this.page.composerAddMenuVisible;
     }
+    if (this.selector === SELECTORS.agentRosterItem) this.page.agentWorkbenchVisible = true;
+    if (
+      this.selector === SELECTORS.agentTaskResultOpen
+      || this.selector.startsWith(`${SELECTORS.agentTaskResultOpen}[data-builder-task-address-id=`)
+    ) this.page.agentWorkbenchVisible = false;
     if (this.selector === SELECTORS.composerAddPlanMode) {
       if (this.page.composerAddMenuVisible !== true) throw new Error('composer add menu unavailable');
       this.page.planModeActive = true;
@@ -304,6 +372,7 @@ class FakeLocator {
       this.page.recordPlanAttempt();
     }
     if (this.selector === SELECTORS.workspaceControlChanges || this.selector === SELECTORS.reviewOpenChanges) {
+      this.page.artifactSidebarVisible = true;
       this.page.changesPanelVisible = true;
       this.page.changesDisclosureOpen = true;
       this.page.workspaceMenuVisible = false;
@@ -311,20 +380,46 @@ class FakeLocator {
     if (
       this.selector === SELECTORS.workspaceControlPreview
     ) {
+      this.page.artifactSidebarVisible = true;
       this.page.previewVisible = true;
       this.page.versionHistoryVisible = false;
       this.page.workspaceMenuVisible = false;
     }
     if (
+      this.selector === `${SELECTORS.runHistory} ${SELECTORS.runHistoryToggle}`
+    ) {
+      this.page.workDetailsOpen = true;
+    }
+    if (
+      this.selector
+      === `${SELECTORS.completedCommandActions} button`
+      || this.selector === SELECTORS.runtimeCommandOpen
+    ) {
+      this.page.artifactSidebarVisible = true;
+      this.page.activeArtifactTab = 'terminal_placeholder';
+      this.page.commandInspectorVisible = true;
+    }
+    if (
       this.selector === SELECTORS.artifactTabVersions
       || this.selector === SELECTORS.workspaceControlVersions
     ) {
+      this.page.artifactSidebarVisible = true;
       this.page.versionHistoryVisible = true;
       this.page.previewVisible = false;
       this.page.workspaceMenuVisible = false;
     }
     if (this.selector === SELECTORS.workspaceMenuButton) {
-      this.page.workspaceMenuVisible = true;
+      this.page.workspaceMenuVisible = !this.page.workspaceMenuVisible;
+    }
+    if (this.selector === SELECTORS.workspaceControlSource) {
+      this.page.artifactSidebarVisible = true;
+      this.page.workspaceMenuVisible = false;
+    }
+    if (this.selector === SELECTORS.artifactToggle) {
+      this.page.artifactSidebarVisible = !this.page.artifactSidebarVisible;
+    }
+    if (this.selector === SELECTORS.reviewMore) {
+      this.page.reviewMenuVisible = !this.page.reviewMenuVisible;
     }
     if (this.selector === SELECTORS.changesSummaryToggle) {
       this.page.changesDisclosureOpen = false;
@@ -335,6 +430,10 @@ class FakeLocator {
       this.page.savedRevision = revision;
       this.page.savedActivityRevision = revision;
       this.page.versionLabel = `Version ${revision}`;
+      this.page.reviewMenuVisible = false;
+    }
+    if (this.selector === SELECTORS.undoDraft) {
+      this.page.recordCheckpointUndo();
     }
     const historyMatch = /\[data-builder-view-version="Version ([1-9][0-9]*)"\]/u.exec(this.selector);
     if (historyMatch !== null) {
@@ -390,12 +489,25 @@ class FakeLocator {
     if (this.selector === SELECTORS.projectPage && name === 'data-builder-project-status') {
       return this.page.projectStatus;
     }
+    if (
+      this.selector === SELECTORS.agentTaskMonitorItem
+      && name === 'data-builder-task-monitor-item'
+    ) return FAKE_TASK_ADDRESS_ID;
+    if (this.selector === SELECTORS.conversationActivity && name === 'data-builder-activity-status') {
+      return 'ready';
+    }
     if (this.selector === SELECTORS.previewFrame && name === 'sandbox') return '';
     if (this.page.failPreviewAttributes) return 'unsafe';
     if (this.selector === SELECTORS.previewFrame && name === 'srcdoc') {
-      const previewRevision = this.page.historyViewingRevision
+      let previewRevision = this.page.historyViewingRevision
+        ?? this.page.previewSourceCheckpoint
         ?? Math.max(this.page.savedRevision, this.page.candidateTurns);
-      return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>Focus timer preview ${previewRevision}</main></body>`;
+      if (this.page.previewFrameLagReads > 0) {
+        this.page.previewFrameLagReads -= 1;
+        previewRevision = this.page.previewFrameLagRevision ?? previewRevision;
+      }
+      const bodyText = this.page.previewFrameBodyTextOverride ?? `Focus timer preview ${previewRevision}`;
+      return `<!doctype html><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><body><main>${bodyText}</main></body>`;
     }
     return null;
   }
@@ -426,6 +538,11 @@ class FakeLocator {
     return new FakeLocator(this.page, this.selector, this.filterText);
   }
 
+  nth(index) {
+    this.page.events.push(['nth', this.selector, index]);
+    return new FakeLocator(this.page, this.selector, this.filterText);
+  }
+
   async inputValue() {
     if (this.page.keepPasswordValue && this.selector === SELECTORS.apiKey) return 'secret-marker';
     return this.page.values.get(this.selector) ?? '';
@@ -440,21 +557,51 @@ class FakeLocator {
       return this.page.composerStatusText() !== null;
     }
     if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
+    if (
+      this.selector === SELECTORS.agentTaskProposal
+      || this.selector === SELECTORS.agentTaskProposalActions
+    ) return this.page.agentTaskProposalVisible;
     if (this.selector === SELECTORS.newProjectPanel) return this.page.newProjectPanelVisible;
+    if (this.selector === SELECTORS.liveOutput) {
+      return this.page.forceLiveOutputVisible || this.page.liveOutputVisible;
+    }
+    if (this.selector === SELECTORS.workStatus) return this.page.workStatusVisible;
     if (this.selector === SELECTORS.skipCheck) {
       return this.page.unsavedDraftVisible && this.page.checkRunStatus === 'not_run';
     }
     if (this.selector === SELECTORS.runCheck) return false;
-    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
+    if (this.selector === SELECTORS.reviewCheckpoint) return this.page.legacyReviewVisible;
+    if (this.selector === SELECTORS.artifactSummary) return this.page.legacyArtifactSummaryVisible;
+    if (this.selector === SELECTORS.completionSummary) return this.page.legacyCompletionSummaryVisible;
+    if (this.selector === SELECTORS.artifactSidebar) return this.page.artifactSidebarVisible;
+    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.undoDraft) {
       return this.page.unsavedDraftVisible;
     }
+    if (
+      this.selector === SELECTORS.composerVersionDecision
+      || this.selector === SELECTORS.discardDraft
+      || this.selector === SELECTORS.saveVersion
+    ) {
+      return this.page.draftDecisionVisible();
+    }
     return true;
+  }
+
+  async isHidden() {
+    this.page.events.push(['isHidden', this.selector]);
+    return !await this.isVisible();
   }
 
   async textContent() {
     this.page.events.push(['textContent', this.selector]);
     if (this.selector === SELECTORS.currentVersion) {
       return this.page.forcedVersionLabel ?? this.page.versionLabel;
+    }
+    if (this.selector.startsWith('[data-builder-version-card="Version ')) {
+      if (this.page.forcedVersionLabel !== null) return this.page.forcedVersionLabel;
+      const match = /Version (\d+)/u.exec(this.selector);
+      const revision = match === null ? this.page.savedRevision : Number(match[1]);
+      return `Version ${revision} Current`;
     }
     if (this.selector === SELECTORS.versionSavedActivity) {
       if (this.page.savedActivityTextOverride !== null) return this.page.savedActivityTextOverride;
@@ -469,12 +616,24 @@ class FakeLocator {
       if (this.page.liveOutputTextOverride !== null) return this.page.liveOutputTextOverride;
       return 'Assistant Building the first project draft.';
     }
+    if (this.selector === SELECTORS.questionAnswer) {
+      return this.page.questionAnswerText;
+    }
+    if (this.selector === SELECTORS.workStatus) {
+      return this.page.workStatusTextOverride
+        ?? 'Assistant working Preparing the current project response.';
+    }
+    if (this.selector === SELECTORS.completedFileActions) {
+      return this.page.completedFileActionsTextOverride ?? 'Edited index.html +1 -1';
+    }
+    if (this.selector === SELECTORS.completedCommandActions) {
+      return 'Ran npm test Checked successfully.';
+    }
+    if (this.selector === SELECTORS.commandDisplay) {
+      return 'npm test';
+    }
     if (this.selector === SELECTORS.composerStatus) {
       return this.page.composerStatusText();
-    }
-    if (this.selector === SELECTORS.reviewCheckpoint) {
-      if (this.page.reviewTextOverride !== null) return this.page.reviewTextOverride;
-      return 'Review before saving 1 file change: 1 added. Preview and changes are ready.';
     }
     if (this.selector === SELECTORS.previewLimitation) {
       if (this.page.previewLimitationTextOverride !== null) return this.page.previewLimitationTextOverride;
@@ -498,6 +657,11 @@ class FakeLocator {
     if (this.selector === SELECTORS.workspacePicker) {
       return 'Choose or create a project before I build. Add a source folder so Builder knows where it can work. Search projects No saved projects yet. New project';
     }
+    if (this.selector === SELECTORS.agentTaskProposal) {
+      const objective = this.page.lastTaskProposalObjective ?? 'Make a focus timer.';
+      return `Task proposal ${objective} Outcome: build Execution: foreground Project: choose before creating the task New project Dismiss`;
+    }
+    if (this.selector === SELECTORS.agentTaskResult) return 'A draft is ready for review. Open task';
     if (this.selector === SELECTORS.newProjectPanel) {
       return 'New project Project name Source folders No source folder selected. Choose an empty local folder that Builder can read and edit for this project. Add source folder';
     }
@@ -511,6 +675,28 @@ class FakeLocator {
 
   async count() {
     this.page.events.push(['count', this.selector]);
+    if (
+      this.selector === SELECTORS.composerAddAskMode
+      || this.selector === SELECTORS.composerAddBuildMode
+      || this.selector === SELECTORS.composerAddFiles
+      || this.selector === SELECTORS.composerAddPlanMode
+    ) {
+      if (!this.page.composerAddMenuVisible) return 0;
+      if (
+        this.page.agentWorkbenchVisible
+        && (
+          this.selector === SELECTORS.composerAddBuildMode
+          || this.selector === SELECTORS.composerAddFiles
+        )
+      ) return 0;
+      return 1;
+    }
+    if (
+      this.selector === SELECTORS.runtimeFileAction
+      || this.selector === SELECTORS.runtimeFileGroup
+      || this.selector === SELECTORS.runtimeCommandAction
+    ) return 0;
+    if (this.selector === SELECTORS.workspaceDraftActions) return 0;
     if (this.selector === SELECTORS.previewUnavailable) {
       return this.page.previewUnavailable ? 1 : 0;
     }
@@ -523,6 +709,11 @@ class FakeLocator {
     if (this.selector === SELECTORS.questionAnswer) {
       return this.page.questionTurns;
     }
+    if (this.selector === `${SELECTORS.draftProposed} [data-builder-completed-action-group]`) return 0;
+    if (
+      this.selector === `${SELECTORS.completedFileActions} details`
+      || this.selector === `${SELECTORS.completedCommandActions} details`
+    ) return 0;
     return 1;
   }
 
@@ -548,9 +739,14 @@ class FakeLocator {
     const state = options?.state ?? 'visible';
     const initialWorkspaceGateDraftAbsenceCheck = this.selector === SELECTORS.unsavedDraft
       && state === 'hidden'
-      && this.page.workspacePickerVisible
-      && this.page.forceWorkspaceGateForNextBuild;
-    if (this.page.failWaitFor.has(this.selector) && !initialWorkspaceGateDraftAbsenceCheck) {
+      && this.page.agentTaskProposalVisible;
+    if (
+      (
+        this.page.failWaitFor.has(this.selector)
+        || this.page.failWaitForStates.has(`${this.selector}:${state}`)
+      )
+      && !initialWorkspaceGateDraftAbsenceCheck
+    ) {
       throw new Error('secret-marker');
     }
     if (this.selector === SELECTORS.retryDraft) {
@@ -566,8 +762,33 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.checkRunStatus === 'skipped', state);
       return;
     }
-    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.saveVersion) {
+    if (
+      this.selector === SELECTORS.reviewCheckpoint
+      || this.selector === SELECTORS.artifactSummary
+      || this.selector === SELECTORS.completionSummary
+    ) {
+      const visible = this.selector === SELECTORS.reviewCheckpoint
+        ? this.page.legacyReviewVisible
+        : this.selector === SELECTORS.artifactSummary
+          ? this.page.legacyArtifactSummaryVisible
+          : this.page.legacyCompletionSummaryVisible;
+      this.page.assertSelectorVisibility(this.selector, visible, state);
+      return;
+    }
+    if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.undoDraft) {
       this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
+      return;
+    }
+    if (
+      this.selector === SELECTORS.composerVersionDecision
+      || this.selector === SELECTORS.discardDraft
+      || this.selector === SELECTORS.saveVersion
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.draftDecisionVisible(),
+        state,
+      );
       return;
     }
     if (this.selector === SELECTORS.historyPreview) {
@@ -575,16 +796,43 @@ class FakeLocator {
       return;
     }
     if (this.selector === SELECTORS.versionHistory) {
-      this.page.assertSelectorVisibility(this.selector, this.page.versionHistoryVisible, state);
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.artifactSidebarVisible && this.page.versionHistoryVisible,
+        state,
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.artifactSidebar) {
+      this.page.assertSelectorVisibility(this.selector, this.page.artifactSidebarVisible, state);
       return;
     }
     if (this.selector === SELECTORS.liveOutput) {
-      this.page.assertSelectorVisibility(this.selector, this.page.liveOutputVisible, state);
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.forceLiveOutputVisible || this.page.liveOutputVisible,
+        state,
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.workStatus) {
+      this.page.assertSelectorVisibility(this.selector, this.page.workStatusVisible, state);
+      return;
+    }
+    if (this.selector === SELECTORS.commandInspector) {
+      this.page.assertSelectorVisibility(this.selector, this.page.commandInspectorVisible, state);
+      return;
+    }
+    if (this.selector === SELECTORS.activeTerminalTab) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.activeArtifactTab === 'terminal_placeholder',
+        state,
+      );
       return;
     }
     if (
-      this.selector === SELECTORS.reviewCheckpoint
-      || this.selector === SELECTORS.workspaceControlChanges
+      this.selector === SELECTORS.workspaceControlChanges
       || this.selector === SELECTORS.reviewOpenChanges
     ) {
       this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
@@ -646,6 +894,51 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.planTurns > 0, state);
       return;
     }
+    if (this.selector === SELECTORS.runHistory) {
+      this.page.assertSelectorVisibility(this.selector, false, state);
+      return;
+    }
+    if (
+      this.selector === SELECTORS.completedFileActions
+      || this.selector === SELECTORS.completedCommandActions
+    ) {
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
+      return;
+    }
+    if (
+      this.selector
+      === `${SELECTORS.completedFileActions} ${SELECTORS.completionCandidateChange}`
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.unsavedDraftVisible,
+        state,
+      );
+      return;
+    }
+    if (this.selector === `${SELECTORS.completedCommandActions} ${SELECTORS.completionCommand}`) {
+      this.page.assertSelectorVisibility(this.selector, this.page.unsavedDraftVisible, state);
+      return;
+    }
+    if (
+      this.selector
+      === `${SELECTORS.runHistory} ${SELECTORS.toolActivitySucceeded}`
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.planTurns > 0 && this.page.workDetailsOpen,
+        state,
+      );
+      return;
+    }
+    if (this.selector === SELECTORS.workspaceControlLogs) {
+      this.page.assertSelectorVisibility(this.selector, false, state);
+      return;
+    }
+    if (this.selector === SELECTORS.completionSummary) {
+      this.page.assertSelectorVisibility(this.selector, false, state);
+      return;
+    }
     if (
       this.selector === SELECTORS.changesPanel
       || this.selector === SELECTORS.changesSummary
@@ -664,6 +957,26 @@ class FakeLocator {
       this.page.assertSelectorVisibility(this.selector, this.page.workspacePickerVisible, state);
       return;
     }
+    if (
+      this.selector === SELECTORS.agentTaskProposal
+      || this.selector === SELECTORS.agentTaskProposalActions
+    ) {
+      this.page.assertSelectorVisibility(this.selector, this.page.agentTaskProposalVisible, state);
+      return;
+    }
+    if (
+      this.selector === SELECTORS.agentTaskMonitor
+      || this.selector === SELECTORS.agentTaskMonitorItem
+      || this.selector === SELECTORS.agentTaskResult
+      || this.selector.startsWith(`${SELECTORS.agentTaskResultOpen}[data-builder-task-address-id=`)
+    ) {
+      this.page.assertSelectorVisibility(
+        this.selector,
+        this.page.agentWorkbenchVisible && this.page.candidateTurns > 0,
+        state,
+      );
+      return;
+    }
     if (this.selector === SELECTORS.newProjectPanel) {
       this.page.assertSelectorVisibility(this.selector, this.page.newProjectPanelVisible, state);
       return;
@@ -671,7 +984,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.preview) {
       this.page.assertSelectorVisibility(
         this.selector,
-        this.page.previewVisible && !this.page.previewUnavailable,
+        this.page.artifactSidebarVisible && this.page.previewVisible && !this.page.previewUnavailable,
         state,
       );
       return;
@@ -775,7 +1088,11 @@ class FakeText {
 
 class FakePage {
   constructor() {
+    this.agentTaskProposalVisible = false;
+    this.agentWorkbenchVisible = true;
     this.artifactsAllowed = false;
+    this.artifactSidebarVisible = false;
+    this.activeArtifactTab = null;
     this.alertVisible = false;
     this.candidateTurns = 0;
     this.changesPanelVisible = false;
@@ -798,7 +1115,9 @@ class FakePage {
     this.failRoleWaits = new Set();
     this.failTextWaitFor = new Set();
     this.failWaitFor = new Set();
+    this.failWaitForStates = new Set();
     this.forceWorkspaceGateForNextBuild = false;
+    this.forceLiveOutputVisible = false;
     this.forcedVersionLabel = null;
     this.historyViewingRevision = null;
     this.disabledRoles = new Set();
@@ -809,9 +1128,18 @@ class FakePage {
     this.planReviewDecisions = [];
     this.liveOutputTextOverride = null;
     this.liveOutputVisible = false;
+    this.lastTaskProposalObjective = null;
+    this.legacyArtifactSummaryVisible = false;
+    this.legacyCompletionSummaryVisible = false;
+    this.legacyReviewVisible = false;
+    this.completedFileActionsTextOverride = null;
+    this.commandInspectorVisible = false;
+    this.workStatusTextOverride = null;
+    this.workStatusVisible = false;
     this.approvedPlanReviews = 0;
     this.rejectedPlanReviews = 0;
     this.planTurns = 0;
+    this.workDetailsOpen = false;
     this.pendingWorkspaceGateInstruction = null;
     this.pendingCurrentProjectWriteInstruction = null;
     this.pendingCurrentProjectWriteCandidateTurns = null;
@@ -822,37 +1150,42 @@ class FakePage {
     this.previewLimitationVisible = true;
     this.previewUnavailable = false;
     this.previewUnavailableTextOverride = null;
-    this.versionHistoryVisible = true;
+    this.reviewMenuVisible = false;
+    this.versionHistoryVisible = false;
     this.visibleButtonTextsOverride = null;
     this.previewFrameBodyFailuresRemaining = 0;
     this.previewFrameBodyTextOverride = null;
+    this.previewFrameLagReads = 0;
+    this.previewFrameLagRevision = null;
     this.projectStatus = 'ready';
     this.questionAnswerFailedNoticeVisible = false;
+    this.questionAnswerText = 'It is a focus timer. Review the timer duration before changing it.';
     this.questionTurns = 0;
+    this.questionsLast = false;
     this.newProjectPanelVisible = false;
     this.retryDraftVisible = false;
     this.requirePlanSourceReadApproval = false;
     this.requireCurrentProjectWriteApproval = false;
-    this.reviewTextOverride = null;
     this.screenshotBufferOverride = null;
     this.previewLimitationTextOverride = null;
     this.previewTextOverride = null;
+    this.previewSourceCheckpoint = 0;
     this.reviewLayoutBoxes = new Map([
       [SELECTORS.chatScroll, { x: 300, y: 44, width: 620, height: 620 }],
       [SELECTORS.artifactSidebar, { x: 936, y: 44, width: 360, height: 620 }],
       [SELECTORS.artifactResizeHandle, { x: 931, y: 44, width: 10, height: 620 }],
       [SELECTORS.conversationActivity, { x: 312, y: 96, width: 596, height: 112 }],
+      [`${SELECTORS.conversationActivity} .cf-builder-activity-list > li`, { x: 492, y: 332, width: 416, height: 72 }],
       [SELECTORS.userMessage, { x: 628, y: 104, width: 280, height: 64 }],
-      [SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 136 }],
-      [SELECTORS.reviewCopy, { x: 326, y: 234, width: 568, height: 62 }],
-      [SELECTORS.reviewTitle, { x: 364, y: 234, width: 200, height: 18 }],
-      [SELECTORS.reviewSummary, { x: 364, y: 254, width: 420, height: 17 }],
-      [SELECTORS.reviewNote, { x: 364, y: 274, width: 500, height: 22 }],
-      [SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 }],
-      [SELECTORS.workspaceControls, { x: 612, y: 4, width: 296, height: 38 }],
+      [SELECTORS.workspaceControls, { x: 492, y: 4, width: 416, height: 38 }],
+      [SELECTORS.checkRunStatus, { x: 500, y: 8, width: 108, height: 30 }],
       [SELECTORS.workspaceDraftActions, { x: 616, y: 8, width: 158, height: 30 }],
+      [SELECTORS.undoDraft, { x: 704, y: 8, width: 30, height: 30 }],
       [SELECTORS.reviewMore, { x: 744, y: 8, width: 30, height: 30 }],
-      [SELECTORS.saveVersion, { x: 616, y: 8, width: 124, height: 30 }],
+      [SELECTORS.composer, { x: 492, y: 536, width: 416, height: 144 }],
+      [SELECTORS.composerVersionDecision, { x: 492, y: 416, width: 416, height: 104 }],
+      [SELECTORS.discardDraft, { x: 640, y: 460, width: 118, height: 32 }],
+      [SELECTORS.saveVersion, { x: 770, y: 460, width: 124, height: 32 }],
       [SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 }],
       [SELECTORS.resultFlow, { x: 948, y: 96, width: 324, height: 520 }],
       [SELECTORS.changesFlow, { x: 948, y: 96, width: 324, height: 520 }],
@@ -868,6 +1201,7 @@ class FakePage {
     this.versionLabel = 'Version 1';
     this.values = new Map();
     this.workspaceBound = false;
+    this.workspaceMenuVisible = false;
     this.workspacePickerVisible = false;
     this.listeners = new Map();
     this.assertSelectorVisibility = (_selector, visible, state) => {
@@ -881,7 +1215,12 @@ class FakePage {
       this.liveOutputVisible = false;
       return revision;
     };
+    this.draftDecisionVisible = () => (
+      this.unsavedDraftVisible === true
+      && this.checkRunStatus === 'passed'
+    );
     this.resetNewProjectConversation = () => {
+      this.questionsLast = false;
       this.questionTurns = 0;
       this.planTurns = 0;
       this.approvedPlanReviews = 0;
@@ -891,7 +1230,7 @@ class FakePage {
       this.briefCorrectionActive = false;
     };
     this.recordCandidateAttempt = (candidateTurns) => {
-      this.liveOutputVisible = true;
+      this.liveOutputVisible = false;
       if (this.draftFailuresRemaining > 0) {
         this.draftFailuresRemaining -= 1;
         this.alertVisible = true;
@@ -910,11 +1249,23 @@ class FakePage {
       this.recordCandidateDraft(candidateTurns);
     };
     this.recordCandidateDraft = (candidateTurns) => {
+      this.questionsLast = false;
       this.candidateTurns = Math.max(this.candidateTurns, candidateTurns);
+      this.previewSourceCheckpoint = this.candidateTurns;
+      this.workDetailsOpen = false;
       this.checkRunStatus = 'not_run';
       this.changesPanelVisible = false;
       this.retryDraftVisible = false;
       this.unsavedDraftVisible = true;
+    };
+    this.recordCheckpointUndo = () => {
+      if (this.unsavedDraftVisible !== true) throw new Error('checkpoint undo unavailable');
+      const targetCheckpoint = Math.max(
+        this.savedRevision,
+        this.previewSourceCheckpoint - 1,
+      );
+      this.recordCandidateDraft(this.candidateTurns + 1);
+      this.previewSourceCheckpoint = targetCheckpoint;
     };
     this.retryCandidateAttempt = () => {
       this.alertVisible = false;
@@ -922,14 +1273,21 @@ class FakePage {
       this.lastFailedDraftTarget = null;
     };
     this.recordQuestion = () => {
+      this.liveOutputVisible = true;
       this.questionTurns += 1;
       const instruction = this.values.get(SELECTORS.idea) ?? '';
+      this.questionsLast = instruction === CANARY_QUESTION;
+      this.questionAnswerText = instruction === CANARY_QUESTION
+        ? CANARY_SAVED_PROJECT_CONTEXT_ANSWER
+        : 'It is a focus timer. Review the timer duration before changing it.';
       if (routeFakeCanarySendInstruction(instruction) === 'brief_correction') {
         this.briefCorrectionActive = true;
       }
     };
     this.recordPlanAttempt = () => {
+      this.questionsLast = false;
       this.planTurns += 1;
+      this.workDetailsOpen = false;
     };
     this.recordPlanApproval = () => {
       if (this.planTurns <= this.approvedPlanReviews + this.rejectedPlanReviews) {
@@ -959,12 +1317,11 @@ class FakePage {
       this.planReviewDecisions.push('rejected');
     };
     this.composerStatusText = () => {
-      if (this.unsavedDraftVisible === true) return 'Ready to execute current direction';
+      if (this.unsavedDraftVisible === true) return null;
       if (this.planTurns > this.approvedPlanReviews + this.rejectedPlanReviews) return 'Needs confirmation';
       if (this.latestPlanReviewDecision === 'rejected') return 'Direction changed';
       if (this.latestPlanReviewDecision === 'approved') return 'Using approved plan';
       if (this.briefCorrectionActive === true) return 'Direction changed';
-      if (this.candidateTurns > 0) return 'Ready to execute current direction';
       return null;
     };
   }
@@ -989,6 +1346,37 @@ class FakePage {
     this.events.push(['waitForTimeout', ms]);
   }
 
+  async waitForFunction(callback, argument, options) {
+    this.events.push(['waitForFunction', String(callback), argument, options ?? null]);
+    if (
+      argument?.agentId === DEFAULT_BUILDER_AGENT_ID
+      && Object.hasOwn(argument, 'projectId')
+    ) {
+      if (this.checkRunAvailable !== true) {
+        throw new Error('selector visibility mismatch');
+      }
+      this.checkRunStatus = 'passed';
+      return fakeWaitForFunctionHandle({ source: 'task_stream_check_projection' });
+    }
+    if (argument === SELECTORS.liveOutput) {
+      if (
+        this.forceLiveOutputVisible === true
+        || this.liveOutputVisible === true
+        || this.unsavedDraftVisible === true
+      ) {
+        return fakeWaitForFunctionHandle(true);
+      }
+      throw new Error('selector visibility mismatch');
+    }
+    return fakeWaitForFunctionHandle(true);
+  }
+
+  async screenshot(options) {
+    if (!this.artifactsAllowed) throw new Error('artifact before password cleared');
+    this.events.push(['pageScreenshot', options]);
+    return this.screenshotBufferOverride ?? pngFixture();
+  }
+
   on(event, listener) {
     const listeners = this.listeners.get(event) ?? [];
     listeners.push(listener);
@@ -999,6 +1387,11 @@ class FakePage {
     this.events.push(['evaluate', callback.toString(), argument]);
     if (callback.toString().includes("querySelectorAll('button')")) {
       return this.visibleButtonTextsOverride ?? [];
+    }
+    if (argument?.key === '__builderPackagedCanaryLiveOutputObservation') {
+      return argument?.liveOutputSelector === SELECTORS.liveOutput
+        ? true
+        : streamingOutputObservation(this);
     }
     return callback({
       projectId: argument.projectId,
@@ -1030,41 +1423,73 @@ function sourceEntry(pathValue, content) {
   return { ...body, content_digest: digestCanonical(body) };
 }
 
+function syntheticHex(namespace, revisionNumber, length) {
+  const seed = nodeCrypto.createHash('sha256')
+    .update(`${namespace}:${revisionNumber}`, 'utf8')
+    .digest('hex');
+  return seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+}
+
+function syntheticUuid(namespace, revisionNumber) {
+  const hex = syntheticHex(namespace, revisionNumber, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 function revisionEvidence(selectedProjectId, revisionNumber) {
   const previous = revisionNumber > 1 ? revisionEvidence(selectedProjectId, revisionNumber - 1) : null;
   const second = revisionNumber === 2;
   const third = revisionNumber === 3;
-  const conversationId = 'builder-conversation:11111111-1111-4111-8111-111111111111';
+  const conversationId = 'builder-conversation:11111111-1111-4111-8111-111111111111:99999999-9999-4999-8999-999999999999';
   const turnId = third
     ? 'builder-turn:cccccccc-cccc-4ccc-8ccc-cccccccccccc'
     : second
       ? 'builder-turn:77777777-7777-4777-8777-777777777777'
-      : 'builder-turn:22222222-2222-4222-8222-222222222222';
+      : revisionNumber > 3
+        ? `builder-turn:${syntheticUuid('candidate-turn', revisionNumber)}`
+        : 'builder-turn:22222222-2222-4222-8222-222222222222';
   const taskId = third
     ? 'builder-task:dddddddd-dddd-4ddd-8ddd-dddddddddddd'
     : second
       ? 'builder-task:88888888-8888-4888-8888-888888888888'
-      : 'builder-task:33333333-3333-4333-8333-333333333333';
+      : revisionNumber > 3
+        ? `builder-task:${syntheticUuid('candidate-task', revisionNumber)}`
+        : 'builder-task:33333333-3333-4333-8333-333333333333';
   const runId = third
     ? 'builder-run:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
     : second
       ? 'builder-run:99999999-9999-4999-8999-999999999999'
-      : 'builder-run:44444444-4444-4444-8444-444444444444';
+      : revisionNumber > 3
+        ? `builder-run:${syntheticUuid('candidate-run', revisionNumber)}`
+        : 'builder-run:44444444-4444-4444-8444-444444444444';
   const requestId = third
     ? 'builder-git-request:ffffffff-ffff-4fff-8fff-ffffffffffff'
     : second
       ? 'builder-git-request:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-      : 'builder-git-request:55555555-5555-4555-8555-555555555555';
+      : revisionNumber > 3
+        ? `builder-git-request:${syntheticUuid('candidate-request', revisionNumber)}`
+        : 'builder-git-request:55555555-5555-4555-8555-555555555555';
   const reviewId = third
     ? 'builder-review:12121212-1212-4212-8212-121212121212'
     : second
       ? 'builder-review:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-      : 'builder-review:66666666-6666-4666-8666-666666666666';
-  const candidateId = `builder-code-change-candidate:${(third ? '3' : second ? 'e' : '7').repeat(64)}`;
-  const candidateDigest = `sha256:${(third ? '4' : second ? 'f' : '8').repeat(64)}`;
-  const semanticIdentityDigest = `sha256:${(third ? '5' : second ? '1' : '9').repeat(64)}`;
-  const commitOid = (third ? '4' : second ? 'c' : 'a').repeat(40);
-  const treeOid = (third ? '5' : second ? 'd' : 'b').repeat(40);
+      : revisionNumber > 3
+        ? `builder-review:${syntheticUuid('candidate-review', revisionNumber)}`
+        : 'builder-review:66666666-6666-4666-8666-666666666666';
+  const candidateId = `builder-code-change-candidate:${revisionNumber > 3
+    ? syntheticHex('candidate-id', revisionNumber, 64)
+    : (third ? '3' : second ? 'e' : '7').repeat(64)}`;
+  const candidateDigest = `sha256:${revisionNumber > 3
+    ? syntheticHex('candidate-digest', revisionNumber, 64)
+    : (third ? '4' : second ? 'f' : '8').repeat(64)}`;
+  const semanticIdentityDigest = `sha256:${revisionNumber > 3
+    ? syntheticHex('candidate-semantic', revisionNumber, 64)
+    : (third ? '5' : second ? '1' : '9').repeat(64)}`;
+  const commitOid = revisionNumber > 3
+    ? syntheticHex('candidate-commit', revisionNumber, 40)
+    : (third ? '4' : second ? 'c' : 'a').repeat(40);
+  const treeOid = revisionNumber > 3
+    ? syntheticHex('candidate-tree', revisionNumber, 40)
+    : (third ? '5' : second ? 'd' : 'b').repeat(40);
   const parentOid = previous?.receipt.commit_oid ?? null;
   const files = [
     sourceEntry('app.js', ''),
@@ -1179,6 +1604,7 @@ function taskStreamConversation(
   approvedPlanReviews = 0,
   rejectedPlanReviews = 0,
   planReviewDecisions = null,
+  questionsLast = false,
 ) {
   const items = [];
   const userMessageIds = [
@@ -1258,14 +1684,15 @@ function taskStreamConversation(
   }
   function pushCandidateTurn(revision, approvedPlanExecution = false) {
     const evidence = revisionEvidence(selectedProjectId, revision);
-    const draftId = `builder-generation-draft:${String(revision).repeat(64)}`;
+    const draftId = `builder-generation-draft:${syntheticHex('candidate-draft', revision, 64)}`;
     items.push(
       {
         item_kind: 'user_message',
         sequence: takeSequence(),
         turn_id: evidence.receipt.turn_id,
         message: {
-          message_id: userMessageIds[revision - 1],
+          message_id: userMessageIds[revision - 1]
+            ?? `builder-message:${syntheticUuid('candidate-user-message', revision)}`,
           text: revision === 1
             ? 'Make a focus timer.'
             : revision === 2
@@ -1335,7 +1762,8 @@ function taskStreamConversation(
         result_kind: 'candidate',
         failure_phase: 'not_applicable',
         assistant_message: {
-          message_id: assistantMessageIds[revision - 1],
+          message_id: assistantMessageIds[revision - 1]
+            ?? `builder-message:${syntheticUuid('candidate-assistant-message', revision)}`,
           text: 'I prepared a draft for review.',
         },
         candidate: {
@@ -1538,8 +1966,10 @@ function taskStreamConversation(
     }
   }
   if (candidateTurns >= 1) pushCandidateTurn(1);
-  for (let question = 1; question <= questionTurns; question += 1) {
-    pushQuestionTurn(question);
+  if (!questionsLast) {
+    for (let question = 1; question <= questionTurns; question += 1) {
+      pushQuestionTurn(question);
+    }
   }
   for (let revision = 2; revision <= Math.min(candidateTurns, 2); revision += 1) {
     pushCandidateTurn(revision);
@@ -1549,6 +1979,11 @@ function taskStreamConversation(
   }
   for (let revision = 3; revision <= candidateTurns; revision += 1) {
     pushCandidateTurn(revision, revision - 2 <= approvedPlanReviews);
+  }
+  if (questionsLast) {
+    for (let question = 1; question <= questionTurns; question += 1) {
+      pushQuestionTurn(question);
+    }
   }
   return {
     conversation_id: revisionEvidence(selectedProjectId, 1).receipt.conversation_id,
@@ -1574,6 +2009,7 @@ function bridgeEvidence(
   approvedPlanReviews = 0,
   rejectedPlanReviews = 0,
   planReviewDecisions = null,
+  questionsLast = false,
 ) {
   const canonicalProjectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const selectedProjectId = projectId ?? canonicalProjectId;
@@ -1603,6 +2039,7 @@ function bridgeEvidence(
           approvedPlanReviews,
           rejectedPlanReviews,
           planReviewDecisions,
+          questionsLast,
         )
         : null,
       authority: {
@@ -1614,8 +2051,9 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v27',
+      bridge_version: 'builder-preload.v36',
       legacy_namespaces_absent: true,
+      agent_project_tree_namespace: 'read_and_lifecycle_methods_only',
       check_run_namespace: 'current_draft_identity_methods_only',
       live_preview_namespace: 'current_preview_control_methods_only',
       side_workspace_files_namespace: 'current_draft_file_read_methods_only',
@@ -1748,6 +2186,12 @@ function replaceTaskStreamItems(evidence, items) {
   conversation.items = items.map((item, index) => ({ ...item, sequence: index + 1 }));
   conversation.head_sequence = conversation.items.length;
   conversation.window.last_sequence = conversation.items.length;
+  if (
+    evidence.task_stream.agent_activity_projection !== null
+    && typeof evidence.task_stream.agent_activity_projection === 'object'
+  ) {
+    evidence.task_stream.agent_activity_projection.head_sequence = conversation.head_sequence;
+  }
   return evidence;
 }
 
@@ -1817,6 +2261,257 @@ function addProgressAndToolFacts(evidence) {
           recorded_state: 'recorded',
         },
       );
+    }
+  }
+  return replaceTaskStreamItems(evidence, items);
+}
+
+function addProgrammingRuntimeFacts(evidence) {
+  const conversation = evidence.task_stream.conversation;
+  const items = [];
+  let inserted = false;
+  for (const item of conversation.items) {
+    items.push(item);
+    if (!inserted && item.item_kind === 'run_started' && item.task_id !== null) {
+      inserted = true;
+      const stepId = 'builder-run-step:323e4567-e89b-42d3-a456-426614174000';
+      const toolCallId = 'builder-tool-call:323e4567-e89b-42d3-a456-426614174000';
+      const commandToolCallId = 'builder-tool-call:423e4567-e89b-42d3-a456-426614174000';
+      const lifecycle = {
+        conversation_admission: 'verified_public_progress',
+        raw_output_admission: 'not_included',
+        revision_admission: 'not_created',
+      };
+      const runningTool = {
+        item_kind: 'programming_runtime_tool_activity',
+        sequence: 0,
+        turn_id: item.turn_id,
+        run_id: item.run_id,
+        step_id: stepId,
+        tool_call_id: toolCallId,
+        tool_kind: 'write',
+        state: 'running',
+        active_label: 'Writing project file',
+        completed_label: 'Wrote project file',
+        target_label: 'index.html',
+        presentation: 'changes',
+        presentation_detail: null,
+        status_label: null,
+        duration_ms: null,
+        summary: null,
+        failure_class: null,
+        result_ref: null,
+        file_change: null,
+        check_result: null,
+      };
+      items.push(
+        {
+          item_kind: 'programming_runtime_status',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: stepId,
+          activity_kind: null,
+          attention_class: null,
+          failure_class: null,
+          status_kind: 'reasoning',
+          status: '正在思考',
+        },
+        {
+          item_kind: 'programming_runtime_status',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: stepId,
+          activity_kind: 'step_analyzing',
+          attention_class: null,
+          failure_class: null,
+          status_kind: 'activity',
+          status: '正在分析下一步',
+        },
+        {
+          item_kind: 'agent_step_progress_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          task_id: item.task_id,
+          step_id: stepId,
+          step_index: 1,
+          recorded_state: 'start_recorded',
+          result: null,
+          summary: {
+            status: 'started',
+            display_summary: 'Agent step start was recorded.',
+          },
+          lifecycle,
+        },
+        {
+          item_kind: 'programming_runtime_assistant_message',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: stepId,
+          message: {
+            message_id: 'builder-message:323e4567-e89b-42d3-a456-426614174000',
+            text: 'I will update the project file, then verify the result.',
+          },
+        },
+        runningTool,
+        {
+          ...runningTool,
+          file_change: {
+            change_ref: `builder-runtime-file-change:${'c'.repeat(64)}`,
+            change_kind: 'edited',
+            added_lines: 4,
+            deleted_lines: 1,
+          },
+        },
+        {
+          ...runningTool,
+          state: 'completed',
+          duration_ms: 125,
+          summary: 'Project file updated.',
+          result_ref: `builder-runtime-tool-result:${'d'.repeat(64)}`,
+          presentation_detail: {
+            detail_kind: 'diff',
+            path: 'index.html',
+            added_lines: 4,
+            deleted_lines: 1,
+          },
+          file_change: {
+            change_ref: `builder-runtime-file-change:${'c'.repeat(64)}`,
+            change_kind: 'edited',
+            added_lines: 4,
+            deleted_lines: 1,
+          },
+        },
+        {
+          ...runningTool,
+          tool_call_id: commandToolCallId,
+          tool_kind: 'command',
+          active_label: 'Running npm run build',
+          completed_label: 'Ran npm run build',
+          target_label: 'npm run build',
+          presentation: 'terminal',
+        },
+        {
+          ...runningTool,
+          tool_call_id: commandToolCallId,
+          tool_kind: 'command',
+          state: 'completed',
+          active_label: 'Running npm run build',
+          completed_label: 'Ran npm run build',
+          target_label: 'npm run build',
+          presentation: 'terminal',
+          duration_ms: 639,
+          summary: 'Ran npm run build.',
+          result_ref: `builder-runtime-tool-result:${'e'.repeat(64)}`,
+          presentation_detail: {
+            detail_kind: 'command',
+            status: 'passed',
+            command: 'npm run build',
+            exit_code: 0,
+            duration_ms: 639,
+            truncated: true,
+          },
+          check_result: {
+            command_ref: `builder-runtime-command-result:${'f'.repeat(64)}`,
+            status: 'passed',
+            duration_ms: 639,
+            summary: 'npm run build passed.',
+          },
+        },
+        {
+          item_kind: 'agent_step_progress_recorded',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          task_id: item.task_id,
+          step_id: stepId,
+          step_index: 1,
+          recorded_state: 'result_recorded',
+          result: {
+            status: 'succeeded',
+            summary_code: 'agent_step_completed_without_raw_output',
+            display_summary: 'Agent step completed. Details were not kept.',
+          },
+          summary: {
+            status: 'succeeded',
+            display_summary: 'Agent step completed. Details were not kept.',
+          },
+          lifecycle,
+        },
+      );
+    }
+  }
+  return replaceTaskStreamItems(evidence, items);
+}
+
+function addProgrammingRuntimeCheckFacts(evidence) {
+  const conversation = evidence.task_stream.conversation;
+  const items = [];
+  let inserted = false;
+  for (const item of conversation.items) {
+    items.push(item);
+    if (!inserted && item.item_kind === 'run_started' && item.task_id !== null) {
+      inserted = true;
+      for (const [index, status] of ['failed', 'passed'].entries()) {
+        const suffix = index === 0 ? '4' : '5';
+        const stepId = `builder-run-step:${suffix}23e4567-e89b-42d3-a456-426614174000`;
+        const toolCallId = `builder-tool-call:${suffix}23e4567-e89b-42d3-a456-426614174000`;
+        const running = {
+          item_kind: 'programming_runtime_tool_activity',
+          sequence: 0,
+          turn_id: item.turn_id,
+          run_id: item.run_id,
+          step_id: stepId,
+          tool_call_id: toolCallId,
+          tool_kind: 'command',
+          state: 'running',
+          active_label: 'Running npm test',
+          completed_label: 'Ran npm test',
+          target_label: 'npm test',
+          presentation: 'terminal',
+          presentation_detail: null,
+          status_label: null,
+          duration_ms: null,
+          summary: null,
+          failure_class: null,
+          result_ref: null,
+          file_change: null,
+          check_result: null,
+        };
+        const checked = {
+          ...running,
+          check_result: {
+            command_ref: `builder-runtime-command-result:${suffix.repeat(64)}`,
+            status,
+            duration_ms: 125,
+            summary: status === 'failed'
+              ? 'The project check failed.'
+              : 'The project check completed successfully.',
+          },
+        };
+        items.push(
+          running,
+          checked,
+          status === 'failed'
+            ? {
+              ...checked,
+              state: 'failed',
+              duration_ms: 125,
+              summary: 'The project check failed.',
+              failure_class: 'check_failed',
+            }
+            : {
+              ...checked,
+              state: 'completed',
+              duration_ms: 125,
+              summary: 'The project check completed successfully.',
+              result_ref: `builder-runtime-tool-result:${suffix.repeat(64)}`,
+            },
+        );
+      }
     }
   }
   return replaceTaskStreamItems(evidence, items);
@@ -1926,7 +2621,62 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v27',
+    bridgeVersion: 'builder-preload.v36',
+    agentProjectTree: {
+      async read() {
+        return {
+          projects: [{
+            project_id: FAKE_PROJECT_ID,
+            tasks: [{ task_address_id: FAKE_TASK_ADDRESS_ID }],
+          }],
+        };
+      },
+      async renameProject() { throw new Error('must not rename projects through read canary bridge'); },
+      async archiveProject() { throw new Error('must not archive projects through read canary bridge'); },
+      async renameTask() { throw new Error('must not rename tasks through read canary bridge'); },
+      async archiveTask() { throw new Error('must not archive tasks through read canary bridge'); },
+    },
+    agentWorkbench: {
+      async read(request) {
+        return {
+          projection_version: 'builder-agent-workbench-projection.v2',
+          agent_id: request.agent_id,
+          stream: { items: [], after_cursor: request.after_cursor, next_cursor: null, has_more: false },
+          task_monitor: {
+            projection_version: 'builder-workbench-task-monitor.v2',
+            agent_id: request.agent_id,
+            tasks: [],
+            counts: { active: 0, attention: 0, recent: 0 },
+            authority: {
+              task_identity: 'main_owned_session_task_address_store',
+              task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+              renderer_authority: 'selection_only',
+              provider_dispatch: false,
+              permission_grant: false,
+              source_read: false,
+              source_write: false,
+            },
+          },
+          inbox: { unread_count: 0, action_required_count: 0, mention_count: 0, active_task_count: 0 },
+          authority: {
+            canonical_messages: 'main_owned_workbench_message_store',
+            user_state: 'main_owned_workbench_message_state_store',
+            task_state: 'sqlite_canonical_event_replay_plus_task_attention',
+            renderer_authority: 'selection_and_bounded_state_requests_only',
+            plugin_payload_exposure: 'not_exposed',
+            permission_grant: false,
+            provider_dispatch: false,
+            source_read: false,
+            source_write: false,
+          },
+        };
+      },
+      async updateMessageState() { return { operation: 'message_state_updated' }; },
+      async createTaskProposal() { return { operation: 'proposal_created' }; },
+      async decideTaskProposal() { return { operation: 'proposal_rejected' }; },
+      async controlTask() { return { operation: 'task_not_active' }; },
+      subscribeChanged() { return () => undefined; },
+    },
     codeGenerator: {
       classifyIntent() { throw new Error('must not route through bridge'); },
       submit() { throw new Error('must not write through bridge'); },
@@ -2084,6 +2834,9 @@ function installBridge(page) {
     checkRun: {
       async readCurrentDraftAvailableChecks() { throw new Error('must not read checks through bridge'); },
       async approveAndRunCurrentDraftCheck() { throw new Error('must not run checks through bridge'); },
+      async decideCurrentDraftDependencyPreparation() {
+        throw new Error('must not prepare check dependencies through bridge');
+      },
       async skipCurrentDraftCheck() { throw new Error('must not skip checks through bridge'); },
     },
     livePreview: {
@@ -2091,13 +2844,19 @@ function installBridge(page) {
       async reloadCurrentPreview() { throw new Error('must not reload live preview through bridge'); },
       async stopCurrentPreview() { throw new Error('must not stop live preview through bridge'); },
       async readCurrentPreviewStatus() { throw new Error('must not read live preview through bridge'); },
+      async updateCurrentPreviewLayout() { throw new Error('must not update live preview layout through bridge'); },
+      async decideDevServerApproval() { throw new Error('must not approve dev servers through bridge'); },
     },
     sideWorkspaceFiles: {
       async readCurrentDraftFileTree() { throw new Error('must not read files through read canary bridge'); },
       async readCurrentDraftFileContent() { throw new Error('must not read file content through read canary bridge'); },
+      async readRuntimeToolFileTree() { throw new Error('must not read runtime files through read canary bridge'); },
     },
     taskStream: {
       async read(request) {
+        if (request.task_address_id !== FAKE_TASK_ADDRESS_ID) {
+          throw new Error('task address required');
+        }
         return bridgeEvidence(
           request.project_id,
           page.draftSaved,
@@ -2108,6 +2867,7 @@ function installBridge(page) {
           page.approvedPlanReviews,
           page.rejectedPlanReviews,
           page.planReviewDecisions,
+          page.questionsLast,
         )
           .task_stream;
       },
@@ -2130,8 +2890,10 @@ function fakeElectron(page) {
     planReviewDecisions: [],
     planTurns: 0,
     questionTurns: 0,
+    questionsLast: false,
     rejectedPlanReviews: 0,
     revision: 0,
+    sourceCheckpoint: 0,
   };
   const fake = {
     appEvents: [],
@@ -2148,8 +2910,10 @@ function fakeElectron(page) {
       activePage.planReviewDecisions = [...durableStore.planReviewDecisions];
       activePage.planTurns = durableStore.planTurns;
       activePage.questionTurns = durableStore.questionTurns;
+      activePage.questionsLast = durableStore.questionsLast;
       activePage.rejectedPlanReviews = durableStore.rejectedPlanReviews;
       activePage.savedRevision = durableStore.revision;
+      activePage.previewSourceCheckpoint = durableStore.sourceCheckpoint;
       activePage.savedActivityRevision = durableStore.revision;
       activePage.draftSaved = durableStore.revision > 0;
       activePage.retryDraftVisible = false;
@@ -2164,15 +2928,38 @@ function fakeElectron(page) {
         return durableStore.revision;
       };
       activePage.recordCandidateDraft = (candidateTurns) => {
+        durableStore.questionsLast = false;
+        activePage.questionsLast = false;
         durableStore.candidateTurns = Math.max(durableStore.candidateTurns, candidateTurns);
+        durableStore.sourceCheckpoint = durableStore.candidateTurns;
         activePage.candidateTurns = durableStore.candidateTurns;
+        activePage.previewSourceCheckpoint = durableStore.sourceCheckpoint;
         activePage.changesPanelVisible = false;
         activePage.retryDraftVisible = false;
         activePage.unsavedDraftVisible = true;
       };
+      activePage.recordCheckpointUndo = () => {
+        if (activePage.unsavedDraftVisible !== true) throw new Error('checkpoint undo unavailable');
+        durableStore.sourceCheckpoint = Math.max(
+          durableStore.revision,
+          durableStore.sourceCheckpoint - 1,
+        );
+        durableStore.candidateTurns += 1;
+        activePage.candidateTurns = durableStore.candidateTurns;
+        activePage.previewSourceCheckpoint = durableStore.sourceCheckpoint;
+        activePage.changesPanelVisible = false;
+        activePage.checkRunStatus = 'not_run';
+        activePage.unsavedDraftVisible = true;
+      };
       activePage.recordQuestion = () => {
+        activePage.liveOutputVisible = true;
         durableStore.questionTurns += 1;
         const instruction = activePage.values.get(SELECTORS.idea) ?? '';
+        durableStore.questionsLast = instruction === CANARY_QUESTION;
+        activePage.questionsLast = durableStore.questionsLast;
+        activePage.questionAnswerText = instruction === CANARY_QUESTION
+          ? CANARY_SAVED_PROJECT_CONTEXT_ANSWER
+          : 'It is a focus timer. Review the timer duration before changing it.';
         if (routeFakeCanarySendInstruction(instruction) === 'brief_correction') {
           durableStore.briefCorrectionActive = true;
           activePage.briefCorrectionActive = true;
@@ -2180,6 +2967,8 @@ function fakeElectron(page) {
         activePage.questionTurns = durableStore.questionTurns;
       };
       activePage.resetNewProjectConversation = () => {
+        durableStore.questionsLast = false;
+        activePage.questionsLast = false;
         durableStore.questionTurns = 0;
         durableStore.planTurns = 0;
         durableStore.approvedPlanReviews = 0;
@@ -2196,8 +2985,11 @@ function fakeElectron(page) {
         activePage.briefCorrectionActive = false;
       };
       activePage.recordPlanAttempt = () => {
+        durableStore.questionsLast = false;
+        activePage.questionsLast = false;
         durableStore.planTurns += 1;
         activePage.planTurns = durableStore.planTurns;
+        activePage.workDetailsOpen = false;
       };
       activePage.recordPlanApproval = () => {
         if (durableStore.planTurns <= durableStore.approvedPlanReviews + durableStore.rejectedPlanReviews) {
@@ -2242,6 +3034,11 @@ function fakeElectron(page) {
           fake.appEvents.push(['firstWindow']);
           activePage.evaluate = async (callback, argument) => {
             activePage.events.push(['evaluate', callback.toString(), argument]);
+            if (argument?.key === '__builderPackagedCanaryLiveOutputObservation') {
+              return argument?.liveOutputSelector === SELECTORS.liveOutput
+                ? true
+                : streamingOutputObservation(activePage);
+            }
             return bridgeEvidence(
               argument.projectId,
               durableStore.revision > 0,
@@ -2252,6 +3049,7 @@ function fakeElectron(page) {
               durableStore.approvedPlanReviews,
               durableStore.rejectedPlanReviews,
               durableStore.planReviewDecisions,
+              durableStore.questionsLast,
             );
           };
           activePage.artifactsAllowed = true;
@@ -2484,9 +3282,9 @@ function savedProfileFixture() {
   };
 }
 
-function assertFixedCanaryError(error, code, stage) {
-  assert.equal(error instanceof BuilderPackagedCanaryError, true);
-  assert.equal(error.code, code);
+function assertFixedCanaryError(error, code, stage, context = stage) {
+  assert.equal(error instanceof BuilderPackagedCanaryError, true, `unexpected error type for ${context}`);
+  assert.equal(error.code, code, `unexpected code for ${context}`);
   assert.equal(error.stage, stage);
   assert.equal(error.stack, `BuilderPackagedCanaryError: ${error.message}`);
   assert.equal(error.message.includes('secret-marker'), false);
@@ -2627,43 +3425,53 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
+    workbench_task_return_deferred_until_after_save: true,
+    workbench_task_return: workbenchTaskReturnEvidence(),
     workspace_gate: workspaceGateEvidence(),
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['New project', 'Send']);
-  assert.deepEqual(
-    page.events.filter((event) => event[0] === 'click').map((event) => event[1]).slice(0, 2),
-    [SELECTORS.workspaceNewProject, SELECTORS.addSourceFolder],
+  assert.deepEqual(roleClicks, ['Send', 'Send']);
+  assert.equal(
+    page.events.filter((event) => event[0] === 'click').map((event) => event[1])[0],
+    SELECTORS.composerAddMenuButton,
   );
   const firstSend = page.events.findIndex((event) => event[0] === 'roleClick' && event[2] === 'Send');
-  const pickerVisible = page.events.findIndex((event) => (
+  const proposalVisible = page.events.findIndex((event) => (
     event[0] === 'waitFor'
-    && event[1] === SELECTORS.workspacePicker
+    && event[1] === SELECTORS.agentTaskProposalActions
     && event[2] === 'visible'
   ));
-  const sourceFolderClick = page.events.findIndex((event) => (
+  const materializeClick = page.events.findIndex((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.addSourceFolder
+    && event[1] === SELECTORS.agentTaskProposalNewProject
   ));
-  assert.ok(firstSend >= 0 && firstSend < pickerVisible);
-  assert.ok(pickerVisible < sourceFolderClick);
-  const liveOutputVisible = page.events.findIndex((event) => (
+  const secondSend = page.events.findLastIndex(
+    (event) => event[0] === 'roleClick' && event[2] === 'Send',
+  );
+  assert.ok(firstSend >= 0 && firstSend < proposalVisible);
+  assert.ok(proposalVisible < materializeClick);
+  assert.ok(materializeClick < secondSend);
+  const draftVisible = page.events.findIndex((event) => (
     event[0] === 'waitFor'
-    && event[1] === SELECTORS.liveOutput
+    && event[1] === SELECTORS.unsavedDraft
     && event[2] === 'visible'
   ));
-  const liveOutputText = page.events.findIndex((event) => (
-    event[0] === 'textContent'
-    && event[1] === SELECTORS.liveOutput
+  const fixedStatusCheck = page.events.findIndex((event) => (
+    event[0] === 'isVisible'
+    && event[1] === SELECTORS.workStatus
   ));
-  const terminalPreview = page.events.findIndex((event) => (
-    event[0] === 'waitFor'
-    && event[1] === SELECTORS.preview
-    && event[2] === 'visible'
+  const sidebarDefaultCheck = page.events.findIndex((event) => (
+    event[0] === 'isVisible'
+    && event[1] === SELECTORS.artifactSidebar
   ));
-  assert.ok(sourceFolderClick < liveOutputVisible);
-  assert.ok(liveOutputVisible < liveOutputText);
-  assert.ok(liveOutputText < terminalPreview);
+  const previewOpen = page.events.findIndex((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.workspaceControlPreview
+  ));
+  assert.ok(secondSend < draftVisible);
+  assert.ok(draftVisible < fixedStatusCheck);
+  assert.ok(fixedStatusCheck < sidebarDefaultCheck);
+  assert.ok(sidebarDefaultCheck < previewOpen);
   const saveScroll = page.events.findIndex(
     (event) => event[0] === 'scrollIntoView' && event[1] === SELECTORS.saveVersion,
   );
@@ -2679,7 +3487,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v27');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v36');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents.find((event) => event[1].includes('providerSettings.status'))?.[1] ?? '';
   assert.match(source, /providerSettings\.status/u);
@@ -2695,7 +3503,8 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
   );
   const versionWait = page.events.findIndex(
-    (event) => event[0] === 'textContent' && event[1] === SELECTORS.currentVersion,
+    (event) => event[0] === 'textContent'
+      && event[1] === '[data-builder-version-card="Version 1"]',
   );
   assert.ok(unsavedWait >= 0 && unsavedWait < preSaveRead);
   assert.ok(preSaveRead < changesCollapse);
@@ -2718,8 +3527,9 @@ test('runs the main-selected project check before saving Version 1', async (t) =
     (event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion,
   );
   const passedStatusWait = page.events.findIndex(
-    (event) => event[0] === 'waitFor'
-      && event[1] === `${SELECTORS.checkRunStatus}[data-builder-check-run-status="passed"]`,
+    (event) => event[0] === 'waitForFunction'
+      && event[2]?.agentId === DEFAULT_BUILDER_AGENT_ID
+      && Object.hasOwn(event[2], 'projectId'),
   );
   assert.ok(passedStatusWait >= 0 && passedStatusWait < saveClick);
   assert.equal(page.events.some((event) => event[0] === 'click' && event[1] === SELECTORS.skipCheck), false);
@@ -2764,15 +3574,17 @@ test('approves current project write gate before waiting for draft output', asyn
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
+    workbench_task_return_deferred_until_after_save: true,
+    workbench_task_return: workbenchTaskReturnEvidence(),
     workspace_gate: workspaceGateEvidence(),
   });
   assert.equal(page.currentProjectWriteApproved, true);
-  const sourceFolderClick = page.events.findIndex((event) => (
+  const taskMaterializeClick = page.events.findIndex((event) => (
     event[0] === 'click'
-    && event[1] === SELECTORS.addSourceFolder
+    && event[1] === SELECTORS.agentTaskProposalNewProject
   ));
   const approvalVisible = page.events.findIndex((event, index) => (
-    index > sourceFolderClick &&
+    index > taskMaterializeClick &&
     event[0] === 'waitFor'
     && event[1] === SELECTORS.currentProjectWriteApproval
     && event[2] === 'visible'
@@ -2782,15 +3594,15 @@ test('approves current project write gate before waiting for draft output', asyn
     event[0] === 'click'
     && event[1] === SELECTORS.approveCurrentProjectWrite
   ));
-  const liveOutputVisible = page.events.findIndex((event, index) => (
+  const draftVisible = page.events.findIndex((event, index) => (
     index > approvalClick &&
     event[0] === 'waitFor'
-    && event[1] === SELECTORS.liveOutput
+    && event[1] === SELECTORS.unsavedDraft
     && event[2] === 'visible'
   ));
-  assert.ok(sourceFolderClick >= 0 && sourceFolderClick < approvalVisible);
+  assert.ok(taskMaterializeClick >= 0 && taskMaterializeClick < approvalVisible);
   assert.ok(approvalVisible < approvalClick);
-  assert.ok(approvalClick < liveOutputVisible);
+  assert.ok(approvalClick < draftVisible);
 });
 
 test('observes draft review diff before Save without leaking internal evidence', async () => {
@@ -2816,43 +3628,52 @@ test('observes draft review diff before Save without leaking internal evidence',
       SELECTORS.changeDiffLine,
       SELECTORS.changeCard,
       SELECTORS.changeDiff,
+      SELECTORS.sideWorkspaceCodeLine,
     ],
   );
-  assert.deepEqual(
-    page.events.filter((event) => event[0] === 'boundingBox').map((event) => event[1]),
-    [
-      SELECTORS.reviewCheckpoint,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewCopy}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewTitle}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewSummary}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewNote}`,
-      `${SELECTORS.reviewCheckpoint} ${SELECTORS.reviewChecks}`,
-      SELECTORS.workspaceControls,
-      SELECTORS.workspaceDraftActions,
-      SELECTORS.saveVersion,
-      SELECTORS.reviewMore,
-      SELECTORS.conversationActivity,
-      SELECTORS.userMessage,
-      SELECTORS.chatScroll,
-      SELECTORS.artifactSummary,
-      SELECTORS.artifactSidebar,
-      SELECTORS.artifactResizeHandle,
-      `${SELECTORS.artifactSidebar} ${SELECTORS.resultFlow}`,
-      SELECTORS.chatScroll,
-      SELECTORS.changesFlow,
-      SELECTORS.changesPanel,
-      SELECTORS.changeCard,
-      SELECTORS.changeDiff,
-    ],
-  );
-  page.reviewTextOverride = 'Review before saving sha256:secret';
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_text_failed',
-  );
+  const hiddenSelectors = page.events
+    .filter((event) => event[0] === 'waitFor' && event[2] === 'hidden')
+    .map((event) => event[1]);
+  assert.equal(hiddenSelectors.includes(SELECTORS.reviewCheckpoint), true);
+  assert.equal(hiddenSelectors.includes(SELECTORS.artifactSummary), true);
+  assert.equal(hiddenSelectors.includes(SELECTORS.completionSummary), true);
 });
 
-test('rejects conversation activity that overlaps the draft review checkpoint', async () => {
+test('rejects legacy review and result cards in the conversation', async () => {
+  for (const legacySurface of ['legacyReviewVisible', 'legacyArtifactSummaryVisible']) {
+    const page = new FakePage();
+    page.unsavedDraftVisible = true;
+    page[legacySurface] = true;
+    await assert.rejects(
+      inspectDraftReviewDiffViaUi(page),
+      (error) => error.code === 'canary_review_diff_failed',
+    );
+  }
+});
+
+test('rejects provider lifecycle phases presented as completed actions', async () => {
+  const page = new FakePage();
+  page.unsavedDraftVisible = true;
+  page.completedFileActionsTextOverride = [
+    'Edited 5 files',
+    'Edited index.html +1 -1',
+    'Read the current project context',
+    'Started the AI request',
+    'Received the AI response',
+    'Prepared the result for review',
+  ].join(' ');
+
+  await assert.rejects(
+    inspectDraftReviewDiffViaUi(page),
+    (error) => error.code === 'canary_review_diff_completed_actions_failed',
+  );
+  assert.equal(page.events.some((event) => (
+    event[0] === 'click'
+    && event[1] === SELECTORS.workspaceControlChanges
+  )), false);
+});
+
+test('rejects conversation activity that leaves the chat column', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.conversationActivity, { x: 360, y: 168, width: 860, height: 96 });
@@ -2868,14 +3689,20 @@ test('rejects conversation activity that overlaps the draft review checkpoint', 
   )), false);
 });
 
-test('rejects check status that leaves the draft review checkpoint', async () => {
+test('rejects save card width that diverges from the composer', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 1016, y: 308, width: 568, height: 32 });
+  page.reviewLayoutBoxes.set(SELECTORS.composerVersionDecision, {
+    x: 492,
+    y: 416,
+    width: 300,
+    height: 104,
+  });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_child_bounds_failed',
+    (error) => error.code === 'canary_review_diff_failed'
+      && error.diagnostic?.review_stage === 'validating_workspace_actions',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -2883,106 +3710,20 @@ test('rejects check status that leaves the draft review checkpoint', async () =>
   )), false);
 });
 
-test('retries transient draft review child bounds while preserving strict geometry checks', async () => {
+test('rejects latest activity hidden under the save card', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 1016, y: 286, width: 568, height: 32 });
-  page.waitForTimeout = async (ms) => {
-    page.events.push(['waitForTimeout', ms]);
-    page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 });
-  };
-
-  assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
-  assert.equal(
-    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
-    true,
-  );
-});
-
-test('retries transient draft review text stack before rejecting layout overlap', async () => {
-  const page = new FakePage();
-  page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 288, width: 568, height: 32 });
-  page.waitForTimeout = async (ms) => {
-    page.events.push(['waitForTimeout', ms]);
-    page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 308, width: 568, height: 32 });
-  };
-
-  assert.deepEqual(await inspectDraftReviewDiffViaUi(page), reviewDiffEvidence());
-  assert.equal(
-    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
-    true,
-  );
-});
-
-test('rejects draft review checkpoint bounds that cannot support status evidence', async () => {
-  const page = new FakePage();
-  page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 300, height: 136 });
+  page.reviewLayoutBoxes.set(`${SELECTORS.conversationActivity} .cf-builder-activity-list > li`, {
+    x: 492,
+    y: 392,
+    width: 416,
+    height: 72,
+  });
 
   await assert.rejects(
     inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_width_failed',
-  );
-
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 79 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
-  );
-
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 361 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_height_failed',
-  );
-
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCheckpoint, { x: 312, y: 220, width: 596, height: 136 });
-  page.reviewLayoutBoxes.set(SELECTORS.reviewCopy, { x: 326, y: 234, width: 300, height: 62 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_copy_width_failed',
-  );
-});
-
-test('rejects squeezed draft action geometry in the workspace toolbar', async () => {
-  const page = new FakePage();
-  page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.saveVersion, { x: 678, y: 308, width: 24, height: 32 });
-
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_workspace_actions_layout_failed',
-  );
-  assert.equal(page.events.some((event) => (
-    event[0] === 'click'
-    && event[1] === SELECTORS.workspaceControlChanges
-  )), false);
-});
-
-test('rejects draft review copy that visually overlaps itself', async () => {
-  const page = new FakePage();
-  page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewSummary, { x: 412, y: 246, width: 420, height: 17 });
-
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_text_stack_failed',
-  );
-  assert.equal(page.events.some((event) => (
-    event[0] === 'click'
-    && event[1] === SELECTORS.workspaceControlChanges
-  )), false);
-});
-
-test('rejects draft check status that overlaps the preview explanation', async () => {
-  const page = new FakePage();
-  page.unsavedDraftVisible = true;
-  page.reviewLayoutBoxes.set(SELECTORS.reviewChecks, { x: 326, y: 288, width: 568, height: 32 });
-
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(page),
-    (error) => error.code === 'canary_review_diff_checkpoint_text_stack_failed',
+    (error) => error.code === 'canary_review_diff_failed'
+      && error.diagnostic?.review_stage === 'validating_workspace_actions',
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'click'
@@ -3005,58 +3746,7 @@ test('rejects draft artifact preview rendered inside the chat area', async () =>
   )), false);
 });
 
-test('rejects draft artifact summaries that are too narrow or before review status', async () => {
-  const narrow = new FakePage();
-  narrow.unsavedDraftVisible = true;
-  narrow.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 372, width: 320, height: 72 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(narrow),
-    (error) => error.code === 'canary_review_diff_artifact_summary_width_failed'
-      && error.stage === 'review_diff_artifact_summary_width',
-  );
-
-  const beforeReview = new FakePage();
-  beforeReview.unsavedDraftVisible = true;
-  beforeReview.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 188, width: 596, height: 72 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(beforeReview),
-    (error) => error.code === 'canary_review_diff_artifact_summary_order_failed'
-      && error.stage === 'review_diff_artifact_summary_order',
-  );
-
-  const transientOrder = new FakePage();
-  transientOrder.unsavedDraftVisible = true;
-  transientOrder.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 188, width: 596, height: 72 });
-  transientOrder.waitForTimeout = async (ms) => {
-    transientOrder.events.push(['waitForTimeout', ms]);
-    transientOrder.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 362, width: 596, height: 88 });
-  };
-  assert.deepEqual(await inspectDraftReviewDiffViaUi(transientOrder), reviewDiffEvidence());
-  assert.equal(
-    transientOrder.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
-    true,
-  );
-
-  const horizontal = new FakePage();
-  horizontal.unsavedDraftVisible = true;
-  horizontal.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 260, y: 372, width: 596, height: 72 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(horizontal),
-    (error) => error.code === 'canary_review_diff_artifact_summary_horizontal_failed'
-      && error.stage === 'review_diff_artifact_summary_horizontal',
-  );
-
-  const vertical = new FakePage();
-  vertical.unsavedDraftVisible = true;
-  vertical.reviewLayoutBoxes.set(SELECTORS.artifactSummary, { x: 312, y: 616, width: 596, height: 621 });
-  await assert.rejects(
-    inspectDraftReviewDiffViaUi(vertical),
-    (error) => error.code === 'canary_review_diff_artifact_summary_vertical_failed'
-      && error.stage === 'review_diff_artifact_summary_vertical',
-  );
-});
-
-test('rejects draft changes panels that overlap the review checkpoint', async () => {
+test('rejects draft changes panels rendered in the chat column', async () => {
   const page = new FakePage();
   page.unsavedDraftVisible = true;
   page.reviewLayoutBoxes.set(SELECTORS.changesFlow, { x: 360, y: 300, width: 860, height: 320 });
@@ -3126,7 +3816,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(page.candidateTurns, 1);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Retry'],
+    ['Send', 'Send', 'Retry'],
   );
   assert.equal(
     page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
@@ -3134,14 +3824,16 @@ test('retries a failed draft through visible UI without saving or leaking write 
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
-    ['Make a focus timer.', 'Change this text after the first failure.'],
+    ['Make a focus timer.', 'Make a focus timer.', 'Change this text after the first failure.'],
   );
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
-  assert.equal(evaluateEvents.length, 1);
-  assert.doesNotMatch(
-    evaluateEvents[0][1],
-    /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent|livePreview\.(?:requestCurrentDraftPreview|reloadCurrentPreview|stopCurrentPreview)|source_tree/u,
-  );
+  assert.ok(evaluateEvents.length >= 1);
+  for (const event of evaluateEvents) {
+    assert.doesNotMatch(
+      event[1],
+      /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent|livePreview\.(?:requestCurrentDraftPreview|reloadCurrentPreview|stopCurrentPreview)|source_tree/u,
+    );
+  }
 });
 
 test('captures saved activity without exposing internal evidence', async () => {
@@ -3185,6 +3877,8 @@ test('answers a saved-project question without creating a draft or revision', as
   assert.equal(page.questionTurns, 1);
   assert.deepEqual(answer, {
     answer_failure_notice_absent: true,
+    current_project_context_verified: false,
+    pending_candidate_preserved: false,
     saved_revision_unchanged: true,
     task_stream: {
       answer_count: 1,
@@ -3211,7 +3905,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send', 'Send'],
+    ['Send', 'Send', 'Send'],
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'isVisible'
@@ -3523,6 +4217,81 @@ test('preserves fixed read-evidence substages without exposing bridge details', 
   );
 });
 
+test('reads task stream through the visible same-project task while the Agent tree lags', async () => {
+  const taskStream = bridgeEvidence(FAKE_PROJECT_ID).task_stream;
+  let requestedTaskStream = null;
+  const page = {
+    async evaluate(callback, argument) {
+      const hadBridge = Object.hasOwn(globalThis, 'clawfabricBuilder');
+      const hadDocument = Object.hasOwn(globalThis, 'document');
+      const previousBridge = globalThis.clawfabricBuilder;
+      const previousDocument = globalThis.document;
+      globalThis.clawfabricBuilder = {
+        agentProjectTree: {
+          async read() {
+            return {
+              projects: [{ project_id: FAKE_PROJECT_ID, tasks: [] }],
+              orphaned_tasks: [],
+            };
+          },
+        },
+        taskStream: {
+          async read(request) {
+            requestedTaskStream = request;
+            return taskStream;
+          },
+        },
+      };
+      globalThis.document = {
+        querySelector(selector) {
+          if (selector !== `[data-builder-project-id="${FAKE_PROJECT_ID}"]`) return null;
+          return {
+            closest() {
+              return {
+                querySelector() {
+                  return { getAttribute: () => FAKE_TASK_ADDRESS_ID };
+                },
+              };
+            },
+          };
+        },
+      };
+      try {
+        return await callback(argument);
+      } finally {
+        if (hadBridge) globalThis.clawfabricBuilder = previousBridge;
+        else delete globalThis.clawfabricBuilder;
+        if (hadDocument) globalThis.document = previousDocument;
+        else delete globalThis.document;
+      }
+    },
+  };
+
+  const evidence = await readSanitizedTaskStreamEvidence(page, FAKE_PROJECT_ID);
+
+  assert.equal(evidence.project_id, FAKE_PROJECT_ID);
+  assert.deepEqual(requestedTaskStream, {
+    project_id: FAKE_PROJECT_ID,
+    task_address_id: FAKE_TASK_ADDRESS_ID,
+  });
+});
+
+test('reports a fixed sanitize phase when task stream evidence drifts', async () => {
+  const page = {
+    async evaluate() {
+      return { ok: true, task_stream: {} };
+    },
+  };
+
+  await assert.rejects(
+    () => readSanitizedTaskStreamEvidence(page, FAKE_PROJECT_ID),
+    (error) => error instanceof BuilderPackagedCanaryError
+      && error.code === 'canary_read_evidence_failed'
+      && error.diagnostic?.phase === 'sanitize'
+      && error.diagnostic?.sanitizer_code === 'canary_evidence_failed',
+  );
+});
+
 test('accepts current check outcome and agent activity task stream projections', () => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const evidence = bridgeEvidence(projectId, true, 1, 1, 0);
@@ -3536,6 +4305,7 @@ test('accepts current check outcome and agent activity task stream projections',
     status: 'not_run',
     label: 'Not checked',
     summary: 'No project check has been recorded for this draft.',
+    environment_reason: 'none',
     completed_at_ms: null,
     authority: {
       projection_authority: 'main_owned_check_run_outcome_projection_v1',
@@ -3640,7 +4410,13 @@ test('approves visible plan source-read prompt before waiting for a plan', async
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
-    [SELECTORS.composerAddMenuButton, SELECTORS.composerAddPlanMode, SELECTORS.approvePlanSourceRead],
+    [
+      SELECTORS.composerAddMenuButton,
+      SELECTORS.composerAddPlanMode,
+      SELECTORS.approvePlanSourceRead,
+      SELECTORS.workspaceMenuButton,
+      SELECTORS.workspaceMenuButton,
+    ],
   );
 });
 
@@ -3676,7 +4452,7 @@ test('proposes and approves a saved-project plan before creating a draft', async
   assert.deepEqual(draft, {
     approved_plan_continued: true,
     approved_plan_task_stream_verified: true,
-    composer_status_text: 'Ready to execute current direction',
+    composer_status_text: null,
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
@@ -3929,7 +4705,7 @@ test('approves current-project write prompt after approving a plan', async (t) =
   assert.deepEqual(draft, {
     approved_plan_continued: true,
     approved_plan_task_stream_verified: true,
-    composer_status_text: 'Ready to execute current direction',
+    composer_status_text: null,
     previous_revision_verified_before_save: true,
     review_diff: reviewDiffEvidence(),
     unsaved_draft_observed: true,
@@ -4023,7 +4799,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send'],
+    ['Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
@@ -4033,6 +4809,23 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.saveVersion).length,
     2,
   );
+});
+
+test('keeps a pending candidate and saved revision when the latest turn answers a project question', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const savedRevision = bridgeEvidence(projectId, true, 2).current.product_revision_receipt;
+  const evidence = bridgeEvidence(projectId, true, 2, 8, 1, 1, 1, 0, null, true);
+  const facts = assertTaskStreamPendingExplanationFacts(evidence, savedRevision, 8, 1, {
+    approvedPlanReviews: 1,
+    planTurns: 1,
+    requireToolActivity: true,
+  });
+
+  assert.equal(facts.answer_count, 1);
+  assert.equal(facts.candidate_ready_count, 8);
+  assert.equal(facts.latest_candidate_review, 'pending');
+  assert.equal(facts.revision_unchanged, true);
+  assert.equal(facts.saved_revision_number, 2);
 });
 
 test('accepts active-run steering messages without changing candidate or revision authority', () => {
@@ -4113,6 +4906,8 @@ test('observes a local Markdown artifact draft through workspace and review gate
     review_diff: reviewDiffEvidence(),
     saved_via_ui: true,
     unsaved_draft_observed: true,
+    workbench_task_return_deferred_until_after_save: true,
+    workbench_task_return: workbenchTaskReturnEvidence(),
     workspace_gate: workspaceGateEvidence(),
   });
   assert.deepEqual(
@@ -4141,11 +4936,14 @@ test('observes a local Markdown artifact draft through workspace and review gate
   assert.equal(page.unsavedDraftVisible, false);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send'],
+    ['Send', 'Send'],
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
-    ['Create a README.md with concise project notes.'],
+    [
+      'Create a README.md with concise project notes.',
+      'Create a README.md with concise project notes.',
+    ],
   );
 });
 
@@ -4174,7 +4972,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['New project', 'Send'],
+    ['Send', 'Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
@@ -4293,7 +5091,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       code: 'canary_build_workspace_required_failed',
       run: async () => {
         const page = new FakePage();
-        page.failWaitFor.add(SELECTORS.workspacePicker);
+        page.failWaitFor.add(SELECTORS.agentTaskProposalActions);
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'build_workspace_required',
@@ -4302,7 +5100,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       code: 'canary_generation_terminal_failed',
       run: async () => {
         const page = new FakePage();
-        page.failWaitFor.add(SELECTORS.liveOutput);
+        page.workStatusVisible = true;
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'generation_terminal',
@@ -4321,6 +5119,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       code: 'canary_generation_terminal_failed',
       run: async () => {
         const page = new FakePage();
+        page.forceLiveOutputVisible = true;
         page.liveOutputTextOverride = 'Assistant request_id provider credential source_tree sha256:secret';
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
@@ -4337,16 +5136,6 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       stage: 'generation_terminal',
     },
     {
-      code: 'canary_preview_failed',
-      run: async () => {
-        const page = new FakePage();
-        page.failAlertWait = true;
-        page.failWaitFor.add(SELECTORS.preview);
-        await generateProjectViaUi(page, 'Make a focus timer.');
-      },
-      stage: 'preview',
-    },
-    {
       code: 'canary_draft_failed',
       run: async () => {
         const page = new FakePage();
@@ -4361,6 +5150,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         const page = new FakePage();
         installBridge(page);
         page.draftSaved = true;
+        page.forceWorkspaceGateForNextBuild = true;
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'draft',
@@ -4372,18 +5162,6 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         installBridge(page);
         page.draftFailuresRemaining = 1;
         page.failRoleClicks.add('button:Retry');
-        await retryFailedDraftViaUi(page, 'Make a focus timer.');
-      },
-      stage: 'retry',
-    },
-    {
-      code: 'canary_retry_failed',
-      run: async () => {
-        const page = new FakePage();
-        installBridge(page);
-        page.draftFailuresRemaining = 1;
-        page.failAlertWait = true;
-        page.failWaitFor.add(SELECTORS.preview);
         await retryFailedDraftViaUi(page, 'Make a focus timer.');
       },
       stage: 'retry',
@@ -4404,7 +5182,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         const page = new FakePage();
         installBridge(page);
         page.persistSave = false;
-        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        page.failWaitForStates.add(`${SELECTORS.unsavedDraft}:hidden`);
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'save_persistence',
@@ -4414,7 +5192,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
       run: async () => {
         const page = new FakePage();
         installBridge(page);
-        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        page.failWaitForStates.add(`${SELECTORS.unsavedDraft}:hidden`);
         await generateProjectViaUi(page, 'Make a focus timer.');
       },
       stage: 'save_confirmation',
@@ -4503,7 +5281,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         installBridge(page);
         page.draftSaved = true;
         page.savedRevision = 1;
-        page.failWaitFor.add(SELECTORS.liveOutput);
+        page.workStatusVisible = true;
         const first = bridgeEvidence(
           'builder-project:11111111-1111-4111-8111-111111111111',
           true,
@@ -4520,6 +5298,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         installBridge(page);
         page.draftSaved = true;
         page.savedRevision = 1;
+        page.forceLiveOutputVisible = true;
         page.liveOutputTextOverride = 'Assistant builder-run:11111111-1111-4111-8111-111111111111 provider credential';
         const first = bridgeEvidence(
           'builder-project:11111111-1111-4111-8111-111111111111',
@@ -4589,7 +5368,7 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
         installBridge(page);
         page.draftSaved = true;
         page.savedRevision = 1;
-        page.failWaitFor.add(SELECTORS.unsavedDraft);
+        page.failWaitForStates.add(`${SELECTORS.unsavedDraft}:hidden`);
         const first = bridgeEvidence(
           'builder-project:11111111-1111-4111-8111-111111111111',
           true,
@@ -4638,12 +5417,12 @@ test('reports fixed redacted UI stages without raw provider, prompt, or DOM deta
     },
   ];
 
-  for (const item of stages) {
+  for (const [index, item] of stages.entries()) {
     try {
       await assert.rejects(item.run(), (error) => {
-        assertFixedCanaryError(error, item.code, item.stage);
+        assertFixedCanaryError(error, item.code, item.stage, `${item.stage} at index ${index}`);
         return true;
-      });
+      }, `${item.stage} at index ${index}`);
     } finally {
       delete globalThis.clawfabricBuilder;
     }
@@ -4707,10 +5486,21 @@ test('sanitizes read evidence before dereferencing renderer-returned shapes', ()
   );
 });
 
+test('accepts a task stream window containing more than 128 public items', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = bridgeEvidence(projectId, true, 1, 33);
+
+  const sanitized = assertReadEvidence(evidence);
+
+  assert.equal(sanitized.task_stream.conversation.item_count > 128, true);
+  assert.equal(sanitized.task_stream.conversation.window.has_earlier, false);
+});
+
 test('accepts renderer-safe run progress and tool activity in task stream evidence', () => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const evidence = addProgressAndToolFacts(bridgeEvidence(projectId, true, 1, 1, 0));
   const revision = evidence.current.product_revision_receipt;
+  assertReadEvidence(evidence);
   const facts = assertTaskStreamCandidateFacts(evidence, revision, 1, 0);
 
   assert.deepEqual(facts, {
@@ -4733,6 +5523,230 @@ test('accepts renderer-safe run progress and tool activity in task stream eviden
   assert.doesNotMatch(
     JSON.stringify(assertReadEvidence(evidence).task_stream),
     /permission_admission_receipt|record_digest|resource_id|raw_output|stdout|stderr|provider|credential|source_tree|commit_oid|tree_oid/iu,
+  );
+});
+
+test('accepts canonical checkpoint and recovery facts and rejects forged lifecycles', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const checkpointEvidence = addContextSnapshotAndBriefFacts(
+    bridgeEvidence(projectId, true, 1, 1, 0),
+  );
+  const checkpointItems = [...checkpointEvidence.task_stream.conversation.items];
+  const checkpointRun = checkpointItems.find(
+    (item) => item.item_kind === 'run_started' && item.task_id !== null,
+  );
+  const checkpointCompletionIndex = checkpointItems.findIndex(
+    (item) => item.item_kind === 'run_completed' && item.run_id === checkpointRun.run_id,
+  );
+  checkpointItems.splice(
+    checkpointCompletionIndex,
+    0,
+    {
+      item_kind: 'checkpoint_recorded',
+      sequence: 0,
+      turn_id: checkpointRun.turn_id,
+      run_id: checkpointRun.run_id,
+      status: 'created',
+      changed_file_count: 2,
+      verification_status: 'candidate_verified',
+    },
+    {
+      item_kind: 'checkpoint_recorded',
+      sequence: 0,
+      turn_id: checkpointRun.turn_id,
+      run_id: checkpointRun.run_id,
+      status: 'updated',
+      changed_file_count: 1,
+      verification_status: 'candidate_verified',
+    },
+  );
+  replaceTaskStreamItems(checkpointEvidence, checkpointItems);
+
+  const checkpointCounts = assertReadEvidence(checkpointEvidence)
+    .task_stream.conversation.item_facts.counts;
+  assert.equal(checkpointCounts.checkpoint_created_count, 1);
+  assert.equal(checkpointCounts.checkpoint_updated_count, 1);
+  assert.equal(checkpointCounts.checkpoint_failed_count, 0);
+
+  const forgedCheckpoint = structuredClone(checkpointEvidence);
+  const forgedCheckpointItems = [...forgedCheckpoint.task_stream.conversation.items];
+  const forgedCheckpointCompletionIndex = forgedCheckpointItems.findIndex(
+    (item) => item.item_kind === 'run_completed' && item.run_id === checkpointRun.run_id,
+  );
+  forgedCheckpointItems.splice(forgedCheckpointCompletionIndex, 0, {
+    item_kind: 'checkpoint_recorded',
+    sequence: 0,
+    turn_id: checkpointRun.turn_id,
+    run_id: checkpointRun.run_id,
+    status: 'created',
+    changed_file_count: 1,
+    verification_status: 'candidate_verified',
+  });
+  replaceTaskStreamItems(forgedCheckpoint, forgedCheckpointItems);
+  assert.throws(
+    () => assertReadEvidence(forgedCheckpoint),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const recoveryEvidence = addContextSnapshotAndBriefFacts(
+    bridgeEvidence(projectId, true, 1, 1, 0),
+  );
+  const recoveryItems = [...recoveryEvidence.task_stream.conversation.items];
+  const recoveryRun = recoveryItems.find(
+    (item) => item.item_kind === 'run_started' && item.task_id !== null,
+  );
+  const recoveryCompletionIndex = recoveryItems.findIndex(
+    (item) => item.item_kind === 'run_completed' && item.run_id === recoveryRun.run_id,
+  );
+  recoveryItems.splice(
+    recoveryCompletionIndex,
+    0,
+    {
+      item_kind: 'recovery_action_recorded',
+      sequence: 0,
+      turn_id: recoveryRun.turn_id,
+      run_id: recoveryRun.run_id,
+      action: 'restore_checkpoint',
+      phase: 'requested',
+    },
+    {
+      item_kind: 'recovery_action_recorded',
+      sequence: 0,
+      turn_id: recoveryRun.turn_id,
+      run_id: recoveryRun.run_id,
+      action: 'restore_checkpoint',
+      phase: 'completed',
+    },
+  );
+  replaceTaskStreamItems(recoveryEvidence, recoveryItems);
+
+  const recoveryCounts = assertReadEvidence(recoveryEvidence)
+    .task_stream.conversation.item_facts.counts;
+  assert.equal(recoveryCounts.recovery_action_requested_count, 1);
+  assert.equal(recoveryCounts.recovery_action_completed_count, 1);
+  assert.equal(recoveryCounts.recovery_action_failed_count, 0);
+
+  const forgedRecovery = addContextSnapshotAndBriefFacts(
+    bridgeEvidence(projectId, true, 1, 1, 0),
+  );
+  const forgedItems = [...forgedRecovery.task_stream.conversation.items];
+  const forgedRun = forgedItems.find(
+    (item) => item.item_kind === 'run_started' && item.task_id !== null,
+  );
+  const forgedCompletionIndex = forgedItems.findIndex(
+    (item) => item.item_kind === 'run_completed' && item.run_id === forgedRun.run_id,
+  );
+  forgedItems.splice(forgedCompletionIndex, 0, {
+    item_kind: 'recovery_action_recorded',
+    sequence: 0,
+    turn_id: forgedRun.turn_id,
+    run_id: forgedRun.run_id,
+    action: 'restore_revision',
+    phase: 'completed',
+  });
+  replaceTaskStreamItems(forgedRecovery, forgedItems);
+  assert.throws(
+    () => assertReadEvidence(forgedRecovery),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+});
+
+test('accepts strict Harness runtime activity and agent step progress evidence', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = addProgrammingRuntimeFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const conversation = evidence.task_stream.conversation;
+  conversation.items = conversation.items.map((item, index) => ({
+    ...item,
+    sequence: index * 2 + 1,
+  }));
+  conversation.head_sequence = conversation.items.at(-1).sequence;
+  conversation.window.last_sequence = conversation.head_sequence;
+  if (
+    evidence.task_stream.agent_activity_projection !== null
+    && typeof evidence.task_stream.agent_activity_projection === 'object'
+  ) {
+    evidence.task_stream.agent_activity_projection.head_sequence = conversation.head_sequence;
+  }
+  const sanitized = assertReadEvidence(evidence);
+  const counts = sanitized.task_stream.conversation.item_facts.counts;
+
+  assert.equal(counts.agent_step_progress_count, 2);
+  assert.equal(counts.programming_runtime_assistant_message_count, 1);
+  assert.equal(counts.programming_runtime_status_count, 2);
+  assert.equal(counts.programming_runtime_tool_activity_count, 5);
+  assert.equal(counts.programming_runtime_check_passed_count, 1);
+  assert.doesNotMatch(
+    JSON.stringify(sanitized.task_stream),
+    /index\.html|Project file updated|I will update|正在思考|正在分析下一步|raw_output|stdout|stderr|credential|source_tree/iu,
+  );
+});
+
+test('counts one failed check and its repaired passing check from canonical runtime facts', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const evidence = addProgrammingRuntimeCheckFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const counts = assertReadEvidence(evidence).task_stream.conversation.item_facts.counts;
+
+  assert.equal(counts.programming_runtime_check_failed_count, 1);
+  assert.equal(counts.programming_runtime_check_passed_count, 1);
+});
+
+test('rejects forged Harness runtime activity transitions and agent summaries', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const completedFirst = addProgrammingRuntimeFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const runtimeItems = completedFirst.task_stream.conversation.items.filter(
+    (item) => item.item_kind === 'programming_runtime_tool_activity',
+  );
+  replaceTaskStreamItems(completedFirst, [
+    ...completedFirst.task_stream.conversation.items.filter(
+      (item) => item.item_kind !== 'programming_runtime_tool_activity',
+    ).slice(0, 2),
+    runtimeItems.at(-1),
+    ...completedFirst.task_stream.conversation.items.filter(
+      (item) => item.item_kind !== 'programming_runtime_tool_activity',
+    ).slice(2),
+  ]);
+  assert.throws(
+    () => assertReadEvidence(completedFirst),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const forgedSummary = addProgrammingRuntimeFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const result = forgedSummary.task_stream.conversation.items.find(
+    (item) => item.item_kind === 'agent_step_progress_recorded'
+      && item.recorded_state === 'result_recorded',
+  );
+  result.summary.display_summary = 'Leaked provider output';
+  assert.throws(
+    () => assertReadEvidence(forgedSummary),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const duplicateNarration = addProgrammingRuntimeFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const narration = duplicateNarration.task_stream.conversation.items.find(
+    (item) => item.item_kind === 'programming_runtime_assistant_message',
+  );
+  const completedIndex = duplicateNarration.task_stream.conversation.items.findIndex(
+    (item) => item.item_kind === 'run_completed',
+  );
+  replaceTaskStreamItems(duplicateNarration, [
+    ...duplicateNarration.task_stream.conversation.items.slice(0, completedIndex),
+    { ...narration },
+    ...duplicateNarration.task_stream.conversation.items.slice(completedIndex),
+  ]);
+  assert.throws(
+    () => assertReadEvidence(duplicateNarration),
+    (error) => error.code === 'canary_evidence_failed',
+  );
+
+  const forgedStatus = addProgrammingRuntimeFacts(bridgeEvidence(projectId, true, 1, 1, 0));
+  const activityStatus = forgedStatus.task_stream.conversation.items.find(
+    (item) => item.item_kind === 'programming_runtime_status'
+      && item.status_kind === 'activity',
+  );
+  activityStatus.attention_class = 'user_input_required';
+  assert.throws(
+    () => assertReadEvidence(forgedStatus),
+    (error) => error.code === 'canary_evidence_failed',
   );
 });
 
@@ -4993,7 +6007,7 @@ test('summarizes nonblank preview pixels and tracks unexpected renderer network'
   });
 });
 
-test('captures chat-flow preview evidence without relying on the retired preview tab', async () => {
+test('opens chat-flow preview through the workspace menu without relying on the retired preview tab', async () => {
   const page = new FakePage();
   const gate = createArtifactGate();
   gate.allow();
@@ -5023,7 +6037,10 @@ test('captures chat-flow preview evidence without relying on the retired preview
   assert.equal(limitationWait > previewWait, true);
   assert.equal(limitationText > limitationWait, true);
   assert.equal(frameWait > limitationText, true);
-  assert.equal(page.events.some((event) => event[0] === 'click'), false);
+  assert.deepEqual(
+    page.events.filter((event) => event[0] === 'click').map((event) => event[1]),
+    [SELECTORS.workspaceMenuButton, SELECTORS.workspaceControlPreview],
+  );
 
   page.previewLimitationTextOverride = 'Static preview only';
   await assert.rejects(
@@ -5063,23 +6080,49 @@ test('captures artifact static preview evidence when the repeated limitation not
   );
 });
 
-test('retries preview iframe body capture when the srcdoc frame is not ready yet', async () => {
+test('validates preview body from mounted srcdoc without waiting on a replaceable content frame', async () => {
   const page = new FakePage();
   const gate = createArtifactGate();
   gate.allow();
   page.artifactsAllowed = true;
-  page.previewFrameBodyFailuresRemaining = 1;
 
   const evidence = await capturePreviewEvidence(page, gate);
 
   assert.equal(evidence.preview_mode, 'static_frame');
   assert.equal(evidence.frame_body_nonempty, true);
   assert.equal(
-    page.events.some((event) => event[0] === 'waitForTimeout' && event[1] === 100),
-    true,
+    page.events.some((event) => event[0] === 'contentFrame' || event[0] === 'frameInnerText'),
+    false,
   );
+  const screenshot = page.events.find((event) => event[0] === 'pageScreenshot');
+  assert.deepEqual(screenshot?.[1], {
+    animations: 'disabled',
+    clip: { x: 0, y: 0, width: 120, height: 32 },
+    timeout: 5000,
+  });
+});
+
+test('waits for the preview iframe to commit a changed srcdoc after generation completes', async () => {
+  const page = new FakePage();
+  const gate = createArtifactGate();
+  gate.allow();
+  page.artifactsAllowed = true;
+  page.previewSourceCheckpoint = 1;
+  const before = await capturePreviewEvidence(page, gate);
+
+  page.previewSourceCheckpoint = 2;
+  page.previewFrameLagRevision = 1;
+  page.previewFrameLagReads = 2;
+  const after = await waitForChangedPreviewEvidence(
+    page,
+    gate,
+    before,
+    'test_changed_srcdoc',
+  );
+
+  assert.notEqual(after.srcdoc_digest, before.srcdoc_digest);
   assert.equal(
-    page.events.filter((event) => event[0] === 'frameInnerText' && event[1] === 'body').length,
+    page.events.filter((event) => event[0] === 'waitForTimeout' && event[1] === 100).length,
     2,
   );
 });
@@ -5259,6 +6302,35 @@ test('sanitizes launch environment and canary root identity without following dr
   assert.equal(Object.hasOwn(launchEnv, 'JWT_SECRET'), false);
   assert.equal(launchEnv[PACKAGED_CANARY_PROJECT_ROOT_PATH], projectRootPath);
 
+  const bundledHarnessEnv = sanitizeLaunchEnvironment({
+    ...env,
+    BUILDER_PROGRAMMING_RUNTIME: 'enabled',
+  }, userDataPath, projectRootPath);
+  assert.equal(bundledHarnessEnv.BUILDER_PROGRAMMING_RUNTIME, 'enabled');
+  assert.equal(Object.hasOwn(bundledHarnessEnv, 'BUILDER_HARNESS_RUNTIME_ROOT'), false);
+
+  const supervisedHarnessEnv = sanitizeLaunchEnvironment({
+    ...env,
+    BUILDER_PACKAGED_CANARY_RUNTIME_IDLE_TIMEOUT_MS: '10000',
+  }, userDataPath, projectRootPath);
+  assert.equal(supervisedHarnessEnv.BUILDER_PACKAGED_CANARY_RUNTIME_IDLE_TIMEOUT_MS, '10000');
+  const invalidSupervisionEnv = sanitizeLaunchEnvironment({
+    ...env,
+    BUILDER_PACKAGED_CANARY_RUNTIME_IDLE_TIMEOUT_MS: '60001',
+  }, userDataPath, projectRootPath);
+  assert.equal(
+    Object.hasOwn(invalidSupervisionEnv, 'BUILDER_PACKAGED_CANARY_RUNTIME_IDLE_TIMEOUT_MS'),
+    false,
+  );
+
+  const structuredFallbackEnv = sanitizeLaunchEnvironment({
+    ...env,
+    BUILDER_PROGRAMMING_RUNTIME: 'disabled',
+    BUILDER_HARNESS_RUNTIME_ROOT: path.join(userDataPath, 'untrusted-runtime'),
+  }, userDataPath, projectRootPath);
+  assert.equal(structuredFallbackEnv.BUILDER_PROGRAMMING_RUNTIME, 'disabled');
+  assert.equal(Object.hasOwn(structuredFallbackEnv, 'BUILDER_HARNESS_RUNTIME_ROOT'), false);
+
   const identity = captureGuardedUserDataRoot(userDataPath, fsModule, osModule);
   assert.equal(identity.path, userDataPath);
   assert.equal(createCanaryProjectRoot(identity, fsModule, osModule), projectRootPath);
@@ -5310,13 +6382,24 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       public_revision_number: 1,
       version_saved_visible: true,
     },
+    restart_restore: {
+      activity_status: 'ready',
+      loading_activity_settled: true,
+      stable_shell_retained_during_restore: true,
+    },
     update_save: {
       internal_evidence_hidden: true,
       public_revision_number: 2,
       version_saved_visible: true,
     },
   });
-  assert.deepEqual(result.draft, {
+  const {
+    checkpoint_continuation_one: checkpointContinuationOneDraft,
+    checkpoint_continuation_two: checkpointContinuationTwoDraft,
+    checkpoint_post_undo_continuation: checkpointPostUndoDraft,
+    ...legacyDraft
+  } = result.draft;
+  assert.deepEqual(legacyDraft, {
     initial: {
       check_run: automaticCheckRunEvidence(),
       live_output: liveOutputEvidence(),
@@ -5324,20 +6407,23 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       review_diff: reviewDiffEvidence(),
       saved_via_ui: true,
       unsaved_draft_observed: true,
+      workbench_task_return_deferred_until_after_save: true,
+      workbench_task_return: workbenchTaskReturnEvidence(),
       workspace_gate: workspaceGateEvidence(),
     },
     restart_continuation: {
       approved_plan_continued: true,
       approved_plan_task_stream_verified: true,
-      composer_status_text: 'Ready to execute current direction',
+      composer_status_text: null,
       previous_revision_verified_before_save: true,
       review_diff: reviewDiffEvidence(),
       unsaved_draft_observed: true,
     },
     pending_update_restart: {
+      formal_version_save_is_secondary: true,
       review_diff: reviewDiffEvidence(),
-      save_remained_explicit: true,
       saved_revision_visible: true,
+      undo_draft_directly_visible: true,
       unsaved_draft_restored: true,
     },
     update: {
@@ -5349,6 +6435,29 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       unsaved_draft_observed: true,
     },
   });
+  for (const draft of [
+    checkpointContinuationOneDraft,
+    checkpointContinuationTwoDraft,
+    checkpointPostUndoDraft,
+  ]) {
+    assert.deepEqual(draft, {
+      check_run: automaticCheckRunEvidence(),
+      live_output: liveOutputEvidence(),
+      previous_revision_verified_before_save: true,
+      review_diff: reviewDiffEvidence(),
+      unsaved_draft_observed: true,
+    });
+  }
+  assert.equal(result.checkpoint_undo.continued_without_formal_save, true);
+  assert.equal(result.checkpoint_undo.formal_revision_unchanged, true);
+  assert.equal(result.checkpoint_undo.repeated_undo_verified, true);
+  assert.equal(result.checkpoint_undo.restart_restore_verified, true);
+  assert.equal(result.checkpoint_undo.first.preview_matches_target_checkpoint, true);
+  assert.equal(result.checkpoint_undo.second.preview_matches_target_checkpoint, true);
+  assert.equal(result.checkpoint_undo.first.automatic_check.status, 'passed');
+  assert.equal(result.checkpoint_undo.second.automatic_check.status, 'passed');
+  assert.equal(result.checkpoint_undo.restart_restore.formal_version_save_is_secondary, true);
+  assert.equal(result.checkpoint_undo.restart_restore.undo_draft_directly_visible, true);
   assert.equal(result.project.initial_revision_number, 1);
   assert.equal(result.project.revision_number, 2);
   assert.equal(result.project.parent_oid, result.project.initial_commit_oid);
@@ -5392,6 +6501,7 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     restart_continuation: {
       approve_plan_visible: true,
       composer_status_text: 'Needs confirmation',
+      plan_markdown_visible: true,
       plan_review_actions_visible: true,
       saved_revision_unchanged: true,
       task_stream: {
@@ -5415,7 +6525,8 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
         tool_result_count: 1,
         tool_result_succeeded_count: 1,
       },
-      tool_activity_visible: true,
+      logs_workspace_control_hidden: true,
+      targetless_tool_lifecycle_hidden_after_completion: true,
     },
   });
   assert.deepEqual(result.question, {
@@ -5424,6 +6535,12 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       catalog_remained_empty: true,
       no_draft_created: true,
       no_workspace_required: true,
+      streaming_output: {
+        frame_updates_bounded: true,
+        message_node_stable: true,
+        structured_json_hidden: true,
+        visible_text_observed: true,
+      },
       ui_answer_observed: true,
       visible_answer_count: 1,
     },
@@ -5435,9 +6552,52 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       ui_answer_observed: true,
       visible_answer_count: 2,
     },
-    saved_project_context_chat: 'skipped_until_provider_context_prompt_bridge',
+    saved_project_context_chat: {
+      answer_failure_notice_absent: true,
+      current_project_context_verified: true,
+      pending_candidate_preserved: true,
+      saved_revision_unchanged: true,
+      task_stream: {
+        answer_count: 1,
+        accepted_review_count: 2,
+        candidate_ready_count: 8,
+        candidate_reviewed_count: 2,
+        candidate_result_count: 8,
+        explanation_result_count: 1,
+        head_sequence: 47,
+        item_count: 47,
+        latest_candidate_review: 'pending',
+        latest_candidate_distinct_from_saved_revision: true,
+        latest_plan_review: 'approved',
+        plan_approved_count: 1,
+        plan_ready_count: 1,
+        plan_rejected_count: 0,
+        plan_result_count: 1,
+        plan_reviewed_count: 1,
+        programming_run_admitted_count: 1,
+        revision_unchanged: true,
+        run_progress_count: 0,
+        saved_revision_number: 2,
+        source_availability: 'not_loaded',
+        tool_request_count: 1,
+        tool_result_count: 1,
+        tool_result_succeeded_count: 1,
+      },
+      ui_answer_observed: true,
+      visible_answer_count: 1,
+    },
   });
-  assert.deepEqual(result.task_stream, {
+  const {
+    checkpoint_continuation_one: checkpointContinuationOneTaskStream,
+    checkpoint_continuation_two: checkpointContinuationTwoTaskStream,
+    checkpoint_undo_first: checkpointUndoFirstTaskStream,
+    checkpoint_undo_restart: checkpointUndoRestartTaskStream,
+    checkpoint_undo_second: checkpointUndoSecondTaskStream,
+    checkpoint_post_undo_continuation: checkpointPostUndoTaskStream,
+    saved_project_context_chat: savedProjectContextTaskStream,
+    ...legacyTaskStream
+  } = result.task_stream;
+  assert.deepEqual(legacyTaskStream, {
     initial: {
       answer_count: 0,
       accepted_review_count: 1,
@@ -5548,13 +6708,22 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
       tool_result_count: 1,
       tool_result_succeeded_count: 1,
     },
-    saved_project_context_chat_deferred_until_prompt_bridge: true,
     pending_update_advanced_candidate_count: true,
     pending_update_restart_unchanged: true,
     restart_continuation_advanced_candidate_count: true,
     restart_unchanged: true,
     update_advanced_candidate_count: true,
   });
+  assert.equal(checkpointContinuationOneTaskStream.candidate_ready_count, 4);
+  assert.equal(checkpointContinuationTwoTaskStream.candidate_ready_count, 5);
+  assert.equal(checkpointUndoFirstTaskStream.candidate_ready_count, 6);
+  assert.deepEqual(checkpointUndoRestartTaskStream, checkpointUndoFirstTaskStream);
+  assert.equal(checkpointUndoSecondTaskStream.candidate_ready_count, 7);
+  assert.equal(checkpointPostUndoTaskStream.candidate_ready_count, 8);
+  assert.equal(checkpointPostUndoTaskStream.saved_revision_number, 2);
+  assert.equal(savedProjectContextTaskStream.answer_count, 1);
+  assert.equal(savedProjectContextTaskStream.candidate_ready_count, 8);
+  assert.equal(savedProjectContextTaskStream.revision_unchanged, true);
   assert.equal(JSON.stringify(result).includes(parsed.provider.credential), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.model), false);
   assert.equal(JSON.stringify(result).includes(parsed.provider.base_url), false);
@@ -5581,8 +6750,11 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     'schema_version',
     'update_instruction_digest',
   ]);
-  assert.equal(electron.launches.length, 3);
+  assert.equal(electron.launches.length, 4);
   assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
     ['context'],
     ['contextOn', 'request'],
     ['firstWindow'],
@@ -5609,38 +6781,20 @@ test('uses playwright-core injection, canary env, cleanup, and redacted output',
     event[0] === 'scopedLocator'
     && event[1] === SELECTORS.projectCatalog
   ));
-  assert.equal(scopedLocators.length, 2);
-  assert.equal(scopedLocators[0][1], SELECTORS.projectCatalog);
-  assert.equal(
-    scopedLocators[0][2],
-    'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
-  );
-  assert.equal(scopedLocators[1][1], SELECTORS.projectCatalog);
-  assert.equal(
-    scopedLocators[1][2],
-    'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
-  );
+  assert.equal(scopedLocators.length, 3);
+  for (const locator of scopedLocators) {
+    assert.equal(locator[1], SELECTORS.projectCatalog);
+    assert.equal(
+      locator[2],
+      'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
+    );
+  }
   const scopedTexts = allPageEvents.filter((event) => event[0] === 'scopedText');
-  assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
-    ['Unsaved draft', { exact: true }],
-    ['Review before saving', { exact: true }],
-    ['This draft was saved as Version 1.', { exact: true }],
-    ['Unsaved draft', { exact: true }],
-    ['Review before saving', { exact: true }],
-    ['Focus timer', { exact: true }],
-    ['A timer.', { exact: true }],
-    ['Version 1', { exact: true }],
-    ['Unsaved draft', { exact: true }],
-    ['Review before saving', { exact: true }],
-    ['This draft was saved as Version 2.', { exact: true }],
-    ['Focus timer', { exact: true }],
-    ['A timer.', { exact: true }],
-    ['Version 2', { exact: true }],
-    ['Version 1', { exact: true }],
-    ['Viewing Version 1', { exact: true }],
-    ['Unsaved draft', { exact: true }],
-    ['Review before saving', { exact: true }],
-  ]);
+  const scopedTextValues = scopedTexts.map((event) => event[2]);
+  assert.equal(scopedTextValues.includes('This draft was saved as Version 1.'), true);
+  assert.equal(scopedTextValues.includes('This draft was saved as Version 2.'), true);
+  assert.equal(scopedTextValues.includes('Viewing Version 1'), true);
+  assert.equal(scopedTextValues.filter((value) => value === 'Unsaved draft').length >= 8, true);
   assert.deepEqual(removed, [userDataPath]);
 });
 
@@ -5698,6 +6852,11 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.activity.initial_save.version_saved_visible, true);
   assert.equal(result.activity.initial_save.public_revision_number, 1);
   assert.equal(result.activity.initial_save.internal_evidence_hidden, true);
+  assert.deepEqual(result.activity.restart_restore, {
+    activity_status: 'ready',
+    loading_activity_settled: true,
+    stable_shell_retained_during_restore: true,
+  });
   assert.equal(result.activity.update_save.version_saved_visible, true);
   assert.equal(result.activity.update_save.public_revision_number, 2);
   assert.equal(result.activity.update_save.internal_evidence_hidden, true);
@@ -5720,13 +6879,19 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(result.preview.restart_continuation_changed_srcdoc, true);
   assert.equal(result.preview.update_changed_srcdoc, true);
   assert.equal(result.plan.restart_continuation.plan_review_actions_visible, true);
-  assert.equal(result.plan.restart_continuation.tool_activity_visible, true);
+  assert.equal(result.plan.restart_continuation.logs_workspace_control_hidden, true);
+  assert.equal(
+    result.plan.restart_continuation.targetless_tool_lifecycle_hidden_after_completion,
+    true,
+  );
   assert.equal(result.plan.restart_continuation.task_stream.plan_ready_count, 1);
   assert.equal(result.question.initial_chat.no_draft_created, true);
   assert.equal(result.question.initial_chat.no_workspace_required, true);
   assert.equal(result.question.initial_chat_followup.visible_answer_count, 2);
-  assert.equal(result.question.saved_project_context_chat, 'skipped_until_provider_context_prompt_bridge');
-  assert.equal(result.task_stream.saved_project_context_chat_deferred_until_prompt_bridge, true);
+  assert.equal(result.question.saved_project_context_chat.current_project_context_verified, true);
+  assert.equal(result.question.saved_project_context_chat.pending_candidate_preserved, true);
+  assert.equal(result.task_stream.saved_project_context_chat.answer_count, 1);
+  assert.equal(result.task_stream.saved_project_context_chat.revision_unchanged, true);
   assert.equal(result.task_stream.pending_update_restart_unchanged, true);
   assert.equal(result.task_stream.updated.candidate_ready_count, 2);
   assert.equal(result.task_stream.updated.answer_count, 0);
@@ -5751,11 +6916,12 @@ test('copies only saved provider profile files and runs without provider input o
   assert.deepEqual(roleClicks, [
     'Send',
     'Send',
-    'New project',
+    'Send',
     'Send',
     'Back to current',
     'Send',
     'Approve plan',
+    'Send',
   ]);
   const selectorClicks = electron.pages
     .flatMap((candidate) => candidate.events)
@@ -5772,8 +6938,11 @@ test('copies only saved provider profile files and runs without provider input o
   assert.equal(roleClicks.includes('Settings'), false);
   assert.equal(roleClicks.includes('Save provider'), false);
   assert.equal(page.events.some((event) => event[0] === 'fill' && event[1] === SELECTORS.apiKey), false);
-  assert.equal(electron.launches.length, 3);
+  assert.equal(electron.launches.length, 4);
   assert.deepEqual(electron.appEvents, [
+    ['context'],
+    ['contextOn', 'request'],
+    ['firstWindow'],
     ['context'],
     ['contextOn', 'request'],
     ['firstWindow'],
@@ -5989,11 +7158,7 @@ test('opens restart project only for canonical project id selectors and visible 
     'button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]',
   );
   const scopedTexts = page.events.filter((event) => event[0] === 'scopedText');
-  assert.deepEqual(scopedTexts.map((event) => [event[2], event[3]]), [
-    ['Focus timer', { exact: true }],
-    ['A timer.', { exact: true }],
-    ['Version 1', { exact: true }],
-  ]);
+  assert.deepEqual(scopedTexts, []);
   assert.deepEqual(page.events.filter((event) => event[0] === 'click').map((event) => event[1]), [
     `${SELECTORS.projectCatalog} button[data-builder-project-id="builder-project:11111111-1111-4111-8111-111111111111"]`,
   ]);
@@ -6235,13 +7400,20 @@ test('cleanup attempts guarded remove when app close fails', async (t) => {
       return {
         async close() { throw new Error('close failed'); },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(
-            argument.projectId,
-            page.draftSaved,
-            Math.max(1, page.savedRevision),
-            Math.max(1, page.savedRevision, page.candidateTurns),
-            page.questionTurns,
-          );
+          page.evaluate = async (callback, argument) => {
+            if (argument?.key === '__builderPackagedCanaryLiveOutputObservation') {
+              return argument?.liveOutputSelector === SELECTORS.liveOutput
+                ? true
+                : streamingOutputObservation(page);
+            }
+            return bridgeEvidence(
+              argument.projectId,
+              page.draftSaved,
+              Math.max(1, page.savedRevision),
+              Math.max(1, page.savedRevision, page.candidateTurns),
+              page.questionTurns,
+            );
+          };
           page.artifactsAllowed = true;
           return page;
         },
@@ -6279,13 +7451,20 @@ test('cleanup refuses user data replacement before recursive remove', async (t) 
           if (closeCount === 2) state.stats.set(userDataPath, fakeDirectoryStat(1n, 12n));
         },
         async firstWindow() {
-          page.evaluate = async (callback, argument) => bridgeEvidence(
-            argument.projectId,
-            page.draftSaved,
-            Math.max(1, page.savedRevision),
-            Math.max(1, page.savedRevision, page.candidateTurns),
-            page.questionTurns,
-          );
+          page.evaluate = async (callback, argument) => {
+            if (argument?.key === '__builderPackagedCanaryLiveOutputObservation') {
+              return argument?.liveOutputSelector === SELECTORS.liveOutput
+                ? true
+                : streamingOutputObservation(page);
+            }
+            return bridgeEvidence(
+              argument.projectId,
+              page.draftSaved,
+              Math.max(1, page.savedRevision),
+              Math.max(1, page.savedRevision, page.candidateTurns),
+              page.questionTurns,
+            );
+          };
           page.artifactsAllowed = true;
           return page;
         },
@@ -6413,6 +7592,44 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
     assert.equal(response.status, 200);
     return JSON.parse(JSON.parse(await response.text()).choices[0].message.content);
   }
+  async function savedProjectQuestionRequest(includeCurrentSource) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Return builder_conversation_explanation.' },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              instruction: CANARY_QUESTION,
+              output_contract: { kind: 'builder_conversation_explanation' },
+              ...(includeCurrentSource ? {
+                current_source_tree: {
+                  files: [
+                    {
+                      path: 'index.html',
+                      content: [
+                        '<h1>Focus Timer Continued</h1>',
+                        '<p>A fresh continuation from the restored checkpoint.</p>',
+                      ].join('\n'),
+                    },
+                    {
+                      path: 'package.json',
+                      content: '{"name":"clawfabric-packaged-canary"}',
+                    },
+                  ],
+                },
+              } : {}),
+            }),
+          },
+        ],
+        model: 'local-canary-model',
+        stream: false,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    return response;
+  }
   const explanation = JSON.parse(JSON.parse(await request('builder_conversation_explanation')).choices[0].message.content);
   assert.equal(explanation.kind, 'builder_conversation_explanation');
   const plan = JSON.parse(JSON.parse(await request('builder_project_plan_proposal')).choices[0].message.content);
@@ -6433,6 +7650,13 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
     (await repairRequest('builder_conversation_explanation')).kind,
     'builder_conversation_explanation',
   );
+  const savedProjectQuestion = await savedProjectQuestionRequest(true);
+  assert.equal(savedProjectQuestion.status, 200);
+  assert.equal(
+    JSON.parse(JSON.parse(await savedProjectQuestion.text()).choices[0].message.content).explanation,
+    CANARY_SAVED_PROJECT_CONTEXT_ANSWER,
+  );
+  assert.equal((await savedProjectQuestionRequest(false)).status, 500);
   assert.equal(
     (await semanticRouteRequest('帮我做一个静态技术博客实施计划')).route,
     'plan',
@@ -6467,14 +7691,170 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
   );
   const firstCode = JSON.parse(JSON.parse(await request('builder_code_change_operations')).choices[0].message.content);
   const secondCodeStream = await request('builder_code_change_operations', true);
+  const streamedCode = secondCodeStream
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map((line) => JSON.parse(line.slice(6)).choices[0].delta.content ?? '')
+    .join('');
   assert.equal(firstCode.kind, 'builder_code_change_operations');
   assert.match(secondCodeStream, /text-event-stream|data:/u);
-  assert.match(secondCodeStream, /Focus Timer Complete/u);
+  assert.match(streamedCode, /Focus Timer Complete/u);
+
+  const harnessTools = ['read', 'grep', 'edit', 'write'].map((name) => ({
+    type: 'function',
+    function: { name, parameters: { type: 'object' } },
+  }));
+  async function harnessRequest(messages) {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages,
+        model: 'deepseek-v4-flash',
+        stream: true,
+        tools: harnessTools,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    return response.text();
+  }
+  const harnessRead = await harnessRequest([{ role: 'user', content: 'Build the project.' }]);
+  assert.match(harnessRead, /"name":"read"/u);
+  assert.match(harnessRead, /index\.html/u);
+  const harnessWrite = await harnessRequest([
+    { role: 'user', content: 'Build the project.' },
+    { role: 'tool', content: 'File: index.html\nStatus: absent' },
+  ]);
+  assert.match(harnessWrite, /"name":"write"/u);
+  assert.match(harnessWrite, /README\.md/u);
+
+  const noChangeInstruction = 'Inspect the current project and explain what detail is still needed. Do not change files.';
+  const harnessSearch = await harnessRequest([{ role: 'user', content: noChangeInstruction }]);
+  assert.match(harnessSearch, /"name":"grep"/u);
+  assert.match(harnessSearch, /Boundary Safe/u);
+  const harnessReadAfterSearch = await harnessRequest([
+    { role: 'user', content: noChangeInstruction },
+    { role: 'tool', content: 'index.html:14:11 <h1>Boundary Safe</h1>' },
+  ]);
+  assert.match(harnessReadAfterSearch, /"name":"read"/u);
+  assert.match(harnessReadAfterSearch, /index\.html/u);
+  const harnessAnswerAfterRead = await harnessRequest([
+    { role: 'user', content: noChangeInstruction },
+    { role: 'tool', content: 'index.html:14:11 <h1>Boundary Safe</h1>' },
+    { role: 'tool', content: 'File: index.html\nObserved version: sha256:0000000000000000000000000000000000000000000000000000000000000000\nContent:\n<h1>Boundary Safe</h1>' },
+  ]);
+  assert.match(harnessAnswerAfterRead, /I inspected index\.html/u);
+});
+
+test('local Harness provider drives packaged workspace boundary recovery', async (t) => {
+  const forbiddenText = 'outside-workspace-secret-marker';
+  const server = await createLocalCanaryProviderServer({
+    forbiddenHarnessText: forbiddenText,
+    harnessAdversarialBoundaries: true,
+  });
+  t.after(async () => {
+    await server.close();
+  });
+  const instruction = 'Exercise Builder workspace boundaries and recover safely.';
+  const observedOne = `sha256:${'1'.repeat(64)}`;
+  const observedTwo = `sha256:${'2'.repeat(64)}`;
+  const tools = ['read', 'grep', 'edit', 'write'].map((name) => ({
+    type: 'function',
+    function: { name, description: name, parameters: { type: 'object' } },
+  }));
+  const toolResults = [];
+  async function request() {
+    const response = await fetch(`${server.baseUrl}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Use Builder tools.' },
+          { role: 'user', content: instruction },
+          ...toolResults.map((content, index) => ({
+            role: 'tool',
+            tool_call_id: `tool-${index}`,
+            content,
+          })),
+        ],
+        model: 'local-canary-model',
+        stream: true,
+        tools,
+      }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+
+  await request();
+  toolResults.push('Error: Use a project-relative file path.');
+  await request();
+  toolResults.push(`File: index.html\nObserved version: ${observedOne}\nContent:\n<h1>Old</h1>`);
+  await request();
+  toolResults.push(
+    `Edited: index.html\nStatus: updated\nObserved version: ${observedTwo}\nLines: +1 -1`,
+    'Error: The file changed after it was read. Read it again before editing.',
+  );
+  await request();
+  toolResults.push('Error: unknown tool "delete"');
+  await request();
+  toolResults.push(`File: index.html\nObserved version: ${observedTwo}\nContent:\n<h1>Intermediate</h1>`);
+  await request();
+  toolResults.push(
+    `Edited: index.html\nStatus: updated\nObserved version: sha256:${'3'.repeat(64)}\nLines: +1 -1`,
+  );
+  await request();
+
+  assert.deepEqual(
+    server.snapshot().map((entry) => entry.response_kind),
+    [
+      'harness_adversarial_escape_read',
+      'harness_adversarial_valid_read',
+      'harness_adversarial_stale_edit_batch',
+      'harness_adversarial_unsupported_tool',
+      'harness_adversarial_reread',
+      'harness_adversarial_repaired_edit',
+      'harness_adversarial_completed',
+    ],
+  );
+  assert.equal(JSON.stringify(server.snapshot()).includes(forbiddenText), false);
+});
+
+test('local Harness provider can stream accepted progress beyond a shorter legacy timeout', async (t) => {
+  const server = await createLocalCanaryProviderServer({
+    delayedHarnessStreamResponses: 1,
+    harnessStreamEventDelayMs: 30,
+  });
+  t.after(async () => {
+    await server.close();
+  });
+  const startedAtMs = Date.now();
+  const response = await fetch(`${server.baseUrl}/chat/completions`, {
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'Build the project.' }],
+      model: 'deepseek-v4-flash',
+      stream: true,
+      tools: ['read', 'grep', 'edit', 'write'].map((name) => ({
+        type: 'function',
+        function: { name, parameters: { type: 'object' } },
+      })),
+    }),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  const elapsedMs = Date.now() - startedAtMs;
+
+  assert.match(body, /"name":"read"/u);
+  assert.ok(elapsedMs >= 75, `expected delayed progress stream, observed ${elapsedMs}ms`);
+  assert.equal(server.snapshot()[0]?.stream_event_delay_ms, 30);
 });
 
 test('script source keeps credential out of argv/env/output and cannot enter ASAR authority', () => {
   const source = fs.readFileSync(SOURCE_PATH, 'utf8');
   const defaultSource = fs.readFileSync(DEFAULT_SOURCE_PATH, 'utf8');
+  const harnessUiSource = fs.readFileSync(HARNESS_UI_SOURCE_PATH, 'utf8');
   const planModeSource = fs.readFileSync(PLAN_MODE_SOURCE_PATH, 'utf8');
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
@@ -6488,6 +7868,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Send['"]\)/u);
   assert.match(source, /node\.scrollIntoView\(\{\s*block:\s*['"]center['"],\s*inline:\s*['"]nearest['"]\s*\}\)/u);
   assert.match(source, /page\.locator\(SELECTORS\.saveVersion\)/u);
+  assert.match(source, /click_save\.close_changes_if_open\.start/u);
+  assert.match(source, /changesDisclosure\.isVisible\(\{\s*timeout:\s*1000\s*\}\)/u);
   assert.match(source, /clickByRole\(page,\s*['"]button['"],\s*['"]Back to current['"]\)/u);
   assert.match(source, /getByRole\(role,\s*\{\s*exact:\s*true,\s*name\s*\}\)/u);
   assert.match(source, /versionSavedActivity\)\.filter\(\{\s*hasText:\s*expectedBody\s*\}\)/u);
@@ -6502,12 +7884,24 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(source, /canary_review_diff_failed/u);
   assert.match(source, /restart_continuation_instruction_digest/u);
   assert.match(source, /restart_continuation_advanced_candidate_count/u);
+  assert.match(source, /undoDraftToCheckpointViaUi/u);
+  assert.match(source, /checkpoint_undo_first/u);
+  assert.match(source, /checkpoint_undo_restart/u);
+  assert.match(source, /continued_without_formal_save:\s*true/u);
+  assert.match(source, /formal_revision_unchanged:\s*true/u);
+  assert.match(source, /repeated_undo_verified:\s*true/u);
   assert.match(source, /historical_preview_matches_saved_version/u);
   assert.match(source, /artifacts_after_password_clear/u);
   assert.match(defaultSource, /createLocalCanaryProviderServer/u);
   assert.match(defaultSource, /127\.0\.0\.1/u);
+  assert.match(defaultSource, /Focus Timer Refined/u);
+  assert.match(defaultSource, /Focus Timer Polished/u);
+  assert.match(defaultSource, /Focus Timer Continued/u);
+  assert.match(defaultSource, /approved_plan_context_present/u);
+  assert.match(defaultSource, /approved_plan_canary_step_present/u);
+  assert.match(harnessUiSource, /healthy_progress_survived_old_provider_timeout:\s*initialDraftDurationMs > 2_000/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
-  assert.match(planModeSource, /builder-packaged-plan-mode-canary-result\.v2/u);
+  assert.match(planModeSource, /builder-packaged-plan-mode-canary-result\.v4/u);
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
   assert.match(planModeSource, /verifyAutoDeterministicRoutesSkipClassifier/u);
   assert.match(planModeSource, /verifyAskModePersistentAndClear/u);
@@ -6524,24 +7918,39 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /auto_build_artifact_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /ask_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /ask_mode_skipped_classifier:\s*true/u);
-  assert.match(planModeSource, /semantic_plan_rejected:\s*true/u);
-  assert.match(planModeSource, /semantic_plan_route_signal_observed:\s*true/u);
-  assert.match(planModeSource, /semantic_plan_signal_mismatch/u);
+  assert.match(planModeSource, /natural_language_plan_rejected:\s*true/u);
+  assert.match(planModeSource, /natural_language_plan_route_signal_observed:\s*true/u);
+  assert.match(planModeSource, /semantic_classifier_skipped:\s*true/u);
+  assert.match(planModeSource, /natural_language_plan_signal_mismatch/u);
   assert.match(planModeSource, /build_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /build_mode_requested_write_approval:\s*true/u);
   assert.match(planModeSource, /build_mode_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /continuation_provider_request_observed:\s*true/u);
-  assert.match(planModeSource, /save_version_still_explicit:\s*true/u);
+  assert.match(planModeSource, /formal_version_save_is_secondary:\s*true/u);
+  assert.match(planModeSource, /undo_draft_directly_visible:\s*true/u);
   assert.match(planModeSource, /unsaved_draft_continued_without_save:\s*true/u);
   assert.match(planModeSource, /clickByRole\(page,\s*['"]button['"],\s*['"]Approve plan['"]\)/u);
   assert.match(planModeSource, /approveCurrentProjectWriteIfRequested/u);
   assert.match(planModeSource, /SELECTORS\.unsavedDraft/u);
+  assert.match(planModeSource, /SELECTORS\.undoDraft/u);
+  assert.match(planModeSource, /SELECTORS\.reviewMore/u);
   assert.match(planModeSource, /SELECTORS\.saveVersion/u);
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
+  assert.match(planModeSource, /approved_plan_context_reached_harness:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.match(planModeSource, /release_gate_integration:\s*['"]included_in_verify_release['"]/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v27['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v36['"]/u);
+  assert.match(preloadSource, /agentProjectTree:\s*Object\.freeze/u);
+  assert.match(preloadSource, /agentWorkbench:\s*Object\.freeze/u);
+  assert.match(preloadSource, /agent-project-tree:read/u);
+  assert.match(preloadSource, /createTaskProposal\(request\)/u);
+  assert.match(preloadSource, /agent-workbench:create-task-proposal/u);
+  assert.match(preloadSource, /decideTaskProposal\(request\)/u);
+  assert.match(preloadSource, /agent-workbench:decide-task-proposal/u);
+  assert.match(preloadSource, /controlTask\(request\)/u);
+  assert.match(preloadSource, /agent-workbench:control-task/u);
+  assert.doesNotMatch(preloadSource, /controlTask\(request_id/u);
   assert.match(preloadSource, /projectWorkspace:\s*Object\.freeze/u);
   assert.match(preloadSource, /openLocation/u);
   assert.match(preloadSource, /project-workspace:open-location/u);
@@ -6551,10 +7960,16 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /provider-context-disclosure:approve-current/u);
   assert.match(preloadSource, /checkRun:\s*Object\.freeze/u);
   assert.match(preloadSource, /readCurrentDraftAvailableChecks\(request\)/u);
+  assert.match(preloadSource, /diagnoseCurrentDraftCheckEnvironment\(request\)/u);
+  assert.match(preloadSource, /diagnoseProjectEnvironment\(request\)/u);
   assert.match(preloadSource, /approveAndRunCurrentDraftCheck\(request\)/u);
+  assert.match(preloadSource, /decideCurrentDraftDependencyPreparation\(request\)/u);
   assert.match(preloadSource, /skipCurrentDraftCheck\(request\)/u);
   assert.match(preloadSource, /check-run:read-current-draft-available/u);
+  assert.match(preloadSource, /check-run:diagnose-current-draft-check-environment/u);
+  assert.match(preloadSource, /check-run:diagnose-project-environment/u);
   assert.match(preloadSource, /check-run:approve-current-draft-check/u);
+  assert.match(preloadSource, /check-run:decide-current-draft-dependency-preparation/u);
   assert.match(preloadSource, /check-run:skip-current-draft-check/u);
   assert.match(preloadSource, /livePreview:\s*Object\.freeze/u);
   assert.match(preloadSource, /requestCurrentDraftPreview\(request\)/u);
@@ -6565,6 +7980,8 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /live-preview:stop-current/u);
   assert.match(preloadSource, /readCurrentPreviewStatus\(request\)/u);
   assert.match(preloadSource, /live-preview:read-current-status/u);
+  assert.match(preloadSource, /updateCurrentPreviewLayout\(request\)/u);
+  assert.match(preloadSource, /live-preview:update-current-layout/u);
   assert.doesNotMatch(preloadSource, /source_tree|sourceTree|entry_url|preview_origin/u);
   assert.match(preloadSource, /prepareCurrentProjectWriteApproval/u);
   assert.match(preloadSource, /approveCurrentProjectWrite/u);

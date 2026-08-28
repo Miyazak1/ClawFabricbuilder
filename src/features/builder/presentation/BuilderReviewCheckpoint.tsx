@@ -1,31 +1,26 @@
-import { useState, type Ref } from 'react';
-import { CircleCheck, CircleX, Ellipsis, GitCompareArrows, LoaderCircle, Save, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { CircleCheck, CircleX, Ellipsis, LoaderCircle, Save, Trash2, Undo2 } from 'lucide-react';
 
 import type { BuilderCheckRunProfile, BuilderCheckRunStatusProjection } from '../application/builderPorts';
 import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderCheckRunOutcomeProjection';
-import type { BuilderSourceTreeChanges } from '../domain/builderSourceTreeChanges';
 import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
-import type { BuilderSourceTreePreviewProjection } from '../preview/builderSourceTreePreview';
-import { builderChangesSummary, builderReviewPreviewStatus } from './builderReviewText';
 
-export type BuilderReviewCheckpointProps = Readonly<{
-  changes: BuilderSourceTreeChanges;
-  checkRunOperation?: 'loading' | 'running' | 'skipping' | 'failed' | null;
+export type BuilderDraftCheckStatusProps = Readonly<{
+  checkRunOperation?: 'loading' | 'running' | 'preparing_dependencies' | 'skipping' | 'failed' | null;
   checkRunOutcome?: BuilderCheckRunOutcomeProjectionWire | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
-  hasContent: boolean;
-  preview: BuilderSourceTreePreviewProjection | null;
-  reviewState: BuilderReviewStateProjectionWire | null;
-  checkpointRef?: Ref<HTMLElement>;
+  presentation?: 'compact' | 'default';
 }>;
 
 export type BuilderDraftWorkspaceActionsProps = Readonly<{
   canReject: boolean;
   canSave: boolean;
+  canUndo: boolean;
   discardLabel: string;
   onRejectDraft?: () => void;
   onSave?: () => void;
+  onUndoDraft?: () => void;
   reviewState: BuilderReviewStateProjectionWire | null;
   saveLabel: string;
 }>;
@@ -33,16 +28,21 @@ export type BuilderDraftWorkspaceActionsProps = Readonly<{
 export function BuilderDraftWorkspaceActions({
   canReject,
   canSave,
+  canUndo,
   discardLabel,
   onRejectDraft,
   onSave,
+  onUndoDraft,
   reviewState,
   saveLabel,
 }: BuilderDraftWorkspaceActionsProps) {
   const saveBlockedByReview = reviewState !== null && reviewState.can_save !== true;
-  const showSaveAction = canSave || saveLabel !== 'Save version' || !saveBlockedByReview;
+  const showSaveAction = typeof onSave === 'function'
+    && (canSave || saveLabel !== 'Save version' || !saveBlockedByReview);
   const [secondaryActionsOpen, setSecondaryActionsOpen] = useState(false);
   const showDiscardAction = typeof onRejectDraft === 'function';
+  const showUndoAction = typeof onUndoDraft === 'function';
+  const showSecondaryActions = showSaveAction || showDiscardAction;
   return (
     <div
       aria-label="Draft actions"
@@ -50,19 +50,31 @@ export function BuilderDraftWorkspaceActions({
       data-builder-workspace-draft-actions="true"
       role="group"
     >
-      {showSaveAction ? (
+      {saveBlockedByReview ? (
+        <span
+          className="cf-builder-workspace-review-state"
+          data-builder-review-state={reviewState.status}
+          role="status"
+          title={reviewState.summary}
+        >
+          <CircleX aria-hidden="true" className="size-3.5" />
+          <span>{reviewState.summary}</span>
+        </span>
+      ) : null}
+      {showUndoAction ? (
         <button
-          className="cf-builder-primary-button cf-builder-workspace-save-button"
-          data-builder-save-version="true"
-          disabled={!canSave}
-          onClick={onSave}
+          aria-label="Undo latest AI change"
+          className="cf-builder-workspace-control-button"
+          data-builder-undo-draft="true"
+          disabled={!canUndo}
+          onClick={onUndoDraft}
+          title="Undo latest AI change"
           type="button"
         >
-          <Save aria-hidden="true" className="size-3.5" />
-          {saveLabel}
+          <Undo2 aria-hidden="true" className="size-3.5" />
         </button>
       ) : null}
-      {showDiscardAction ? (
+      {showSecondaryActions ? (
         <div className="cf-builder-workspace-draft-more-wrap">
           <button
             aria-expanded={secondaryActionsOpen}
@@ -82,6 +94,23 @@ export function BuilderDraftWorkspaceActions({
               data-builder-review-more-menu="true"
               role="menu"
             >
+              {showSaveAction ? (
+                <button
+                  className="cf-builder-review-menu-item"
+                  data-builder-save-version="true"
+                  disabled={!canSave}
+                  onClick={() => {
+                    setSecondaryActionsOpen(false);
+                    onSave?.();
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Save aria-hidden="true" className="size-3.5" />
+                  {saveLabel}
+                </button>
+              ) : null}
+              {showDiscardAction ? (
               <button
                 className="cf-builder-review-menu-item cf-builder-review-danger-action"
                 data-builder-discard-draft="true"
@@ -96,6 +125,7 @@ export function BuilderDraftWorkspaceActions({
                 <Trash2 aria-hidden="true" className="size-3.5" />
                 {discardLabel}
               </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -104,17 +134,13 @@ export function BuilderDraftWorkspaceActions({
   );
 }
 
-export function BuilderReviewCheckpoint({
-  changes,
+export function BuilderDraftCheckStatus({
   checkRunOperation = null,
   checkRunOutcome = null,
   checkRunProfiles = [],
   checkRunStatus = null,
-  hasContent,
-  preview,
-  reviewState,
-  checkpointRef,
-}: BuilderReviewCheckpointProps) {
+  presentation = 'default',
+}: BuilderDraftCheckStatusProps) {
   const restoredRunning = checkRunOperation === null && checkRunOutcome?.state === 'running';
   const recordedStatus = checkRunStatus ?? (
     checkRunOutcome?.state === 'completed'
@@ -124,20 +150,24 @@ export function BuilderReviewCheckpoint({
       : null
   );
   const checkStatusText = checkRunOperation === 'loading'
-    ? 'Finding project checks...'
+    ? 'Finding checks...'
     : checkRunOperation === 'running' || restoredRunning
-      ? 'Running project check...'
-      : checkRunOperation === 'skipping'
-        ? 'Recording your choice to skip checks...'
-      : checkRunOperation === 'failed'
-        ? 'Project checks are unavailable. Try again.'
-        : recordedStatus !== null
-          ? `${recordedStatus.label}. ${recordedStatus.summary}`
-          : checkRunProfiles.length === 0
-            ? 'No project checks found.'
-            : 'Checking automatically...';
+      ? 'Running checks...'
+      : checkRunOperation === 'preparing_dependencies'
+        ? 'Preparing dependencies...'
+        : checkRunOperation === 'skipping'
+          ? 'Skipping checks...'
+          : checkRunOperation === 'failed'
+            ? 'Checks unavailable'
+            : recordedStatus !== null
+              ? recordedStatus.label
+              : checkRunProfiles.length === 0
+                ? 'No checks found'
+                : 'Checking...';
+  const checkStatusTitle = recordedStatus?.summary ?? checkStatusText;
   const CheckStatusIcon = checkRunOperation === 'loading'
     || checkRunOperation === 'running'
+    || checkRunOperation === 'preparing_dependencies'
     || checkRunOperation === 'skipping'
     || restoredRunning
     ? LoaderCircle
@@ -146,61 +176,42 @@ export function BuilderReviewCheckpoint({
       : recordedStatus !== null
         ? CircleX
         : null;
+  if (
+    checkRunOperation === null
+    && !restoredRunning
+    && (
+      recordedStatus === null
+      || recordedStatus.status === 'passed'
+      || recordedStatus.status === 'skipped'
+    )
+  ) {
+    return null;
+  }
   return (
-    <section
-      aria-label="Draft review"
-      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
-      data-builder-review-layout="status-only"
-      data-builder-review-checkpoint="true"
-      ref={checkpointRef}
-      tabIndex={-1}
+    <div
+      aria-label="Draft check status"
+      className="cf-builder-workspace-check-status"
+      data-builder-check-run-operation={checkRunOperation ?? 'idle'}
+      data-builder-check-run-presentation={presentation}
+      data-builder-check-run-status={recordedStatus?.status ?? (restoredRunning ? 'running' : 'not_run')}
+      role="status"
+      title={checkStatusTitle}
     >
-      <div className="cf-builder-review-copy" data-builder-review-copy="true">
-        <div className="cf-builder-review-icon" aria-hidden="true">
-          <GitCompareArrows className="size-4" />
-        </div>
-        <div className="cf-builder-review-copy-body min-w-0" data-builder-review-copy-body="true">
-          <h2 className="cf-builder-review-title" data-builder-review-title="true">Review before saving</h2>
-          <p className="cf-builder-review-summary" data-builder-review-summary="true">
-            {builderChangesSummary(changes)}
-          </p>
-          <p className="cf-builder-review-note" data-builder-review-note="true">
-            {builderReviewPreviewStatus(preview, hasContent)}
-          </p>
-          <p
-            className="cf-builder-review-note"
-            data-builder-review-state={reviewState?.status ?? 'unavailable'}
-          >
-            {reviewState?.summary ?? 'Review status is unavailable.'}
-          </p>
-        </div>
-      </div>
-      <div
-        className="cf-builder-review-checks"
-        data-builder-check-run-operation={checkRunOperation ?? 'idle'}
-        data-builder-review-checks="true"
-      >
-        <div
-          className="cf-builder-review-check-status"
-          data-builder-check-run-status={recordedStatus?.status ?? (restoredRunning ? 'running' : 'not_run')}
-        >
-          <span className="cf-builder-review-check-label">Checks</span>
-          <span className="cf-builder-review-check-summary" role={checkRunOperation === 'failed' ? 'alert' : undefined}>
-            {CheckStatusIcon === null ? null : (
-              <CheckStatusIcon
-                aria-hidden="true"
-                className={checkRunOperation === 'loading'
-                  || checkRunOperation === 'running'
-                  || checkRunOperation === 'skipping'
-                  || restoredRunning
-                  ? 'size-3.5 animate-spin'
-                  : 'size-3.5'}
-              />
-            )}
-            {checkStatusText}
-          </span>
-        </div>
-      </div>
-    </section>
+      {CheckStatusIcon === null ? null : (
+        <CheckStatusIcon
+          aria-hidden="true"
+          className={checkRunOperation === 'loading'
+            || checkRunOperation === 'running'
+            || checkRunOperation === 'preparing_dependencies'
+            || checkRunOperation === 'skipping'
+            || restoredRunning
+            ? 'size-3.5 animate-spin'
+            : 'size-3.5'}
+        />
+      )}
+      <span className={presentation === 'compact' ? 'cf-builder-visually-hidden' : undefined}>
+        {checkStatusText}
+      </span>
+    </div>
   );
 }

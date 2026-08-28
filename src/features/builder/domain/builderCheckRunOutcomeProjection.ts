@@ -6,6 +6,16 @@ export type BuilderCheckRunOutcomeProjectionWire = Readonly<{
   status: 'not_run' | 'skipped' | 'running' | 'passed' | 'failed' | 'incomplete' | 'unavailable';
   label: string;
   summary: string;
+  environment_reason:
+    | 'none'
+    | 'dependency_workspace_missing'
+    | 'install_approval_required'
+    | 'install_denied'
+    | 'dependency_preparation_failed'
+    | 'dependency_preparation_timed_out'
+    | 'package_manager_unavailable'
+    | 'host_toolchain_missing'
+    | 'environment_unknown';
   completed_at_ms: number | null;
   authority: Readonly<{
     projection_authority: 'main_owned_check_run_outcome_projection_v1';
@@ -26,7 +36,7 @@ type PlainRecord = Record<string, unknown>;
 
 const KEYS = Object.freeze([
   'projection_version', 'state', 'command_kind', 'command_label', 'status',
-  'label', 'summary', 'completed_at_ms', 'authority',
+  'label', 'summary', 'environment_reason', 'completed_at_ms', 'authority',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'projection_authority', 'fact_source', 'raw_output', 'runtime_paths',
@@ -50,10 +60,28 @@ const COMPLETED_COPY = new Set([
   ['failed', 'Check failed', 'The project check produced too much output to review safely.'],
   ['incomplete', 'Check incomplete', 'The project check reached its time limit.'],
   ['incomplete', 'Check incomplete', 'The project check was cancelled.'],
-  ['incomplete', 'Check unavailable', 'The required local check environment is unavailable.'],
+  ['incomplete', 'Check unavailable', 'The admitted check workspace needs prepared dependencies or local toolchain access before this check can run.'],
+  ['incomplete', 'Check unavailable', 'This draft declares project dependencies, but the isolated check workspace has not prepared them yet.'],
+  ['incomplete', 'Check unavailable', 'This check needs explicit dependency preparation approval before it can run.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation was denied, so Builder could not run this check.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation failed in the isolated check workspace. You can retry preparation for this check.'],
+  ['incomplete', 'Check unavailable', 'Dependency preparation reached the time limit in the isolated check workspace. You can retry preparation for this check.'],
+  ['incomplete', 'Check unavailable', 'Builder could not start the package manager needed to prepare check dependencies.'],
+  ['incomplete', 'Check unavailable', 'Builder cannot see the local Node/package-manager toolchain required for this check.'],
   ['incomplete', 'Check unavailable', 'The project check could not be started.'],
   ['incomplete', 'Check needs attention', 'Builder could not confirm that the project check stopped.'],
 ].map((tuple) => JSON.stringify(tuple)));
+const ENVIRONMENT_REASONS = new Set([
+  'none',
+  'dependency_workspace_missing',
+  'install_approval_required',
+  'install_denied',
+  'dependency_preparation_failed',
+  'dependency_preparation_timed_out',
+  'package_manager_unavailable',
+  'host_toolchain_missing',
+  'environment_unknown',
+]);
 
 function exactRecord(value: unknown, keys: readonly string[]): value is PlainRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -89,6 +117,8 @@ export function sanitizeBuilderCheckRunOutcomeProjectionWire(
         || !Object.hasOwn(COMMAND_LABELS, commandKind)
         || value.command_label !== COMMAND_LABELS[commandKind as keyof typeof COMMAND_LABELS]
         || !COMPLETED_COPY.has(JSON.stringify([value.status, value.label, value.summary]))
+        || !ENVIRONMENT_REASONS.has(String(value.environment_reason))
+        || (value.label !== 'Check unavailable' && value.environment_reason !== 'none')
         || !Number.isSafeInteger(value.completed_at_ms)
         || (value.completed_at_ms as number) < 0
         || authority.fact_source !== 'verified_current_candidate_check_run'
@@ -103,6 +133,7 @@ export function sanitizeBuilderCheckRunOutcomeProjectionWire(
       || value.status !== special[0]
       || value.label !== special[1]
       || value.summary !== special[2]
+      || value.environment_reason !== 'none'
       || value.completed_at_ms !== null
       || authority.fact_source !== special[3]
     ) return null;
