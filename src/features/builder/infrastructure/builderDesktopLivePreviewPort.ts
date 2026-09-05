@@ -43,6 +43,7 @@ const STATUS_KEYS = Object.freeze([
   'window_open_block_count',
   'message',
   'dev_server_approval',
+  'runtime_launch_projection',
   'unavailable_reason',
   'updated_at_ms',
   'authority',
@@ -89,6 +90,28 @@ const UNAVAILABLE_REASONS = Object.freeze([
   'live_preview_static_server_unavailable',
   'live_preview_view_attachment_failed',
   'live_preview_dev_server_unavailable',
+]);
+const RUNTIME_LAUNCH_KEYS = Object.freeze([
+  'projection_version',
+  'project_id',
+  'conversation_id',
+  'preview_kind',
+  'source_status',
+  'command_profile',
+  'user_approval',
+  'command_execution',
+  'dependency_preparation',
+  'package_install',
+  'sandbox_policy',
+  'provider_dispatch',
+  'tool_dispatch',
+  'project_workspace_write',
+  'authority',
+]);
+const RUNTIME_LAUNCH_AUTHORITY_KEYS = Object.freeze([
+  'projection_authority',
+  'renderer_authority',
+  'path_disclosure',
 ]);
 
 export class BuilderDesktopLivePreviewPortError extends Error {
@@ -243,6 +266,66 @@ function sanitizeCount(value: unknown): number {
   return value;
 }
 
+function sanitizeRuntimeLaunchProjection(
+  value: unknown,
+  request: BuilderLivePreviewRequest,
+  previewKind: BuilderLivePreviewStatusProjection['preview_kind'],
+): BuilderLivePreviewStatusProjection['runtime_launch_projection'] {
+  const source = exactRecord(value, RUNTIME_LAUNCH_KEYS);
+  const authority = exactRecord(source.authority, RUNTIME_LAUNCH_AUTHORITY_KEYS);
+  if (
+    source.projection_version !== 'builder-project-runtime-launch-projection.v1'
+    || source.project_id !== request.project_id
+    || source.conversation_id !== request.conversation_id
+    || source.preview_kind !== previewKind
+    || !['not_requested', 'main_owned_verified'].includes(source.source_status as string)
+    || !['none', 'main_owned_dev_server_profile'].includes(source.command_profile as string)
+    || !['not_required', 'required', 'approved_once', 'denied_or_expired'].includes(source.user_approval as string)
+    || !['not_applicable', 'approval_required', 'started', 'stopped', 'failed'].includes(source.command_execution as string)
+    || source.dependency_preparation !== 'not_allowed'
+    || source.package_install !== 'not_allowed'
+    || !['static_preview_no_command_execution', 'dev_server_only_no_dependency_install'].includes(source.sandbox_policy as string)
+    || source.provider_dispatch !== false
+    || source.tool_dispatch !== false
+    || source.project_workspace_write !== 'not_granted_by_preview'
+    || authority.projection_authority !== 'main_owned_project_runtime_launch_projection_v1'
+    || authority.renderer_authority !== 'status_projection_only'
+    || authority.path_disclosure !== 'not_serialized'
+  ) throw unavailable();
+  if (
+    (previewKind === 'live_static_web' && (
+      source.command_profile !== 'none'
+      || source.command_execution !== 'not_applicable'
+      || source.sandbox_policy !== 'static_preview_no_command_execution'
+    ))
+    || (previewKind === 'live_dev_server_web' && (
+      source.command_profile !== 'main_owned_dev_server_profile'
+      || source.sandbox_policy !== 'dev_server_only_no_dependency_install'
+    ))
+  ) throw unavailable();
+  return Object.freeze({
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    preview_kind: previewKind,
+    source_status: source.source_status as BuilderLivePreviewStatusProjection['runtime_launch_projection']['source_status'],
+    command_profile: source.command_profile as BuilderLivePreviewStatusProjection['runtime_launch_projection']['command_profile'],
+    user_approval: source.user_approval as BuilderLivePreviewStatusProjection['runtime_launch_projection']['user_approval'],
+    command_execution: source.command_execution as BuilderLivePreviewStatusProjection['runtime_launch_projection']['command_execution'],
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: source.sandbox_policy as BuilderLivePreviewStatusProjection['runtime_launch_projection']['sandbox_policy'],
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority: Object.freeze({
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+      renderer_authority: 'status_projection_only',
+      path_disclosure: 'not_serialized',
+    }),
+  });
+}
+
 function sanitizeStatus(
   value: unknown,
   request: BuilderLivePreviewRequest,
@@ -348,6 +431,11 @@ function sanitizeStatus(
     window_open_block_count: windowOpenBlockCount,
     message: source.message,
     dev_server_approval: devServerApproval,
+    runtime_launch_projection: sanitizeRuntimeLaunchProjection(
+      source.runtime_launch_projection,
+      request,
+      source.preview_kind as BuilderLivePreviewStatusProjection['preview_kind'],
+    ),
     unavailable_reason: source.unavailable_reason as BuilderLivePreviewStatusProjection['unavailable_reason'],
     updated_at_ms: updatedAtMs,
     authority: sanitizeAuthority(source.authority),

@@ -5,6 +5,10 @@ const nodeCrypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const {
+  createBuilderAgentPlanArtifact,
+  createBuilderAgentPlanDecision,
+} = require('../electron/builder-agent-plan-contract.cjs');
 
 const {
   BUILDER_GENERATED_EXPLANATION_KIND,
@@ -13,6 +17,7 @@ const {
   BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION,
   MAX_GENERATED_TEXT_BYTES,
   BuilderGenerationKernelError,
+  createBuilderAgentPlanMarkdownPromptDescriptor,
   createBuilderGenerationRequest,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
@@ -1286,6 +1291,39 @@ test('builds a route-specific explanation prompt without allowing source operati
   assert.doesNotMatch(descriptor.user_instruction, /builder-project:|revision_digest|request_digest|candidate_digest/iu);
 });
 
+test('keeps persisted Agent plan context complete, validated, and non-authoritative', () => {
+  const artifact = createBuilderAgentPlanArtifact({
+    agent_plan_id: `builder-agent-plan:${UUID}`,
+    agent_id: `builder-agent:${UUID}`,
+    source_conversation_id: `builder-agent-conversation:${UUID}`,
+    source_turn_id: TURN_ID, source_run_id: RUN_ID, source_message_id: MESSAGE_ID,
+    version: 2, markdown: '# Complete plan\n\n' + 'Preserve this requirement. '.repeat(150).trim(),
+    created_at_ms: 10,
+  });
+  const decision = createBuilderAgentPlanDecision({
+    agent_plan_id: artifact.agent_plan_id, content_digest: artifact.content_digest,
+    decision: 'approved', decided_by: 'owner', decided_at_ms: 11,
+  });
+  const input = {
+    request: request(), base_source_tree: sourceTree(), conversation_events: [],
+    prior_agent_plan: { artifact, decision },
+  };
+  const descriptor = createBuilderExplanationPromptDescriptor(input);
+  assert.deepEqual(JSON.parse(descriptor.user_instruction).prior_agent_plan, {
+    version: 2, review_state: 'approved', text: artifact.markdown,
+  });
+  assert.match(descriptor.system_instruction, /never authorization/);
+  for (const invalid of [
+    { ...input, request: request({ existingProjectId: PROJECT_ID }) },
+    { ...input, prior_agent_plan: { artifact: { ...artifact, markdown: '# Tampered' }, decision } },
+    { ...input, prior_agent_plan: { artifact, decision: createBuilderAgentPlanDecision({
+      agent_plan_id: artifact.agent_plan_id, content_digest: ZERO_DIGEST,
+      decision: 'approved', decided_by: 'owner', decided_at_ms: 11,
+    }) } },
+    { ...input, prior_agent_plan: { artifact, decision, permission: 'allowed' } },
+  ]) assert.throws(() => createBuilderExplanationPromptDescriptor(invalid), { code: 'builder_generation_request_invalid' });
+});
+
 test('allows explanation prompts to answer general questions directly', () => {
   const rawRequest = request({ instruction: '你觉得大模型还有哪些进化空间？', existingProjectId: null });
   const descriptor = createBuilderExplanationPromptDescriptor({
@@ -1334,7 +1372,7 @@ test('keeps read-only plan-like questions inside the explanation answer contract
 
 test('marks an explicit Agent plan answer as a full Markdown plan response', () => {
   const rawRequest = request({ instruction: '为摄影博客制定实施计划', existingProjectId: PROJECT_ID });
-  const descriptor = createBuilderExplanationPromptDescriptor({
+  const descriptor = createBuilderAgentPlanMarkdownPromptDescriptor({
     request: rawRequest,
     base_source_tree: sourceTree(),
     conversation_events: conversationEvents({
@@ -1346,9 +1384,19 @@ test('marks an explicit Agent plan answer as a full Markdown plan response', () 
   const context = JSON.parse(descriptor.user_instruction);
 
   assert.equal(context.response_mode, 'plan');
-  assert.match(descriptor.system_instruction, /complete actionable plan/iu);
-  assert.match(descriptor.system_instruction, /Markdown headings and lists/iu);
-  assert.match(descriptor.system_instruction, /Do not replace it with a summary/iu);
+  assert.deepEqual(descriptor.output_contract, {
+    kind: 'builder_agent_plan_markdown',
+    format: 'markdown_document',
+  });
+  assert.match(descriptor.system_instruction, /raw Markdown only/iu);
+  assert.match(descriptor.system_instruction, /Do not wrap it in JSON/iu);
+  assert.match(descriptor.system_instruction, /complete execution blueprint/iu);
+  assert.match(descriptor.system_instruction, /subordinate project Tasks/iu);
+  assert.match(descriptor.system_instruction, /goals and non-goals/iu);
+  assert.match(descriptor.system_instruction, /module and file boundaries/iu);
+  assert.match(descriptor.system_instruction, /test and verification matrix/iu);
+  assert.match(descriptor.system_instruction, /risks, recovery, and rollback/iu);
+  assert.match(descriptor.system_instruction, /Do not return only technology choices/iu);
   assert.equal(context.instruction, rawRequest.instruction);
 });
 
@@ -1708,6 +1756,47 @@ test('squashes draft continuation output back onto the current product base', ()
   });
 });
 
+test('admits long Agent plans and normalizes outer Markdown whitespace without relaxing ordinary answer bounds', () => {
+  const input = {
+    request: request(),
+    generated_text: generatedExplanationText({ explanation: `\n${'A'.repeat(9000)}\n\n` }),
+  };
+  assert.equal(projectBuilderExplanationResult(input, 'plan').explanation, 'A'.repeat(9000));
+  expectKernelError(() => projectBuilderExplanationResult(input), 'builder_generation_structured_response_invalid');
+  expectKernelError(() => projectBuilderExplanationResult({ ...input,
+    generated_text: generatedExplanationText({ explanation: 'A'.repeat(12001) }),
+  }, 'plan'), 'builder_generation_structured_response_invalid');
+  assert.equal(projectBuilderExplanationResult({ ...input,
+    generated_text: generatedExplanationText({ explanation: '\n## Plan\n\n- Verify.\n' }),
+  }).explanation, '## Plan\n\n- Verify.');
+  assert.equal(projectBuilderExplanationResult({ ...input,
+    generated_text: `\n# Native plan\n\n${'A'.repeat(2000)}\n`,
+  }, 'plan').explanation, `# Native plan\n\n${'A'.repeat(2000)}`);
+  assert.equal(projectBuilderExplanationResult({ ...input,
+    generated_text: `\`\`\`markdown\n# Fenced plan\n\n${'A'.repeat(2000)}\n\`\`\``,
+  }, 'plan').explanation, `# Fenced plan\n\n${'A'.repeat(2000)}`);
+  const webPlan = `# Web routes\n\n- Routes: /post/:slug and /posts/:slug\n- Asset: "/images/cover.jpg"\n\n${'A'.repeat(2000)}`;
+  assert.equal(projectBuilderExplanationResult({ ...input,
+    generated_text: webPlan,
+  }, 'plan').explanation, webPlan);
+  for (const privatePath of [
+    'C:\\Users\\private\\plan.md',
+    '\\\\server\\share\\plan.md',
+    '~/private/plan.md',
+    '/Users/private/plan.md',
+    '/home/private/plan.md',
+    '/workspace/private/plan.md',
+    '/src/private/plan.md',
+  ]) {
+    expectKernelError(() => projectBuilderExplanationResult({ ...input,
+      generated_text: `# Private path\n\n${privatePath}\n\n${'A'.repeat(2000)}`,
+    }, 'plan'), 'builder_generation_structured_response_invalid');
+  }
+  expectKernelError(() => projectBuilderExplanationResult({ ...input,
+    generated_text: '{"kind":"builder_conversation_explanation","explanation":"truncated"',
+  }, 'plan'), 'builder_generation_structured_response_invalid');
+});
+
 test('projects provider explanation without creating a candidate or source change', () => {
   const rawRequest = request({ instruction: 'What does this project do?', existingProjectId: PROJECT_ID });
   const result = projectBuilderExplanationResult({
@@ -2059,6 +2148,7 @@ test('stays aligned with the v3 draft protocol and avoids old revision or sandbo
     'node:util',
     './builder-code-change-kernel.cjs',
     './builder-conversation-records.cjs',
+    './builder-agent-plan-contract.cjs',
     './builder-project-source-tree.cjs',
     './builder-plan-proposal-records.cjs',
     './builder-route-decision-signals.cjs',

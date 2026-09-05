@@ -480,6 +480,8 @@ function createBuilderControlledCommandExecutor(rawOptions) {
       );
       const command = commandFor(profile, handle);
       const result = await measureTraceWindow('command_executor_process_run', 'main.command_executor.process_run.duration_ms', () => new Promise((resolve) => {
+        let childCloseObserved = false;
+        let terminationConfirmed = false;
         function clearTimers() {
           if (timer !== null) clearTimer(timer);
           if (terminationTimer !== null) clearTimer(terminationTimer);
@@ -539,7 +541,15 @@ function createBuilderControlledCommandExecutor(rawOptions) {
             TERMINATION_CONFIRMATION_TIMEOUT_MS,
           );
           Promise.resolve(terminateProcessTree({ child, reason: status })).then(
-            (terminated) => { if (!settled && terminated !== true) finish('termination_failed', null, false); },
+            (terminated) => {
+              if (settled) return;
+              if (terminated !== true) {
+                finish('termination_failed', null, false);
+                return;
+              }
+              terminationConfirmed = true;
+              if (childCloseObserved) finish(stopStatus, null, true);
+            },
             () => finish('termination_failed', null, false),
           );
         }
@@ -597,7 +607,10 @@ function createBuilderControlledCommandExecutor(rawOptions) {
         child.once('error', () => requestStop('spawn_failed'));
         child.once('close', (code, signal) => {
           if (settled) return;
-          if (stopStatus !== null) finish(stopStatus, null, true);
+          if (stopStatus !== null) {
+            childCloseObserved = true;
+            if (terminationConfirmed) finish(stopStatus, null, true);
+          }
           else if (signal !== null || !Number.isSafeInteger(code)) finish('spawn_failed');
           else if (code === 0) finish('passed', 0);
           else finish('failed', Math.min(255, Math.max(1, code)));

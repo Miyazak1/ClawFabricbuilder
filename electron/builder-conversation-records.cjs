@@ -68,6 +68,9 @@ const ID_PATTERNS = Object.freeze({
   actor: /^(?:builder-user|builder-agent):[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   interrupt_request: /^builder-interrupt-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
   cancel_request: /^builder-cancel-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  task_address: /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  context_compaction_admission: /^builder-context-compaction-admission:[0-9a-f]{64}$/u,
+  context_compaction: /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$/u,
 });
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const UNSAFE_UNICODE_FORMAT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
@@ -180,6 +183,22 @@ const PAYLOAD_KEYS = Object.freeze({
   tool_call_requested: Object.freeze(['tool_call_record']),
   tool_call_result_recorded: Object.freeze(['tool_result_record']),
   agent_step_progress_recorded: Object.freeze(['progress_admission']),
+  context_compaction_recorded: Object.freeze([
+    'turn_id',
+    'run_id',
+    'task_id',
+    'task_address_id',
+    'admission_id',
+    'conversation_compaction_projection_digest',
+    'operation',
+    'status',
+    'compaction_id',
+    'start_seq',
+    'summary_seq',
+    'end_seq',
+    'shadowed_token_count',
+    'recorded_at_ms',
+  ]),
   run_completed: Object.freeze([
     'turn_id', 'run_id', 'terminal_status', 'result_kind', 'result_digest',
     'assistant_message', 'candidate_result', 'plan_admission',
@@ -317,6 +336,13 @@ function safeTaskId(value) { return safePattern(value, ID_PATTERNS.task, 88); }
 function safeRunId(value) { return safePattern(value, ID_PATTERNS.run, 88); }
 function safeReviewId(value) { return safePattern(value, ID_PATTERNS.review, 91); }
 function safeActorId(value) { return safePattern(value, ID_PATTERNS.actor, 96); }
+function safeTaskAddressId(value) { return safePattern(value, ID_PATTERNS.task_address, 96); }
+function safeContextCompactionAdmissionId(value) {
+  return safePattern(value, ID_PATTERNS.context_compaction_admission, 128);
+}
+function safeContextCompactionId(value) {
+  return safePattern(value, ID_PATTERNS.context_compaction, 240);
+}
 function safeInterruptRequestId(value) {
   return safePattern(value, ID_PATTERNS.interrupt_request, 104);
 }
@@ -328,6 +354,21 @@ function safeGitOid(value) { return safePattern(value, GIT_OID_PATTERN, 40); }
 
 function safeSequence(value) {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_EVENT_SEQUENCE) fail();
+  return value;
+}
+
+function safeContextCompactionSequence(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 10_000_000) fail();
+  return value;
+}
+
+function nullableContextCompactionSequence(value) {
+  return value === null ? null : safeContextCompactionSequence(value);
+}
+
+function nullableShadowedTokenCount(value) {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000_000) fail();
   return value;
 }
 
@@ -554,7 +595,10 @@ function sanitizeCurrentMaterialization(value) {
     const reason = valueAt(value, 'reason');
     if (
       (status === 'not_materialized' && reason !== 'current_projection_unavailable')
-      || (status === 'not_attempted' && reason !== 'current_projection_not_configured')
+      || (
+        status === 'not_attempted'
+        && !['current_projection_not_configured', 'automatic_check_not_passed'].includes(reason)
+      )
     ) fail();
     return { status, reason };
   }
@@ -705,7 +749,8 @@ function nullable(value, sanitizer) { return value === null ? null : sanitizer(v
 function sanitizePayload(eventType, value, projectId, conversationId) {
   const expected = PAYLOAD_KEYS[eventType];
   if (!expected) fail();
-  assertExactObject(value, expected);
+  const hasResume = eventType === 'run_started' && isPlainObject(value) && Object.hasOwn(value, 'resume_session_run_id');
+  assertExactObject(value, hasResume ? [...expected, 'resume_session_run_id'] : expected);
   switch (eventType) {
     case 'turn_submitted': {
       const mode = valueAt(value, 'mode');
@@ -841,6 +886,7 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
         attempt_number: safeAttemptNumber(valueAt(value, 'attempt_number')),
         retry_of_run_id: nullable(valueAt(value, 'retry_of_run_id'), safeRunId),
         input_digest: safeDigest(valueAt(value, 'input_digest')),
+        ...(hasResume ? { resume_session_run_id: safeRunId(valueAt(value, 'resume_session_run_id')) } : {}),
       };
     case 'run_progress_recorded': {
       const stage = valueAt(value, 'stage');
@@ -936,6 +982,58 @@ function sanitizePayload(eventType, value, projectId, conversationId) {
       ) fail();
       return {
         progress_admission: progressAdmission,
+      };
+    }
+    case 'context_compaction_recorded': {
+      const operation = valueAt(value, 'operation');
+      const status = valueAt(value, 'status');
+      const compactionId = valueAt(value, 'compaction_id');
+      const startSeq = nullableContextCompactionSequence(valueAt(value, 'start_seq'));
+      const summarySeq = nullableContextCompactionSequence(valueAt(value, 'summary_seq'));
+      const endSeq = nullableContextCompactionSequence(valueAt(value, 'end_seq'));
+      const shadowedTokenCount = nullableShadowedTokenCount(valueAt(value, 'shadowed_token_count'));
+      if (
+        !['manual_compaction_completed', 'manual_compaction_noop'].includes(operation)
+        || !['compaction_completed', 'compaction_not_needed'].includes(status)
+        || (operation === 'manual_compaction_completed') !== (status === 'compaction_completed')
+      ) fail();
+      if (
+        status === 'compaction_completed'
+        && (
+          compactionId === null
+          || startSeq === null
+          || summarySeq === null
+          || endSeq === null
+          || shadowedTokenCount === null
+          || !(startSeq < summarySeq && summarySeq < endSeq)
+        )
+      ) fail();
+      if (
+        status === 'compaction_not_needed'
+        && (
+          compactionId !== null
+          || startSeq !== null
+          || summarySeq !== null
+          || endSeq !== null
+          || shadowedTokenCount !== null
+        )
+      ) fail();
+      return {
+        turn_id: safeTurnId(valueAt(value, 'turn_id')),
+        run_id: safeRunId(valueAt(value, 'run_id')),
+        task_id: safeTaskId(valueAt(value, 'task_id')),
+        task_address_id: safeTaskAddressId(valueAt(value, 'task_address_id')),
+        admission_id: safeContextCompactionAdmissionId(valueAt(value, 'admission_id')),
+        conversation_compaction_projection_digest:
+          safeDigest(valueAt(value, 'conversation_compaction_projection_digest')),
+        operation,
+        status,
+        compaction_id: compactionId === null ? null : safeContextCompactionId(compactionId),
+        start_seq: startSeq,
+        summary_seq: summarySeq,
+        end_seq: endSeq,
+        shadowed_token_count: shadowedTokenCount,
+        recorded_at_ms: safeTimestamp(valueAt(value, 'recorded_at_ms')),
       };
     }
     case 'run_completed': {

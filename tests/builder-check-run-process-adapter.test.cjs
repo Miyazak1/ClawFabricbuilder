@@ -64,6 +64,40 @@ test('spawns only the runner fixed shell-disabled process shape', () => {
   }), { code: 'builder_check_run_process_unavailable' });
 });
 
+test('accepts npm-expanded environment values while rejecting oversized entries', () => {
+  const calls = [];
+  const spawned = child();
+  const adapter = createBuilderCheckRunProcessAdapter({
+    spawn_process(file, args, options) {
+      calls.push({ file, args, options });
+      return spawned;
+    },
+    platform: 'linux',
+    windows_root: null,
+  });
+  const file = path.resolve(process.execPath);
+  const worker = path.resolve('builder-packaged-check-script-worker.cjs');
+  const longPath = `C:\\node\\bin;${'C:\\workspace\\node_modules\\.bin;'.repeat(200)}`;
+
+  assert.equal(adapter.spawn_process(
+    file,
+    [worker, 'run-script', 'test', `sha256:${'a'.repeat(64)}`],
+    {
+      ...spawnOptions(),
+      env: { CI: '1', PATH: longPath },
+    },
+  ), spawned);
+  assert.equal(calls[0].options.env.PATH, longPath);
+  assert.throws(() => adapter.spawn_process(
+    file,
+    [worker, 'run-script', 'test', `sha256:${'a'.repeat(64)}`],
+    {
+      ...spawnOptions(),
+      env: { CI: '1', PATH: 'x'.repeat(32_768) },
+    },
+  ), { code: 'builder_check_run_process_unavailable' });
+});
+
 test('terminates only child identities created by the adapter', async () => {
   const spawned = child();
   const adapter = createBuilderCheckRunProcessAdapter({

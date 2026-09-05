@@ -152,6 +152,8 @@ function fixture({
   hold_prompt: holdPrompt = false,
   fail_after_edit: failAfterEdit = false,
   agent_test_browser: agentTestBrowser = false,
+  empty_first: emptyFirst = false,
+  controlled_command: controlledCommand = false,
 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-harness-composition-'));
   const runtimeRoot = path.join(root, 'runtime');
@@ -175,6 +177,9 @@ function fixture({
   let brokerCloseCount = 0;
   let launch = null;
   let promptCount = 0;
+  let resumeCount = 0;
+  const promptTexts = [];
+  let recoveryCount = 0;
   let releaseHeldPrompt = null;
   let hostCancelCount = 0;
   let brokerPendingQuestion = null;
@@ -203,6 +208,20 @@ function fixture({
       });
     },
   });
+  const commandRuntime = Object.freeze({
+    approval_service: Object.freeze({
+      service_version: 'builder-controlled-command-approval-service.v1',
+      async request_approval() { throw new Error('command approval is not used by this fixture'); },
+      decide() { return false; },
+      pending_for_run() { return null; },
+      cancel_run() { return false; },
+    }),
+    executor: Object.freeze({
+      executor_version: 'builder-controlled-command-executor.v1',
+      async execute() { throw new Error('command execution is not used by this fixture'); },
+      async cancel() { return false; },
+    }),
+  });
   const composition = createBuilderHarnessRuntimeComposition({
     runtime_root: runtimeRoot,
     config_path: configPath,
@@ -212,6 +231,7 @@ function fixture({
     set_timeout: setTimeout,
     clear_timeout: clearTimeout,
     process_adapter: processAdapter,
+    ...(controlledCommand ? { command_runtime: commandRuntime } : {}),
     ...(agentTestBrowser ? { agent_test_browser_runtime: agentTestBrowserRuntime } : {}),
     create_broker({ workspace_tools: tools, on_user_question: onUserQuestion, browser_service: runBrowserService }) {
       workspaceTools = tools;
@@ -243,8 +263,16 @@ function fixture({
         async start() {
           return Object.freeze({ runtime_name: 'deepseek-harness-sdk-runtime', runtime_version: '0.0.1' });
         },
-        async prompt({ session_id: sessionId }) {
+        async prompt({ session_id: sessionId, text: promptText }) {
           promptCount += 1;
+          promptTexts.push(promptText);
+          if (emptyFirst && promptCount === 1) {
+            await notify(options.on_notification, sessionId, 'turn/start', 1, { turn: 1 });
+            await notify(options.on_notification, sessionId, 'step/start', 2, { turn: 1, step: 1 });
+            await notify(options.on_notification, sessionId, 'step/end', 3, { turn: 1, step: 1 });
+            await notify(options.on_notification, sessionId, 'turn/end', 4, { turn: 1, reason: { kind: 'max-tokens' } });
+            return Object.freeze({ session_id: sessionId, message_id: 'empty-message' });
+          }
           if (holdPrompt && promptCount === 1) {
             await new Promise((resolve) => { releaseHeldPrompt = resolve; });
             return Object.freeze({ session_id: sessionId, message_id: 'cancelled-user-message' });
@@ -351,6 +379,14 @@ function fixture({
           });
           return Object.freeze({ session_id: sessionId, message_id: 'user-message' });
         },
+        async resume({ session_id: sessionId }) {
+          resumeCount += 1;
+          return Object.freeze({ session_id: sessionId, restored: true });
+        },
+        async recover_empty_output(request) {
+          recoveryCount += 1;
+          return this.prompt(request);
+        },
         async shutdown() { return true; },
         when_terminated() { return hostTermination; },
         async cancel() {
@@ -371,6 +407,9 @@ function fixture({
     composition,
     getBrokerCloseCount: () => brokerCloseCount,
     getHostCancelCount: () => hostCancelCount,
+    getRecoveryCount: () => recoveryCount,
+    getResumeCount: () => resumeCount,
+    getPromptTexts: () => [...promptTexts],
     getLaunch: () => launch,
     getWorkspaceTools: () => workspaceTools,
     async askUserQuestion(questionRequest) {
@@ -399,7 +438,8 @@ function providerConfig() {
   });
 }
 
-function runContract(composition, tree, config) {
+function runContract(composition, tree, config, overrides = {}) {
+  const runId = overrides.run_id ?? `builder-run:${UUID}`;
   return createBuilderProgrammingRuntimeRunContract({
     runtime_descriptor: composition.descriptor,
     admission: {
@@ -407,7 +447,7 @@ function runContract(composition, tree, config) {
       conversation_id: `builder-conversation:${UUID}:22345678-1234-4234-8234-123456789abc`,
       turn_id: `builder-turn:${UUID}`,
       task_id: `builder-task:${UUID}`,
-      run_id: `builder-run:${UUID}`,
+      run_id: runId,
       mode: 'build',
       workspace_ref: {
         ref_version: 'builder-programming-workspace-ref.v1',
@@ -426,11 +466,38 @@ function runContract(composition, tree, config) {
       admitted_at_ms: 10,
     },
     input: {
-      message_id: `builder-message:${UUID}`,
-      text: 'Update index.js.',
+      message_id: overrides.message_id ?? `builder-message:${UUID}`,
+      text: overrides.text ?? 'Update index.js.',
+      ...(overrides.resume_session_run_id === undefined ? {} : {
+        resume_session_run_id: overrides.resume_session_run_id,
+        resume_kind: overrides.resume_kind,
+      }),
     },
   });
 }
+
+test('forwards the one-shot empty-output route through composition while retaining workspace authority', async (t) => {
+  const fixtureValue = fixture({ empty_first: true });
+  t.after(async () => {
+    await fixtureValue.composition.dispose();
+    fs.rmSync(fixtureValue.root, { recursive: true, force: true });
+  });
+  const sourceTree = createBuilderProjectSourceTree({ files: [{ path: 'index.js', content: 'export const ready = false;\n' }] });
+  const config = providerConfig();
+  const contract = runContract(fixtureValue.composition, sourceTree, config);
+  const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: contract });
+  const handle = await fixtureValue.composition.startRun({
+    run_contract: contract, source_tree: sourceTree, provider_config: config, credential: 'configured-test-credential',
+    event_sink: { emit: candidate => journal.append(candidate, candidate.occurred_at_ms + 1) },
+  });
+  const result = await handle.completion;
+  assert.equal(result.status, 'awaiting_reconciliation');
+  assert.equal(result.resulting_source_tree.files[0].content, 'export const ready = "repaired";\n');
+  assert.equal(fixtureValue.getRecoveryCount(), 1);
+  assert.equal(fixtureValue.getBrokerCloseCount(), 0);
+  assert.equal(fixtureValue.getLaunch().initialize.max_tokens, config.max_tokens);
+  assert.equal(journal.snapshot().events.filter(event => event.event_type === 'turn_started').length, 1);
+});
 
 test('returns the Builder-owned workspace snapshot and waits for reconciliation', async (t) => {
   const fixtureValue = fixture();
@@ -590,6 +657,122 @@ test('returns the Builder-owned workspace snapshot and waits for reconciliation'
     ],
   );
   assert.equal(fixtureValue.composition.diagnostics().active_run_count, 0);
+});
+
+test('keeps controlled command runtime out of provider-facing Harness tools', async (t) => {
+  const fixtureValue = fixture({ controlled_command: true });
+  t.after(async () => {
+    await fixtureValue.composition.dispose();
+    fs.rmSync(fixtureValue.root, { recursive: true, force: true });
+  });
+  const sourceTree = createBuilderProjectSourceTree({ files: [
+    { path: 'index.js', content: 'export const ready = false;\n' },
+  ] });
+  const config = providerConfig();
+  const contract = runContract(fixtureValue.composition, sourceTree, config);
+  const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: contract });
+  const handle = await fixtureValue.composition.startRun({
+    run_contract: contract,
+    source_tree: sourceTree,
+    provider_config: config,
+    credential: 'configured-test-credential',
+    event_sink: { emit: (candidate) => journal.append(candidate, candidate.occurred_at_ms + 1) },
+  });
+
+  await handle.completion;
+
+  assert.deepEqual(
+    JSON.parse(fixtureValue.getLaunch().launch.env.BUILDER_TOOL_BROKER_ALLOWED_METHODS),
+    ['read', 'search', 'edit', 'write', 'ask_user_question'],
+  );
+  assert.match(
+    fixtureValue.getLaunch().launch.env.DSH_SYSTEM_PROMPT,
+    /Use only the tools Builder exposes for this run: read, grep, edit, write, ask_user_question/u,
+  );
+  assert.doesNotMatch(
+    fixtureValue.getLaunch().launch.env.DSH_SYSTEM_PROMPT,
+    /\bbash\b|execute_command/u,
+  );
+  assert.equal(fixtureValue.composition.diagnostics().shell_available, true);
+
+  await fixtureValue.composition.reconcileRun(handle, { checkpoint_status: 'created' });
+});
+
+test('continues the native Harness session only when the current project matches the recorded snapshot', async (t) => {
+  const fixtureValue = fixture();
+  t.after(async () => {
+    await fixtureValue.composition.dispose();
+    fs.rmSync(fixtureValue.root, { recursive: true, force: true });
+  });
+  const sourceTree = createBuilderProjectSourceTree({ files: [
+    { path: 'index.js', content: 'export const ready = false;\n' },
+  ] });
+  const config = providerConfig();
+  const firstContract = runContract(fixtureValue.composition, sourceTree, config);
+  const firstJournal = createBuilderProgrammingRuntimeEventJournal({ run_contract: firstContract });
+  const firstHandle = await fixtureValue.composition.startRun({
+    run_contract: firstContract,
+    source_tree: sourceTree,
+    provider_config: config,
+    credential: 'configured-test-credential',
+    event_sink: { emit: candidate => firstJournal.append(candidate, candidate.occurred_at_ms + 1) },
+  });
+  const firstResult = await firstHandle.completion;
+  await fixtureValue.composition.reconcileRun(firstHandle, { checkpoint_status: 'updated' });
+
+  const continuation = await fixtureValue.composition.prepareContinuation({
+    project_id: firstContract.admission.project_id,
+    conversation_id: firstContract.admission.conversation_id,
+    run_id: firstContract.admission.run_id,
+    session_run_id: firstContract.admission.run_id,
+    current_source_tree: firstResult.resulting_source_tree,
+  });
+  assert.equal(continuation.projection_version, 'builder-session-continuation-projection.v1');
+  assert.equal(continuation.continuity_status, 'native_resumed');
+  assert.equal(continuation.reason, 'previous_harness_session_available');
+  assert.equal(continuation.session_run_id, firstContract.admission.run_id);
+  assert.equal(continuation.source_tree_digest, firstResult.resulting_source_tree.source_tree_digest);
+  assert.equal(continuation.source_freshness, 'unchanged');
+  assert.equal(Array.isArray(continuation.observed_working_set), true);
+
+  const externallyChangedTree = createBuilderProjectSourceTree({ files: [
+    { path: 'index.js', content: 'export const ready = "external";\n' },
+  ] });
+  await assert.rejects(fixtureValue.composition.prepareContinuation({
+    project_id: firstContract.admission.project_id,
+    conversation_id: firstContract.admission.conversation_id,
+    run_id: firstContract.admission.run_id,
+    session_run_id: firstContract.admission.run_id,
+    current_source_tree: externallyChangedTree,
+  }), { code: 'builder_harness_runtime_composition_conflict' });
+
+  const followupText = 'Preserve the existing work and apply this follow-up.';
+  const secondContract = runContract(fixtureValue.composition, firstResult.resulting_source_tree, config, {
+    run_id: 'builder-run:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    message_id: 'builder-message:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    text: followupText,
+    resume_session_run_id: continuation.session_run_id,
+    resume_kind: 'task_continuation',
+  });
+  const secondJournal = createBuilderProgrammingRuntimeEventJournal({ run_contract: secondContract });
+  const secondHandle = await fixtureValue.composition.startRun({
+    run_contract: secondContract,
+    source_tree: firstResult.resulting_source_tree,
+    provider_config: config,
+    credential: 'configured-test-credential',
+    event_sink: { emit: candidate => secondJournal.append(candidate, candidate.occurred_at_ms + 1) },
+  });
+  const secondResult = await secondHandle.completion;
+
+  assert.equal(firstResult.status, 'awaiting_reconciliation');
+  assert.equal(secondResult.status, 'awaiting_reconciliation');
+  assert.equal(fixtureValue.getResumeCount(), 1);
+  assert.deepEqual(fixtureValue.getPromptTexts(), ['Update index.js.', followupText]);
+  assert.equal(
+    secondResult.resulting_source_tree.files[0].content,
+    'export const ready = "repaired";\n',
+  );
+  await fixtureValue.composition.reconcileRun(secondHandle, { checkpoint_status: 'updated' });
 });
 
 test('projects a native Harness user question and resumes the same run after Builder answers', async (t) => {
@@ -760,9 +943,14 @@ test('binds one Agent Test browser service to the run and closes it on cancellat
   );
   assert.equal(allowedMethods.includes('browser_open_local_app'), true);
   assert.equal(allowedMethods.includes('browser_reload_latest_source'), true);
+  assert.equal(allowedMethods.includes('execute_command'), false);
   assert.match(
     fixtureValue.getLaunch().launch.env.DSH_SYSTEM_PROMPT,
     /browser_open_local_app, browser_observe, browser_click/u,
+  );
+  assert.doesNotMatch(
+    fixtureValue.getLaunch().launch.env.DSH_SYSTEM_PROMPT,
+    /\bbash\b|execute_command/u,
   );
   assert.doesNotMatch(
     fixtureValue.getLaunch().launch.env.DSH_SYSTEM_PROMPT,

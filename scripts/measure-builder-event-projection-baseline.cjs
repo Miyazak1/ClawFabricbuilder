@@ -1,6 +1,6 @@
 'use strict';
 
-const { performance } = require('node:perf_hooks');
+const { performance: nodePerformance } = require('node:perf_hooks');
 
 const {
   CONVERSATION_AUTHORITY,
@@ -130,9 +130,9 @@ function measure(eventCount, repetitions) {
   projectBuilderTaskStream(input);
   const samples = [];
   for (let index = 0; index < repetitions; index += 1) {
-    const startedAt = performance.now();
+    const startedAt = nodePerformance.now();
     projectBuilderTaskStream(input);
-    samples.push(performance.now() - startedAt);
+    samples.push(nodePerformance.now() - startedAt);
   }
   samples.sort((left, right) => left - right);
   return {

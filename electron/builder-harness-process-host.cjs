@@ -29,6 +29,15 @@ const OPTION_KEYS = Object.freeze([
 const LAUNCH_KEYS = Object.freeze(['executable', 'args', 'cwd', 'env']);
 const INITIALIZE_KEYS = Object.freeze(['cwd', 'provider', 'model', 'max_tokens']);
 const PROMPT_KEYS = Object.freeze(['session_id', 'text']);
+const COMPACT_KEYS = Object.freeze(['session_id', 'source_command_id']);
+const COMPACTION_RESULT_KEYS = Object.freeze([
+  'compactionId',
+  'sourceCommandId',
+  'startSeq',
+  'summarySeq',
+  'endSeq',
+  'shadowedTokenCount',
+]);
 const REQUEST_TIMEOUT_KEYS = Object.freeze([
   'initialize_ms',
   'session_prompt_ms',
@@ -36,6 +45,8 @@ const REQUEST_TIMEOUT_KEYS = Object.freeze([
 ]);
 const MAX_STDERR_BYTES = 32 * 1_024;
 const PROCESS_LIVENESS_POLL_MS = 250;
+const ADMISSION_ID_PATTERN = /^builder-context-compaction-admission:[0-9a-f]{64}$/u;
+const COMPACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$/u;
 
 class BuilderHarnessProcessHostError extends Error {
   constructor(code = 'builder_harness_process_host_failed') {
@@ -123,7 +134,8 @@ function safeText(value) {
     typeof value !== 'string'
     || value.length === 0
     || value.normalize('NFC') !== value
-    || Buffer.byteLength(value, 'utf8') > 256 * 1_024
+    // Full Main-admitted plans plus bounded continuation and repair instructions.
+    || Buffer.byteLength(value, 'utf8') > 640 * 1_024
     || /[\p{Cf}\p{Bidi_Control}]/u.test(value)
   ) fail();
   for (let index = 0; index < value.length; index += 1) {
@@ -139,6 +151,11 @@ function safeText(value) {
 
 function safeInteger(value, minimum, maximum) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) fail();
+  return value;
+}
+
+function safePattern(value, pattern) {
+  if (typeof value !== 'string' || !pattern.test(value)) fail();
   return value;
 }
 
@@ -424,12 +441,12 @@ function createBuilderHarnessProcessHost(rawOptions) {
     );
   }
 
-  async function promptImpl(rawRequest) {
+  async function promptImpl(rawRequest, method = 'session/prompt') {
     if (state !== 'ready') fail('builder_harness_process_host_closed');
     const requestValue = exactObject(rawRequest, PROMPT_KEYS);
     const sessionId = safeIdentifier(requestValue.session_id.value, 240);
     const text = safeText(requestValue.text.value);
-    const result = await request('session/prompt', {
+    const result = await request(method, {
       sessionId,
       contentBlocks: [{ type: 'text', text }],
     });
@@ -437,6 +454,43 @@ function createBuilderHarnessProcessHost(rawOptions) {
     return Object.freeze({
       session_id: sessionId,
       message_id: safeIdentifier(response.messageId.value, 240),
+    });
+  }
+
+  async function resume(rawRequest) {
+    if (state !== 'ready') fail('builder_harness_process_host_closed');
+    const requestValue = exactObject(rawRequest, ['session_id']);
+    const sessionId = safeIdentifier(requestValue.session_id.value, 240);
+    const result = exactObject(await request('session/resume', { sessionId }), ['sessionId', 'restored']);
+    if (result.sessionId.value !== sessionId || result.restored.value !== true) fail();
+    return Object.freeze({ session_id: sessionId, restored: true });
+  }
+
+  async function manualCompact(rawRequest) {
+    if (state !== 'ready') fail('builder_harness_process_host_closed');
+    const requestValue = exactObject(rawRequest, COMPACT_KEYS);
+    const sessionId = safeIdentifier(requestValue.session_id.value, 240);
+    const sourceCommandId = safePattern(requestValue.source_command_id.value, ADMISSION_ID_PATTERN);
+    const rawResult = await request('session/compact', {
+      sessionId,
+      sourceCommandId,
+    });
+    if (rawResult === null) return null;
+    const response = exactObject(rawResult, COMPACTION_RESULT_KEYS);
+    const startSeq = safeInteger(response.startSeq.value, 1, 10_000_000);
+    const summarySeq = safeInteger(response.summarySeq.value, 1, 10_000_000);
+    const endSeq = safeInteger(response.endSeq.value, 1, 10_000_000);
+    if (
+      response.sourceCommandId.value !== sourceCommandId
+      || !(startSeq < summarySeq && summarySeq < endSeq)
+    ) fail();
+    return Object.freeze({
+      compactionId: safePattern(response.compactionId.value, COMPACTION_ID_PATTERN),
+      sourceCommandId,
+      startSeq,
+      summarySeq,
+      endSeq,
+      shadowedTokenCount: safeInteger(response.shadowedTokenCount.value, 1, 1_000_000_000),
     });
   }
 
@@ -492,6 +546,9 @@ function createBuilderHarnessProcessHost(rawOptions) {
     host_version: BUILDER_HARNESS_PROCESS_HOST_VERSION,
     start,
     prompt,
+    recover_empty_output: (rawRequest) => promptImpl(rawRequest, 'session/recover-empty-output'),
+    resume,
+    manual_compact: manualCompact,
     when_terminated() { return termination; },
     shutdown,
     cancel,

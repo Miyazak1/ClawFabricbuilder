@@ -10,10 +10,10 @@ const {
   SELECTORS,
   approveCurrentProjectWriteIfRequested,
   assertCustomChromeControls,
-  bindNewProjectWorkspaceViaUi,
   createArtifactGate,
   fillProviderSettingsViaUi,
   readSanitizedTaskStreamEvidence,
+  requireBuildWorkspaceBeforeDraftViaUi,
   sanitizeLaunchEnvironment,
 } = require('./verify-packaged-canary.cjs');
 const {
@@ -192,17 +192,10 @@ function terminateWindowsProcessTree(processId, failureMessage) {
 }
 
 async function startFailingBuild(page) {
-  const newProject = page.locator('[data-builder-catalog-new-project="true"]').first();
-  await newProject.waitFor({ state: 'visible', timeout: 30_000 });
-  await newProject.click();
-  await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible' });
-  await bindNewProjectWorkspaceViaUi(page);
-  await page.locator(SELECTORS.composerAddMenuButton).click();
-  await page.locator(SELECTORS.composerAddBuildMode).click();
-  await page.locator('[data-builder-composer-mode-chip="build"]')
-    .waitFor({ state: 'visible', timeout: 10_000 });
-  await page.locator(SELECTORS.idea).fill('Build a small focus timer in this project.');
-  await page.locator(SELECTORS.submitTurn).click();
+  await requireBuildWorkspaceBeforeDraftViaUi(
+    page,
+    'Build a small focus timer in this project.',
+  );
   await approveCurrentProjectWriteIfRequested(page);
 }
 
@@ -1210,6 +1203,9 @@ if (require.main === module) {
     process.stderr.write(`${JSON.stringify({
       ok: false,
       code: 'canary_evidence_failed',
+      diagnostic: error instanceof Error && error.diagnostic !== undefined
+        ? error.diagnostic
+        : null,
       message: error instanceof Error ? error.message : 'Packaged Harness failure canary failed.',
     })}\n`);
     process.exitCode = 1;

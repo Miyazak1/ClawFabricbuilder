@@ -8,6 +8,12 @@ const TRACE_VERSION = 'builder-performance-trace.v1';
 const MAX_SAMPLES_PER_METRIC = 4_096;
 const MAX_EVENT_LOOP_WINDOWS = 256;
 const METRIC_NAMES = Object.freeze(new Set([
+  'main.agent_plan.validation.accepted',
+  'main.agent_plan.validation.code_points',
+  'main.agent_plan.validation.utf8_bytes',
+  'main.agent_plan.validation.outer_whitespace',
+  'main.agent_plan.validation.headings',
+  'main.agent_plan.validation.list_items',
   'main.command_output.public_event_bytes',
   'main.command_output.received_bytes',
   'main.command_output.event_loop_delay_ms',
@@ -145,6 +151,13 @@ const METRIC_NAMES = Object.freeze(new Set([
   'main.user_web.navigate.duration_ms',
   'main.user_web.reload.duration_ms',
   'main.workbench.read.duration_ms',
+  'main.metadata.schema_fingerprint.duration_ms',
+  'main.metadata.fingerprint.cache_hit_count',
+  'main.metadata.fingerprint.full_read_count',
+  'main.workbench.monitor.list.duration_ms',
+  'main.workbench.monitor.stream_read.duration_ms',
+  'main.workbench.task_sync.project.duration_ms',
+  'main.workbench.task_sync.record.duration_ms',
   'main.workbench.task_sync.duration_ms',
   'main.workbench.task_sync.task_count',
 ]));

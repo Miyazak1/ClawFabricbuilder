@@ -17,6 +17,11 @@ const {
   sanitizeBuilderProjectEnvironmentDiagnosisResult,
 } = require('./builder-project-environment-diagnosis.cjs');
 const {
+  BUILDER_PROJECT_DEPENDENCY_PREPARATION_RESULT_VERSION,
+  BUILDER_PROJECT_DEPENDENCY_PREPARER_VERSION,
+  sanitizeBuilderProjectDependencyPreparationResult,
+} = require('./builder-project-dependency-preparer.cjs');
+const {
   sanitizeBuilderCheckRunStatusProjection,
 } = require('./builder-check-run-status-projection.cjs');
 const {
@@ -33,6 +38,8 @@ const DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL =
   'clawfabric-builder:check-run:diagnose-current-draft-check-environment';
 const DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL =
   'clawfabric-builder:check-run:diagnose-project-environment';
+const PREPARE_PROJECT_DEPENDENCIES_CHANNEL =
+  'clawfabric-builder:check-run:prepare-project-dependencies';
 const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:approve-current-draft-check';
 const DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL =
@@ -43,6 +50,7 @@ const OPTION_KEYS = Object.freeze([
   'readCurrentDraftAvailableChecks',
   'diagnoseCurrentDraftCheckEnvironment',
   'diagnoseProjectEnvironment',
+  'prepareProjectDependencies',
   'approveAndRunCurrentDraftCheck',
   'decideCurrentDraftDependencyPreparation',
   'skipCurrentDraftCheck',
@@ -90,6 +98,14 @@ const PROJECT_DIAGNOSIS_RESULT_KEYS = Object.freeze([
   'service_version',
   'operation',
   'project_id',
+  'environment_diagnosis',
+]);
+const PROJECT_DEPENDENCY_PREPARATION_RESULT_KEYS = Object.freeze([
+  'result_version',
+  'service_version',
+  'operation',
+  'project_id',
+  'preparation_receipt',
   'environment_diagnosis',
 ]);
 const SKIP_RESULT_KEYS = Object.freeze([
@@ -194,6 +210,7 @@ function safeOptions(value) {
     readCurrentDraftAvailableChecks: stableMethod(value, 'readCurrentDraftAvailableChecks'),
     diagnoseCurrentDraftCheckEnvironment: stableMethod(value, 'diagnoseCurrentDraftCheckEnvironment'),
     diagnoseProjectEnvironment: stableMethod(value, 'diagnoseProjectEnvironment'),
+    prepareProjectDependencies: stableMethod(value, 'prepareProjectDependencies'),
     approveAndRunCurrentDraftCheck: stableMethod(value, 'approveAndRunCurrentDraftCheck'),
     decideCurrentDraftDependencyPreparation:
       stableMethod(value, 'decideCurrentDraftDependencyPreparation'),
@@ -386,6 +403,25 @@ function safeProjectDiagnosisResult(value, request) {
   return result;
 }
 
+function safeProjectDependencyPreparationResult(value, request) {
+  const descriptors = exactObject(
+    value,
+    PROJECT_DEPENDENCY_PREPARATION_RESULT_KEYS,
+    'builder_check_run_approval_unavailable',
+  );
+  if (
+    descriptors.result_version.value !== BUILDER_PROJECT_DEPENDENCY_PREPARATION_RESULT_VERSION
+    || descriptors.service_version.value !== BUILDER_PROJECT_DEPENDENCY_PREPARER_VERSION
+    || descriptors.operation.value !== 'project_dependencies_prepared'
+    || descriptors.project_id.value !== request.project_id
+  ) throw ipcError();
+  try {
+    return sanitizeBuilderProjectDependencyPreparationResult(value);
+  } catch {
+    throw ipcError();
+  }
+}
+
 function safeSkipResult(value, request) {
   const descriptors = exactObject(value, SKIP_RESULT_KEYS, 'builder_check_run_approval_unavailable');
   if (
@@ -552,6 +588,21 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
     }
   }
 
+  async function invokePrepareProjectDependencies(event, rawArguments) {
+    try {
+      assertActiveSender(event, options.mainWindowRef);
+      if (rawArguments.length !== 1) throw ipcError('builder_check_run_approval_invalid');
+      const request = safeProjectDiagnosisRequest(rawArguments[0]);
+      return safeProjectDependencyPreparationResult(await Reflect.apply(
+        options.prepareProjectDependencies,
+        undefined,
+        [request],
+      ), request);
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
   async function invokeDecideDependencyPreparation(event, rawArguments) {
     try {
       assertActiveSender(event, options.mainWindowRef);
@@ -600,6 +651,13 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
         method: 'diagnoseProjectEnvironment',
         invoke(event, ...rawArguments) { return invokeProjectDiagnose(event, rawArguments); },
       }),
+      prepareProjectDependencies: Object.freeze({
+        channel: PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
+        method: 'prepareProjectDependencies',
+        invoke(event, ...rawArguments) {
+          return invokePrepareProjectDependencies(event, rawArguments);
+        },
+      }),
       approveAndRunCurrentDraftCheck: Object.freeze({
         channel: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
         method: 'approveAndRunCurrentDraftCheck',
@@ -622,6 +680,7 @@ function createBuilderCheckRunApprovalIpcAdapter(rawOptions) {
       'readCurrentDraftAvailableChecks',
       'diagnoseCurrentDraftCheckEnvironment',
       'diagnoseProjectEnvironment',
+      'prepareProjectDependencies',
       'approveAndRunCurrentDraftCheck',
       'decideCurrentDraftDependencyPreparation',
       'skipCurrentDraftCheck',
@@ -649,6 +708,7 @@ module.exports = Object.freeze({
   DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
   DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
   DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+  PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   BuilderCheckRunApprovalIpcError,

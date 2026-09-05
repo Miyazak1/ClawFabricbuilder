@@ -63,8 +63,47 @@ function authority() {
   };
 }
 
-function status(overrides = {}) {
+function runtimeLaunchProjection(statusLike = {}) {
+  const previewKind = statusLike.preview_kind ?? 'live_static_web';
+  const statusValue = statusLike.status ?? 'unavailable';
+  const devServerApproval = statusLike.dev_server_approval ?? null;
+  const devServer = previewKind === 'live_dev_server_web';
   return {
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: statusLike.project_id ?? PROJECT_ID,
+    conversation_id: statusLike.conversation_id ?? CONVERSATION_ID,
+    preview_kind: previewKind,
+    source_status: statusValue === 'idle' ? 'not_requested' : 'main_owned_verified',
+    command_profile: devServer ? 'main_owned_dev_server_profile' : 'none',
+    user_approval: devServer
+      ? devServerApproval !== null ? 'required'
+        : ['ready', 'reloading', 'starting', 'failed'].includes(statusValue)
+          ? 'approved_once'
+          : 'denied_or_expired'
+      : 'not_required',
+    command_execution: devServer
+      ? statusValue === 'approval_required' ? 'approval_required'
+        : ['ready', 'reloading', 'starting'].includes(statusValue) ? 'started'
+          : statusValue === 'failed' ? 'failed' : 'stopped'
+      : 'not_applicable',
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: devServer
+      ? 'dev_server_only_no_dependency_install'
+      : 'static_preview_no_command_execution',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+      renderer_authority: 'status_projection_only',
+      path_disclosure: 'not_serialized',
+    },
+  };
+}
+
+function status(overrides = {}) {
+  const projected = {
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
@@ -87,6 +126,10 @@ function status(overrides = {}) {
     authority: authority(),
     ...overrides,
   };
+  if (!Object.hasOwn(projected, 'runtime_launch_projection')) {
+    projected.runtime_launch_projection = runtimeLaunchProjection(projected);
+  }
+  return projected;
 }
 
 function adapter(overrides = {}) {
@@ -156,6 +199,15 @@ test('live preview adapter exposes fixed current-preview channels only', async (
   assert.deepEqual(projected, status());
   assert.equal(Object.isFrozen(projected), true);
   assert.equal(Object.isFrozen(projected.authority), true);
+  assert.equal(Object.isFrozen(projected.runtime_launch_projection), true);
+  assert.equal(Object.isFrozen(projected.runtime_launch_projection.authority), true);
+  assert.equal(
+    projected.runtime_launch_projection.projection_version,
+    'builder-project-runtime-launch-projection.v1',
+  );
+  assert.equal(projected.runtime_launch_projection.package_install, 'not_allowed');
+  assert.equal(projected.runtime_launch_projection.provider_dispatch, false);
+  assert.equal(projected.runtime_launch_projection.tool_dispatch, false);
   assert.doesNotMatch(
     JSON.stringify(projected),
     /"source_tree":|content_digest|preview_origin|credential|permission_id|revision_receipt|commit_oid|tree_oid/iu,
@@ -265,6 +317,11 @@ test('live preview adapter forwards only an exact one-time development-server de
   assert.deepEqual(calls, [decision]);
   assert.equal(projected.status, 'approval_required');
   assert.equal(projected.dev_server_approval.command_display, 'npm run dev');
+  assert.equal(projected.runtime_launch_projection.preview_kind, 'live_dev_server_web');
+  assert.equal(projected.runtime_launch_projection.command_profile, 'main_owned_dev_server_profile');
+  assert.equal(projected.runtime_launch_projection.user_approval, 'required');
+  assert.equal(projected.runtime_launch_projection.command_execution, 'approval_required');
+  assert.equal(projected.runtime_launch_projection.package_install, 'not_allowed');
 
   for (const invalid of [
     { ...decision, decision: 'always_allow' },
@@ -378,6 +435,22 @@ test('live preview adapter maps service and output failures to fixed redacted er
   });
   await assert.rejects(
     leaking.value.channels.requestCurrentDraftPreview.invoke(leaking.active.event, request()),
+    { code: 'builder_live_preview_unavailable' },
+  );
+
+  const runtimeAuthorityLeak = adapter({
+    result: {
+      runtime_launch_projection: {
+        ...runtimeLaunchProjection(),
+        package_install: 'allowed',
+      },
+    },
+  });
+  await assert.rejects(
+    runtimeAuthorityLeak.value.channels.requestCurrentDraftPreview.invoke(
+      runtimeAuthorityLeak.active.event,
+      request(),
+    ),
     { code: 'builder_live_preview_unavailable' },
   );
 });

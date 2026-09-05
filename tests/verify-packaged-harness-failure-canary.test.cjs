@@ -175,10 +175,16 @@ test('keeps crash detection independent from idle supervision', () => {
 
 test('release gate includes packaged Harness failure convergence', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
+  const acceptance = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts', 'verify-packaged-harness-acceptance.cjs'),
+    'utf8',
+  );
 
   assert.equal(
     packageJson.scripts['verify:packaged-harness-failure'],
     'node scripts/verify-packaged-harness-failure-canary.cjs',
   );
-  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-failure/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-acceptance/u);
+  assert.match(acceptance, /verify-packaged-harness-failure-canary\.cjs/u);
+  assert.match(acceptance, /packaged_failure_feedback/u);
 });

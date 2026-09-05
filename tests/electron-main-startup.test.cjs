@@ -182,6 +182,18 @@ async function executeMain({
       }
       if (specifier === 'node:path') return path;
       if (specifier === 'electron') return electron;
+      if (specifier === './builder-main-stdio-boundary.cjs') {
+        return {
+          BUILDER_MAIN_STDIO_BOUNDARY_VERSION: 'builder-main-stdio-boundary.v1',
+          installBuilderMainStdioBoundary() {
+            return Object.freeze({
+              boundary_version: 'builder-main-stdio-boundary.v1',
+              diagnostics: () => Object.freeze({}),
+              dispose() {},
+            });
+          },
+        };
+      }
       if (specifier === './runtime-options.cjs') {
         return { resolveBuilderRendererTarget: () => ({ kind: 'packaged_file' }) };
       }
@@ -237,6 +249,11 @@ async function executeMain({
             });
             value.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime =
               () => projectEnvironmentDiagnosisService;
+            const projectDependencyPreparer = Object.freeze({
+              preparer_version: 'builder-project-dependency-preparer.v1',
+            });
+            value.readProjectDependencyPreparerForMainOnlyApprovalRuntime =
+              () => projectDependencyPreparer;
             currentDraftLivePreviewSourceService = Object.freeze({
               service_version: 'builder-live-preview-current-draft-source-service.v1',
             });
@@ -310,6 +327,10 @@ async function executeMain({
             assert.equal(
               options.projectEnvironmentDiagnosisService.service_version,
               'builder-project-environment-diagnosis-service.v1',
+            );
+            assert.equal(
+              options.projectDependencyPreparer.preparer_version,
+              'builder-project-dependency-preparer.v1',
             );
             const value = runtime(4);
             value.shutdown = async () => {

@@ -132,9 +132,11 @@ function sanitizeTools(value) {
 }
 
 function sanitizeRecord(value) {
+  const hasResume = isPlainObject(value) && Object.hasOwn(value, 'resume');
   const descriptors = exactObject(value, [
     'record_version', 'project_id', 'conversation_id', 'run_id',
     'source_tree', 'tools', 'updated_at_ms',
+    ...(hasResume ? ['resume'] : []),
   ]);
   if (descriptors.record_version.value !== RECORD_VERSION) fail();
   const identity = safeIdentity({
@@ -150,6 +152,15 @@ function sanitizeRecord(value) {
     source_tree: sanitizeBuilderProjectSourceTree(descriptors.source_tree.value),
     tools: sanitizeTools(descriptors.tools.value),
     updated_at_ms: updatedAtMs,
+    ...(hasResume ? { resume: sanitizeResume(descriptors.resume.value) } : {}),
+  });
+}
+
+function sanitizeResume(value) {
+  const descriptors = exactObject(value, ['session_run_id', 'base_source_tree']);
+  return freezeDeep({
+    session_run_id: safePattern(descriptors.session_run_id.value, RUN_ID_PATTERN),
+    base_source_tree: sanitizeBuilderProjectSourceTree(descriptors.base_source_tree.value),
   });
 }
 
@@ -198,6 +209,8 @@ function createBuilderRuntimeWorkspaceSnapshotStore(rawOptions) {
       }))
       .sort((left, right) => right.mtime - left.mtime);
     for (const stale of files.slice(MAX_RECORDS)) {
+      // Resumable work is durable task state, not an evictable file-preview cache.
+      if (readDisk(`builder-run:${stale.name.slice(0, -5)}`)?.resume !== undefined) continue;
       try { fs.unlinkSync(path.join(root, stale.name)); } catch { /* bounded cleanup is best effort */ }
     }
   }
@@ -214,21 +227,27 @@ function createBuilderRuntimeWorkspaceSnapshotStore(rawOptions) {
   }
 
   async function recordSourceTree(rawRequest) {
-    const descriptors = exactObject(rawRequest, ['project_id', 'conversation_id', 'run_id', 'source_tree']);
+    const hasResume = isPlainObject(rawRequest) && Object.hasOwn(rawRequest, 'resume');
+    const descriptors = exactObject(rawRequest, ['project_id', 'conversation_id', 'run_id', 'source_tree', ...(hasResume ? ['resume'] : [])]);
     const identity = safeIdentity({
       project_id: descriptors.project_id.value,
       conversation_id: descriptors.conversation_id.value,
       run_id: descriptors.run_id.value,
     });
     const sourceTree = sanitizeBuilderProjectSourceTree(descriptors.source_tree.value);
+    const resume = hasResume ? sanitizeResume(descriptors.resume.value) : null;
     return enqueue(identity.run_id, () => {
       const existing = current(identity);
+      if (resume !== null && existing?.resume !== undefined
+        && JSON.stringify(resume) !== JSON.stringify(existing.resume)) fail();
       const record = sanitizeRecord({
         record_version: RECORD_VERSION,
         ...identity,
         source_tree: sourceTree,
         tools: existing?.tools ?? {},
         updated_at_ms: Number(Reflect.apply(nowMs, undefined, [])),
+        ...((resume ?? existing?.resume) === undefined || (resume ?? existing?.resume) === null
+          ? {} : { resume: resume ?? existing.resume }),
       });
       persist(record);
       return record;
@@ -320,6 +339,13 @@ function createBuilderRuntimeWorkspaceSnapshotStore(rawOptions) {
     bind_tool_file: bindToolFile,
     read_tool_file: readToolFile,
     read_source_tree: readSourceTree,
+    async read_run_source_tree(rawRequest) {
+      const identity = safeIdentity(rawRequest);
+      await (queues.get(identity.run_id) ?? Promise.resolve());
+      const record = current(identity);
+      if (record === null) fail();
+      return record;
+    },
   });
 }
 

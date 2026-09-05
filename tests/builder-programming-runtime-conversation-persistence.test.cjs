@@ -26,7 +26,8 @@ const {
 
 const UUID = '12345678-1234-4234-8234-123456789abc';
 const PROJECT_ID = `builder-project:${UUID}`;
-const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${UUID}:22345678-1234-4234-8234-123456789abc`;
 const TURN_ID = `builder-turn:${UUID}`;
 const TASK_ID = `builder-task:${UUID}`;
 const RUN_ID = `builder-run:${UUID}`;
@@ -375,6 +376,125 @@ test('projects bounded Harness reasoning and runtime activity without reasoning 
     ['reasoning', null, '正在思考'],
   ]);
   assert.doesNotMatch(JSON.stringify(stream), /private reasoning|chain.of.thought/iu);
+});
+
+test('projects live Harness context usage and the post-compaction token drop into the task stream', () => {
+  const journal = runtimeJournal();
+  const runtimeEvents = [
+    journal.append(runtimeCandidate('run_started', { mode: 'build' }, {
+      runtime_event_ref: 'test:context_run_started',
+      occurred_at_ms: 20,
+    }), 21),
+    journal.append(runtimeCandidate('turn_started', { message_id: MESSAGE_ID }, {
+      runtime_event_ref: 'test:context_turn_started',
+      occurred_at_ms: 22,
+      turn_id: TURN_ID,
+    }), 23),
+    journal.append(runtimeCandidate('step_started', { step_index: 1 }, {
+      runtime_event_ref: 'test:context_step_started',
+      occurred_at_ms: 24,
+      turn_id: TURN_ID,
+      step_id: STEP_ID,
+    }), 25),
+    journal.append(runtimeCandidate('context_usage_projected', {
+      harness_projection_seq: 42,
+      uncached_input_tokens: 20_000,
+      output_tokens: 5_000,
+      cache_read_tokens: 180_000,
+      cache_write_tokens: 0,
+      pressure_tokens: 200_000,
+      projected_tokens: 205_000,
+      context_window_tokens: 258_000,
+    }, {
+      runtime_event_ref: 'test:context_usage_before',
+      occurred_at_ms: 26,
+    }), 27),
+    journal.append(runtimeCandidate('runtime_activity_status', {
+      activity_kind: 'context_compacting',
+      status: 'Compacting context',
+    }, {
+      runtime_event_ref: 'test:context_compacting',
+      occurred_at_ms: 28,
+      turn_id: TURN_ID,
+      step_id: STEP_ID,
+    }), 29),
+    journal.append(runtimeCandidate('runtime_activity_status', {
+      activity_kind: 'context_compacted',
+      status: 'Context compacted',
+    }, {
+      runtime_event_ref: 'test:context_compacted',
+      occurred_at_ms: 30,
+      turn_id: TURN_ID,
+      step_id: STEP_ID,
+    }), 31),
+    journal.append(runtimeCandidate('context_usage_projected', {
+      harness_projection_seq: 52,
+      uncached_input_tokens: 22_000,
+      output_tokens: 6_000,
+      cache_read_tokens: 190_000,
+      cache_write_tokens: 0,
+      pressure_tokens: 30_000,
+      projected_tokens: 31_000,
+      context_window_tokens: 258_000,
+    }, {
+      runtime_event_ref: 'test:context_usage_after',
+      occurred_at_ms: 32,
+    }), 33),
+  ];
+
+  let events = activeWorkEvents();
+  for (const runtimeEvent of runtimeEvents.slice(0, -1)) {
+    events = appendConversation(events, 'programming_runtime_event_recorded', {
+      runtime_event: runtimeEvent,
+    });
+  }
+  let stream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: { conversation_id: CONVERSATION_ID, created_at_ms: 1, events },
+  });
+  const compactedProjection = {
+    projection_version: 'builder-context-usage-projection.v2',
+    authority: 'main_owned_context_usage_projection',
+    source: 'deepseek_harness_session_projection',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    run_id: RUN_ID,
+    harness_projection_seq: 42,
+    measurement_state: 'awaiting_post_compaction_projection',
+    uncached_input_tokens: 20_000,
+    output_tokens: 5_000,
+    cache_read_tokens: 180_000,
+    cache_write_tokens: 0,
+    pressure_tokens: 200_000,
+    projected_tokens: 205_000,
+    context_window_tokens: 258_000,
+    usage_percent: 79,
+    cache_hit_percent: 90,
+    compaction_state: 'compacted',
+    last_compacted_at_ms: 30,
+    updated_at_ms: 30,
+  };
+  assert.deepEqual(stream.context_usage_projection, compactedProjection);
+
+  events = appendConversation(events, 'programming_runtime_event_recorded', {
+    runtime_event: runtimeEvents.at(-1),
+  });
+  stream = projectBuilderTaskStream({
+    project_id: PROJECT_ID,
+    conversation: { conversation_id: CONVERSATION_ID, created_at_ms: 1, events },
+  });
+  assert.deepEqual(stream.context_usage_projection, {
+    ...compactedProjection,
+    measurement_state: 'ready',
+    harness_projection_seq: 52,
+    uncached_input_tokens: 22_000,
+    output_tokens: 6_000,
+    cache_read_tokens: 190_000,
+    pressure_tokens: 30_000,
+    projected_tokens: 31_000,
+    usage_percent: 12,
+    updated_at_ms: 32,
+  });
 });
 
 test('replay omits a discarded retry attempt and projects only the recovered narration', () => {

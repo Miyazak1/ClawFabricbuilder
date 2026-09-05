@@ -85,6 +85,9 @@ const {
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CONVERSATION_ID = 'builder-conversation:11111111-1111-4111-8111-111111111111';
+const TASK_CONVERSATION_ID =
+  'builder-conversation:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222';
+const TASK_ADDRESS_ID = 'builder-task-address:22222222-2222-4222-8222-222222222222';
 const REQUEST_DIGEST = `sha256:${'1'.repeat(64)}`;
 const QUESTION_DIGEST = `sha256:${'0'.repeat(64)}`;
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
@@ -183,6 +186,16 @@ function begin(service, baseRevision = null, instruction = 'Build a focused time
     instruction,
     request_digest: REQUEST_DIGEST,
     base_revision: baseRevision,
+  });
+}
+
+function beginTaskConversation(service, instruction = 'Build a focused timer') {
+  return service.begin_work({
+    project_id: PROJECT_ID,
+    conversation_id: TASK_CONVERSATION_ID,
+    instruction,
+    request_digest: REQUEST_DIGEST,
+    base_revision: null,
   });
 }
 
@@ -585,6 +598,38 @@ function candidateResult(context) {
   };
 }
 
+function manualContextCompactionResult(overrides = {}) {
+  const status = overrides.status ?? 'compaction_completed';
+  const completed = status === 'compaction_completed';
+  return {
+    result_version: 'builder-context-compaction-execution-result.v1',
+    operation: completed ? 'manual_compaction_completed' : 'manual_compaction_noop',
+    status,
+    admission_id: 'builder-context-compaction-admission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    conversation_compaction_projection_digest: `sha256:${'b'.repeat(64)}`,
+    compaction_id: completed ? 'deepseek-compaction:manual-1' : null,
+    start_seq: completed ? 8 : null,
+    summary_seq: completed ? 9 : null,
+    end_seq: completed ? 10 : null,
+    shadowed_token_count: completed ? 48_000 : null,
+    authority: {
+      bridge_authority: 'main_context_compaction_execution_bridge_v1',
+      admission_authority: 'verified_main_context_compaction_admission_contract_v1',
+      harness_authority: 'manual_compactNow_invoked_after_admission',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: 'harness_owned_compaction_only',
+      tool_dispatch: 'not_performed_by_bridge',
+      source_write: 'not_performed_by_bridge',
+      sqlite_write: 'not_performed_by_bridge',
+      permission_grant_authority: 'not_present',
+      revision_authority: 'not_present',
+      summary_materialization: 'not_performed_by_bridge',
+    },
+    ...overrides,
+  };
+}
+
 function draftContinuationAdmission(context, terminal, candidate, overrides = {}) {
   return createBuilderDraftContinuationAdmission({
     pending_draft: {
@@ -867,6 +912,33 @@ test('records start and terminal events before allowing a later turn to continue
   }
 });
 
+test('monitor reads preserve canonical start and terminal items without loading chat details', () => {
+  let detailReads = 0;
+  const changes = [];
+  const item = fixture(1, 1_000, {
+    onTaskStreamChanged: (event, scope) => changes.push({ event, scope }),
+    workingContextStateService: { read_current_working_context_state_for_conversation() {
+      detailReads += 1;
+      throw new Error('unavailable detail');
+    } },
+  });
+  try {
+    const first = begin(item.service);
+    const request = { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID };
+    const started = item.service.read_monitor_stream(request);
+    assert.equal(detailReads, 0);
+    assert.deepEqual(started.conversation, item.service.read_stream(request).conversation);
+    assert.equal(detailReads, 1);
+    item.service.complete_candidate({ context: first, candidate_result: candidateResult(first), assistant_text: 'Ready for review.' });
+    const completed = item.service.read_monitor_stream(request);
+    assert.equal(detailReads, 1);
+    assert.equal(completed.conversation.recorded_active_turn_id, null);
+    assert.deepEqual(completed.conversation, item.service.read_stream(request).conversation);
+    assert.ok(changes.every(({ scope, event }) => scope.conversationId === CONVERSATION_ID && !Object.hasOwn(event, 'conversation_id')));
+    assert.throws(() => item.service.read_monitor_stream({ ...request, project_id: 'invalid' }));
+  } finally { item.close(); }
+});
+
 test('keeps SQLite conversation appends authoritative when transcript archival fails', () => {
   const archiveCalls = [];
   const item = fixture(1, 1_000, {
@@ -1006,6 +1078,31 @@ test('records derived context compaction after committed appends without making 
     assert.equal(compactionCalls.length, 2);
     assert.equal(compactionCalls[1].loaded_conversation.current_head.sequence, 4);
     assert.ok(item.service.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }).conversation.items.length >= 4);
+  } finally {
+    item.close();
+  }
+});
+
+test('reads a main-owned compaction projection from committed SQLite conversation state', () => {
+  const item = fixture();
+  try {
+    const context = begin(item.service);
+    const projection = item.service.read_compaction_projection({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    });
+    assert.equal(projection.projection_version, 'builder-conversation-compaction-projection.v1');
+    assert.equal(projection.project_id, PROJECT_ID);
+    assert.equal(projection.conversation_id, CONVERSATION_ID);
+    assert.equal(projection.source.authority, 'sqlite_conversation_replay_read_only');
+    assert.equal(projection.source.current_sequence, context.start_head.sequence);
+    assert.match(projection.projection_id, /^builder-conversation-compaction-projection:[0-9a-f]{64}$/u);
+    assert.doesNotMatch(JSON.stringify(projection), /git_candidate_receipt|source_tree|credential/iu);
+    assert.throws(() => item.service.read_compaction_projection({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      prompt: '/compact',
+    }));
   } finally {
     item.close();
   }
@@ -4854,11 +4951,52 @@ test('recovers a running turn as interrupted without redispatching a provider', 
   }
 });
 
+test('recovers an inactive run on reopening without creating a new turn and is idempotent', () => {
+  const item = fixture();
+  try {
+    begin(item.service);
+    const restarted = createBuilderConversationMainService({
+      metadataAuthority: item.database, createUuid: uuidFactory(200), nowMs: () => 2_000,
+    });
+    const request = { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID };
+    assert.notEqual(restarted.read_stream(request).conversation.recorded_active_turn_id, null);
+    restarted.recover_inactive_run(request);
+    const recovered = restarted.read_stream(request);
+    assert.equal(recovered.conversation.recorded_active_turn_id, null);
+    assert.deepEqual(recovered.conversation.items.map((entry) => entry.item_kind), [
+      'user_message', 'run_started', 'run_control_requested', 'run_completed', 'turn_completed',
+    ]);
+    assert.equal(recovered.conversation.items[3].terminal_status, 'interrupted');
+    assert.equal(recovered.conversation.items[3].assistant_message, null);
+    assert.equal(recovered.conversation.items[3].candidate, null);
+    restarted.recover_inactive_run(request);
+    assert.deepEqual(restarted.read_stream(request), recovered);
+  } finally { item.close(); }
+});
+
+test('never recovers a turn owned by this process, including the retry and cancellation windows', () => {
+  const item = fixture();
+  try {
+    let context = begin(item.service);
+    const request = { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID };
+    for (const phase of ['running', 'retry', 'cancelling']) {
+      if (phase === 'retry') context = item.service.retry_after_failure({ context, failure_code: 'builder_generation_failed' });
+      if (phase === 'cancelling') context = item.service.request_cancel({ context });
+      const before = item.service.read_stream(request);
+      item.service.recover_inactive_run(request);
+      assert.deepEqual(item.service.read_stream(request), before);
+      assert.notEqual(before.conversation.recorded_active_turn_id, null);
+    }
+  } finally { item.close(); }
+});
+
 test('records fixed failed, cancelled, and timeout-interrupted terminal outcomes', () => {
   const cases = [
     ['builder_generation_failed', 'failed', 4],
     ['builder_generation_cancelled', 'cancelled', 5],
-    ['builder_generation_timeout', 'interrupted', 5],
+      ['builder_generation_timeout', 'interrupted', 5],
+      ['builder_generation_desktop_closed', 'interrupted', 5],
+      ['builder_generation_paused', 'interrupted', 5],
     ['builder_generation_runtime_stalled', 'interrupted', 5],
     ['builder_generation_run_limit_reached', 'interrupted', 5],
   ];
@@ -4880,6 +5018,202 @@ test('records fixed failed, cancelled, and timeout-interrupted terminal outcomes
     } finally {
       item.close();
     }
+  }
+});
+
+function recordResumableHarnessStart(service, context) {
+  const contract = createBuilderProgrammingRuntimeRunContract({
+    runtime_descriptor: createBuilderProgrammingRuntimeDescriptor({
+      runtime_kind: 'deepseek_harness.v1', implementation_version: '1.0.0',
+      capabilities: { streaming_text: true, reasoning_status: 'none', native_tool_calls: true,
+        steering: 'none', cancellation: 'process', session_resume: 'runtime_local',
+        context_compaction: true, parallel_read_tools: false },
+    }),
+    admission: {
+      project_id: PROJECT_ID, conversation_id: context.conversation.conversation_id,
+      turn_id: context.ids.turn_id, task_id: context.ids.task_id, run_id: context.ids.run_id,
+      mode: 'build', workspace_ref: { ref_version: 'builder-programming-workspace-ref.v1',
+        workspace_id: `builder-programming-workspace:${'8'.repeat(64)}`,
+        source_tree_digest: REQUEST_DIGEST, writable: true },
+      provider_config_digest: REQUEST_DIGEST, allowed_tools: [],
+      limits: { max_steps: 4, max_duration_ms: 300_000, max_model_tokens: 32_768,
+        max_tool_output_bytes: 262_144 }, admitted_at_ms: 900,
+    },
+    input: {
+      message_id: context.ids.message_id,
+      text: 'Build a focused timer',
+      ...(context.resume_session_run_id === undefined ? {} : {
+        resume_session_run_id: context.resume_session_run_id,
+        resume_kind: 'interrupted_recovery',
+      }),
+    },
+  });
+  const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: contract });
+  return service.record_programming_runtime_event({ context, runtime_event: journal.append({
+    protocol_version: 'builder-programming-runtime.v1', runtime_event_ref: 'harness:start',
+    run_id: context.ids.run_id, occurred_at_ms: 901, turn_id: null, step_id: null,
+    tool_call_id: null, event_type: 'run_started', payload: { mode: 'build' },
+  }, 902) });
+}
+
+test('resumes an interrupted Harness turn durably without another user message or new task', () => {
+  const item = fixture();
+  try {
+    const first = recordResumableHarnessStart(item.service, begin(item.service));
+    item.service.complete_failure({ context: first, failure_code: 'builder_generation_desktop_closed' });
+    const paused = item.service.read_resume_context({ project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID, run_id: first.ids.run_id });
+    const resumed = item.service.begin_resume({ context: paused, request_digest: QUESTION_DIGEST });
+    assert.equal(resumed.ids.turn_id, first.ids.turn_id);
+    assert.equal(resumed.ids.task_id, first.ids.task_id);
+    assert.notEqual(resumed.ids.run_id, first.ids.run_id);
+    assert.equal(resumed.resume_session_run_id, first.ids.run_id);
+    assert.equal(resumed.events.filter(event => event.event_type === 'turn_submitted').length, 1);
+    assert.equal(replayBuilderConversation(resumed.events).active_turn_id, first.ids.turn_id);
+    assert.throws(() => item.service.begin_resume({ context: paused, request_digest: REQUEST_DIGEST }));
+    const second = recordResumableHarnessStart(item.service, resumed);
+    item.service.complete_failure({ context: second, failure_code: 'builder_generation_desktop_closed' });
+    const pausedAgain = item.service.read_resume_context({ project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID, run_id: second.ids.run_id });
+    assert.equal(pausedAgain.resume_session_run_id, first.ids.run_id);
+    const third = item.service.begin_resume({ context: pausedAgain, request_digest: QUESTION_DIGEST });
+    const completed = item.service.complete_candidate({ context: third,
+      candidate_result: candidateResult(third), assistant_text: 'Resumed work is ready.' });
+    assert.equal(completed.snapshot.turns.length, 1);
+    assert.equal(completed.snapshot.turns[0].runs.length, 3);
+    assert.equal(completed.snapshot.turns[0].outcome, 'candidate_ready');
+    assert.throws(() => item.service.read_resume_context({ project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID, run_id: third.ids.run_id }));
+  } finally { item.close(); }
+});
+
+test('selects the retained Harness session for the next completed-task follow-up', () => {
+  const item = fixture();
+  try {
+    const first = recordResumableHarnessStart(item.service, begin(item.service));
+    item.service.complete_candidate({
+      context: first,
+      candidate_result: candidateResult(first),
+      assistant_text: 'The first task is complete.',
+    });
+    assert.deepEqual(item.service.read_session_continuation({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+    }), {
+      status: 'ready',
+      run_id: first.ids.run_id,
+      session_run_id: first.ids.run_id,
+    });
+
+    const followup = item.service.begin_work({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      instruction: 'Optimize the existing scene lighting.',
+      request_digest: QUESTION_DIGEST,
+      base_revision: null,
+      resume_session_run_id: first.ids.run_id,
+    });
+    assert.equal(followup.resume_session_run_id, first.ids.run_id);
+    assert.equal(followup.events.at(-1).payload.resume_session_run_id, first.ids.run_id);
+    assert.equal(replayBuilderConversation(followup.events).active_turn_id, followup.ids.turn_id);
+  } finally { item.close(); }
+});
+
+test('records manual context compaction results only on the current task conversation', () => {
+  const completedItem = fixture(1_500, 20_000);
+  try {
+    const first = recordResumableHarnessStart(completedItem.service, beginTaskConversation(completedItem.service));
+    completedItem.service.complete_candidate({
+      context: first,
+      candidate_result: candidateResult(first),
+      assistant_text: 'The task draft is ready.',
+    });
+
+    const recorded = completedItem.service.record_context_compaction({
+      project_id: PROJECT_ID,
+      conversation_id: TASK_CONVERSATION_ID,
+      task_address_id: TASK_ADDRESS_ID,
+      run_id: first.ids.run_id,
+      context_compaction_result: manualContextCompactionResult(),
+    });
+    assert.equal(recorded.conversation_id, TASK_CONVERSATION_ID);
+    assert.equal(recorded.task_address_id, TASK_ADDRESS_ID);
+    assert.equal(recorded.run_id, first.ids.run_id);
+    assert.equal(recorded.conversation_event_admission, 'sqlite_recorded');
+
+    const stream = completedItem.service.read_stream({
+      project_id: PROJECT_ID,
+      conversation_id: TASK_CONVERSATION_ID,
+    });
+    const compactionItem = stream.conversation.items.at(-1);
+    assert.equal(compactionItem.item_kind, 'context_compaction_recorded');
+    assert.equal(compactionItem.status, 'compaction_completed');
+    assert.equal(compactionItem.operation, 'manual_compaction_completed');
+    assert.equal(compactionItem.task_address_id, TASK_ADDRESS_ID);
+    assert.equal(compactionItem.shadowed_token_count, 48_000);
+    assert.equal(
+      compactionItem.lifecycle.conversation_admission,
+      'main_recorded_after_verified_manual_compaction',
+    );
+    assert.doesNotMatch(
+      JSON.stringify(compactionItem),
+      /source_tree|credential|api[_-]?key|provider_secret/iu,
+    );
+    assert.throws(() => completedItem.service.record_context_compaction({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      task_address_id: TASK_ADDRESS_ID,
+      run_id: first.ids.run_id,
+      context_compaction_result: manualContextCompactionResult({
+        admission_id: 'builder-context-compaction-admission:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        compaction_id: 'deepseek-compaction:manual-2',
+      }),
+    }), { code: 'builder_conversation_main_service_unavailable' });
+  } finally {
+    completedItem.close();
+  }
+
+  const noopItem = fixture(1_700, 21_000);
+  try {
+    const first = recordResumableHarnessStart(noopItem.service, beginTaskConversation(noopItem.service));
+    noopItem.service.complete_candidate({
+      context: first,
+      candidate_result: candidateResult(first),
+      assistant_text: 'The task draft is ready.',
+    });
+    noopItem.service.record_context_compaction({
+      project_id: PROJECT_ID,
+      conversation_id: TASK_CONVERSATION_ID,
+      task_address_id: TASK_ADDRESS_ID,
+      run_id: first.ids.run_id,
+      context_compaction_result: manualContextCompactionResult({
+        status: 'compaction_not_needed',
+        admission_id: 'builder-context-compaction-admission:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      }),
+    });
+    const stream = noopItem.service.read_stream({
+      project_id: PROJECT_ID,
+      conversation_id: TASK_CONVERSATION_ID,
+    });
+    const compactionItem = stream.conversation.items.at(-1);
+    assert.equal(compactionItem.item_kind, 'context_compaction_recorded');
+    assert.equal(compactionItem.status, 'compaction_not_needed');
+    assert.equal(compactionItem.compaction_id, null);
+    assert.equal(compactionItem.shadowed_token_count, null);
+  } finally {
+    noopItem.close();
+  }
+});
+
+test('resume refuses unrelated, cancelled, failed, and non-Harness task records', () => {
+  for (const failure of ['builder_generation_cancelled', 'builder_generation_failed', 'builder_generation_desktop_closed']) {
+    const item = fixture();
+    try {
+      const context = begin(item.service);
+      item.service.complete_failure({ context, failure_code: failure });
+      assert.throws(() => item.service.read_resume_context({ project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID, run_id: context.ids.run_id }));
+    } finally { item.close(); }
   }
 });
 

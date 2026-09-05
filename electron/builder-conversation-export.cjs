@@ -14,13 +14,16 @@ const {
   replayBuilderConversation,
   BuilderConversationReplayError,
 } = require('./builder-conversation-replay.cjs');
+const {
+  CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+} = require('./builder-conversation-address.cjs');
 
 const BUILDER_CONVERSATION_EXPORT_VERSION = 'builder-conversation-export.v1';
 const BUILDER_CONVERSATION_COMPACTION_PROJECTION_VERSION =
   'builder-conversation-compaction-projection.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
 const MESSAGE_ID_PATTERN = new RegExp(`^builder-message:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
@@ -244,6 +247,7 @@ function sanitizeLoadedConversation(value) {
   if (valueAt(value, 'result_version') !== BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION) fail();
   if (valueAt(value, 'operation') !== 'conversation_loaded') fail();
   const conversation = sanitizeConversation(valueAt(value, 'conversation'));
+  sanitizeBuilderConversationAddress(conversation.project_id, conversation.conversation_id);
   if (denseArray(valueAt(value, 'action_events')).length !== 0) fail();
   const currentHead = sanitizeHead(valueAt(value, 'current_head'));
   const rawEvents = denseArray(valueAt(value, 'events'));

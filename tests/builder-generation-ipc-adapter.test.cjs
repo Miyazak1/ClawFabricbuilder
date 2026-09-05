@@ -17,6 +17,8 @@ const {
   SUBMIT_CHANNEL,
   CLASSIFY_INTENT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  RESUME_INTERRUPTED_RUN_CHANNEL,
+  MANUAL_COMPACT_CONTEXT_CHANNEL,
   ANSWER_CHANNEL,
   ANSWER_PLAN_CHANNEL,
   ANSWER_DRAFT_CHANNEL,
@@ -90,6 +92,14 @@ function adapter(overrides = {}) {
     retry: async (request) => {
       calls.push(['retry', request]);
       return { result: 'retried' };
+    },
+    resumeInterruptedRun: async (request) => {
+      calls.push(['resumeInterruptedRun', request]);
+      return { result: 'interrupted-run-resumed' };
+    },
+    manualCompactContext: async (request) => {
+      calls.push(['manualCompactContext', request]);
+      return { result: 'compacted' };
     },
     answer: async (request) => {
       calls.push(['answer', request]);
@@ -168,6 +178,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     'submit',
     'classifyIntent',
     'retry',
+    'resumeInterruptedRun',
+    'manualCompactContext',
     'answer',
     'answerDraft',
     'restoreDraft',
@@ -194,6 +206,8 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       SUBMIT_CHANNEL,
       CLASSIFY_INTENT_CHANNEL,
       RETRY_GENERATE_CHANNEL,
+      RESUME_INTERRUPTED_RUN_CHANNEL,
+      MANUAL_COMPACT_CONTEXT_CHANNEL,
       ANSWER_CHANNEL,
       ANSWER_PLAN_CHANNEL,
       ANSWER_DRAFT_CHANNEL,
@@ -265,6 +279,14 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
       version: GENERATE_RESULT_VERSION,
       ok: true,
       result: { result: 'plan-source-read-approved' },
+    },
+  );
+  assert.deepEqual(
+    await value.channels.resumeInterruptedRun.invoke({ sender: windowRef.webContents }, request),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'interrupted-run-resumed' },
     },
   );
   assert.deepEqual(
@@ -340,6 +362,19 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     },
   );
   assert.deepEqual(
+    await value.channels.manualCompactContext.invoke({ sender: windowRef.webContents }, {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      conversation_id:
+        'builder-conversation:123e4567-e89b-42d3-a456-426614174000:223e4567-e89b-42d3-a456-426614174000',
+      task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174001',
+    }),
+    {
+      version: GENERATE_RESULT_VERSION,
+      ok: true,
+      result: { result: 'compacted' },
+    },
+  );
+  assert.deepEqual(
     await value.channels.restorePreviousCheckpointAsDraft.invoke({ sender: windowRef.webContents }, {
       draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
     }),
@@ -394,6 +429,7 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['proposePlan', request],
     ['preparePlanSourceReadApproval', request],
     ['approvePlanSourceRead', request],
+    ['resumeInterruptedRun', request],
     ['prepareCurrentProjectWriteApproval', request],
     ['approveCurrentProjectWrite', request],
     ['submit', request],
@@ -407,6 +443,12 @@ test('exposes only the dedicated Builder generation channels and forwards exact 
     ['restoreRevisionAsDraft', {
       project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
       revision_receipt_digest: `sha256:${'d'.repeat(64)}`,
+    }],
+    ['manualCompactContext', {
+      project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+      conversation_id:
+        'builder-conversation:123e4567-e89b-42d3-a456-426614174000:223e4567-e89b-42d3-a456-426614174000',
+      task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174001',
     }],
     ['restorePreviousCheckpointAsDraft', {
       draft_id: `builder-generation-draft:${'9'.repeat(64)}`,

@@ -127,6 +127,17 @@ test('registered unavailable service returns safe status without source or view 
   assert.equal(projected.download_block_count, 0);
   assert.equal(projected.window_open_block_count, 0);
   assert.equal(projected.unavailable_reason, 'preview_source_resolver_not_connected');
+  assert.equal(
+    projected.runtime_launch_projection.projection_version,
+    'builder-project-runtime-launch-projection.v1',
+  );
+  assert.equal(projected.runtime_launch_projection.preview_kind, 'live_static_web');
+  assert.equal(projected.runtime_launch_projection.command_profile, 'none');
+  assert.equal(projected.runtime_launch_projection.command_execution, 'not_applicable');
+  assert.equal(projected.runtime_launch_projection.dependency_preparation, 'not_allowed');
+  assert.equal(projected.runtime_launch_projection.package_install, 'not_allowed');
+  assert.equal(projected.runtime_launch_projection.provider_dispatch, false);
+  assert.equal(projected.runtime_launch_projection.tool_dispatch, false);
   assert.equal(projected.authority.source_tree_from_renderer, 'not_accepted');
   assert.equal(projected.authority.preview_content_ipc, false);
   assert.equal(projected.authority.node_integration, false);

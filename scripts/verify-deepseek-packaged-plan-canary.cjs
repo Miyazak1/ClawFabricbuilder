@@ -11,7 +11,6 @@ const {
   approveCurrentProjectWriteIfRequested,
   approvePlanSourceReadIfRequested,
   assertCustomChromeControls,
-  bindNewProjectWorkspaceViaUi,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
   createCanaryProjectRoot,
@@ -98,6 +97,9 @@ async function diagnostic(page, stage, projectId = null) {
     stage,
     project_status: await page.locator(SELECTORS.projectPage)
       .getAttribute('data-builder-project-status').catch(() => null),
+    conversation_project_id: await page.locator(SELECTORS.projectPage)
+      .getAttribute('data-builder-conversation-project-id').catch(() => null),
+    composer_visible: await optionalVisible(page, SELECTORS.composer),
     composer_status: await page.locator(SELECTORS.composerStatus).textContent().catch(() => null),
     composer_route: await page.locator(SELECTORS.composer).getAttribute('data-builder-route').catch(() => null),
     composer_dispatch: await page.locator(SELECTORS.composer)
@@ -112,6 +114,28 @@ async function diagnostic(page, stage, projectId = null) {
     generation_failed_visible: await optionalVisible(page, SELECTORS.generationFailedNotice),
     task_stream_counts: counts,
   });
+}
+
+async function waitForSidebarNewProjectReady(page) {
+  try {
+    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`).
+      waitFor({ state: 'visible', timeout: 45_000 });
+    await page.locator(SELECTORS.composer).waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForFunction((selector) => {
+      const node = document.querySelector(selector);
+      return node !== null
+        && node.tagName === 'TEXTAREA'
+        && node.disabled === false;
+    }, SELECTORS.idea, { timeout: 15_000 });
+  } catch (error) {
+    if (error instanceof DeepSeekPackagedPlanCanaryError) throw error;
+    fail('deepseek_plan_workspace_bind_failed', Object.freeze({
+      ...(await diagnostic(page, 'workspace_bind')),
+      agent_workbench_visible: await optionalVisible(page, '[data-builder-agent-workbench-stream="true"]'),
+      new_project_panel_visible: await optionalVisible(page, SELECTORS.newProjectPanel),
+      workspace_picker_visible: await optionalVisible(page, SELECTORS.workspacePicker),
+    }));
+  }
 }
 
 async function waitForSubmitEnabled(page, projectId, stage, timeoutMs = 15_000) {
@@ -229,7 +253,7 @@ async function runDeepSeekPackagedPlanCanary(rawInput, options = {}) {
     await assertCustomChromeControls(page);
     await page.locator(SELECTORS.catalogNewProject).first().click();
     stage = 'workspace_bind';
-    await bindNewProjectWorkspaceViaUi(page);
+    await waitForSidebarNewProjectReady(page);
     stage = 'fixture_seed';
     if (scenario === DEFAULT_SCENARIO) seedFixture(projectRoot);
     stage = 'explicit_plan';
@@ -327,6 +351,7 @@ async function runDeepSeekPackagedPlanCanary(rawInput, options = {}) {
       : new DeepSeekPackagedPlanCanaryError('deepseek_plan_canary_failed', Object.freeze({
         stage,
         cause_code: typeof error?.code === 'string' ? error.code.slice(0, 96) : null,
+        cause_diagnostic: error?.diagnostic ?? null,
         cause_message: error instanceof Error ? error.message.slice(0, 500) : null,
       }));
   }

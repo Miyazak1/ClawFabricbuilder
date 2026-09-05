@@ -15,6 +15,9 @@ const {
 const {
   createBuilderRuntimeReadinessSnapshot,
 } = require('./builder-runtime-readiness-snapshot.cjs');
+const {
+  BUILDER_DEPENDENCY_ENVIRONMENT_STORE_VERSION,
+} = require('./builder-dependency-environment-store.cjs');
 
 const BUILDER_CHECK_WORKSPACE_MATERIALIZER_VERSION =
   'builder-check-workspace-materializer.v1';
@@ -22,6 +25,10 @@ const BUILDER_CHECK_WORKSPACE_ADMISSION_VERSION =
   'builder-check-workspace-admission.v1';
 const ADMISSION_KIND = 'builder_check_workspace_admission';
 const CREATE_KEYS = Object.freeze(['checks_root']);
+const CREATE_WITH_DEPENDENCY_ENVIRONMENT_KEYS = Object.freeze([
+  'checks_root',
+  'dependency_environment_store',
+]);
 const MATERIALIZE_KEYS = Object.freeze([
   'check_run_admission',
   'source_tree',
@@ -204,6 +211,31 @@ function checkedDependencyArtifactLink(targetPath, workspacePath) {
   }
   if (!isContained(workspacePath, realPath)) fail();
   return realPath;
+}
+
+function optionalDependencyEnvironmentStore(value) {
+  if (value === undefined) return null;
+  if (!isPlainObject(value)) fail();
+  const version = Object.getOwnPropertyDescriptor(value, 'store_version');
+  const restore = Object.getOwnPropertyDescriptor(value, 'restore_for_candidate');
+  const capture = Object.getOwnPropertyDescriptor(value, 'capture_from_candidate');
+  if (
+    !version
+    || !Object.hasOwn(version, 'value')
+    || version.value !== BUILDER_DEPENDENCY_ENVIRONMENT_STORE_VERSION
+    || !restore
+    || !Object.hasOwn(restore, 'value')
+    || typeof restore.value !== 'function'
+    || utilTypes.isProxy(restore.value)
+    || !capture
+    || !Object.hasOwn(capture, 'value')
+    || typeof capture.value !== 'function'
+    || utilTypes.isProxy(capture.value)
+  ) fail();
+  return Object.freeze({
+    restore_for_candidate: restore.value.bind(value),
+    capture_from_candidate: capture.value.bind(value),
+  });
 }
 
 function protectedPath(sourcePath) {
@@ -509,9 +541,17 @@ function assertTrustedAdmission(admission) {
 
 function createBuilderCheckWorkspaceMaterializer(rawInput) {
   try {
-    const descriptors = exactObject(rawInput, CREATE_KEYS);
+    const descriptors = exactObject(
+      rawInput,
+      isPlainObject(rawInput) && Object.hasOwn(rawInput, 'dependency_environment_store')
+        ? CREATE_WITH_DEPENDENCY_ENVIRONMENT_KEYS
+        : CREATE_KEYS,
+    );
     const checksRoot = safeAbsolutePath(descriptors.checks_root.value);
     const checksRootRealPath = checkedRealDirectory(checksRoot, null, true);
+    const dependencyEnvironmentStore = optionalDependencyEnvironmentStore(
+      descriptors.dependency_environment_store?.value,
+    );
 
     return freezeDeep({
       materializer_version: BUILDER_CHECK_WORKSPACE_MATERIALIZER_VERSION,
@@ -540,6 +580,13 @@ function createBuilderCheckWorkspaceMaterializer(rawInput) {
           }
           checkedRealDirectory(workspacePath, checksRootRealPath);
           for (const file of sourceTree.files) writeExclusiveFile(workspacePath, file);
+          if (dependencyEnvironmentStore !== null) {
+            dependencyEnvironmentStore.restore_for_candidate({
+              check_run_admission: checkRunAdmission,
+              source_tree: sourceTree,
+              workspace_path: workspacePath,
+            });
+          }
           scanWorkspace(workspacePath, sourceTree);
 
           const admission = freezeDeep({
@@ -559,6 +606,7 @@ function createBuilderCheckWorkspaceMaterializer(rawInput) {
             checksRootRealPath,
             workspacePath,
             sourceTree,
+            checkRunAdmission,
             cleaned: false,
           });
           return admission;
@@ -613,6 +661,37 @@ function createBuilderCheckWorkspaceMaterializer(rawInput) {
             toolchain_probe: input.toolchain_probe.value,
             install_permission: input.install_permission.value,
             updated_at_ms: input.updated_at_ms.value,
+          });
+        } catch (error) {
+          if (error instanceof BuilderCheckWorkspaceMaterializerError) throw error;
+          fail();
+        }
+      },
+      record_prepared_dependencies(rawAdmission) {
+        try {
+          const state = assertTrustedAdmission(rawAdmission);
+          if (state.cleaned || dependencyEnvironmentStore === null) {
+            return freezeDeep({
+              receipt_version: 'builder-dependency-environment-store-receipt.v1',
+              status: dependencyEnvironmentStore === null ? 'unavailable' : 'cleaned',
+              dependency_environment_key: null,
+              restored_artifact_count: 0,
+              authority: {
+                store_authority: 'main_owned_prepared_dependency_environment_v1',
+                renderer_authority: 'not_present',
+                provider_dispatch: false,
+                project_workspace_write: false,
+                check_workspace_write: true,
+                path_disclosure: 'not_serialized',
+              },
+            });
+          }
+          checkedRealDirectory(state.checksRootRealPath);
+          scanWorkspace(state.workspacePath, state.sourceTree);
+          return dependencyEnvironmentStore.capture_from_candidate({
+            check_run_admission: state.checkRunAdmission,
+            source_tree: state.sourceTree,
+            workspace_path: state.workspacePath,
           });
         } catch (error) {
           if (error instanceof BuilderCheckWorkspaceMaterializerError) throw error;

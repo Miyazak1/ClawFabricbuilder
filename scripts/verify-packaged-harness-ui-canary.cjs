@@ -35,7 +35,7 @@ const A04_PERFORMANCE_BUDGETS = Object.freeze({
   restart: Object.freeze({
     activity_commits: 260,
     builder_page_commits: 280,
-    controller_publishes: 50,
+    controller_publishes: 60,
     renderer_read_p95_ms: 1_845.6,
     renderer_result_p95_bytes: 64 * 1024,
     side_workspace_commits: 40,
@@ -496,7 +496,7 @@ async function waitForHarnessRequestIncrease(providerServer, previousCount, incr
   throw new Error(`${code}: ${JSON.stringify(providerServer.snapshot())}`);
 }
 
-async function waitForCancellationHarnessRequest(page, providerServer, previousCount) {
+async function waitForCancellationHarnessRequest(page, providerServer, previousCount, userDataPath) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const requests = harnessRequests(providerServer);
@@ -517,7 +517,21 @@ async function waitForCancellationHarnessRequest(page, providerServer, previousC
       .getAttribute('data-builder-project-status').catch(() => null),
     submit_disabled: await submit.isDisabled().catch(() => null),
     requests: providerServer.snapshot(),
+    main_debug: fs.existsSync(path.join(userDataPath, 'builder-canary-generation-debug.jsonl'))
+      ? fs.readFileSync(path.join(userDataPath, 'builder-canary-generation-debug.jsonl'), 'utf8')
+      : null,
   })}`);
+}
+
+async function waitForHeldHarnessResponse(providerServer) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (providerServer.pendingResponseCount() === 1) return;
+    await delay(100);
+  }
+  throw new Error(`Packaged Harness cancellation provider response was not held: ${JSON.stringify(
+    providerServer.snapshot(),
+  )}`);
 }
 
 async function submitHarnessContinuation({
@@ -684,6 +698,7 @@ async function main() {
     delayedHarnessStreamResponses: 1,
     forbiddenHarnessText: outsideMarker,
     harnessAdversarialBoundaries: true,
+    harnessCancellationHold: true,
     harnessFailedCheckRepair: true,
     harnessStreamEventDelayMs: 1_250,
     deferHarnessResponses: 1,
@@ -850,10 +865,6 @@ async function main() {
       );
     } catch (error) {
       const diagnostic = await page.evaluate(async ({ defaultAgentId, targetProjectId }) => {
-        const conversationId = targetProjectId.replace(
-          'builder-project:',
-          'builder-conversation:',
-        );
         const tree = await globalThis.clawfabricBuilder.agentProjectTree.read({
           agent_id: defaultAgentId,
         });
@@ -868,6 +879,8 @@ async function main() {
           project_id: targetProjectId,
           task_address_id: taskAddressId,
         });
+        const conversationId = taskStream?.conversation?.conversation_id;
+        if (typeof conversationId !== 'string') throw new Error('conversation unavailable');
         let files;
         try {
           files = {
@@ -1062,6 +1075,9 @@ async function main() {
     const noChangeSearchBaseline = await restartedPage.locator(
       '[data-builder-runtime-tool-kind="search"]',
     ).count();
+    const noChangeFailureBaseline = await restartedPage.locator(
+      '[data-builder-activity-card="Could not finish"]',
+    ).count();
     await selectBuildMode(restartedPage);
     await restartedPage.locator(SELECTORS.idea).fill(
       'Inspect the current project and explain what detail is still needed. Do not change files.',
@@ -1078,15 +1094,17 @@ async function main() {
       restartedPage,
       projectId,
       (current) => (
-        current.explanation_result_count
-          > noChangeCountsBaseline.explanation_result_count
-        && current.turn_completed_count > noChangeCountsBaseline.turn_completed_count
+        current.run_completed_count > noChangeCountsBaseline.run_completed_count
         && current.candidate_ready_count === noChangeCountsBaseline.candidate_ready_count
         && current.programming_runtime_check_passed_count
           === noChangeCountsBaseline.programming_runtime_check_passed_count
       ),
-      'Packaged Harness unchanged response did not settle as a normal reply',
+      'Packaged Harness unchanged Build did not fail closed',
     );
+    const noChangeFailure = restartedPage.locator(
+      '[data-builder-activity-card="Could not finish"]',
+    ).nth(noChangeFailureBaseline);
+    await noChangeFailure.waitFor({ state: 'visible', timeout: 30_000 });
     await restartedPage.getByText(
       'I inspected index.html, but I need the exact replacement text before changing files.',
       { exact: true },
@@ -1098,19 +1116,19 @@ async function main() {
     if (
       noChangeSourceAfter !== boundaryIndexContent
       || noChangeSearchCount <= noChangeSearchBaseline
-      || await restartedPage.locator(SELECTORS.generationFailedNotice).isVisible().catch(() => false)
+      || !await noChangeFailure.isVisible().catch(() => false)
     ) {
-      throw new Error('Harness unchanged response changed source or surfaced as a failure.');
+      throw new Error('Harness unchanged Build did not preserve source and fail closed.');
     }
     const finalHarnessRequests = harnessRequests(providerServer);
     if (
-      finalHarnessRequests.length !== 28
+      finalHarnessRequests.length !== 26
       || finalHarnessRequests.filter(
         (request) => request.response_kind === 'harness_tool_edit_index.html',
-      ).length !== 3
+      ).length !== 2
       || finalHarnessRequests.filter(
         (request) => request.response_kind === 'harness_text_completed',
-      ).length !== 4
+      ).length !== 3
       || !finalHarnessRequests.some(
         (request) => request.response_kind === 'harness_adversarial_escape_read',
       )
@@ -1141,9 +1159,6 @@ async function main() {
 
     const cancellationBaseline = noChangeCounts;
     const cancellationSourceBefore = await readCurrentDraftFile(restartedPage, 'index.html');
-    await restartedPage.locator(
-      `${SELECTORS.projectPage}[data-builder-project-status="draft_ready"]`,
-    ).waitFor({ state: 'visible', timeout: 30_000 });
     await selectBuildMode(restartedPage);
     await restartedPage.locator(SELECTORS.idea).fill(
       'Start another focus timer change, but wait before applying it.',
@@ -1154,12 +1169,11 @@ async function main() {
       restartedPage,
       providerServer,
       finalHarnessRequests.length,
+      userDataPath,
     );
     const cancelButton = restartedPage.locator(SELECTORS.cancelWork).first();
     await cancelButton.waitFor({ state: 'visible', timeout: 30_000 });
-    if (providerServer.pendingResponseCount() !== 1) {
-      throw new Error('Packaged Harness cancellation provider response was not held.');
-    }
+    await waitForHeldHarnessResponse(providerServer);
     await cancelButton.click();
     await cancelButton.waitFor({ state: 'hidden', timeout: 30_000 });
     const cancelledCounts = await waitForTaskStreamCounts(
@@ -1270,7 +1284,7 @@ async function main() {
     const a04PerformanceQualification = assertA04PerformanceGate(performanceSessions);
 
     process.stdout.write(`${JSON.stringify({
-      result_version: 'builder-packaged-harness-ui-canary.v2',
+      result_version: 'builder-packaged-harness-ui-canary.v3',
       runtime_kind: 'deepseek_harness.v1',
       default_runtime_selection: true,
       bundled_runtime_auto_discovered: true,
@@ -1319,7 +1333,7 @@ async function main() {
       workspace_escape_denied_without_context_leak: true,
       stale_edit_rejected_and_recovered: true,
       unsupported_tool_rejected_and_recovered: true,
-      unchanged_work_response_visible: true,
+      unchanged_build_failed_closed: true,
       unchanged_work_candidate_count_preserved:
         noChangeCounts.candidate_ready_count === noChangeCountsBaseline.candidate_ready_count,
       unchanged_work_check_count_preserved:

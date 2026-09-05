@@ -17,6 +17,9 @@ const {
   sanitizeBuilderProviderContextDisclosureStatusProjection,
 } = require('./builder-provider-context-disclosure-status-projection.cjs');
 const {
+  projectBuilderContextUsage,
+} = require('./builder-context-usage-projection.cjs');
+const {
   sanitizeBuilderDraftCheckpointStatusProjection,
 } = require('./builder-draft-checkpoint-status-projection.cjs');
 const {
@@ -241,6 +244,13 @@ function currentMaterializationProjection(value) {
     };
   }
   if (status === 'not_attempted') {
+    if (valueAt(value, 'reason') === 'automatic_check_not_passed') {
+      return {
+        status,
+        label: 'Project folder not updated',
+        detail: 'The draft is recoverable, but Builder did not write it to the project folder because the automatic check did not pass.',
+      };
+    }
     return {
       status,
       label: 'Workspace sync not enabled',
@@ -753,6 +763,29 @@ function itemFromEvent(
         },
       };
     }
+    case 'context_compaction_recorded':
+      return {
+        item_kind: 'context_compaction_recorded',
+        sequence: event.sequence,
+        turn_id: payload.turn_id,
+        run_id: payload.run_id,
+        task_id: payload.task_id,
+        task_address_id: payload.task_address_id,
+        admission_id: payload.admission_id,
+        operation: payload.operation,
+        status: payload.status,
+        compaction_id: payload.compaction_id,
+        start_seq: payload.start_seq,
+        summary_seq: payload.summary_seq,
+        end_seq: payload.end_seq,
+        shadowed_token_count: payload.shadowed_token_count,
+        recorded_at_ms: payload.recorded_at_ms,
+        lifecycle: {
+          conversation_admission: 'main_recorded_after_verified_manual_compaction',
+          renderer_authority: 'not_present',
+          revision_admission: 'not_created',
+        },
+      };
     case 'run_completed':
       return {
         item_kind: 'run_completed',
@@ -974,6 +1007,7 @@ function withOptionalStatusProjections(
   result,
   contextStatusProjection,
   providerContextDisclosureStatusProjection,
+  contextUsageProjection,
   draftCheckpointStatusProjection,
   draftCheckpointTimelineProjection,
   reviewStateProjection,
@@ -991,6 +1025,9 @@ function withOptionalStatusProjections(
         provider_context_disclosure_status_projection:
           providerContextDisclosureStatusProjection,
       }),
+    ...(contextUsageProjection === undefined
+      ? {}
+      : { context_usage_projection: contextUsageProjection }),
     ...(draftCheckpointStatusProjection === undefined
       ? {}
       : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
@@ -1147,7 +1184,7 @@ function projectBuilderTaskStreamInternal(rawInput, authorityState) {
         project_id: projectId,
         conversation: null,
         authority: authority(),
-      }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
+      }, contextStatusProjection, providerContextDisclosureStatusProjection, undefined, draftCheckpointStatusProjection,
       draftCheckpointTimelineProjection, reviewStateProjection, checkRunOutcomeProjection, undefined));
     }
 
@@ -1250,6 +1287,11 @@ function projectBuilderTaskStreamInternal(rawInput, authorityState) {
       review_state_projection: reviewStateProjection ?? null,
       candidate_activity: candidateActivity ?? null,
     });
+    const contextUsageProjection = projectBuilderContextUsage({
+      project_id: projectId,
+      conversation_id: conversationId,
+      events,
+    });
     return boundResult(withOptionalStatusProjections({
       stream_version: BUILDER_TASK_STREAM_VERSION,
       project_id: projectId,
@@ -1266,7 +1308,8 @@ function projectBuilderTaskStreamInternal(rawInput, authorityState) {
         items: visibleItems,
       },
       authority: authority(),
-    }, contextStatusProjection, providerContextDisclosureStatusProjection, draftCheckpointStatusProjection,
+    }, contextStatusProjection, providerContextDisclosureStatusProjection, contextUsageProjection,
+    draftCheckpointStatusProjection,
     draftCheckpointTimelineProjection, reviewStateProjection, checkRunOutcomeProjection,
     agentActivityProjection));
   } catch (error) {

@@ -265,6 +265,26 @@ test('hydrates one addressed task without replaying its project siblings', () =>
   );
 });
 
+test('invalidates only the changed task or conversation within a shared project', () => {
+  const first = task(20);
+  const second = task(21);
+  const reads = [];
+  const projection = createBuilderWorkbenchTaskMonitorProjection({
+    address_store: { list_task_addresses_for_agent: () => ({ status: 'ready', task_addresses: [first, second] }) },
+    read_task_stream(request) { reads.push(request.conversation_id); return null; },
+  });
+  projection.read_monitor({ agent_id: AGENT_ID });
+  projection.invalidate_monitor({ agent_id: AGENT_ID, project_id: PROJECT_ID, conversation_id: first.task_address.conversation_id });
+  projection.read_monitor({ agent_id: AGENT_ID });
+  assert.deepEqual(reads, [first.task_address.conversation_id, second.task_address.conversation_id, first.task_address.conversation_id]);
+  projection.invalidate_monitor({ agent_id: AGENT_ID, project_id: PROJECT_ID, task_address_id: second.task_address.task_address_id });
+  projection.read_monitor({ agent_id: AGENT_ID });
+  assert.equal(reads.length, 4);
+  assert.equal(reads.at(-1), second.task_address.conversation_id);
+  assert.throws(() => projection.invalidate_monitor({ agent_id: AGENT_ID, project_id: PROJECT_ID,
+    conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174999' }), BuilderWorkbenchTaskMonitorProjectionError);
+});
+
 test('projects an orphaned durable run as interrupted after runtime restart', () => {
   const record = task(8, 'Restarted task');
   const streams = new Map([[
@@ -276,7 +296,7 @@ test('projects an orphaned durable run as interrupted after runtime restart', ()
 
   assert.equal(result.tasks[0].group, 'attention');
   assert.equal(result.tasks[0].state, 'interrupted');
-  assert.equal(result.tasks[0].status_label, 'Continue task');
+  assert.equal(result.tasks[0].status_label, 'Paused');
   assert.deepEqual(result.tasks[0].operations, ['open_task']);
   assert.deepEqual(result.counts, { active: 0, attention: 1, recent: 0 });
 });

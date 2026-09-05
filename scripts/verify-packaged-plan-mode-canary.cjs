@@ -10,17 +10,17 @@ const {
   CANARY_INPUT_VERSION,
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
-  approveCurrentProjectWriteIfRequested,
   captureGuardedUserDataRoot,
   createArtifactGate,
   createCanaryProjectRoot,
   fillProviderSettingsViaUi,
+  requireBuildWorkspaceBeforeDraftViaUi,
   sanitizeLaunchEnvironment,
 } = require('./verify-packaged-canary.cjs');
 const { createLocalCanaryProviderServer } = require('./verify-packaged-canary-default.cjs');
 
 const DEFAULT_EXECUTABLE = path.join(__dirname, '..', 'release', 'win-unpacked', 'ClawFabric Builder.exe');
-const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v4';
+const RESULT_VERSION = 'builder-packaged-plan-mode-canary-result.v5';
 const AUTO_QUESTION_INSTRUCTION = '这个项目是什么';
 const AUTO_BUILD_ARTIFACT_INSTRUCTION = '做一个计划管理页面';
 const ASK_MODE_INSTRUCTION = 'Make a timer.';
@@ -29,6 +29,7 @@ const CONTINUE_DRAFT_INSTRUCTION = '继续优化标题和说明，不要保存�
 const SEMANTIC_PLAN_INSTRUCTION = '帮我做一个静态技术博客实施计划';
 const PLAN_MODE_INSTRUCTION = '我打算做一个技术博客，静态的，帮我做成计划';
 const PROJECT_USAGE_QUESTION = '这个项目应该怎么运行和使用？';
+const WORKSPACE_BOOTSTRAP_INSTRUCTION = 'Create a minimal starter page in this new project.';
 
 function fail(code, diagnostic = undefined) {
   const error = new Error(code);
@@ -69,22 +70,30 @@ async function waitForSubmitEnabled(page, stage) {
   }
 }
 
-async function bindNewProjectWorkspace(page) {
-  try {
-    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'visible', timeout: 1_000 });
-  } catch {
-    await page.locator(SELECTORS.workspaceChip).click();
-    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'visible', timeout: 10_000 });
+async function bootstrapInjectedProjectWorkspace(page, providerServer, userDataPath) {
+  const workspaceGate = await requireBuildWorkspaceBeforeDraftViaUi(
+    page,
+    WORKSPACE_BOOTSTRAP_INSTRUCTION,
+  );
+  const draftReady = page.locator(SELECTORS.composerVersionDecision).
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'draft_ready', () => 'draft_timeout');
+  const alertReady = page.getByRole('alert').waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'alert_ready', () => 'alert_timeout');
+  const outcome = await Promise.race([draftReady, alertReady]);
+  if (outcome !== 'draft_ready') {
+    fail('plan_mode_workspace_bootstrap_failed', await capturePlanModeDiagnostic(
+      page,
+      providerServer,
+      userDataPath,
+    ));
   }
-  const newProjectPanelAlreadyVisible = await optionalVisible(page, SELECTORS.newProjectPanel);
-  if (!newProjectPanelAlreadyVisible) {
-    await page.locator(SELECTORS.workspaceNewProject).click();
-    await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible', timeout: 10_000 });
-  }
-  await page.locator(SELECTORS.addSourceFolder).click();
-  await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden', timeout: 15_000 });
+  await page.locator(SELECTORS.discardDraft).click();
+  await page.locator(SELECTORS.composerVersionDecision).
+    waitFor({ state: 'hidden', timeout: 30_000 });
   await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`).
-    waitFor({ state: 'visible', timeout: 15_000 });
+    waitFor({ state: 'visible', timeout: 30_000 });
+  return workspaceGate;
 }
 
 async function approvePlanSourceReadIfRequested(page) {
@@ -189,7 +198,34 @@ async function waitForProviderRequestCount(providerServer, responseKind, previou
   });
 }
 
-async function verifyAutoDeterministicRoutesSkipClassifier(page, providerServer) {
+async function waitForGeneratedDraftAndDiscard(page, providerServer, userDataPath, code) {
+  const draftReady = page.locator(SELECTORS.composerVersionDecision).
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'draft_ready', () => 'draft_timeout');
+  const approvalReady = page.locator(SELECTORS.currentProjectWriteApproval).
+    waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'approval_ready', () => 'approval_timeout');
+  const alertReady = page.getByRole('alert').waitFor({ state: 'visible', timeout: 120_000 }).
+    then(() => 'alert_ready', () => 'alert_timeout');
+  const outcome = await Promise.race([draftReady, approvalReady, alertReady]);
+  if (outcome !== 'draft_ready') {
+    fail(code, {
+      outcome,
+      ...await capturePlanModeDiagnostic(page, providerServer, userDataPath),
+    });
+  }
+  await page.locator(SELECTORS.discardDraft).click();
+  await page.locator(SELECTORS.composerVersionDecision).
+    waitFor({ state: 'hidden', timeout: 30_000 });
+  await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`).
+    waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+async function verifyAutoDeterministicRoutesSkipClassifier(
+  page,
+  providerServer,
+  userDataPath,
+) {
   const beforeQuestion = providerServer.snapshot();
   const answersBefore = await page.locator(SELECTORS.questionAnswer).count().catch(() => 0);
   await page.locator(SELECTORS.idea).fill(AUTO_QUESTION_INSTRUCTION);
@@ -217,15 +253,18 @@ async function verifyAutoDeterministicRoutesSkipClassifier(page, providerServer)
   await page.locator(SELECTORS.idea).fill(AUTO_BUILD_ARTIFACT_INSTRUCTION);
   await waitForSubmitEnabled(page, 'auto_build_artifact_before_submit');
   await page.locator(SELECTORS.submitTurn).click();
-  await page.locator(SELECTORS.currentProjectWriteApproval).
-    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.waitForFunction((selector) => {
+    const composer = document.querySelector(selector);
+    return composer?.getAttribute('data-builder-route') === 'build'
+      && composer?.getAttribute('data-builder-route-dispatch') === 'build';
+  }, SELECTORS.composer, { timeout: 30_000 });
   composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
   composerDispatch = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-dispatch');
   composerSignals = await page.locator(SELECTORS.composer).getAttribute('data-builder-route-signals');
   after = providerServer.snapshot();
   if (
     composerRoute !== 'build'
-    || composerDispatch !== 'ask_permission'
+    || composerDispatch !== 'build'
     || composerSignals !== 'clear_build'
   ) {
     fail('auto_build_artifact_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
@@ -234,10 +273,14 @@ async function verifyAutoDeterministicRoutesSkipClassifier(page, providerServer)
     !== countProviderRequests(beforeBuild, 'builder_semantic_route_classification')) {
     fail('auto_build_artifact_spent_semantic_classifier', { provider_requests: after });
   }
-  await page.locator(SELECTORS.dismissCurrentProjectWriteApproval).click();
-  await page.locator(SELECTORS.currentProjectWriteApproval).
-    waitFor({ state: 'hidden', timeout: 30_000 });
+  await waitForGeneratedDraftAndDiscard(
+    page,
+    providerServer,
+    userDataPath,
+    'auto_build_artifact_did_not_finish',
+  );
   return Object.freeze({
+    auto_build_artifact_executed_with_existing_write_grant: true,
     auto_build_artifact_skipped_classifier: true,
     auto_question_skipped_classifier: true,
   });
@@ -279,14 +322,17 @@ async function verifyAskModePersistentAndClear(page, providerServer) {
   });
 }
 
-async function verifyBuildModePersistentAndClear(page, providerServer) {
+async function verifyBuildModePersistentAndClear(page, providerServer, userDataPath) {
   const before = providerServer.snapshot();
   await selectComposerMode(page, 'build');
   await page.locator(SELECTORS.idea).fill(BUILD_MODE_INSTRUCTION);
   await waitForSubmitEnabled(page, 'build_mode_before_submit');
   await page.locator(SELECTORS.submitTurn).click();
-  await page.locator(SELECTORS.currentProjectWriteApproval).
-    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.waitForFunction((selector) => {
+    const composer = document.querySelector(selector);
+    return composer?.getAttribute('data-builder-route') === 'build'
+      && composer?.getAttribute('data-builder-route-dispatch') === 'build';
+  }, SELECTORS.composer, { timeout: 30_000 });
   const composerRoute = await page.locator(SELECTORS.composer).getAttribute('data-builder-route');
   const composerDispatch = await page.locator(SELECTORS.composer).
     getAttribute('data-builder-route-dispatch');
@@ -295,7 +341,7 @@ async function verifyBuildModePersistentAndClear(page, providerServer) {
   const after = providerServer.snapshot();
   if (
     composerRoute !== 'build'
-    || composerDispatch !== 'ask_permission'
+    || composerDispatch !== 'build'
     || composerSignals !== 'composer_mode_build'
   ) {
     fail('build_mode_route_mismatch', { composer_dispatch: composerDispatch, composer_route: composerRoute, composer_signals: composerSignals });
@@ -304,15 +350,18 @@ async function verifyBuildModePersistentAndClear(page, providerServer) {
     !== countProviderRequests(before, 'builder_semantic_route_classification')) {
     fail('build_mode_spent_semantic_classifier', { provider_requests: after });
   }
+  await waitForGeneratedDraftAndDiscard(
+    page,
+    providerServer,
+    userDataPath,
+    'build_mode_did_not_finish',
+  );
   await page.locator('[data-builder-composer-mode-chip="build"]').
     waitFor({ state: 'visible', timeout: 10_000 });
-  await page.locator(SELECTORS.dismissCurrentProjectWriteApproval).click();
-  await page.locator(SELECTORS.currentProjectWriteApproval).
-    waitFor({ state: 'hidden', timeout: 30_000 });
   await clearComposerMode(page, 'build');
   return Object.freeze({
+    build_mode_executed_with_existing_write_grant: true,
     build_mode_persisted_until_cleared: true,
-    build_mode_requested_write_approval: true,
     build_mode_skipped_classifier: true,
   });
 }
@@ -320,15 +369,17 @@ async function verifyBuildModePersistentAndClear(page, providerServer) {
 async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
   await clickByRole(page, 'button', 'Approve plan');
   await page.locator(SELECTORS.planApproved).waitFor({ state: 'visible', timeout: 30_000 });
-  const approvedCurrentProjectWrite = await approveCurrentProjectWriteIfRequested(page);
   const draftReady = page.locator(SELECTORS.unsavedDraft)
     .getByText('Unsaved draft', { exact: true })
     .waitFor({ state: 'visible', timeout: 120_000 })
     .then(() => 'draft_ready', () => 'draft_timeout');
+  const approvalReady = page.locator(SELECTORS.currentProjectWriteApproval)
+    .waitFor({ state: 'visible', timeout: 120_000 })
+    .then(() => 'approval_ready', () => 'approval_timeout');
   const alertReady = page.getByRole('alert')
     .waitFor({ state: 'visible', timeout: 120_000 })
     .then(() => 'alert_ready', () => 'alert_timeout');
-  const draftOutcome = await Promise.race([draftReady, alertReady]);
+  const draftOutcome = await Promise.race([draftReady, approvalReady, alertReady]);
   if (draftOutcome !== 'draft_ready') {
     fail('plan_mode_approved_plan_not_executed', await capturePlanModeDiagnostic(
       page,
@@ -336,10 +387,12 @@ async function approvePlanAndWaitForDraft(page, providerServer, userDataPath) {
       userDataPath,
     ));
   }
-  await page.locator(SELECTORS.undoDraft).waitFor({ state: 'visible', timeout: 30_000 });
-  await page.locator(SELECTORS.reviewMore).waitFor({ state: 'visible', timeout: 30_000 });
-  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden', timeout: 30_000 });
-  return approvedCurrentProjectWrite;
+  await page.locator(SELECTORS.undoDraft).last().
+    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.workspaceMenuButton).
+    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
+  return true;
 }
 
 async function verifyCodingClosureAndUsageAnswer(page) {
@@ -423,9 +476,11 @@ async function verifyContinueUnsavedDraftWithoutSave(page, providerServer, userD
       userDataPath,
     ));
   }
-  await page.locator(SELECTORS.undoDraft).waitFor({ state: 'visible', timeout: 30_000 });
-  await page.locator(SELECTORS.reviewMore).waitFor({ state: 'visible', timeout: 30_000 });
-  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'hidden', timeout: 30_000 });
+  await page.locator(SELECTORS.undoDraft).last().
+    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.workspaceMenuButton).
+    waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(SELECTORS.saveVersion).waitFor({ state: 'visible', timeout: 30_000 });
   return Object.freeze({
     continuation_provider_request_observed: true,
     formal_version_save_is_secondary: true,
@@ -523,16 +578,27 @@ async function run() {
       temperature: 0.2,
       timeout_ms: 30000,
     }), gate);
-    await page.locator(SELECTORS.catalogNewProject).click();
-    await bindNewProjectWorkspace(page);
-    const autoRoutes = await verifyAutoDeterministicRoutesSkipClassifier(page, providerServer);
+    const workspaceBootstrap = await bootstrapInjectedProjectWorkspace(
+      page,
+      providerServer,
+      userDataPath,
+    );
+    const autoRoutes = await verifyAutoDeterministicRoutesSkipClassifier(
+      page,
+      providerServer,
+      userDataPath,
+    );
     const askMode = await verifyAskModePersistentAndClear(page, providerServer);
     const semanticPlan = await verifyNaturalLanguagePlanAndReject(
       page,
       providerServer,
       userDataPath,
     );
-    const buildMode = await verifyBuildModePersistentAndClear(page, providerServer);
+    const buildMode = await verifyBuildModePersistentAndClear(
+      page,
+      providerServer,
+      userDataPath,
+    );
     await page.locator(SELECTORS.idea).fill(PLAN_MODE_INSTRUCTION);
     await waitForSubmitEnabled(page, 'manual_plan_before_mode_select');
     await selectComposerMode(page, 'plan');
@@ -558,7 +624,7 @@ async function run() {
     if (!providerRequests.some((request) => request.response_kind === 'builder_project_plan_proposal')) {
       fail('plan_provider_request_missing', { provider_requests: providerRequests });
     }
-    const approvedCurrentProjectWrite = await approvePlanAndWaitForDraft(
+    const reusedCurrentProjectWriteGrant = await approvePlanAndWaitForDraft(
       page,
       providerServer,
       userDataPath,
@@ -583,13 +649,16 @@ async function run() {
       executable_path: executablePath,
       instruction_digest: `sha256:${require('node:crypto').
         createHash('sha256').update(PLAN_MODE_INSTRUCTION).digest('hex')}`,
+      auto_build_artifact_executed_with_existing_write_grant:
+        autoRoutes.auto_build_artifact_executed_with_existing_write_grant,
       auto_build_artifact_skipped_classifier: autoRoutes.auto_build_artifact_skipped_classifier,
       auto_question_skipped_classifier: autoRoutes.auto_question_skipped_classifier,
       ask_mode_answer_observed: askMode.ask_answer_observed,
       ask_mode_persisted_until_cleared: askMode.ask_mode_persisted_until_cleared,
       ask_mode_skipped_classifier: askMode.ask_mode_skipped_classifier,
+      build_mode_executed_with_existing_write_grant:
+        buildMode.build_mode_executed_with_existing_write_grant,
       build_mode_persisted_until_cleared: buildMode.build_mode_persisted_until_cleared,
-      build_mode_requested_write_approval: buildMode.build_mode_requested_write_approval,
       build_mode_skipped_classifier: buildMode.build_mode_skipped_classifier,
       plan_mode_enabled: true,
       plan_mode_chip_visible: true,
@@ -601,7 +670,7 @@ async function run() {
       plan_source_read_approved: approvedSourceRead,
       plan_review_actions_visible: true,
       plan_approved: true,
-      current_project_write_approved: approvedCurrentProjectWrite,
+      current_project_write_grant_reused: reusedCurrentProjectWriteGrant,
       approved_plan_context_reached_harness: true,
       approved_plan_executed: true,
       composer_reenabled_after_completion: codingClosure.composer_reenabled_after_completion,
@@ -614,13 +683,15 @@ async function run() {
       undo_draft_directly_visible: continuation.undo_draft_directly_visible,
       unsaved_draft_continued_without_save: continuation.unsaved_draft_continued_without_save,
       unsaved_draft_visible: true,
-      save_version_directly_visible: false,
+      save_version_directly_visible: true,
       composer_route: composerRoute,
       composer_dispatch: composerDispatch,
       provider_plan_request_observed: true,
       provider_code_change_request_observed: true,
       programming_runtime: 'deepseek_harness.v1',
       project_root_basename: path.basename(projectRootPath),
+      workspace_bootstrap_via_agent_task_proposal:
+        workspaceBootstrap.build_continued_after_task_materialized,
       release_gate_integration: 'included_in_verify_release',
       schema_version: CANARY_INPUT_VERSION,
     });

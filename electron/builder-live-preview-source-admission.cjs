@@ -24,7 +24,7 @@ const CHECKPOINT_ID_PATTERN = /^builder-draft-checkpoint:[0-9a-f]{64}$/u;
 const CANDIDATE_ID_PATTERN = /^builder-code-change-candidate:[0-9a-f]{64}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40,64}$/u;
-const PREVIEW_KINDS = Object.freeze(['live_static_web']);
+const PREVIEW_KINDS = Object.freeze(['live_static_web', 'live_dev_server_web']);
 
 const INPUT_KEYS = Object.freeze([
   'source_resolver_result',
@@ -171,7 +171,7 @@ const AUTHORITY = Object.freeze({
   node_integration: 'not_present',
   preload: 'not_present',
 });
-const LIFECYCLE = Object.freeze({
+const STATIC_LIFECYCLE = Object.freeze({
   source_resolver_admission: 'verified_ready_snapshot',
   entry_admission: 'html_entry_verified_in_snapshot',
   preview_server: 'not_started',
@@ -182,6 +182,10 @@ const LIFECYCLE = Object.freeze({
   tool_dispatch: 'not_started',
   revision_admission: 'not_created',
   save_admission: 'not_performed',
+});
+const DEV_SERVER_LIFECYCLE = Object.freeze({
+  ...STATIC_LIFECYCLE,
+  entry_admission: 'package_manifest_verified_in_snapshot',
 });
 const ERROR_MESSAGE = 'Builder live preview source admission could not be verified.';
 
@@ -305,7 +309,7 @@ function safeExpiresAt(value, admittedAt) {
   return expiresAt;
 }
 
-function safeEntryPath(value) {
+function safeEntryPath(value, previewKind) {
   if (
     typeof value !== 'string'
     || value.length < 1
@@ -315,10 +319,11 @@ function safeEntryPath(value) {
     || value.endsWith('/')
     || value.includes('\\')
     || value.includes('..')
-    || !/\.html?$/iu.test(value)
     || /[<>:"|?*]/u.test(value)
     || hasUnsafeTextControlCharacter(value)
   ) fail();
+  if (previewKind === 'live_static_web' && !/\.html?$/iu.test(value)) fail();
+  if (previewKind === 'live_dev_server_web' && value !== 'package.json') fail();
   return value;
 }
 
@@ -507,16 +512,18 @@ function createBuilderLivePreviewSourceAdmission(rawInput) {
   try {
     exactObject(rawInput, INPUT_KEYS);
     const snapshot = sanitizeReadyResolverResult(valueAt(rawInput, 'source_resolver_result'));
-    const selectedEntryPath = safeEntryPath(valueAt(rawInput, 'selected_entry_path'));
+    const previewKind = safeEnum(valueAt(rawInput, 'preview_kind'), PREVIEW_KINDS);
+    const selectedEntryPath = safeEntryPath(valueAt(rawInput, 'selected_entry_path'), previewKind);
     const selectedEntry = findEntry(snapshot.source_tree, selectedEntryPath);
     const admittedAtMs = safeTimestamp(valueAt(rawInput, 'admitted_at_ms'));
+    const lifecycle = previewKind === 'live_dev_server_web' ? DEV_SERVER_LIFECYCLE : STATIC_LIFECYCLE;
     const admission = {
       admission_version: BUILDER_LIVE_PREVIEW_SOURCE_ADMISSION_VERSION,
       admission_id: null,
       project_id: snapshot.project_id,
       conversation_id: snapshot.conversation_id,
       source_kind: snapshot.source_kind,
-      preview_kind: safeEnum(valueAt(rawInput, 'preview_kind'), PREVIEW_KINDS),
+      preview_kind: previewKind,
       source_tree_digest: snapshot.source_tree_digest,
       source_ref_digest: snapshot.source_ref_digest,
       source_ref: snapshot.source_ref,
@@ -525,7 +532,7 @@ function createBuilderLivePreviewSourceAdmission(rawInput) {
       source_tree: snapshot.source_tree,
       admitted_at_ms: admittedAtMs,
       expires_at_ms: safeExpiresAt(valueAt(rawInput, 'expires_at_ms'), admittedAtMs),
-      lifecycle: LIFECYCLE,
+      lifecycle,
       authority: AUTHORITY,
     };
     admission.admission_id = idFor('builder-live-preview-source-admission', bodyFor(admission));
@@ -554,7 +561,8 @@ function sanitizeBuilderLivePreviewSourceAdmission(rawAdmission) {
     );
     const sourceRefDigest = safeDigest(valueAt(rawAdmission, 'source_ref_digest'));
     if (sourceRefDigest !== sha256Canonical(sourceRef)) fail();
-    const selectedEntryPath = safeEntryPath(valueAt(rawAdmission, 'selected_entry_path'));
+    const previewKind = safeEnum(valueAt(rawAdmission, 'preview_kind'), PREVIEW_KINDS);
+    const selectedEntryPath = safeEntryPath(valueAt(rawAdmission, 'selected_entry_path'), previewKind);
     const selectedEntry = findEntry(sourceTree, selectedEntryPath);
     const selectedEntryDigest = safeDigest(valueAt(rawAdmission, 'selected_entry_digest'));
     if (selectedEntryDigest !== selectedEntry.content_digest) fail();
@@ -565,7 +573,7 @@ function sanitizeBuilderLivePreviewSourceAdmission(rawAdmission) {
       project_id: projectId,
       conversation_id: conversationId,
       source_kind: sourceKind,
-      preview_kind: safeEnum(valueAt(rawAdmission, 'preview_kind'), PREVIEW_KINDS),
+      preview_kind: previewKind,
       source_tree_digest: sourceTreeDigest,
       source_ref_digest: sourceRefDigest,
       source_ref: sourceRef,
@@ -574,7 +582,11 @@ function sanitizeBuilderLivePreviewSourceAdmission(rawAdmission) {
       source_tree: sourceTree,
       admitted_at_ms: admittedAtMs,
       expires_at_ms: safeExpiresAt(valueAt(rawAdmission, 'expires_at_ms'), admittedAtMs),
-      lifecycle: assertAuthority(valueAt(rawAdmission, 'lifecycle'), LIFECYCLE, LIFECYCLE_KEYS),
+      lifecycle: assertAuthority(
+        valueAt(rawAdmission, 'lifecycle'),
+        previewKind === 'live_dev_server_web' ? DEV_SERVER_LIFECYCLE : STATIC_LIFECYCLE,
+        LIFECYCLE_KEYS,
+      ),
       authority: assertAuthority(valueAt(rawAdmission, 'authority'), AUTHORITY, AUTHORITY_KEYS),
     };
     if (admission.admission_version !== BUILDER_LIVE_PREVIEW_SOURCE_ADMISSION_VERSION) fail();

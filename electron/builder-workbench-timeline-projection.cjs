@@ -6,6 +6,7 @@ const PROJECTION_VERSION = 'builder-agent-workbench-projection.v2';
 const BUILTIN_TYPES = Object.freeze({
   'builder.chat.user_message.v1': Object.freeze({ family: 'conversation', body_kind: 'plain_text' }),
   'builder.chat.agent_message.v1': Object.freeze({ family: 'conversation', body_kind: 'markdown' }),
+  'builder.chat.turn_status.v1': Object.freeze({ family: 'conversation', body_kind: 'plain_text' }),
   'builder.task.proposal.v1': Object.freeze({ family: 'proposal', body_kind: 'markdown' }),
   'builder.task.status.v1': Object.freeze({ family: 'status', body_kind: 'plain_text' }),
   'builder.task.result.v1': Object.freeze({ family: 'result', body_kind: 'markdown' }),
@@ -81,6 +82,29 @@ function bodyText(message, builtin) {
   return message.content.fallback_text;
 }
 
+function orderAgentConversationEntries(entries) {
+  const ordered = [...entries];
+  const threads = new Map();
+  for (const [index, entry] of entries.entries()) {
+    const { message } = entry;
+    const sequence = /^agent-conversation:([1-9][0-9]*)$/u.exec(message.delivery.source_sequence ?? '');
+    if (sequence === null || message.address.thread_id === null
+      || !['owner', 'local_agent'].includes(message.source.source_kind)
+      || !['builder.chat.user_message.v1', 'builder.chat.agent_message.v1', 'builder.chat.turn_status.v1']
+        .includes(message.content.content_type)) continue;
+    const group = threads.get(message.address.thread_id) ?? [];
+    group.push({ index, entry, sequence: Number(sequence[1]) });
+    threads.set(message.address.thread_id, group);
+  }
+  // Backfilled terminal notices arrive later in the store, but belong to their original turn.
+  // Keep non-conversation slots and the store's pagination cursor unchanged.
+  for (const group of threads.values()) {
+    const canonical = [...group].sort((a, b) => a.sequence - b.sequence);
+    group.forEach(({ index }, offset) => { ordered[index] = canonical[offset].entry; });
+  }
+  return ordered;
+}
+
 function createBuilderWorkbenchTimelineProjection({
   message_store: messageStore,
   proposal_store: proposalStore = null,
@@ -101,7 +125,7 @@ function createBuilderWorkbenchTimelineProjection({
         agent_id: request.agent_id,
         cache_only: true,
       }]);
-      const items = timeline.items.map((entry) => {
+      const items = orderAgentConversationEntries(timeline.items).map((entry) => {
         const { message, state } = entry;
         const builtin = BUILTIN_TYPES[message.content.content_type];
         const actions = [];

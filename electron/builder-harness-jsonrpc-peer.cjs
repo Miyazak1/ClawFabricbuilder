@@ -20,10 +20,18 @@ const REQUEST_TIMEOUT_KEYS = Object.freeze([
   'shutdown_ms',
 ]);
 const REQUEST_KEYS = Object.freeze(['method', 'params']);
-const REQUEST_METHODS = Object.freeze(['initialize', 'session/prompt', 'shutdown']);
+const REQUEST_METHODS = Object.freeze([
+  'initialize',
+  'session/prompt',
+  'session/resume',
+  'session/recover-empty-output',
+  'session/compact',
+  'shutdown',
+]);
 const NOTIFICATION_METHODS = Object.freeze([
   'session.event',
   'session.status',
+  'session.context-usage',
   'subagent.started',
   'subagent.finished',
 ]);
@@ -387,6 +395,9 @@ function createBuilderHarnessJsonRpcPeer(rawOptions) {
     const timeoutMs = {
       initialize: requestTimeouts.initialize_ms,
       'session/prompt': requestTimeouts.session_prompt_ms,
+      'session/recover-empty-output': requestTimeouts.session_prompt_ms,
+      'session/compact': requestTimeouts.session_prompt_ms,
+      'session/resume': requestTimeouts.initialize_ms,
       shutdown: requestTimeouts.shutdown_ms,
     }[method];
 

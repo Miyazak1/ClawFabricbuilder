@@ -26,6 +26,30 @@ function render(element: ReactNode): HTMLDivElement {
   return container;
 }
 
+function runtimeLaunchProjection() {
+  return {
+    projection_version: 'builder-project-runtime-launch-projection.v1' as const,
+    project_id: 'builder-project:123e4567-e89b-42d3-a456-426614174000',
+    conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+    preview_kind: 'live_static_web' as const,
+    source_status: 'main_owned_verified' as const,
+    command_profile: 'none' as const,
+    user_approval: 'not_required' as const,
+    command_execution: 'not_applicable' as const,
+    dependency_preparation: 'not_allowed' as const,
+    package_install: 'not_allowed' as const,
+    sandbox_policy: 'static_preview_no_command_execution' as const,
+    provider_dispatch: false as const,
+    tool_dispatch: false as const,
+    project_workspace_write: 'not_granted_by_preview' as const,
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1' as const,
+      renderer_authority: 'status_projection_only' as const,
+      path_disclosure: 'not_serialized' as const,
+    },
+  };
+}
+
 describe('BuilderResultPanel', () => {
   it('preserves the chat-flow result shell around the static preview', () => {
     const panelRef = createRef<HTMLElement>();
@@ -118,6 +142,7 @@ describe('BuilderResultPanel', () => {
           message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
           unavailable_reason: 'preview_source_resolver_not_connected',
           dev_server_approval: null,
+          runtime_launch_projection: runtimeLaunchProjection(),
           updated_at_ms: 10,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -181,6 +206,7 @@ describe('BuilderResultPanel', () => {
           message: 'Browser preview is ready to start.',
           unavailable_reason: null,
           dev_server_approval: null,
+          runtime_launch_projection: runtimeLaunchProjection(),
           updated_at_ms: 20,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -219,6 +245,37 @@ describe('BuilderResultPanel', () => {
     expect(onRequestLivePreview).toHaveBeenCalledOnce();
   });
 
+  it.each(['starting', 'failed', 'approval_required'] as const)(
+    'shows %s in the artifact panel without a hidden mode-switch requirement', (status) => {
+      const container = render(<BuilderResultPanel placement="artifact" projection={null}
+        livePreviewStatus={{
+          status_version: 'builder-live-preview-status-projection.v1', project_id: PROJECT_ID,
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
+          preview_kind: 'live_static_web', entry_url: null, status,
+          can_start: status === 'failed', can_reload: false, can_stop: false,
+          blocked_request_count: 0, navigation_block_count: 0, network_block_count: 0,
+          permission_block_count: 0, download_block_count: 0, window_open_block_count: 0,
+          message: `Preview ${status}`, unavailable_reason: null, dev_server_approval: null, updated_at_ms: 30,
+          runtime_launch_projection: runtimeLaunchProjection(),
+          authority: {
+            live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
+            renderer_authority: 'current_project_conversation_only', active_renderer_required: true,
+            source_tree_from_renderer: 'not_accepted', source_read: 'main_owned_preview_source_resolver_or_not_performed',
+            source_write: 'not_performed', provider_dispatch: false, tool_dispatch: false,
+            command_execution: false, git_mutation: false, sqlite_write: false, permission_grant: false,
+            revision_admission: false, save_admission: false,
+            electron_view_attachment: 'main_only_not_exposed_to_renderer', preview_content_ipc: false,
+            node_integration: false, preload: false,
+          },
+        }} />);
+      expect(container.querySelector('[data-builder-live-preview-panel="true"]')?.textContent)
+        .toContain(`Preview ${status}`);
+      expect(container.querySelector('[data-builder-live-preview-panel="true"]')?.getAttribute('role'))
+        .toBe(status === 'failed' ? 'alert' : 'status');
+      expect(container.querySelector('iframe')).toBeNull();
+    },
+  );
+
   it('shows a compact live preview safety summary after unsafe requests are blocked', () => {
     const container = render(
       <BuilderResultPanel
@@ -241,6 +298,7 @@ describe('BuilderResultPanel', () => {
           message: 'Live preview is ready.',
           unavailable_reason: null,
           dev_server_approval: null,
+          runtime_launch_projection: runtimeLaunchProjection(),
           updated_at_ms: 30,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',

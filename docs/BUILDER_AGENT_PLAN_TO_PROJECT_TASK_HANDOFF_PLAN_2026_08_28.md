@@ -4,6 +4,8 @@ Date: 2026-08-28
 
 Status: target architecture and staged implementation contract.
 
+Implementation status: the first single-task Agent Plan handoff is implemented and passed a real DeepSeek packaged desktop RC canary on 2026-08-28.
+
 Related architecture:
 
 - `AGENT_HOME_CONTROL_PLANE_AND_TASK_DELEGATION_ARCHITECTURE.md`
@@ -354,3 +356,214 @@ Agent Plan controls must never replace Task Plan controls.
 The largest risk is treating orchestration as prompt text instead of durable state. That would produce duplicate Tasks, stale plans, lost dependencies, false completion, and permission leakage after restart.
 
 The implementation should therefore extend the existing Main-owned Task Address, Workbench Message Fabric, Context Capsule, and result-return services. It should not introduce direct model-to-model calls or a second execution runtime.
+
+## Implemented O4 Closure
+
+The first production slice now supports this exact path:
+
+```text
+Agent Plan mode
+-> real provider streams Markdown in the Agent conversation
+-> Main records the complete normalized plan artifact
+-> user approves the exact digest
+-> Main creates one idempotent build proposal
+-> user confirms a new Project
+-> Main materializes one Task Address and binds the approved plan
+-> foreground handoff preserves requested_outcome=build
+-> Task runtime resolves the full plan by Task Address
+-> coding tools, automatic check, review, and Save use the normal Task pipeline
+```
+
+Three production-only contract gaps were found and fixed during the real RC run:
+
+1. Agent conversation context uses `project: { project_id: null }`; plan recording previously expected `project === null`.
+2. Provider Markdown may include terminal whitespace; plan persistence now normalizes it before computing the immutable digest.
+3. Opening prior Project history leaves a Main-owned selected Project. Agent Plan admission now forces a projectless request, while foreground build proposals preserve explicit Build mode instead of asking semantic routing to infer execution from the task title.
+
+The packaged canary begins with a cloned saved test profile, not an empty fixture. Its passing run observed:
+
+- 2 existing Projects and 10 existing Tasks before the run;
+- a 700-character durable Agent Plan and exact digest approval;
+- exactly one proposal and one materialized Task Address;
+- a new Project followed by automatic foreground coding;
+- live Task Markdown, 12 programming tool activities, automatic check readiness, review, and Save;
+- 3 Projects and 12 Tasks after completion;
+- 52.3 seconds total wall time.
+
+The same run exposed performance work that remains separate from orchestration correctness:
+
+- the first coding Task received 559 live-output updates and dropped 381 intermediate renderer updates by design;
+- Task Stream read latency reached 566.8 ms in the renderer window;
+- Workbench task synchronization reached 377.8 ms;
+- Main event-loop delay reached about 1.02 seconds.
+
+These measurements make incremental Task Stream reads, bounded Workbench synchronization, and live-output batching the next performance priorities. They do not weaken the completed authority model or justify moving canonical state into Renderer memory.
+
+## Complete Agent Plan Quality Contract
+
+The initial O4 provider run proved the handoff mechanics, but its 700-character plan was not detailed enough to serve as the execution source for subordinate Tasks. Agent Plan mode now requires an implementation blueprint rather than a short recommendation.
+
+A complete Agent Plan must adapt these concerns to the actual request:
+
+- goals, non-goals, assumptions, and unresolved decisions;
+- target users and end-to-end flows;
+- features, controls, states, interactions, and failure behavior;
+- visual behavior and, when relevant, concrete 3D scene behavior;
+- technical architecture, data models, interfaces, modules, and file boundaries;
+- implementation phases, dependencies, deliverables, and measurable acceptance criteria;
+- test and verification coverage;
+- performance, security, privacy, and accessibility requirements;
+- risks, recovery, rollback, deployment, observability, and maintenance.
+
+The provider output is admitted as an Agent Plan only when it contains at least 1,200 Unicode code points, eight substantive Markdown sections, and twelve concrete list items. These are structural lower bounds, not a target length and not permission to add filler. If the first answer is underspecified, Main requests one bounded repair that preserves the user's language and intent. If the repair remains incomplete, the request fails instead of creating a misleading approval artifact.
+
+Plan artifact persistence happens after the conversation terminal event. Main must therefore publish a second Workbench change notification after plan recording so the approval card appears without requiring a restart, navigation, or unrelated refresh.
+
+## August 31 Terminal And History Regression
+
+The saved-profile investigation found failed structured responses and queued follow-ups, not an intentional provider wait for plan approval. The UI could also retain an old Project selection and display an older approval card beneath a newer failed request. These are separate from the remaining Main-thread performance work.
+
+The current fixes preserve the existing Main-owned plan authority:
+
+- Agent Plan requests and started-event matching are explicitly projectless even when a saved Project, unsaved draft, or historical revision is retained behind the Workbench.
+- Terminal refresh targets the Agent conversation and Workbench, not the retained Project. Plan completion releases the composer without another user reply; failures restore the submitted instruction.
+- Approval controls appear within the exact source message identified by the artifact's `source_message_id`, after its full Markdown body. A failed newer request cannot move an older plan's controls under its own bubble.
+- Agent Plan explanations accept up to 12,000 code points and 48,000 UTF-8 bytes through kernel validation, Renderer answer validation, and Agent transcript projection. Ordinary answers retain their 4,000-code-point bound. Outer explanation whitespace is normalized before validation.
+- A bounded provider repair resets the old live buffer through the existing digest-bound reset protocol and streams the replacement explanation. It does not concatenate two plans or silently wait for the entire repair before showing output.
+- Current requirements are repeated as the final Plan user message. Earlier conversation remains context, but may not replace a new goal, explicit file names, literals, or acceptance checks.
+- Plan validation diagnostics contain only allowlisted numeric aggregates, never plan text or credentials.
+- The sticky Agent filter bar uses the declared opaque background token.
+
+### Packaged Evidence
+
+The final real DeepSeek run used a copy of the saved test profile. It did not modify original history or use global desktop input. Evidence is in `release/agent-plan-rc-20260831-final/result.json` and the adjacent 1280px/1000px review screenshots.
+
+- Started with 2 Projects, 10 Tasks, and 59 old-task history items; continued an existing saved Task.
+- One Plan submission produced 3,213 characters with live Markdown, the specified `index.html`, `package.json`, and `check.js`, and the expected verification requirements.
+- Approval was visible and enabled beside its own completed plan without a follow-up message; the Stop control and submit lock were gone.
+- Approved the exact digest, clicked New project, and materialized exactly one foreground Task with the full approved plan bound by Main.
+- The first Task used real coding tools and checks. The test clicked Save version and verified the saved activity plus removal of the unsaved-draft indicator.
+- A second Task reused the same Project, changed the requested subtitle while preserving the heading, and reached check-ready. This run does not claim a second version was saved.
+- Finished with 3 Projects and 12 Tasks in 74.3 seconds.
+
+Earlier runs are not counted as passes: one failed structured validation and needed resubmission, and another generated a 4,734-character plan that omitted two explicitly required files. The latter stopped before approval. The final current-instruction change passed the same saved-history requirements in one submission; this is one successful sample, not a long-running reliability claim.
+
+Final focused verification: 439 frontend tests, 220 Node tests, TypeScript build, Windows packaging, and package-identity verification passed. Full repository lint still has pre-existing errors and is not a passing release gate.
+
+Performance remains open: the final RC observed Main event-loop delay up to 1,193 ms, Workbench task synchronization up to 394 ms, and Renderer Task Stream reads up to 723 ms. This slice fixes plan scope, content admission, and terminal/review behavior; it does not complete O2 decomposition, O5 reconciliation, O6 scheduling, or the performance program.
+
+## Multi-Round Plan Stability Follow-Up
+
+The follow-up preserves the Main-owned authority model:
+
+- Projectless Agent Plan context now includes the latest complete immutable
+  plan and its digest-matching decision, rather than relying on a truncated
+  chat summary. Current requirements remain authoritative. A prior plan or
+  decision in context does not grant execution permission.
+- Failed and cancelled revisions retain the prior artifact. Startup closes
+  interrupted Agent runs with durable terminal facts without inventing an
+  assistant reply. Review remains attached to the exact plan after restart.
+- Agent-only conversation events no longer invalidate every Project Task
+  projection. Workbench recording skips a previously synchronized head only
+  after its writes succeeded; Agent stream caching is keyed by SQLite head.
+- A real coding failure consumed all 8,192 response tokens as reasoning,
+  returned `max-tokens`, and produced neither text nor tools. Build now allows
+  one bounded continuation inside the same admitted run, with the complete
+  original requirements and unchanged model settings/permissions. A second
+  empty token-limit result fails with a specific internal cause. Cancellation
+  remains available. High reasoning and the configured per-response token
+  limit are not disabled or increased.
+
+The real-provider canary now revises a complete plan, cancels an intermediate
+revision, restarts before approval, clicks New project, executes and saves the
+first Task, creates a second Task in that Project, checks it, and clicks Save
+again. It verifies the revised requirement in actual source files and exact
+Project/Task count changes. Check success must be present in canonical Task
+facts even when completion is observed through the UI save checkpoint.
+
+Canary fixes are not product successes: stale v36 bridge assertions and
+missing Browser/Question tool kinds were aligned with current contracts;
+mock readiness interfaces were brought up to date without weakening their
+read-only restrictions. Native maximize/restore now has a real click check.
+Additional screenshots open source through the tool record's Open button,
+since the source menu is not always available after Save.
+
+Failed attempts are retained under `release/agent-plan-stability-20260831`:
+round 1 had an underspecified continuation-question assertion; round 2 hit
+the empty token-limit coding failure; round 4 saved both tasks but failed an
+obsolete screenshot selector; round 5 failed the second Task's automatic
+checks; rounds 6 and 8 failed the cold-start window preflight. They are not
+counted as successful end-to-end runs. The regression request now explicitly
+keeps the subtitle mutable and limits its check to the fixed heading so the
+two tasks do not accidentally impose conflicting fixture requirements.
+Round 10 also completed both checks and saves but timed out while taking an
+additional screenshot. Round 11 isolated the cold-start failure to a stale
+Playwright native-window read handle. The corrected preflight only reacquires
+invalidated read handles and preserves exactly one click per window action.
+Supplemental theme screenshots and the strict workflow soak can now run
+separately; the workflow still requires native maximize/restore, all plan and
+approval gates, canonical successful check facts, real file changes, both
+visible Save clicks, and exact final Project/Task counts.
+
+### Final Consecutive RC Results
+
+Rounds 12, 13, and 14 passed consecutively against the final packaged runtime
+using separate copies of the saved test profile and the configured
+`deepseek-v4-flash` provider. Original history was not changed. Each round
+started with 2 Projects, 10 Tasks, and 59 existing history items, continued an
+old Task, and finished with exactly 3 Projects and 12 Tasks.
+
+| Round | Duration | Revised plan characters | Tool activities (Task 1 / 2) | Passed checks (Task 1 / 2) |
+| --- | --- | --- | --- | --- |
+| 12 | 81.107 s | 4,467 | 11 / 9 | 1 / 1 |
+| 13 | 67.689 s | 1,907 | 11 / 11 | 1 / 1 |
+| 14 | 63.569 s | 2,562 | 17 / 7 | 1 / 1 |
+
+All three observed live complete Plan Markdown, review without a follow-up,
+one initial submission, cancellation preserving the prior plan, a complete
+revision preserving requirements, pending review after restart, exact-digest
+approval, one new-project Task, automatic coding without redundant write
+approval, a second Task in that Project, and two Save version clicks with
+the unsaved state removed. Native title-bar maximize and restore matched
+renderer dimensions in all three runs.
+
+Evidence: `release/agent-plan-stability-20260831/round-{12,13,14}/result.json`.
+Visual theme evidence is separately retained in rounds 7 and 9 and the
+`native-window` directory. The final three runs deliberately omit additional
+screenshots; they retain all functional UI and canonical check assertions.
+
+Peak timings below take the maximum across both process lifetimes, before
+and after the required restart:
+
+| Round | Main event-loop delay | Workbench task sync | Renderer Task Stream read |
+| --- | --- | --- | --- |
+| 12 | 591.921 ms | 356.419 ms | 457.1 ms |
+| 13 | 553.124 ms | 404.629 ms | 344.3 ms |
+| 14 | 620.233 ms | 370.385 ms | 404.0 ms |
+
+The prior single-run baseline reached 1,193 ms on the Main loop. These are
+observational RC samples, not a controlled performance benchmark. Main
+blocking and Workbench synchronization remain measurable next-stage work;
+the change does not claim a fully smooth application under every workload.
+
+Verification: 302 focused frontend tests, 268 focused Main/history tests,
+and 101 packaged-canary tests passed (the Node groups overlap by six tests).
+TypeScript, Windows packaging, package verification, changed-file lint, and
+`git diff --check` passed. Extracted packaged Main/runtime files match the
+current source. Full repository lint remains a known non-passing release
+gate, and the full repository test suite was not run in this follow-up.
+
+The final successful provider runs did not trigger empty-token-limit
+recovery. Its one-continuation bound, second-failure terminal state,
+cancellation, preservation of requirements, and non-replay of partial text
+are covered by focused runtime tests. No model setting or per-response token
+limit was weakened to obtain the successful RC samples.
+
+### Performance And Interaction Follow-up
+
+The next-stage Main synchronization benchmark, Agent navigation/scroll
+fixes, and durable cancelled-turn notices are recorded in
+`BUILDER_WORKBENCH_PERFORMANCE_AND_INTERACTION_RC_2026_08_31.md`.
+Performance rounds 6-8 passed consecutively; round 9 additionally verifies
+the cancellation notice after Stop and restart, then completes both Saves.
+These are separate artifacts from the plan-stability rounds above.

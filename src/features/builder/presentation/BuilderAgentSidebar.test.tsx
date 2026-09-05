@@ -132,6 +132,7 @@ describe('Builder Agent sidebar', () => {
     const root = createRoot(container);
     const onArchiveProject = vi.fn();
     const onArchiveTask = vi.fn();
+    const onExportTaskTranscript = vi.fn();
     const onRenameProject = vi.fn();
     const onRenameTask = vi.fn();
     const tree = sanitizeBuilderAgentProjectTreeProjection(agentTreeWire());
@@ -144,6 +145,7 @@ describe('Builder Agent sidebar', () => {
         onCollapse={vi.fn()}
         onCreateProject={vi.fn()}
         onCreateTask={vi.fn()}
+        onExportTaskTranscript={onExportTaskTranscript}
         onOpenProject={vi.fn()}
         onOpenTask={vi.fn()}
         onRefresh={vi.fn()}
@@ -186,6 +188,67 @@ describe('Builder Agent sidebar', () => {
     click(container, `[data-builder-agent-context-archive-task="${task.task_address_id}"]`);
     expect(onArchiveTask).toHaveBeenCalledExactlyOnceWith(project.project_id, task.task_address_id);
 
+    openTaskMenu();
+    click(container, `[data-builder-agent-context-export-task-transcript="${task.task_address_id}"]`);
+    expect(onExportTaskTranscript).toHaveBeenCalledExactlyOnceWith(
+      project.project_id,
+      task.task_address_id,
+    );
+
+    act(() => root.unmount());
+  });
+
+  it('shows task transcript export feedback from the app shell', () => {
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    const tree = sanitizeBuilderAgentProjectTreeProjection(agentTreeWire());
+    const task = tree.projects[0].tasks[0];
+
+    act(() => root.render(
+      <BuilderAgentSidebar
+        exportTranscriptFeedback={{
+          message: 'Downloaded clawfabric-focus-timer-transcript.md.',
+          state: 'ready',
+          taskAddressId: task.task_address_id,
+        }}
+        onCollapse={vi.fn()}
+        onCreateProject={vi.fn()}
+        onCreateTask={vi.fn()}
+        onOpenProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onRefresh={vi.fn()}
+        selectedProjectId={tree.projects[0].project_id}
+        selectedTaskAddressId={task.task_address_id}
+        snapshot={{ status: 'ready', tree, busy: false }}
+      />,
+    ));
+
+    const status = container.querySelector('[data-builder-task-transcript-export-status="ready"]');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.textContent).toContain('Downloaded clawfabric-focus-timer-transcript.md.');
+
+    act(() => root.render(
+      <BuilderAgentSidebar
+        exportTranscriptFeedback={{
+          message: 'Transcript export failed.',
+          state: 'failed',
+          taskAddressId: task.task_address_id,
+        }}
+        onCollapse={vi.fn()}
+        onCreateProject={vi.fn()}
+        onCreateTask={vi.fn()}
+        onOpenProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onRefresh={vi.fn()}
+        selectedProjectId={tree.projects[0].project_id}
+        selectedTaskAddressId={task.task_address_id}
+        snapshot={{ status: 'ready', tree, busy: false }}
+      />,
+    ));
+
+    const failure = container.querySelector('[data-builder-task-transcript-export-status="failed"]');
+    expect(failure?.getAttribute('role')).toBe('alert');
+    expect(failure?.textContent).toContain('Transcript export failed.');
     act(() => root.unmount());
   });
 });

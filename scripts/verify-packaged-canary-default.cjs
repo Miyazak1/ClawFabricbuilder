@@ -364,13 +364,18 @@ function harnessAdversarialBoundaryOutput(toolResults) {
 
 function harnessOutputForRequest(body, state) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const toolResults = messages
+  const latestUserIndex = messages.reduce(
+    (selected, message, index) => (message?.role === 'user' ? index : selected),
+    -1,
+  );
+  const activeMessages = latestUserIndex >= 0 ? messages.slice(latestUserIndex) : messages;
+  const toolResults = activeMessages
     .filter((message) => message?.role === 'tool')
     .map(messageText);
-  const promptText = messages.map(messageText).join('\n');
+  const activePromptText = activeMessages.map(messageText).join('\n');
   if (
     state.harnessAgentBrowserCancellation
-    && promptText.includes('PACKAGED_AGENT_BROWSER_CANCEL')
+    && activePromptText.includes('PACKAGED_AGENT_BROWSER_CANCEL')
   ) {
     if (toolResults.length === 0) {
       return {
@@ -388,9 +393,19 @@ function harnessOutputForRequest(body, state) {
       events: harnessTextEvents('The isolated browser observation completed.'),
     };
   }
-  const pb03InstructionIndex = promptText.lastIndexOf('PB-03 controlled 60-second stream');
-  const pb06InstructionIndex = promptText.lastIndexOf('PB-06 controlled 10 MB output burst');
-  const pb07InstructionIndex = promptText.lastIndexOf('PB-07 controlled broker read search pressure');
+  if (
+    state.harnessCancellationHold
+    && activePromptText.includes('Start another focus timer change, but wait before applying it.')
+  ) {
+    return {
+      kind: 'harness_cancellation_hold',
+      defer_response: true,
+      events: harnessTextEvents('The cancellation probe is pending until Builder stops this run.'),
+    };
+  }
+  const pb03InstructionIndex = activePromptText.lastIndexOf('PB-03 controlled 60-second stream');
+  const pb06InstructionIndex = activePromptText.lastIndexOf('PB-06 controlled 10 MB output burst');
+  const pb07InstructionIndex = activePromptText.lastIndexOf('PB-07 controlled broker read search pressure');
   if (
     state.harnessStressScenarios
     && pb03InstructionIndex >= 0
@@ -454,8 +469,19 @@ function harnessOutputForRequest(body, state) {
       events: harnessTextEvents('The broker read and search pressure pass completed without changing project files.'),
     };
   }
-  if (promptText.includes('Inspect the current project and explain what detail is still needed. Do not change files.')) {
+  if (activePromptText.includes('Inspect the current project and explain what detail is still needed. Do not change files.')) {
     const allResults = toolResults.join('\n');
+    if (
+      activePromptText.includes('The preceding implementation turn ended without a successful Builder write or edit.')
+      || activePromptText.includes('This admitted task requires a source change.')
+    ) {
+      return {
+        kind: 'harness_no_change_completed',
+        events: harnessTextEvents(
+          'I already inspected index.html, but I still need the exact replacement text before changing files.',
+        ),
+      };
+    }
     if (toolResults.length === 0) {
       return {
         kind: 'harness_no_change_search',
@@ -487,14 +513,14 @@ function harnessOutputForRequest(body, state) {
   }
   if (
     state.harnessAdversarialBoundaries
-    && promptText.includes('Exercise Builder workspace boundaries and recover safely.')
+    && activePromptText.includes('Exercise Builder workspace boundaries and recover safely.')
   ) {
     return harnessAdversarialBoundaryOutput(toolResults);
   }
   if (
     state.harnessFailedCheckRepair
     && !state.harnessRepairCompleted
-    && (state.harnessRepairStarted || promptText.includes('The Builder project check failed.'))
+    && (state.harnessRepairStarted || activePromptText.includes('The Builder project check failed.'))
   ) {
     state.harnessRepairStarted = true;
     const allResults = toolResults.join('\n');
@@ -533,15 +559,7 @@ function harnessOutputForRequest(body, state) {
     };
   }
   if (toolResults.length === 0) {
-    if (
-      state.harnessFailedCheckRepair
-      && state.harnessRepairCompleted
-      && !state.harnessRepairContinuationConsumed
-    ) {
-      state.harnessRepairContinuationConsumed = true;
-    } else {
-      state.harnessRunCount += 1;
-    }
+    state.harnessRunCount += 1;
     return {
       kind: 'harness_tool_read',
       events: harnessToolEvents(`read-index-${state.harnessRunCount}`, 'read', {
@@ -707,7 +725,7 @@ function planOutput() {
   });
 }
 
-function codeChangeOutput(index) {
+function codeChangeOutput(index, includeLocalDependency = false) {
   const variants = [
     ['Focus Timer', 'A compact local canary project.'],
     ['Focus Timer Updated', 'A reviewed update from the packaged canary.'],
@@ -763,7 +781,14 @@ function codeChangeOutput(index) {
         content: `${JSON.stringify({
           name: 'clawfabric-packaged-canary',
           private: true,
-          scripts: { test: 'node --check check.js' },
+          scripts: {
+            test: includeLocalDependency
+              ? 'clawfabric-local-check-tool --version'
+              : 'node --check check.js',
+          },
+          ...(includeLocalDependency
+            ? { devDependencies: { 'clawfabric-local-check-tool': 'file:./tools/clawfabric-local-check-tool' } }
+            : {}),
         }, null, 2)}\n`,
       },
       {
@@ -771,6 +796,29 @@ function codeChangeOutput(index) {
         path: 'check.js',
         content: "const canary = 'packaged-check-ready';\nvoid canary;\n",
       },
+      ...(includeLocalDependency ? [
+        {
+          operation: 'upsert',
+          path: 'tools/clawfabric-local-check-tool/package.json',
+          content: `${JSON.stringify({
+            name: 'clawfabric-local-check-tool',
+            version: '1.0.0',
+            bin: {
+              'clawfabric-local-check-tool': 'bin/check-tool.js',
+            },
+          }, null, 2)}\n`,
+        },
+        {
+          operation: 'upsert',
+          path: 'tools/clawfabric-local-check-tool/bin/check-tool.js',
+          content: [
+            '#!/usr/bin/env node',
+            "'use strict';",
+            "console.log('clawfabric-local-check-tool 1.0.0');",
+            '',
+          ].join('\n'),
+        },
+      ] : []),
     ],
   });
 }
@@ -809,7 +857,7 @@ function outputForRequest(body, state) {
   if (outputKind === 'builder_conversation_explanation') return explanationOutput(messageContents);
   if (outputKind === 'builder_code_change_operations') {
     state.codeChangeCount += 1;
-    return codeChangeOutput(state.codeChangeCount);
+    return codeChangeOutput(state.codeChangeCount, state.projectRootDependencyLocalInstall);
   }
   const promptText = messageContents.join('\n');
   const explicitKind = promptText.match(
@@ -819,12 +867,12 @@ function outputForRequest(body, state) {
   if (explicitKind === 'builder_conversation_explanation') return explanationOutput(messageContents);
   if (explicitKind === 'builder_code_change_operations') {
     state.codeChangeCount += 1;
-    return codeChangeOutput(state.codeChangeCount);
+    return codeChangeOutput(state.codeChangeCount, state.projectRootDependencyLocalInstall);
   }
   if (promptText.includes('builder_project_plan_proposal')) return planOutput();
   if (promptText.includes('builder_conversation_explanation')) return explanationOutput(messageContents);
   state.codeChangeCount += 1;
-  return codeChangeOutput(state.codeChangeCount);
+  return codeChangeOutput(state.codeChangeCount, state.projectRootDependencyLocalInstall);
 }
 
 function readRequestBody(request) {
@@ -896,15 +944,16 @@ async function createLocalCanaryProviderServer(options = {}) {
     harnessFailedCheckRepair: options.harnessFailedCheckRepair === true,
     harnessAdversarialBoundaries: options.harnessAdversarialBoundaries === true,
     harnessAgentBrowserCancellation: options.harnessAgentBrowserCancellation === true,
+    harnessCancellationHold: options.harnessCancellationHold === true,
     harnessStressScenarios: options.harnessStressScenarios === true,
     harnessDependencyWorkspaceMissing: options.harnessDependencyWorkspaceMissing === true,
     harnessDependencyLocalInstall: options.harnessDependencyLocalInstall === true,
     harnessDependencyInstallFails: options.harnessDependencyInstallFails === true,
+    projectRootDependencyLocalInstall: options.projectRootDependencyLocalInstall === true,
     forbiddenHarnessText: typeof options.forbiddenHarnessText === 'string'
       ? options.forbiddenHarnessText
       : null,
     harnessRepairCompleted: false,
-    harnessRepairContinuationConsumed: false,
     harnessRepairStarted: false,
     deferredCodeChangeResponses,
     pendingResponseReleases: [],
@@ -957,11 +1006,10 @@ async function createLocalCanaryProviderServer(options = {}) {
         if (typeof options.onRequest === 'function') options.onRequest(Object.freeze({ ...requestRecord }));
         if (state.requests.length > 40) state.requests.shift();
         if (body.stream !== true) throw new Error('Harness canary requires streaming.');
-        if (
-          state.harnessResponseCount > state.deferHarnessResponsesAfter
-          && state.deferredHarnessResponses > 0
-        ) {
-          state.deferredHarnessResponses -= 1;
+        const shouldDeferByCount = state.harnessResponseCount > state.deferHarnessResponsesAfter
+          && state.deferredHarnessResponses > 0;
+        if (harnessOutput.defer_response === true || shouldDeferByCount) {
+          if (shouldDeferByCount) state.deferredHarnessResponses -= 1;
           await new Promise((resolve) => {
             state.pendingResponseReleases.push(resolve);
           });

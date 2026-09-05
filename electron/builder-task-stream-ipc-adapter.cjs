@@ -16,6 +16,18 @@ const AGENT_ID_PATTERN =
 const CURSOR_PROTOCOL_VERSION = 'builder-task-stream-cursor.v1';
 const CURSOR_READ_RESULT_VERSION = 'builder-task-stream-cursor-read-result.v1';
 const SNAPSHOT_DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
+const INCREMENTAL_TOP_LEVEL_PATCH_KEYS = Object.freeze([
+  'context_status_projection',
+  'provider_context_disclosure_status_projection',
+  'context_usage_projection',
+  'draft_checkpoint_status_projection',
+  'draft_checkpoint_timeline_projection',
+  'review_state_projection',
+  'check_run_outcome_projection',
+  'candidate_activity',
+  'agent_activity_projection',
+]);
+const INCREMENTAL_TOP_LEVEL_CLEARED_KEYS = '__cleared_top_level_keys';
 const MAX_CURSOR_CACHE_ENTRIES = 64;
 const MAX_PLAIN_DATA_NODES = 20_000;
 const MAX_PLAIN_DATA_ENTRIES = 20_000;
@@ -261,8 +273,23 @@ function incrementalSnapshot(previous, current) {
     }
   }
   const suffix = currentItems.filter((item) => valueDescriptor(item, 'sequence') > previousLast);
+  const patch = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (
+      INCREMENTAL_TOP_LEVEL_PATCH_KEYS.includes(key)
+      && Object.hasOwn(previous, key)
+      && JSON.stringify(valueDescriptor(previous, key)) === JSON.stringify(value)
+    ) {
+      continue;
+    }
+    patch[key] = value;
+  }
+  const clearedKeys = INCREMENTAL_TOP_LEVEL_PATCH_KEYS.filter((key) => (
+    Object.hasOwn(previous, key) && !Object.hasOwn(current, key)
+  ));
+  if (clearedKeys.length > 0) patch[INCREMENTAL_TOP_LEVEL_CLEARED_KEYS] = Object.freeze(clearedKeys);
   return Object.freeze({
-    ...current,
+    ...patch,
     conversation: Object.freeze({
       ...currentConversation,
       items: Object.freeze(suffix),

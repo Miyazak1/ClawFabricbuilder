@@ -80,6 +80,14 @@ const ADMISSION_KEYS = Object.freeze([
   'admitted_at_ms',
 ]);
 const INPUT_KEYS = Object.freeze(['message_id', 'text']);
+const COMPLETION_REQUIREMENTS = Object.freeze([
+  'response_allowed',
+  'source_change_required',
+]);
+const RESUME_KINDS = Object.freeze([
+  'task_continuation',
+  'interrupted_recovery',
+]);
 const RUN_CONTRACT_INPUT_KEYS = Object.freeze([
   'runtime_descriptor',
   'admission',
@@ -366,15 +374,35 @@ function sanitizeAdmission(value) {
 }
 
 function sanitizeInput(value) {
-  const source = exactObject(value, INPUT_KEYS);
+  const hasResume = isPlainObject(value) && Object.hasOwn(value, 'resume_session_run_id');
+  const hasResumeKind = isPlainObject(value) && Object.hasOwn(value, 'resume_kind');
+  const hasCompletionRequirement = isPlainObject(value)
+    && Object.hasOwn(value, 'completion_requirement');
+  const optionalKeys = [
+    ...(hasCompletionRequirement ? ['completion_requirement'] : []),
+    ...(hasResume ? ['resume_session_run_id'] : []),
+    ...(hasResumeKind ? ['resume_kind'] : []),
+  ];
+  const source = exactObject(value, [...INPUT_KEYS, ...optionalKeys]);
   return freezeDeep({
     message_id: safePattern(valueAt(source, 'message_id'), ID_PATTERNS.message),
-    text: safeText(valueAt(source, 'text'), 8_192, 32 * 1_024),
+    // Main composes a verified plan (up to 128k) with the bounded user request and instructions.
+    text: safeText(valueAt(source, 'text'), 144 * 1_024, 576 * 1_024),
+    ...(hasCompletionRequirement ? {
+      completion_requirement: safeEnum(
+        valueAt(source, 'completion_requirement'),
+        COMPLETION_REQUIREMENTS,
+      ),
+    } : {}),
+    ...(hasResume ? { resume_session_run_id: safePattern(valueAt(source, 'resume_session_run_id'), ID_PATTERNS.run) } : {}),
+    ...(hasResumeKind ? {
+      resume_kind: safeEnum(valueAt(source, 'resume_kind'), RESUME_KINDS),
+    } : {}),
   });
 }
 
 function runContractBody(value) {
-  return freezeDeep({
+  const body = freezeDeep({
     run_contract_version: BUILDER_PROGRAMMING_RUNTIME_RUN_CONTRACT_VERSION,
     protocol_version: BUILDER_PROGRAMMING_RUNTIME_PROTOCOL_VERSION,
     runtime_descriptor: sanitizeBuilderProgrammingRuntimeDescriptor(
@@ -383,6 +411,21 @@ function runContractBody(value) {
     admission: sanitizeAdmission(valueAt(value, 'admission')),
     input: sanitizeInput(valueAt(value, 'input')),
   });
+  if ((body.input.resume_session_run_id === undefined) !== (body.input.resume_kind === undefined)) fail();
+  if (body.input.resume_session_run_id !== undefined) {
+    if (
+      body.runtime_descriptor.capabilities.session_resume !== 'runtime_local'
+      || body.input.resume_session_run_id === body.admission.run_id
+    ) fail();
+  }
+  if (
+    body.input.completion_requirement === 'source_change_required'
+    && (
+      body.admission.mode !== 'build'
+      || !body.admission.allowed_tools.some((tool) => tool === 'edit' || tool === 'write')
+    )
+  ) fail();
+  return body;
 }
 
 function assertCapabilitiesSupportAdmission(descriptor, admission) {

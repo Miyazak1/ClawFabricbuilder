@@ -36,6 +36,11 @@ export type BuilderAgentWorkbenchController = Readonly<{
     operation: BuilderWorkbenchTaskProposalDecision;
     project_id: string | null;
   }>): Promise<BuilderAgentWorkbenchSnapshot>;
+  decideAgentPlan(request: Readonly<{
+    agent_plan_id: string;
+    content_digest: string;
+    decision: 'approved' | 'rejected';
+  }>): Promise<BuilderAgentWorkbenchSnapshot>;
   controlTask(request: Readonly<{
     project_id: string;
     task_address_id: string;
@@ -164,6 +169,18 @@ export function createBuilderAgentWorkbenchController(
       if (disposed) return current;
       try {
         await port.decideTaskProposal({ agent_id: agentId, ...request });
+      } catch {
+        return publish(createSnapshot(
+          current.projection === null ? 'unavailable' : 'stale',
+          current.projection,
+        ));
+      }
+      return run();
+    },
+    async decideAgentPlan(request) {
+      if (disposed) return current;
+      try {
+        await port.decideAgentPlan({ agent_id: agentId, ...request });
       } catch {
         return publish(createSnapshot(
           current.projection === null ? 'unavailable' : 'stale',

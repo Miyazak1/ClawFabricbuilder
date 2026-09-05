@@ -35,13 +35,61 @@ function styleBlockContaining(source: string, selector: string, expected: string
 }
 
 describe('Builder desktop layout styles', () => {
+  it('defaults Builder chrome to dark semantic theme tokens', () => {
+    const source = styles();
+    const root = styleBlock(source, ':root');
+    const chrome = styleBlock(source, '.cf-builder-app-chrome');
+    const mainFrame = styleBlock(source, '.cf-builder-main-frame');
+    const composerShell = styleBlock(source, '.cf-builder-composer-shell');
+    const composerFocus = styleBlock(source, '.cf-builder-composer-shell:focus-within');
+    const previewFrame = styleBlockContaining(source, '.cf-builder-preview-frame', 'background:');
+    const terminal = styleBlock(source, '.cf-builder-side-workspace-terminal');
+
+    expect(root).toContain('color-scheme: dark;');
+    expect(root).toContain('--cf-bg: #0f1311;');
+    expect(root).toContain('--cf-app-bg: #101512;');
+    expect(root).toContain('--cf-surface: #171d1a;');
+    expect(root).toContain('--cf-surface-raised: #222a26;');
+    expect(root).toContain('--cf-primary: #6ee7b7;');
+    expect(root).toContain('--cf-accent: #7aa7ff;');
+    expect(root).toContain('--cf-danger: #fb7185;');
+    expect(root).toContain('--cf-preview-canvas: #ffffff;');
+    expect(chrome).toContain('border-bottom: 1px solid var(--cf-border);');
+    expect(mainFrame).toContain('background: var(--cf-app-bg);');
+    expect(composerShell).toContain('background: var(--cf-surface);');
+    expect(composerFocus).toContain('border-color: var(--cf-primary-border);');
+    expect(previewFrame).toContain('background: var(--cf-preview-canvas);');
+    expect(terminal).toContain('background: var(--cf-terminal-bg);');
+    expect(source).toContain('background: var(--cf-surface-raised);');
+  });
+
   it('keeps Agent Workbench filters visible while its timeline scrolls', () => {
     const filters = styleBlock(styles(), '.cf-builder-agent-workbench-filters');
 
     expect(filters).toContain('position: sticky;');
     expect(filters).toContain('top: 0;');
     expect(filters).toContain('z-index: 4;');
-    expect(filters).toContain('background: var(--cf-app-bg);');
+    expect(filters).toContain('background: var(--cf-bg);');
+    expect(filters).toContain('box-shadow: 0 -14px 0 var(--cf-bg);');
+    expect(styles()).toMatch(/--cf-bg:\s*#[a-f0-9]{6};/i);
+  });
+
+  it('keeps dark theme body, metadata, and placeholder text readable', () => {
+    const root = styleBlock(styles(), ':root');
+    const luminance = (name: string) => {
+      const hex = root.match(new RegExp(`${name}: #([a-f0-9]{6});`, 'i'))?.[1];
+      expect(hex).toBeDefined();
+      const [r, g, b] = hex!.match(/../g)!.map((pair) => {
+        const value = parseInt(pair, 16) / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    for (const text of ['--cf-text', '--cf-text-soft', '--cf-text-muted', '--cf-text-subtle', '--cf-text-faint']) {
+      for (const surface of ['--cf-bg', '--cf-surface', '--cf-surface-raised']) {
+        expect((luminance(text) + 0.05) / (luminance(surface) + 0.05)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 
   it('pins the desktop shell and lets only the conversation body scroll', () => {
@@ -91,6 +139,17 @@ describe('Builder desktop layout styles', () => {
     expect(chatFlowColumn).toContain('flex-direction: column;');
     expect(chatFlowColumn).toContain('align-items: center;');
     expect(chatFlowColumn).toContain('width: 100%;');
+  });
+
+  it('balances conversation and composer insets beside a desktop sidebar only', () => {
+    const source = styles();
+    const adjustment = '.cf-builder-chat-shell[data-builder-artifact-sidebar-visible="true"] .cf-builder-chat-main';
+    expect(source).toMatch(/@media \(min-width: 1161px\) \{\s*\.cf-builder-chat-shell\[data-builder-artifact-sidebar-visible="true"\] \.cf-builder-chat-main \{/u);
+    expect(styleBlock(source, adjustment)).toContain('padding-inline-end: 14px;');
+    expect(styleBlock(source, '.cf-builder-surface-body')).toContain('padding: 14px;');
+    expect(styleBlock(source, '.cf-builder-chat-main .cf-builder-composer-card')).toContain('padding-inline: 14px;');
+    expect(styleBlock(source, '.cf-builder-chat-main')).not.toContain('padding-inline-end:');
+    expect(styleBlock(source, '.cf-builder-chat-main .cf-builder-composer-stack')).toContain('justify-self: center;');
   });
 
   it('keeps the desktop artifact sidebar resizable without taking over the chat shell', () => {
@@ -414,18 +473,43 @@ describe('Builder desktop layout styles', () => {
     expect(source).toContain('@media (prefers-reduced-motion: reduce)');
   });
 
+  it('animates real context pressure and compaction without ignoring reduced motion', () => {
+    const source = styles();
+    const meter = styleBlock(source, '.cf-builder-composer-context-meter');
+    const compacting = styleBlock(
+      source,
+      '.cf-builder-composer-context-meter-button[data-builder-composer-context-compaction="compacting"]\n  .cf-builder-composer-context-meter',
+    );
+
+    expect(source).toContain('@property --cf-builder-context-progress');
+    expect(meter).toContain('var(--cf-builder-context-progress, 0deg)');
+    expect(meter).toContain('transition: --cf-builder-context-progress 320ms');
+    expect(compacting).toContain('animation: cf-builder-context-meter-compacting 760ms');
+    expect(source).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.cf-builder-composer-context-meter,[\s\S]*?animation: none;/u,
+    );
+  });
+
   it('keeps the Agent task monitor stable, independently scrollable, and motion-safe', () => {
     const source = styles();
     const monitor = styleBlock(source, '.cf-builder-task-monitor');
-    const list = styleBlock(source, '.cf-builder-task-monitor-list');
     const item = styleBlock(source, '.cf-builder-task-monitor-list li > button');
+    const selectedOrHover = styleBlock(
+      source,
+      '.cf-builder-task-monitor-list li > button:hover,\n.cf-builder-task-monitor-list li > button[aria-pressed="true"]',
+    );
+    const list = styleBlock(source, '.cf-builder-task-monitor-list');
     const spinner = styleBlock(source, '.cf-builder-task-monitor-spin');
 
     expect(monitor).toContain('grid-template-rows: auto minmax(0, 1fr) auto;');
     expect(monitor).toContain('overflow: hidden;');
+    expect(monitor).toContain('background: color-mix(in srgb, var(--cf-surface) 94%, var(--cf-bg));');
     expect(list).toContain('overflow: auto;');
     expect(list).toContain('scrollbar-gutter: stable;');
     expect(item).toContain('grid-template-columns: 20px minmax(0, 1fr) auto;');
+    expect(item).toContain('border: 1px solid transparent;');
+    expect(selectedOrHover).toContain('border-color: color-mix(in srgb, var(--cf-primary-border) 50%, transparent);');
+    expect(selectedOrHover).toContain('background: color-mix(in srgb, var(--cf-primary-soft) 62%, var(--cf-surface));');
     expect(spinner).toContain('animation: cf-builder-task-monitor-spin 1.2s linear infinite;');
     expect(source).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.cf-builder-task-monitor-spin \{[\s\S]*?animation: none;/u,
@@ -651,10 +735,12 @@ describe('Builder desktop layout styles', () => {
   it('keeps the composer textarea from covering the shell rounded corners', () => {
     const source = styles();
     const shell = styleBlock(source, '.cf-builder-composer-shell');
+    const shellFocus = styleBlock(source, '.cf-builder-composer-shell:focus-within');
     const textarea = styleBlock(source, '.cf-builder-composer-textarea.cf-builder-input');
 
     expect(shell).toContain('border-radius: 8px;');
     expect(shell).toContain('background: var(--cf-surface);');
+    expect(shellFocus).toContain('border-color: var(--cf-primary-border);');
     expect(textarea).toContain('border: 0;');
     expect(textarea).toContain('border-radius: 0;');
     expect(textarea).toContain('background: transparent;');
@@ -675,6 +761,10 @@ describe('Builder desktop layout styles', () => {
     const approvalButton = styleBlock(source, '.cf-builder-composer-approval-button');
     const approvalMenu = styleBlockContaining(source, '.cf-builder-composer-approval-menu', 'min-width: 230px;');
     const floatingMenus = styleBlock(source, '.cf-builder-composer-add-menu,\n.cf-builder-composer-approval-menu');
+    const checkedMenuItem = styleBlock(
+      source,
+      '.cf-builder-composer-add-menu button[aria-checked="true"],\n.cf-builder-composer-approval-menu button[aria-checked="true"]',
+    );
 
     expect(shell).toContain('grid-template-rows: auto minmax(72px, auto) auto;');
     expect(contextBar).toContain('display: flex;');
@@ -699,5 +789,7 @@ describe('Builder desktop layout styles', () => {
     expect(approvalMenu).toContain('min-width: 230px;');
     expect(floatingMenus).toContain('position: absolute;');
     expect(floatingMenus).toContain('bottom: calc(100% + 8px);');
+    expect(floatingMenus).toContain('background: var(--cf-surface-raised);');
+    expect(checkedMenuItem).toContain('background: color-mix(in srgb, var(--cf-primary) 13%, var(--cf-surface-raised));');
   });
 });

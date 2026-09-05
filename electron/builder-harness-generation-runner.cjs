@@ -280,7 +280,17 @@ function createBuilderHarnessGenerationRunner(rawOptions) {
           credential_retained: false,
         });
       }
-      if (completion.resulting_source_tree.source_tree_digest === sourceTree.source_tree_digest) {
+      if (completion.resulting_source_tree.source_tree_digest === candidateBaseSourceTree.source_tree_digest) {
+        if (
+          runContract.admission.mode === 'build'
+          && runContract.input.completion_requirement !== 'response_allowed'
+        ) {
+          fail(
+            'builder_harness_generation_runner_failed',
+            'builder_harness_source_change_required',
+            'builder_harness_source_change_required',
+          );
+        }
         const assistantText = safeAssistantText(completion.assistant_text);
         return Object.freeze({
           runner_version: BUILDER_HARNESS_GENERATION_RUNNER_VERSION,

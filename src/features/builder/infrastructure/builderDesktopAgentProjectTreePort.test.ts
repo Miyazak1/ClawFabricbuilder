@@ -8,12 +8,14 @@ describe('Builder desktop Agent project tree port', () => {
     const archiveProject = vi.fn(async (request) => ({ request }));
     const renameTask = vi.fn(async (request) => ({ request }));
     const archiveTask = vi.fn(async (request) => ({ request }));
+    const exportTaskTranscript = vi.fn(async (request) => ({ request }));
     const port = createBuilderDesktopAgentProjectTreePort({
       read,
       renameProject,
       archiveProject,
       renameTask,
       archiveTask,
+      exportTaskTranscript,
     });
     const agentId = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
     const projectId = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
@@ -46,10 +48,16 @@ describe('Builder desktop Agent project tree port', () => {
       project_id: projectId,
       task_address_id: taskAddressId,
     })).toEqual({ request: { agent_id: agentId, project_id: projectId, task_address_id: taskAddressId } });
+    expect(await port.exportTaskTranscript({
+      agent_id: agentId,
+      project_id: projectId,
+      task_address_id: taskAddressId,
+    })).toEqual({ request: { agent_id: agentId, project_id: projectId, task_address_id: taskAddressId } });
     expect(read).toHaveBeenCalledOnce();
     expect(renameProject).toHaveBeenCalledOnce();
     expect(archiveProject).toHaveBeenCalledOnce();
     expect(renameTask).toHaveBeenCalledOnce();
     expect(archiveTask).toHaveBeenCalledOnce();
+    expect(exportTaskTranscript).toHaveBeenCalledOnce();
   });
 });

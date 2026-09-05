@@ -12,6 +12,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'application/builderGeneration.ts',
   'application/builderCommandOutputStore.ts',
   'application/builderLiveOutputStore.ts',
+  'application/builderPerformanceTrace.ts',
   'application/builderComposerIntent.ts',
   'application/builderConversationController.ts',
   'application/builderPorts.ts',
@@ -25,9 +26,11 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'domain/builderAgentWorkbenchProjection.ts',
   'domain/builderCheckRunOutcomeProjection.ts',
   'domain/builderContextStatusProjection.ts',
+  'domain/builderContextUsageProjection.ts',
   'domain/builderConversationSnapshot.ts',
   'domain/builderDraftCheckpointStatusProjection.ts',
   'domain/builderDraftCheckpointTimelineProjection.ts',
+  'domain/builderInterruptedTask.ts',
   'domain/builderProjectCatalog.ts',
   'domain/builderProjectHistory.ts',
   'domain/builderProjectSnapshot.ts',
@@ -44,6 +47,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'hooks/useBuilderProviderSettingsController.ts',
   'infrastructure/builderDesktopCheckRunPort.ts',
   'infrastructure/builderDesktopAgentProjectTreePort.ts',
+  'infrastructure/builderDesktopAgentTestBrowserPort.ts',
   'infrastructure/builderDesktopAgentWorkbenchPort.ts',
   'infrastructure/builderDesktopCodeGeneratorPort.ts',
   'infrastructure/builderDesktopLivePreviewPort.ts',
@@ -53,6 +57,7 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'infrastructure/builderDesktopProviderSettingsPort.ts',
   'infrastructure/builderDesktopSideWorkspaceFilesPort.ts',
   'infrastructure/builderDesktopTaskStreamPort.ts',
+  'infrastructure/builderDesktopUserWebPort.ts',
   'presentation/BuilderChangesPanel.tsx',
   'presentation/BuilderAgentSidebar.tsx',
   'presentation/BuilderAgentRoster.tsx',
@@ -65,8 +70,8 @@ const EXPECTED_PRODUCTION_FILES = Object.freeze([
   'presentation/BuilderResultPanel.tsx',
   'presentation/BuilderReviewCheckpoint.tsx',
   'presentation/BuilderSourceDisclosure.tsx',
-  'presentation/BuilderWorkspacePicker.tsx',
   'presentation/builderReviewText.ts',
+  'presentation/builderUserMessageReconciliation.ts',
   'preview/builderSourceTreePreview.ts',
 ]);
 
@@ -201,7 +206,7 @@ describe('Builder v2 architecture boundary', () => {
     expect(ports).toContain('restoreDraft(request: Readonly<{ draft_id: string }>)');
     expect(ports).toMatch(/restoreRevisionAsDraft\(\s*request: Readonly<\{ project_id: string; revision_receipt_digest: string \}>/u);
     expect(ports).toContain('rejectDraft(request: Readonly<{ draft_id: string }>)');
-    expect(ports).toContain('cancel(request: Readonly<{ request_id: string }>)');
+    expect(ports).toContain('cancel(request: Readonly<{ request_id: string; pause?: true }>)');
     expect(ports).toContain('steer(request: Readonly<{ request_id: string; message: string }>)');
     expect(ports).toContain('queueFollowup(request: Readonly<{ request_id: string; message: string }>)');
     expect(ports).toContain('review(request: BuilderPlanReviewRequest)');
@@ -319,7 +324,10 @@ describe('Builder v2 architecture boundary', () => {
     expect(sidebar).not.toMatch(/synthetic|fallback|legacy/iu);
     expect(roster).toContain('data-builder-agent-id={tree.agent_id}');
     expect(roster).not.toMatch(/project_id|task_address_id|saveDraft|generate/iu);
-    expect(port).toContain("const BRIDGE_KEYS = Object.freeze(['read'])");
+    expect(port).toContain("'renameProject',");
+    expect(port).toContain("'archiveProject',");
+    expect(port).toContain("'renameTask',");
+    expect(port).toContain("'archiveTask',");
     expect(port).not.toMatch(/saveDraft|generate|permission|source_tree|commit_oid|tree_oid/iu);
   });
 });

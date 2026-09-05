@@ -49,6 +49,12 @@ function sanitizeBuilderConversationAddress(projectId, conversationId) {
   return conversationId;
 }
 
+function sanitizeBuilderTaskConversationAddress(projectId, conversationId) {
+  const sanitized = sanitizeBuilderConversationAddress(projectId, conversationId);
+  if (parseBuilderConversationAddress(sanitized).format !== 'task_conversation') fail();
+  return sanitized;
+}
+
 function createBuilderConversationAddress(projectId, conversationUuid) {
   const ownerProjectUuid = projectUuid(projectId);
   if (typeof conversationUuid !== 'string' || !UUID_PATTERN.test(conversationUuid)) fail();
@@ -62,4 +68,5 @@ module.exports = Object.freeze({
   createBuilderConversationAddress,
   parseBuilderConversationAddress,
   sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 });

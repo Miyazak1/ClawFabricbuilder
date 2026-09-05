@@ -24,6 +24,9 @@ const {
   sanitizeBuilderAgentActivityProjection,
 } = require('../electron/builder-agent-activity-projection.cjs');
 const {
+  sanitizeBuilderContextUsageProjection,
+} = require('../electron/builder-context-usage-projection.cjs');
+const {
   MAX_PUBLIC_ITEMS: TASK_STREAM_MAX_PUBLIC_ITEMS,
 } = require('../electron/builder-task-stream-projection.cjs');
 const {
@@ -190,12 +193,12 @@ const SELECTORS = Object.freeze({
   workspaceControlLogs: '[data-builder-workspace-control-tab="logs"]',
   workspaceControlPreview: '[data-builder-workspace-control-tab="preview"]',
   workspaceControlSource: '[data-builder-workspace-control-tab="source"]',
+  workspaceControlTerminal: '[data-builder-workspace-control-tab="terminal_placeholder"]',
   workspaceControlVersions: '[data-builder-workspace-control-tab="versions"]',
   workspaceControls: '[data-builder-workspace-controls="true"]',
   workspaceDraftActions: '[data-builder-workspace-draft-actions="true"]',
   workspaceMenu: '[data-builder-workspace-menu="true"]',
   workspaceMenuButton: '[data-builder-workspace-menu-button="true"]',
-  workspaceNewProject: '[data-builder-workspace-new-project="true"]',
   workspacePicker: '[data-builder-workspace-picker="true"]',
   maxTokens: '#builder-provider-max-tokens',
   model: '#builder-provider-model',
@@ -622,6 +625,7 @@ const STATUS_KEYS = Object.freeze([
 const TASK_STREAM_KEYS = Object.freeze(['authority', 'conversation', 'project_id', 'stream_version']);
 const TASK_STREAM_OPTIONAL_KEYS = Object.freeze([
   'context_status_projection',
+  'context_usage_projection',
   'provider_context_disclosure_status_projection',
   'draft_checkpoint_status_projection',
   'draft_checkpoint_timeline_projection',
@@ -921,7 +925,6 @@ const TASK_STREAM_PROGRAMMING_RUNTIME_TOOL_ACTIVITY_KEYS = Object.freeze([
   'completed_label',
   'target_label',
   'presentation',
-  'presentation_detail',
   'status_label',
   'duration_ms',
   'summary',
@@ -929,6 +932,9 @@ const TASK_STREAM_PROGRAMMING_RUNTIME_TOOL_ACTIVITY_KEYS = Object.freeze([
   'result_ref',
   'file_change',
   'check_result',
+]);
+const TASK_STREAM_PROGRAMMING_RUNTIME_TOOL_ACTIVITY_OPTIONAL_KEYS = Object.freeze([
+  'presentation_detail',
 ]);
 const TASK_STREAM_PROGRAMMING_RUNTIME_ASSISTANT_MESSAGE_KEYS = Object.freeze([
   'item_kind',
@@ -2625,41 +2631,6 @@ async function fillProviderSettingsViaUi(page, provider, gate) {
   }
 }
 
-async function bindNewProjectWorkspaceViaUi(page) {
-  let phase = 'workspace_picker';
-  try {
-    try {
-      await page.locator(SELECTORS.workspacePicker).
-        waitFor({ state: 'visible', timeout: 1_000 });
-    } catch {
-      await page.locator(SELECTORS.workspaceChip).click();
-      await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'visible' });
-    }
-    if (!await page.locator(SELECTORS.newProjectPanel).isVisible()) {
-      phase = 'new_project_panel';
-      await page.locator(SELECTORS.workspaceNewProject).click();
-      await page.locator(SELECTORS.newProjectPanel).waitFor({ state: 'visible' });
-    }
-    phase = 'source_folder';
-    await page.locator(SELECTORS.addSourceFolder).click();
-    await page.locator(SELECTORS.workspacePicker).waitFor({ state: 'hidden' });
-    phase = 'project_ready';
-    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`)
-      .waitFor({ state: 'visible', timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
-  } catch (error) {
-    if (error instanceof BuilderPackagedCanaryError) {
-      if (error.diagnostic === undefined) {
-        error.diagnostic = Object.freeze({
-          diagnostic_version: 'builder-canary-initial-draft-phase-diagnostic.v1',
-          phase,
-        });
-      }
-      throw error;
-    }
-    fail('canary_new_project_failed');
-  }
-}
-
 async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
   try {
     await page.locator(SELECTORS.composerAddMenuButton).click();
@@ -2683,17 +2654,21 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
     if (
       typeof proposalText !== 'string'
       || !proposalText.includes('Task proposal')
-      || !proposalText.includes(idea)
-      || !proposalText.includes('New project')
       || composerClearedAfterProposal !== ''
       || REVIEW_DIFF_INTERNAL_EVIDENCE_PATTERN.test(proposalText)
     ) fail('canary_build_workspace_required_failed');
+    await page.waitForFunction((selector) => {
+      // eslint-disable-next-line no-undef -- this callback executes in the renderer page.
+      const action = document.querySelector(selector);
+      return action?.tagName === 'BUTTON' && action.disabled === false;
+    }, SELECTORS.agentTaskProposalNewProject, { timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
     await page.locator(SELECTORS.agentTaskProposalNewProject).click();
-    await page.locator(`${SELECTORS.projectPage}[data-builder-project-status="ready"]`)
-      .waitFor({ state: 'visible', timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
     await page.locator(SELECTORS.agentTaskProposalActions).waitFor({ state: 'hidden' });
-    await page.locator(SELECTORS.idea).fill(idea);
-    await clickByRole(page, 'button', 'Send');
+    await page.waitForFunction((selector) => {
+      // eslint-disable-next-line no-undef -- this callback executes in the renderer page.
+      const status = document.querySelector(selector)?.getAttribute('data-builder-project-status');
+      return ['ready', 'submitting', 'generating', 'checking', 'draft_ready'].includes(status);
+    }, SELECTORS.projectPage, { timeout: CANARY_PROJECT_READY_TIMEOUT_MS });
     return Object.freeze({
       agent_task_proposal_visible: true,
       agent_workbench_build_mode_hidden: true,
@@ -2702,13 +2677,17 @@ async function requireBuildWorkspaceBeforeDraftViaUi(page, idea) {
       build_without_workspace_blocked: true,
       build_continued_after_task_materialized: true,
       source_folder_required: true,
-      task_started_only_after_user_submit: true,
+      task_auto_started_after_project_confirmation: true,
     });
   } catch (error) {
     const diagnostic = Object.freeze({
       agent_task_proposal_actions_visible: await optionalLocatorVisible(
         page,
         SELECTORS.agentTaskProposalActions,
+      ),
+      agent_task_proposal_new_project_enabled: await optionalLocatorEnabled(
+        page,
+        SELECTORS.agentTaskProposalNewProject,
       ),
       agent_task_proposal_text: safeDiagnosticText(
         await optionalLocatorText(page, SELECTORS.agentTaskProposal),
@@ -2828,7 +2807,7 @@ async function inspectAgentWorkbenchTaskReturnViaUi(page, userDataRoot = null) {
   }
 }
 
-async function createInitialDraftViaUi(page, idea, userDataRoot = null) {
+async function createInitialDraftViaUi(page, idea, userDataRoot = null, options = {}) {
   let phase = 'workspace_gate';
   let checkRun = null;
   let draftReviewDiff = null;
@@ -2869,7 +2848,9 @@ async function createInitialDraftViaUi(page, idea, userDataRoot = null) {
     await assertArtifactSidebarDefaultHidden(page);
     phase = 'automatic_check';
     traceCanaryStage('initial_draft.automatic_check.start');
-    checkRun = await waitForAutomaticProjectCheckViaUi(page, null, userDataRoot);
+    checkRun = await waitForAutomaticProjectCheckViaUi(page, null, userDataRoot, {
+      prepareDependencies: options.prepareCurrentDraftDependencies === true,
+    });
     traceCanaryStage('initial_draft.automatic_check.done', checkRun);
     phase = 'draft_review_diff';
     traceCanaryStage('initial_draft.review_diff.start');
@@ -2919,8 +2900,8 @@ async function createInitialDraftViaUi(page, idea, userDataRoot = null) {
   });
 }
 
-async function generateProjectViaUi(page, idea, userDataRoot = null) {
-  const initialDraft = await createInitialDraftViaUi(page, idea, userDataRoot);
+async function generateProjectViaUi(page, idea, userDataRoot = null, options = {}) {
+  const initialDraft = await createInitialDraftViaUi(page, idea, userDataRoot, options);
   try {
     traceCanaryStage('generate_project.click_save.start');
     await clickSaveVersionViaUi(page);
@@ -3093,7 +3074,8 @@ async function waitForPassedProjectCheckEvidenceViaUi(page, projectId = null) {
     throw new Error('Automatic check did not produce task stream check projection evidence.');
   }
   if (evidence.status === 'passed') {
-    await page.locator(SELECTORS.runtimeCommandAction).last().waitFor({
+    await expandLatestRuntimeHistoryContaining(page, SELECTORS.runtimeCommandAction);
+    await page.locator(`${SELECTORS.runtimeCommandAction}:visible`).last().waitFor({
       state: 'visible',
       timeout: 10_000,
     });
@@ -3101,13 +3083,99 @@ async function waitForPassedProjectCheckEvidenceViaUi(page, projectId = null) {
   return evidence;
 }
 
-async function waitForAutomaticProjectCheckViaUi(page, projectId = null, userDataRoot = null) {
+async function waitForProjectCheckOrDependencyPreparationViaUi(page, projectId = null) {
+  const evidenceHandle = await page.waitForFunction(async (request) => {
+    const visible = (element) => {
+      if (!(element instanceof globalThis.HTMLElement)) return false;
+      const style = globalThis.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.visibility !== 'hidden'
+        && style.display !== 'none'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const prepareButton = globalThis.document.querySelector(
+      '[data-builder-allow-dependency-preparation="true"]',
+    );
+    if (
+      visible(prepareButton)
+      && prepareButton instanceof globalThis.HTMLButtonElement
+      && prepareButton.disabled !== true
+    ) {
+      return { source: 'current_draft_dependency_preparation_required' };
+    }
+    const bridge = globalThis.clawfabricBuilder;
+    const tree = await bridge?.agentProjectTree?.read?.({ agent_id: request.agentId });
+    const treeProjects = Array.isArray(tree?.projects) ? tree.projects : [];
+    const resolvedProjectId = typeof request.projectId === 'string'
+      ? request.projectId
+      : treeProjects.find((project) => typeof project?.project_id === 'string')?.project_id ?? null;
+    const project = treeProjects.find((candidate) => candidate?.project_id === resolvedProjectId) ?? null;
+    const taskAddressId = Array.isArray(project?.tasks)
+      ? project.tasks.find((task) => typeof task?.task_address_id === 'string')?.task_address_id ?? null
+      : null;
+    if (typeof resolvedProjectId !== 'string' || typeof taskAddressId !== 'string') return false;
+    const stream = await bridge?.taskStream?.read?.({
+      project_id: resolvedProjectId,
+      task_address_id: taskAddressId,
+    });
+    const outcome = stream?.check_run_outcome_projection;
+    const review = stream?.review_state_projection;
+    if (
+      outcome?.state === 'completed'
+      && outcome?.status === 'passed'
+      && review?.check_status === 'passed'
+    ) {
+      return { source: 'task_stream_check_projection', status: 'passed' };
+    }
+    if (
+      outcome?.state === 'skipped'
+      && outcome?.status === 'skipped'
+      && review?.check_status === 'skipped'
+      && review?.can_save === true
+    ) {
+      return { source: 'task_stream_check_projection', status: 'skipped' };
+    }
+    return false;
+  }, {
+    agentId: DEFAULT_BUILDER_AGENT_ID,
+    projectId,
+  }, { timeout: 120_000 });
+  return await evidenceHandle.jsonValue();
+}
+
+async function waitForAutomaticProjectCheckViaUi(
+  page,
+  projectId = null,
+  userDataRoot = null,
+  options = {},
+) {
   try {
-    const evidence = await waitForPassedProjectCheckEvidenceViaUi(page, projectId);
+    let currentDraftDependenciesPrepared = false;
+    let evidence = null;
+    if (options.prepareDependencies === true) {
+      evidence = await waitForProjectCheckOrDependencyPreparationViaUi(page, projectId);
+      if (evidence?.source === 'current_draft_dependency_preparation_required') {
+        currentDraftDependenciesPrepared = true;
+        await page.locator('[data-builder-allow-dependency-preparation="true"]').click();
+        evidence = await waitForPassedProjectCheckEvidenceViaUi(page, projectId);
+      } else if (evidence?.status === 'passed') {
+        await expandLatestRuntimeHistoryContaining(page, SELECTORS.runtimeCommandAction);
+        await page.locator(`${SELECTORS.runtimeCommandAction}:visible`).last().waitFor({
+          state: 'visible',
+          timeout: 10_000,
+        });
+      }
+    } else {
+      evidence = await waitForPassedProjectCheckEvidenceViaUi(page, projectId);
+    }
     await assertNoManualProjectCheckControlsViaUi(page);
     return Object.freeze({
       agent_ran_check_automatically: true,
       command_profile_selected_by_main: true,
+      ...(options.prepareDependencies === true
+        ? { current_draft_dependencies_prepared: currentDraftDependenciesPrepared }
+        : {}),
       manual_check_controls_hidden: true,
       packaged_runtime_executed: true,
       evidence_source: evidence?.source ?? 'unknown',
@@ -3145,6 +3213,12 @@ async function waitForAutomaticProjectCheckViaUi(page, projectId = null, userDat
           ? conversationProjectId
           : projectId,
       ),
+      helper_error: Object.freeze({
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error
+          ? error.message.replace(/\s+/gu, ' ').slice(0, 300)
+          : String(error).replace(/\s+/gu, ' ').slice(0, 300),
+      }),
       generation_debug: optionalCanaryGenerationDebug(userDataRoot),
     }));
   }
@@ -3765,12 +3839,17 @@ async function inspectDraftReviewDiffViaUi(page) {
       runtime_group_count: runtimeFileGroupCount,
       using_runtime_facts: usingRuntimeFacts,
     });
+    if (usingRuntimeFacts) {
+      await expandLatestRuntimeHistoryContaining(page, SELECTORS.runtimeCommandAction);
+      await expandLatestRuntimeHistoryContaining(page, SELECTORS.runtimeFileAction);
+    }
+    const runtimeCommandVisibleActions = page.locator(`${SELECTORS.runtimeCommandAction}:visible`);
     const runtimeFileGrouped = usingRuntimeFacts && runtimeFileGroupCount === 1;
     const fileActions = usingRuntimeFacts
       ? runtimeFileGrouped ? runtimeFileGroup : runtimeFileActions.last()
       : page.locator(SELECTORS.completedFileActions).last();
     const commandActions = usingRuntimeFacts
-      ? runtimeCommandActions.last()
+      ? runtimeCommandVisibleActions.last()
       : page.locator(SELECTORS.completedCommandActions).last();
     const draftCandidateChange = usingRuntimeFacts
       ? runtimeFileActions
@@ -3779,7 +3858,7 @@ async function inspectDraftReviewDiffViaUi(page) {
       ? commandActions
       : commandActions.locator(SELECTORS.completionCommand);
     const draftCommandButton = usingRuntimeFacts
-      ? page.locator(SELECTORS.runtimeCommandOpen).last()
+      ? page.locator(`${SELECTORS.runtimeCommandOpen}:visible`).last()
       : commandActions.locator('button');
     const fileDisclosure = fileActions.locator('details');
     const commandDisclosure = commandActions.locator('details');
@@ -4132,6 +4211,24 @@ async function optionalExistingLocatorText(locator) {
   }
 }
 
+async function expandLatestRuntimeHistoryContaining(page, selector) {
+  const histories = page.locator(SELECTORS.runHistory);
+  const historyCount = await histories.count().catch(() => 0);
+  for (let index = historyCount - 1; index >= 0; index -= 1) {
+    const history = histories.nth(index);
+    if (await history.locator(selector).count().catch(() => 0) === 0) continue;
+    const isOpen = await history.evaluate((node) => (
+      node.tagName === 'DETAILS' && node.open
+    )).catch(() => false);
+    if (isOpen) return true;
+    const toggle = history.locator(SELECTORS.runHistoryToggle).first();
+    if (await toggle.count().catch(() => 0) === 0) return false;
+    await toggle.click();
+    return true;
+  }
+  return false;
+}
+
 async function optionalDetailsOpen(locator) {
   try {
     return await locator.evaluate((node) => node.open === true);
@@ -4143,6 +4240,14 @@ async function optionalDetailsOpen(locator) {
 async function optionalLocatorVisible(page, selector) {
   try {
     return await page.locator(selector).isVisible();
+  } catch {
+    return null;
+  }
+}
+
+async function optionalLocatorEnabled(page, selector) {
+  try {
+    return await page.locator(selector).isEnabled();
   } catch {
     return null;
   }
@@ -4934,14 +5039,29 @@ async function proposePlanViaUi(
     fail('canary_plan_failed');
   }
 
+  let toolActivityProjectionStage = 'run_history_hidden';
   try {
-    await page.locator(SELECTORS.runHistory).last().waitFor({ state: 'hidden' });
+    const runHistoryVisible = await optionalLocatorVisible(page, SELECTORS.runHistory);
+    if (runHistoryVisible === true) fail('canary_plan_tool_activity_failed');
+    toolActivityProjectionStage = 'workspace_menu_open';
     await page.locator(SELECTORS.workspaceMenuButton).click();
+    toolActivityProjectionStage = 'workspace_logs_hidden';
     await page.locator(SELECTORS.workspaceControlLogs).waitFor({ state: 'hidden' });
+    toolActivityProjectionStage = 'workspace_menu_close';
     await page.locator(SELECTORS.workspaceMenuButton).click();
   } catch (error) {
     if (error instanceof BuilderPackagedCanaryError) throw error;
-    fail('canary_plan_tool_activity_failed');
+    failWithDiagnostic('canary_plan_tool_activity_failed', Object.freeze({
+      projection_stage: toolActivityProjectionStage,
+      run_history_visible: await optionalLocatorVisible(page, SELECTORS.runHistory),
+      run_history_count: await optionalLocatorCount(page, SELECTORS.runHistory),
+      workspace_menu_button_visible: await optionalLocatorVisible(page, SELECTORS.workspaceMenuButton),
+      workspace_control_logs_visible: await optionalLocatorVisible(page, SELECTORS.workspaceControlLogs),
+      workspace_control_terminal_visible: await optionalLocatorVisible(
+        page,
+        SELECTORS.workspaceControlTerminal,
+      ),
+    }));
   }
 
   try {
@@ -5676,6 +5796,7 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
         'archiveProject',
         'renameTask',
         'archiveTask',
+        'exportTaskTranscript',
       ];
       const agentProjectTreeMethodsAreExact =
         agentProjectTreeKeys.length === agentProjectTreeMethodNames.length
@@ -5726,6 +5847,7 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
         'readCurrentDraftAvailableChecks',
         'diagnoseCurrentDraftCheckEnvironment',
         'diagnoseProjectEnvironment',
+        'prepareProjectDependencies',
         'approveAndRunCurrentDraftCheck',
         'decideCurrentDraftDependencyPreparation',
         'skipCurrentDraftCheck',
@@ -5840,7 +5962,7 @@ async function readOnlyBridgeEvidence(page, projectId = null, code = 'canary_rea
             (Number.isSafeInteger(right?.latest_activity_at_ms) ? right.latest_activity_at_ms : 0)
             - (Number.isSafeInteger(left?.latest_activity_at_ms) ? left.latest_activity_at_ms : 0)
           ))[0]?.task_address_id;
-        const projectLink = globalThis.document.querySelector(
+        const projectLink = typeof projectedTaskAddressId === 'string' ? null : globalThis.document?.querySelector(
           `[data-builder-project-id="${request.projectId}"]`,
         );
         const visibleTaskAddressId = projectLink?.closest('li')
@@ -5947,6 +6069,7 @@ async function readSanitizedTaskStreamEvidence(
   page,
   projectId,
   code = 'canary_read_evidence_failed',
+  expectedTaskAddressId = null,
 ) {
   try {
     const probe = await page.evaluate(async (request) => {
@@ -5975,9 +6098,11 @@ async function readSanitizedTaskStreamEvidence(
       const visibleTaskAddressId = projectLink?.closest('li')
         ?.querySelector('[data-builder-task-address-id]')
         ?.getAttribute('data-builder-task-address-id');
-      const taskAddressId = typeof projectedTaskAddressId === 'string'
-        ? projectedTaskAddressId
-        : visibleTaskAddressId;
+      const taskAddressId = typeof request.taskAddressId === 'string'
+        ? request.taskAddressId
+        : typeof projectedTaskAddressId === 'string'
+          ? projectedTaskAddressId
+          : visibleTaskAddressId;
       if (typeof taskAddressId !== 'string') return { ok: false, phase: 'task_address' };
       try {
         return {
@@ -5990,7 +6115,7 @@ async function readSanitizedTaskStreamEvidence(
       } catch {
         return { ok: false, phase: 'task_stream' };
       }
-    }, { agentId: DEFAULT_BUILDER_AGENT_ID, projectId });
+    }, { agentId: DEFAULT_BUILDER_AGENT_ID, projectId, taskAddressId: expectedTaskAddressId });
     if (
       probe === null
       || typeof probe !== 'object'
@@ -6012,6 +6137,9 @@ async function readSanitizedTaskStreamEvidence(
         sanitizer_code: error instanceof BuilderPackagedCanaryError
           ? error.code
           : 'canary_read_evidence_failed',
+        sanitizer_diagnostic: error instanceof BuilderPackagedCanaryError
+          ? error.diagnostic ?? null
+          : null,
       }));
     }
   } catch (error) {
@@ -6064,7 +6192,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
     BRIDGE_CONTRACT_KEYS,
   );
   if (
-    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v36'
+    bridgeContractDescriptors.bridge_version.value !== 'builder-preload.v40'
     || bridgeContractDescriptors.legacy_namespaces_absent.value !== true
     || bridgeContractDescriptors.agent_project_tree_namespace.value
       !== 'read_and_lifecycle_methods_only'
@@ -6079,7 +6207,7 @@ function assertReadEvidence(value, code = 'canary_evidence_failed') {
       !== 'approve_current_method_only'
   ) fail('canary_evidence_failed');
   const bridgeContract = Object.freeze({
-    bridge_version: 'builder-preload.v36',
+    bridge_version: 'builder-preload.v40',
     legacy_namespaces_absent: true,
     agent_project_tree_namespace: 'read_and_lifecycle_methods_only',
     check_run_namespace: 'current_draft_identity_methods_only',
@@ -6545,6 +6673,25 @@ function sanitizeTaskStream(value, expectedProjectId) {
     && checkRunOutcomeProjection !== null
     && reviewStateProjection.check_status !== checkRunOutcomeProjection.status
   ) fail('canary_evidence_failed');
+  const contextUsageProjection = Object.hasOwn(descriptors, 'context_usage_projection')
+    ? descriptors.context_usage_projection.value === null
+      ? null
+      : sanitizeTaskStreamPhase(
+        'context_usage_projection',
+        () => sanitizeBuilderContextUsageProjection(
+          descriptors.context_usage_projection.value,
+        ),
+      )
+    : undefined;
+  if (
+    contextUsageProjection !== undefined
+    && contextUsageProjection !== null
+    && (
+      conversation === null
+      || contextUsageProjection.project_id !== projectId
+      || contextUsageProjection.conversation_id !== conversation.conversation_id
+    )
+  ) fail('canary_evidence_failed');
   return Object.freeze({
     authority: Object.freeze({
       candidate_source: 'not_loaded',
@@ -6559,6 +6706,9 @@ function sanitizeTaskStream(value, expectedProjectId) {
           sanitizeTaskStreamContextStatusProjection(descriptors.context_status_projection.value),
       }
       : {}),
+    ...(contextUsageProjection === undefined
+      ? {}
+      : { context_usage_projection: contextUsageProjection }),
     ...(Object.hasOwn(descriptors, 'provider_context_disclosure_status_projection')
       ? {
         provider_context_disclosure_status_projection:
@@ -7092,9 +7242,9 @@ function sanitizeTaskStreamProgrammingRuntimeToolActivity(source, sequence) {
   const presentation = source.presentation;
   const failureClass = source.failure_class;
   if (
-    !['read', 'search', 'edit', 'write', 'command'].includes(toolKind)
+    !['read', 'search', 'edit', 'write', 'command', 'browser', 'question'].includes(toolKind)
     || !['running', 'completed', 'failed'].includes(state)
-    || !['file', 'changes', 'terminal', 'search'].includes(presentation)
+    || !['file', 'changes', 'terminal', 'search', 'browser', 'question'].includes(presentation)
     || (failureClass !== null && ![
       'denied',
       'invalid_input',
@@ -7435,6 +7585,16 @@ function exactTaskStreamValues(value, keys) {
   return output;
 }
 
+function exactTaskStreamValuesWithOptional(value, requiredKeys, optionalKeys) {
+  const descriptors = exactDataObjectWithOptional(value, requiredKeys, optionalKeys);
+  const output = {};
+  for (const key of requiredKeys) output[key] = descriptors[key].value;
+  for (const key of optionalKeys) {
+    output[key] = Object.hasOwn(descriptors, key) ? descriptors[key].value : null;
+  }
+  return output;
+}
+
 function sanitizeTaskStreamItem(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value) || isObjectProxy(value)) {
     fail('canary_evidence_failed');
@@ -7472,9 +7632,10 @@ function sanitizeTaskStreamItem(value) {
   } else if (itemKind === 'tool_call_result_recorded') {
     source = exactTaskStreamValues(value, TASK_STREAM_TOOL_CALL_RESULT_RECORDED_KEYS);
   } else if (itemKind === 'programming_runtime_tool_activity') {
-    source = exactTaskStreamValues(
+    source = exactTaskStreamValuesWithOptional(
       value,
       TASK_STREAM_PROGRAMMING_RUNTIME_TOOL_ACTIVITY_KEYS,
+      TASK_STREAM_PROGRAMMING_RUNTIME_TOOL_ACTIVITY_OPTIONAL_KEYS,
     );
   } else if (itemKind === 'programming_runtime_assistant_message') {
     source = exactTaskStreamValues(
@@ -10000,6 +10161,94 @@ async function assertCustomChromeControls(page) {
   }
 }
 
+async function assertNativeWindowMaximizeRestore(page, app) {
+  let phase = 'native_window';
+  let nativeStateSource = 'electron_browser_window';
+  let useWindowMetrics = false;
+  try {
+    async function readNativeState() {
+      if (useWindowMetrics) {
+        const state = await page.evaluate(async () => ({
+          maximized: (await globalThis.window.clawfabricBuilder.windowControls.readState()).maximized,
+          bounds: { width: globalThis.outerWidth, height: globalThis.outerHeight },
+        }));
+        if (typeof state.maximized !== 'boolean' || !(state.bounds.width > 0) || !(state.bounds.height > 0)) {
+          fail('canary_custom_chrome_failed');
+        }
+        return state;
+      }
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const window = await app.browserWindow(page);
+          return await window.evaluate((target) => ({
+            maximized: target.isMaximized(), bounds: target.getContentBounds(),
+          }));
+        } catch (error) {
+          if (!/Execution context was destroyed/u.test(String(error?.message))) throw error;
+          if (attempt === 2) {
+            // Playwright can retain a destroyed Main handle. For this frameless
+            // app, outer window metrics remain independent of viewport emulation.
+            useWindowMetrics = true;
+            nativeStateSource = 'main_state_and_window_outer_bounds';
+            return readNativeState();
+          }
+          // Cold-start navigation can invalidate a read handle. Never replay the click.
+          await page.waitForTimeout(50);
+        }
+      }
+    }
+    const initiallyMaximized = (await readNativeState()).maximized;
+    if (initiallyMaximized) {
+      await page.getByRole('button', { name: 'Restore window', exact: true }).click();
+      await page.getByRole('button', { name: 'Maximize window', exact: true }).waitFor();
+    }
+    const states = [];
+    for (const maximized of [true, false]) {
+      phase = maximized ? 'maximize_click' : 'restore_click';
+      await page.getByRole('button', {
+        name: maximized ? 'Maximize window' : 'Restore window', exact: true,
+      }).click();
+      phase = maximized ? 'maximize_label' : 'restore_label';
+      await page.getByRole('button', {
+        name: maximized ? 'Restore window' : 'Maximize window', exact: true,
+      }).waitFor();
+      phase = maximized ? 'maximize_native_state' : 'restore_native_state';
+      let native;
+      const deadline = Date.now() + 5_000;
+      do {
+        native = await readNativeState();
+        if (native.maximized === maximized) break;
+        await page.waitForTimeout(50);
+      } while (Date.now() < deadline);
+      if (native.maximized !== maximized) fail('canary_custom_chrome_failed');
+      phase = maximized ? 'maximize_content_size' : 'restore_content_size';
+      // A fixed Playwright viewport can mask a native resize; compare both dimensions.
+      await page.waitForFunction((bounds) => (
+        Math.abs(globalThis.innerWidth - bounds.width) <= 2
+        && Math.abs(globalThis.innerHeight - bounds.height) <= 2
+      ), native.bounds, { timeout: 5_000 });
+      states.push({ maximized, width: native.bounds.width, height: native.bounds.height });
+    }
+    if (!(states[0].width > states[1].width || states[0].height > states[1].height)) {
+      fail('canary_custom_chrome_failed');
+    }
+    if (initiallyMaximized) {
+      await page.getByRole('button', { name: 'Maximize window', exact: true }).click();
+      await page.getByRole('button', { name: 'Restore window', exact: true }).waitFor();
+    }
+    return Object.freeze({ native_resize_verified: true, native_state_source: nativeStateSource, states: Object.freeze(states) });
+  } catch (error) {
+    if (error instanceof BuilderPackagedCanaryError) throw error;
+    failWithDiagnostic('canary_custom_chrome_failed', Object.freeze({
+      phase,
+      operation_error: String(error?.message ?? 'unknown').replace(/\s+/gu, ' ').slice(0, 240),
+      failure_kind: /Execution context was destroyed/u.test(String(error?.message))
+        ? 'native_context_invalidated'
+        : /Timeout/u.test(String(error?.message)) ? 'window_wait_timeout' : 'window_operation_failed',
+    }));
+  }
+}
+
 function makeTempUserData(fsModule = fs, osModule = os) {
   return fsModule.mkdtempSync(path.join(osModule.tmpdir(), PACKAGED_CANARY_USER_DATA_PREFIX));
 }
@@ -10834,6 +11083,7 @@ module.exports = {
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertCustomChromeControls,
+  assertNativeWindowMaximizeRestore,
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
@@ -10853,7 +11103,6 @@ module.exports = {
   capturePreviewEvidence,
   waitForChangedPreviewEvidence,
   captureSavedActivityEvidence,
-  bindNewProjectWorkspaceViaUi,
   clickSaveVersionViaUi,
   copySavedProviderProfile,
   createInitialDraftViaUi,
@@ -10873,6 +11122,7 @@ module.exports = {
   readOnlyBridgeEvidence,
   readSanitizedBridgeEvidence,
   readSanitizedTaskStreamEvidence,
+  requireBuildWorkspaceBeforeDraftViaUi,
   retryFailedDraftViaUi,
   rejectPlanViaUi,
   runCli,

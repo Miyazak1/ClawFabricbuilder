@@ -10,6 +10,12 @@ const {
 const SERVICE_VERSION = 'builder-agent-conversation-workbench-recording-service.v1';
 const AGENT_ID_PATTERN = /^builder-agent:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u;
 const OWNER_ID_PATTERN = /^builder-user:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RUN_ID_PATTERN = /^builder-run:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u;
+const TURN_OUTCOME_TEXT = Object.freeze({
+  cancelled: '\u5df2\u505c\u6b62\uff0c\u672c\u6b21\u8bf7\u6c42\u672a\u5b8c\u6210\u3002',
+  interrupted: '\u8bf7\u6c42\u5df2\u4e2d\u65ad\uff0c\u53ef\u4ee5\u91cd\u65b0\u53d1\u9001\u3002',
+  failed: '\u8bf7\u6c42\u672a\u5b8c\u6210\uff0c\u8bf7\u91cd\u8bd5\u3002',
+});
 
 class BuilderAgentConversationWorkbenchRecordingServiceError extends Error {
   constructor() {
@@ -55,6 +61,7 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
   const recordMessage = stableMethod(messageStore, 'record_message');
   const threadId = `builder-workbench-thread:${match[1]}`;
   const workbenchId = `builder-agent-workbench:${match[1]}`;
+  let synchronizedHead = 0;
 
   function syncAgentConversationStream(stream) {
     if (
@@ -78,7 +85,10 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
       || !Number.isSafeInteger(conversation.created_at_ms)
       || conversation.created_at_ms < 0
       || !Array.isArray(conversation.items)
+      || !Number.isSafeInteger(conversation.head_sequence)
+      || conversation.head_sequence < 0
     ) fail();
+    if (conversation.head_sequence < synchronizedHead) synchronizedHead = 0;
     Reflect.apply(recordThread, messageStore, [{
       thread: {
         thread_version: BUILDER_WORKBENCH_THREAD_VERSION,
@@ -96,20 +106,28 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
       if (
         item === null
         || typeof item !== 'object'
-        || item.item_kind !== 'transcript_message'
-        || (item.role !== 'user' && item.role !== 'assistant')
         || !Number.isSafeInteger(item.sequence)
         || item.sequence < 1
         || typeof item.turn_id !== 'string'
-        || typeof item.message?.message_id !== 'string'
-        || typeof item.message?.text !== 'string'
       ) continue;
+      if (item.sequence <= synchronizedHead) continue;
+      const turnStatus = item.item_kind === 'turn_completed'
+        && Object.hasOwn(TURN_OUTCOME_TEXT, item.outcome)
+        && typeof item.run_id === 'string' && RUN_ID_PATTERN.test(item.run_id);
+      const transcript = item.item_kind === 'transcript_message'
+        && (item.role === 'user' || item.role === 'assistant')
+        && typeof item.message?.message_id === 'string' && typeof item.message?.text === 'string';
+      if (!turnStatus && !transcript) continue;
+      // A terminal notice is a Main fact, never a synthesized assistant reply.
+      const messageId = turnStatus
+        ? `builder-message:${RUN_ID_PATTERN.exec(item.run_id)[1]}` : item.message.message_id;
+      const messageText = turnStatus ? TURN_OUTCOME_TEXT[item.outcome] : item.message.text;
       const isOwner = item.role === 'user';
       const timestamp = conversation.created_at_ms + item.sequence;
       const result = Reflect.apply(recordMessage, messageStore, [{
         message: {
           envelope_version: BUILDER_WORKBENCH_MESSAGE_ENVELOPE_VERSION,
-          message_id: item.message.message_id,
+          message_id: messageId,
           agent_id: agentId,
           owner_id: ownerId,
           source: {
@@ -127,12 +145,17 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
             task_address_id: null,
           },
           content: {
-            content_type: isOwner
-              ? 'builder.chat.user_message.v1'
-              : 'builder.chat.agent_message.v1',
-            schema_ref: 'builder.workbench.chat_message.v1',
+            content_type: turnStatus ? 'builder.chat.turn_status.v1'
+              : isOwner ? 'builder.chat.user_message.v1' : 'builder.chat.agent_message.v1',
+            schema_ref: turnStatus ? 'builder.workbench.turn_status.v1' : 'builder.workbench.chat_message.v1',
             schema_version: 1,
-            payload: {
+            payload: turnStatus ? {
+              outcome: item.outcome,
+              run_id: item.run_id,
+              sequence: item.sequence,
+              text: messageText,
+              turn_id: item.turn_id,
+            } : {
               context_route: typeof item.context_route === 'string' ? item.context_route : null,
               message_kind: item.message_kind,
               role: item.role,
@@ -140,18 +163,18 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
               text: item.message.text,
               turn_id: item.turn_id,
             },
-            fallback_text: item.message.text,
+            fallback_text: messageText,
           },
           delivery: {
             attention: 'normal',
             visibility: 'main_stream',
-            dedupe_key: item.message.message_id,
+            dedupe_key: messageId,
             source_sequence: `agent-conversation:${item.sequence}`,
           },
           trust: {
             provenance: isOwner ? 'human' : 'local_system',
             sensitivity: 'local',
-            prompt_admission: 'candidate',
+            prompt_admission: turnStatus ? 'excluded' : 'candidate',
             memory_admission: isOwner ? 'candidate' : 'excluded',
           },
           attachment_refs: [],
@@ -162,6 +185,7 @@ function createBuilderAgentConversationWorkbenchRecordingService(rawOptions) {
       }]);
       if (result.operation === 'message_recorded') recordedCount += 1;
     }
+    synchronizedHead = conversation.head_sequence;
     return freezeDeep({
       result_version: 'builder-agent-conversation-workbench-recording-result.v1',
       operation: 'conversation_synchronized',

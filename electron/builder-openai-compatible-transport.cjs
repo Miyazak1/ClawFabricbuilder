@@ -14,6 +14,7 @@ const REQUEST_KEYS = Object.freeze([
   'model',
   'credential',
   'messages',
+  'output_format',
   'timeout_ms',
 ]);
 const OPTIONAL_REQUEST_KEYS = Object.freeze(['temperature', 'max_tokens']);
@@ -21,7 +22,7 @@ const MESSAGE_KEYS = Object.freeze(['role', 'content']);
 const CONTROL_KEYS = Object.freeze(['signal', 'on_output_delta']);
 const DEEPSEEK_V4_MODELS = Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']);
 const ERROR_MESSAGES = Object.freeze({
-  builder_provider_request_invalid: 'AI provider settings are invalid.',
+  builder_provider_request_invalid: 'The AI provider request is invalid.',
   builder_provider_unavailable: 'AI generation is unavailable.',
   builder_provider_cancelled: 'AI generation was cancelled.',
   builder_provider_timeout: 'AI generation timed out.',
@@ -146,11 +147,12 @@ function providerEndpoint(value) {
 }
 
 function sanitizeMessages(value) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value) || ![2, 3].includes(value.length)) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || ![2, 3, 4].includes(value.length)) {
     fail('builder_provider_request_invalid');
   }
   const arrayKeys = Reflect.ownKeys(value);
-  const expectedRoles = value.length === 2 ? ['system', 'user'] : ['system', 'user', 'user'];
+  // Plan repair adds a repair instruction before the final current-user reminder.
+  const expectedRoles = ['system', 'user', 'user', 'user'].slice(0, value.length);
   const expectedKeys = [...expectedRoles.map((_, index) => String(index)), 'length'];
   if (arrayKeys.length !== expectedKeys.length || arrayKeys.some((key) => !expectedKeys.includes(key))) {
     fail('builder_provider_request_invalid');
@@ -188,8 +190,12 @@ function sanitizeRequest(value) {
     model: safeText(ownValue(value, 'model', 'builder_provider_request_invalid'), 200, 'builder_provider_request_invalid'),
     credential: safeText(ownValue(value, 'credential', 'builder_provider_request_invalid'), 16 * 1024, 'builder_provider_request_invalid'),
     messages: sanitizeMessages(ownValue(value, 'messages', 'builder_provider_request_invalid')),
+    output_format: ownValue(value, 'output_format', 'builder_provider_request_invalid'),
     timeout_ms: timeoutMs,
   };
+  if (!['json_object', 'text'].includes(request.output_format)) {
+    fail('builder_provider_request_invalid');
+  }
   if (Reflect.ownKeys(value).includes('temperature')) {
     const temperature = ownValue(value, 'temperature', 'builder_provider_request_invalid');
     if (typeof temperature !== 'number' || !Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
@@ -575,7 +581,9 @@ function createBuilderOpenAICompatibleTransport(options = {}) {
         body: JSON.stringify({
           model: request.model,
           messages: request.messages,
-          response_format: { type: 'json_object' },
+          ...(request.output_format === 'json_object'
+            ? { response_format: { type: 'json_object' } }
+            : {}),
           stream: shouldStream,
           ...providerDialectFields(request),
           ...(request.temperature === undefined ? {} : { temperature: request.temperature }),

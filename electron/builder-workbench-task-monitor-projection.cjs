@@ -2,6 +2,8 @@
 
 const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
+const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
+const { sanitizeBuilderConversationAddress } = require('./builder-conversation-address.cjs');
 
 const PROJECTION_VERSION = 'builder-workbench-task-monitor.v2';
 const AGENT_ID_PATTERN = /^builder-agent:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -177,7 +179,7 @@ function deriveTaskState(task, stream, attentionValue) {
   } else if (latestCompletion.terminal_status === 'interrupted') {
     group = 'attention';
     state = 'interrupted';
-    statusLabel = 'Continue task';
+    statusLabel = 'Paused';
   } else if (latestCompletion.terminal_status === 'cancelled') {
     state = 'stopped';
     statusLabel = 'Stopped';
@@ -264,10 +266,10 @@ function createBuilderWorkbenchTaskMonitorProjection({
   function projectTask(task) {
     let stream = null;
     try {
-      stream = Reflect.apply(readTaskStream, undefined, [{
+      stream = builderPerformanceTrace.measureSync('main.workbench.monitor.stream_read.duration_ms', () => Reflect.apply(readTaskStream, undefined, [{
         project_id: task.project_id,
         conversation_id: task.conversation_id,
-      }]);
+      }]));
     } catch {
       stream = null;
     }
@@ -299,7 +301,7 @@ function createBuilderWorkbenchTaskMonitorProjection({
       derived = freezeDeep({
         group: 'attention',
         state: 'interrupted',
-        status_label: 'Continue task',
+        status_label: 'Paused',
         latest_activity_at_ms: derived.latest_activity_at_ms,
         latest_result: null,
         attention: null,
@@ -341,10 +343,15 @@ function createBuilderWorkbenchTaskMonitorProjection({
   }
   return freezeDeep({
     projection_version: PROJECTION_VERSION,
-    invalidate_monitor({ agent_id: agentId, project_id: projectId = null }) {
-      validateScope(agentId, projectId);
+    invalidate_monitor({ agent_id: agentId, project_id: projectId = null, task_address_id: taskAddressId = null, conversation_id: conversationId = null }) {
+      validateScope(agentId, projectId, taskAddressId);
+      if (conversationId !== null) {
+        try { sanitizeBuilderConversationAddress(projectId, conversationId); } catch { fail(); }
+      }
       for (const [key, cached] of taskProjectionCache) {
-        if (cached.agent_id === agentId && (projectId === null || cached.project_id === projectId)) {
+        if (cached.agent_id === agentId && (projectId === null || cached.project_id === projectId)
+          && (taskAddressId === null || cached.projection.task_address_id === taskAddressId)
+          && (conversationId === null || cached.projection.conversation_id === conversationId)) {
           taskProjectionCache.delete(key);
         }
       }
@@ -362,7 +369,8 @@ function createBuilderWorkbenchTaskMonitorProjection({
     }) {
       validateScope(agentId, projectId, taskAddressId);
       if (typeof cacheOnly !== 'boolean') fail();
-      const listed = Reflect.apply(listTasks, addressStore, [{ agent_id: agentId, limit: 256 }]);
+      const listed = builderPerformanceTrace.measureSync('main.workbench.monitor.list.duration_ms',
+        () => Reflect.apply(listTasks, addressStore, [{ agent_id: agentId, limit: 256 }]));
       if (listed?.status !== 'ready' || !Array.isArray(listed.task_addresses)) fail();
       const allTaskAddresses = listed.task_addresses.map((record) => {
         const task = record?.task_address;

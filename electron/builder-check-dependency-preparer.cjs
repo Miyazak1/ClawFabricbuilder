@@ -272,6 +272,9 @@ function createBuilderCheckDependencyPreparer(rawOptions) {
   const terminateProcessTree = functionValue(options.terminate_process_tree.value);
   const materializer = options.workspace_materializer.value;
   const readWorkspacePath = methodValue(materializer, 'read_workspace_path');
+  const recordPreparedDependencies = typeof materializer.record_prepared_dependencies === 'function'
+    ? materializer.record_prepared_dependencies.bind(materializer)
+    : null;
   const clock = options.clock.value;
   const nowMs = methodValue(clock, 'now_ms');
   const setTimer = methodValue(clock, 'set_timeout');
@@ -353,7 +356,13 @@ function createBuilderCheckDependencyPreparer(rawOptions) {
           child.once('error', () => settle('failed'));
           child.once('close', (code, signal) => {
             if (signal !== null || code !== 0) settle('failed', Number.isSafeInteger(code) ? code : null);
-            else settle('prepared', 0);
+            else if (recordPreparedDependencies === null) settle('prepared', 0);
+            else {
+              Promise.resolve()
+                .then(() => recordPreparedDependencies(input.workspace_admission.value))
+                .catch(() => {})
+                .finally(() => settle('prepared', 0));
+            }
           });
         });
       } catch (error) {

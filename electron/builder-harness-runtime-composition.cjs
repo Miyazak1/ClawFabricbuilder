@@ -411,29 +411,8 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
     async host_factory({ run_contract: runContract, session_id: sessionId, on_notification: onNotification }) {
       const entry = entries.get(runContract.admission.run_id);
       if (!entry || entry.session_id !== sessionId) fail('builder_harness_runtime_composition_conflict');
-      const commandService = commandRuntime === null ? null : Object.freeze({
-        executor_version: BUILDER_CONTROLLED_COMMAND_EXECUTOR_VERSION,
-        async execute(rawCommand) {
-          const commandRequest = exactObject(rawCommand, ['command', 'description']);
-          const sourceTree = await entry.workspace_tools.snapshot();
-          const approval = await commandRuntime.approval_service.request_approval({
-            run_contract: runContract,
-            source_tree: sourceTree,
-            command: valueAt(commandRequest, 'command'),
-            description: valueAt(commandRequest, 'description'),
-          });
-          entry.pending_command_approval = null;
-          return commandRuntime.executor.execute({
-            execution_approval: approval,
-            run_contract: runContract,
-            source_tree: await entry.workspace_tools.snapshot(),
-            command_profile_id: approval.command_profile_id,
-          });
-        },
-      });
       const broker = checkedBroker(await Promise.resolve(Reflect.apply(createBroker, undefined, [{
         workspace_tools: entry.workspace_tools,
-        ...(commandService === null ? {} : { command_service: commandService }),
         ...(agentTestBrowserRuntime === null ? {} : {
           browser_service: (entry.browser_service = createBuilderAgentTestBrowserService({
             browser_runtime: agentTestBrowserRuntime,
@@ -475,7 +454,6 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
         'grep',
         'edit',
         'write',
-        ...(commandService === null ? [] : ['bash']),
         ...(agentTestBrowserRuntime === null ? [] : AGENT_TEST_BROWSER_BROKER_METHODS),
         'ask_user_question',
       ]);
@@ -536,6 +514,10 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
       }])));
       const start = requiredMethod(rawHost, 'start');
       const prompt = requiredMethod(rawHost, 'prompt');
+      const resume = (request) => requiredMethod(rawHost, 'resume')(request);
+      const manualCompact = Reflect.ownKeys(rawHost).includes('manual_compact')
+        ? (request) => requiredMethod(rawHost, 'manual_compact')(request)
+        : null;
       const whenTerminated = requiredMethod(rawHost, 'when_terminated');
       const shutdown = requiredMethod(rawHost, 'shutdown');
       const cancel = requiredMethod(rawHost, 'cancel');
@@ -547,6 +529,9 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
         host_version: BUILDER_HARNESS_PROCESS_HOST_VERSION,
         start,
         prompt,
+        recover_empty_output: (request) => requiredMethod(rawHost, 'recover_empty_output')(request),
+        resume,
+        ...(manualCompact === null ? {} : { manual_compact: manualCompact }),
         when_terminated: whenTerminated,
         async shutdown() { try { return await shutdown(); } finally { await closeBroker('completed'); } },
         async cancel() { try { return await cancel(); } finally { await closeBroker('cancelled'); } },
@@ -618,7 +603,7 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
       credential,
       event_sink: eventSink,
       workspace_tools: trackedWorkspaceTools(runContract, sourceTree),
-      session_id: `builder-harness-${runId.slice('builder-run:'.length)}`,
+      session_id: `builder-harness-${(runContract.input.resume_session_run_id ?? runId).slice('builder-run:'.length)}`,
       broker: null,
       broker_closed: false,
       browser_service: null,
@@ -629,7 +614,14 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
     };
     entries.set(runId, entry);
     try {
-      await recordWorkspaceSnapshot(runContract, sourceTree);
+      const originRunId = runContract.input.resume_session_run_id;
+      const resume = originRunId === undefined
+        ? { session_run_id: runId, base_source_tree: sourceTree }
+        : (await snapshotStore.read_run_source_tree({
+          ...snapshotIdentity(runContract), run_id: originRunId,
+        })).resume;
+      if (resume === undefined) fail('builder_harness_runtime_composition_unavailable');
+      await snapshotStore.record_source_tree({ ...snapshotIdentity(runContract), source_tree: sourceTree, resume });
       entry.runtime_handle = await runtime.startRun({ run_contract: runContract, event_sink: eventSink });
       entry.status = 'running';
     } catch (error) {
@@ -772,6 +764,9 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
     startRun,
     repairRun,
     reconcileRun,
+    manual_compact(request) {
+      return runtime.manual_compact(request);
+    },
     cancelRun,
     pendingUserQuestion,
     answerUserQuestion,
@@ -788,6 +783,57 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
     },
     readRuntimeSourceTree(request) {
       return snapshotStore.read_source_tree(request);
+    },
+    async prepareResume(request) {
+      const value = exactObject(request, ['project_id', 'conversation_id', 'run_id', 'session_run_id', 'current_source_tree']);
+      const record = await snapshotStore.read_run_source_tree({
+        project_id: value.project_id, conversation_id: value.conversation_id, run_id: value.run_id,
+      });
+      const currentTree = sanitizeBuilderProjectSourceTree(value.current_source_tree);
+      if (record.resume === undefined || record.resume.session_run_id !== value.session_run_id) {
+        fail('builder_harness_runtime_composition_unavailable');
+      }
+      // An external edit must never be silently overwritten by the paused snapshot.
+      if (record.resume.base_source_tree.source_tree_digest !== currentTree.source_tree_digest) {
+        fail('builder_harness_runtime_composition_conflict');
+      }
+      return record.source_tree;
+    },
+    async prepareContinuation(request) {
+      const value = exactObject(request, [
+        'project_id', 'conversation_id', 'run_id', 'session_run_id', 'current_source_tree',
+      ]);
+      const record = await snapshotStore.read_run_source_tree({
+        project_id: value.project_id,
+        conversation_id: value.conversation_id,
+        run_id: value.run_id,
+      });
+      const currentTree = sanitizeBuilderProjectSourceTree(value.current_source_tree);
+      if (
+        record.resume === undefined
+        || record.resume.session_run_id !== value.session_run_id
+      ) fail('builder_harness_runtime_composition_unavailable');
+      if (record.source_tree.source_tree_digest !== currentTree.source_tree_digest) {
+        fail('builder_harness_runtime_composition_conflict');
+      }
+      const filesByPath = new Map(record.source_tree.files.map((file) => [file.path, file]));
+      const observed = [...new Set(Object.values(record.tools))]
+        .map((toolPath) => filesByPath.get(toolPath))
+        .filter((file) => file !== undefined)
+        .map((file) => freezeDeep({
+          path: file.path,
+          content_digest: file.content_digest,
+          freshness: 'unchanged',
+        }));
+      return freezeDeep({
+        projection_version: 'builder-session-continuation-projection.v1',
+        continuity_status: 'native_resumed',
+        reason: 'previous_harness_session_available',
+        session_run_id: value.session_run_id,
+        source_tree_digest: record.source_tree.source_tree_digest,
+        source_freshness: 'unchanged',
+        observed_working_set: observed,
+      });
     },
     dispose,
     diagnostics() {
@@ -807,6 +853,7 @@ function createBuilderHarnessRuntimeComposition(rawOptions) {
         ],
         shell_available: commandRuntime !== null,
         renderer_authority: false,
+        runtime: typeof runtime.diagnostics === 'function' ? runtime.diagnostics() : null,
       });
     },
   });

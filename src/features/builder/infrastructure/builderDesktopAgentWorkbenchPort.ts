@@ -4,7 +4,7 @@ import type {
 } from '../application/builderPorts';
 
 const BRIDGE_KEYS = Object.freeze([
-  'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'controlTask',
+  'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'decideAgentPlan', 'controlTask',
   'subscribeChanged',
 ]);
 const AGENT_ID =
@@ -19,12 +19,16 @@ const PROJECT_ID =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ADDRESS_ID =
   /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const AGENT_PLAN_ID =
+  /^builder-agent-plan:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DIGEST = /^sha256:[0-9a-f]{64}$/u;
 
 type Bridge = Readonly<{
   read(request: unknown): Promise<unknown>;
   updateMessageState(request: unknown): Promise<unknown>;
   createTaskProposal(request: unknown): Promise<unknown>;
   decideTaskProposal(request: unknown): Promise<unknown>;
+  decideAgentPlan(request: unknown): Promise<unknown>;
   controlTask(request: unknown): Promise<unknown>;
   subscribeChanged(listener: (event: unknown) => void): () => void;
 }>;
@@ -52,6 +56,7 @@ function bridge(value: unknown): Bridge {
     updateMessageState: method(value, 'updateMessageState') as Bridge['updateMessageState'],
     createTaskProposal: method(value, 'createTaskProposal') as Bridge['createTaskProposal'],
     decideTaskProposal: method(value, 'decideTaskProposal') as Bridge['decideTaskProposal'],
+    decideAgentPlan: method(value, 'decideAgentPlan') as Bridge['decideAgentPlan'],
     controlTask: method(value, 'controlTask') as Bridge['controlTask'],
     subscribeChanged: method(value, 'subscribeChanged') as Bridge['subscribeChanged'],
   });
@@ -93,6 +98,16 @@ export function createBuilderDesktopAgentWorkbenchPort(value: unknown): BuilderA
     async decideTaskProposal(request: Parameters<BuilderAgentWorkbenchPort['decideTaskProposal']>[0]) {
       if (!AGENT_ID.test(request.agent_id) || !PROPOSAL_ID.test(request.proposal_id)) unavailable();
       try { return structuredClone(await Reflect.apply(target.decideTaskProposal, target, [request])); }
+      catch { throw new BuilderDesktopAgentWorkbenchPortError(); }
+    },
+    async decideAgentPlan(request: Parameters<BuilderAgentWorkbenchPort['decideAgentPlan']>[0]) {
+      if (
+        !AGENT_ID.test(request.agent_id)
+        || !AGENT_PLAN_ID.test(request.agent_plan_id)
+        || !DIGEST.test(request.content_digest)
+        || (request.decision !== 'approved' && request.decision !== 'rejected')
+      ) unavailable();
+      try { return structuredClone(await Reflect.apply(target.decideAgentPlan, target, [request])); }
       catch { throw new BuilderDesktopAgentWorkbenchPortError(); }
     },
     async controlTask(request: Parameters<BuilderAgentWorkbenchPort['controlTask']>[0]) {

@@ -12,6 +12,7 @@ const {
   DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
   DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
   DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+  PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
 } = require('../electron/builder-check-run-approval-ipc-adapter.cjs');
@@ -189,13 +190,16 @@ async function projectEnvironmentDiagnosisResult() {
       load_current() {
         return {
           result_version: 'builder-project-read-result.v1',
-          operation: 'current_loaded',
-          project_id: PROJECT_ID,
-          title: 'Project',
-          summary: 'Project summary',
+          product_revision_receipt: {
+            project_id: PROJECT_ID,
+            resulting_tree_digest: sourceTree.source_tree_digest,
+          },
+          current: {},
           source_tree: sourceTree,
-          base_revision: null,
+          git_candidate_receipt: {},
+          git_verification_receipt: {},
           authority_evidence: {},
+          operation: 'current_loaded',
         };
       },
       load_revision() {},
@@ -255,6 +259,7 @@ function setup({
   read = async () => readResult(),
   diagnose = async () => environmentDiagnosisResult(),
   projectDiagnose = async () => projectEnvironmentDiagnosisResult(),
+  projectDependencyPrepare = async () => { throw new Error('unused project dependency preparer'); },
   run = async () => runResult(),
   dependency = async () => runResult(),
   skip = async () => skipResult(),
@@ -286,6 +291,10 @@ function setup({
     service_version: 'builder-project-environment-diagnosis-service.v1',
     diagnose_project_environment: projectDiagnose,
   };
+  const projectDependencyPreparer = {
+    preparer_version: 'builder-project-dependency-preparer.v1',
+    prepare_project_dependencies: projectDependencyPrepare,
+  };
   const runtime = createBuilderCheckRunApprovalIpcRuntime({
     ipcMain,
     mainWindowRef: () => ({ webContents, isDestroyed: () => false }),
@@ -295,6 +304,7 @@ function setup({
       skip_current_draft_check: skip,
     },
     projectEnvironmentDiagnosisService: projectDiagnosisService,
+    projectDependencyPreparer,
   });
   return {
     event: { sender: webContents, senderFrame: mainFrame },
@@ -311,6 +321,7 @@ test('registers exactly the read, diagnosis, explicit run, dependency preparatio
     READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
     DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
     DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+    PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
     APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
     DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
     SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
@@ -353,6 +364,7 @@ test('registers exactly the read, diagnosis, explicit run, dependency preparatio
     SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
     DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
     APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
+    PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
     DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
     DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
     READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
@@ -523,6 +535,7 @@ test('rolls back partial registration and rejects malformed services', () => {
   });
   assert.equal(failed.handlers.size, 0);
   assert.deepEqual(failed.removed, [
+    PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
     DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
     DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
     READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
@@ -557,5 +570,6 @@ test('runtime source has no preload, renderer, provider, source, Git, or save au
   assert.doesNotMatch(source, /preload|ipcRenderer|contextBridge|provider|source_tree|writeFile|git_authority|save_draft/iu);
   assert.match(source, /activeReads/u);
   assert.match(source, /activeProjectDiagnoses/u);
+  assert.match(source, /activeProjectDependencyPreparations/u);
   assert.match(source, /activeRuns/u);
 });

@@ -176,10 +176,18 @@ function currentDraftIdFromStream(rawValue, request) {
     || !Object.hasOwn(conversation, 'value')
     || !isPlainObject(conversation.value)
     || conversation.value.conversation_id !== request.conversation_id
-    || !reviewState
-    || !Object.hasOwn(reviewState, 'value')
-    || !isPlainObject(reviewState.value)
   ) fail();
+  // Saved/rejected candidates no longer have a review projection. Resolve
+  // their source through the saved-revision authority, not the old checkpoint.
+  if (!reviewState || (Object.hasOwn(reviewState, 'value') && reviewState.value === null)) {
+    const items = conversation.value.items;
+    const latestCandidate = Array.isArray(items) ? [...items].reverse().find((item) => (
+      item.item_kind === 'candidate_reviewed' || item.candidate !== null && item.candidate !== undefined
+    )) : null;
+    if (latestCandidate?.candidate?.candidate_state === 'proposed') fail();
+    return null;
+  }
+  if (!Object.hasOwn(reviewState, 'value') || !isPlainObject(reviewState.value)) fail();
   const draftId = reviewState.value.draft_id;
   return draftId === null ? null : safePattern(draftId, DRAFT_ID_PATTERN);
 }
@@ -219,12 +227,30 @@ function candidateFromConversation(rawValue, request) {
   return receipt;
 }
 
-function selectedHtmlEntryPath(sourceTree) {
+function hasPackageDevScript(sourceTree) {
+  const packageFile = sourceTree.files.find((file) => file.path === 'package.json') ?? null;
+  if (packageFile === null) return false;
+  let pkg;
+  try {
+    pkg = JSON.parse(packageFile.content);
+  } catch {
+    return false;
+  }
+  return isPlainObject(pkg)
+    && isPlainObject(pkg.scripts)
+    && typeof pkg.scripts.dev === 'string'
+    && pkg.scripts.dev.trim().length > 0;
+}
+
+function selectedPreviewEntry(sourceTree) {
   const index = sourceTree.files.find((file) => file.path === 'index.html') ?? null;
-  if (index !== null) return index.path;
+  if (index !== null) return { path: index.path, preview_kind: 'live_static_web' };
   const first = sourceTree.files.find((file) => /\.html?$/iu.test(file.path)) ?? null;
-  if (first === null) fail();
-  return first.path;
+  if (first !== null) return { path: first.path, preview_kind: 'live_static_web' };
+  if (hasPackageDevScript(sourceTree)) {
+    return { path: 'package.json', preview_kind: 'live_dev_server_web' };
+  }
+  fail();
 }
 
 function createBuilderLivePreviewCurrentDraftSourceService(rawOptions) {
@@ -303,11 +329,12 @@ function createBuilderLivePreviewCurrentDraftSourceService(rawOptions) {
         }
         if (resolverResult.status !== 'ready' || resolverResult.preview_source_snapshot === null) fail();
         const sourceTree = resolverResult.preview_source_snapshot.source_tree;
+        const previewEntry = selectedPreviewEntry(sourceTree);
         const admittedAtMs = safeTimestamp(nowMs());
         const sourceAdmission = createBuilderLivePreviewSourceAdmission({
           source_resolver_result: resolverResult,
-          selected_entry_path: selectedHtmlEntryPath(sourceTree),
-          preview_kind: 'live_static_web',
+          selected_entry_path: previewEntry.path,
+          preview_kind: previewEntry.preview_kind,
           admitted_at_ms: admittedAtMs,
           expires_at_ms: admittedAtMs + 10 * 60 * 1_000,
         });

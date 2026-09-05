@@ -7,6 +7,7 @@ const {
   DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
   DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
   DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+  PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   createBuilderCheckRunApprovalIpcAdapter,
@@ -17,6 +18,9 @@ const {
 const {
   BUILDER_CHECK_SKIP_CURRENT_DRAFT_SERVICE_VERSION,
 } = require('./builder-check-skip-current-draft-service.cjs');
+const {
+  BUILDER_PROJECT_DEPENDENCY_PREPARER_VERSION,
+} = require('./builder-project-dependency-preparer.cjs');
 
 const BUILDER_CHECK_RUN_APPROVAL_IPC_RUNTIME_VERSION =
   'builder-check-run-approval-ipc-runtime.v1';
@@ -26,6 +30,7 @@ const OPTION_KEYS = Object.freeze([
   'currentDraftCheckRunService',
   'currentDraftCheckSkipService',
   'projectEnvironmentDiagnosisService',
+  'projectDependencyPreparer',
 ]);
 const SERVICE_KEYS = Object.freeze([
   'service_version',
@@ -39,6 +44,10 @@ const SKIP_SERVICE_KEYS = Object.freeze(['service_version', 'skip_current_draft_
 const PROJECT_DIAGNOSIS_SERVICE_KEYS = Object.freeze([
   'service_version',
   'diagnose_project_environment',
+]);
+const PROJECT_DEPENDENCY_PREPARER_KEYS = Object.freeze([
+  'preparer_version',
+  'prepare_project_dependencies',
 ]);
 
 class BuilderCheckRunApprovalIpcRuntimeError extends Error {
@@ -130,6 +139,16 @@ function safeProjectDiagnosisService(value) {
   return value;
 }
 
+function safeProjectDependencyPreparer(value) {
+  const descriptors = exactObject(value, PROJECT_DEPENDENCY_PREPARER_KEYS);
+  if (
+    descriptors.preparer_version.value !== BUILDER_PROJECT_DEPENDENCY_PREPARER_VERSION
+    || typeof descriptors.prepare_project_dependencies.value !== 'function'
+    || utilTypes.isProxy(descriptors.prepare_project_dependencies.value)
+  ) fail();
+  return value;
+}
+
 function safeOptions(value) {
   const descriptors = exactObject(value, OPTION_KEYS);
   const ipcMain = descriptors.ipcMain.value;
@@ -150,6 +169,8 @@ function safeOptions(value) {
     currentDraftCheckSkipService: safeSkipService(descriptors.currentDraftCheckSkipService.value),
     projectEnvironmentDiagnosisService:
       safeProjectDiagnosisService(descriptors.projectEnvironmentDiagnosisService.value),
+    projectDependencyPreparer:
+      safeProjectDependencyPreparer(descriptors.projectDependencyPreparer.value),
   });
 }
 
@@ -158,6 +179,7 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
   const activeReads = new Map();
   const activeDiagnoses = new Map();
   const activeProjectDiagnoses = new Map();
+  const activeProjectDependencyPreparations = new Map();
   const activeRuns = new Set();
   const activeSkips = new Set();
   const activeOperations = new Set();
@@ -221,6 +243,23 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     return trackOperation(operation);
   }
 
+  function prepareProjectDependencies(request) {
+    const existing = activeProjectDependencyPreparations.get(request.project_id);
+    if (existing !== undefined) return existing;
+    const operation = Promise.resolve().then(() => Reflect.apply(
+      options.projectDependencyPreparer.prepare_project_dependencies,
+      options.projectDependencyPreparer,
+      [request],
+    ));
+    activeProjectDependencyPreparations.set(request.project_id, operation);
+    operation.finally(() => {
+      if (activeProjectDependencyPreparations.get(request.project_id) === operation) {
+        activeProjectDependencyPreparations.delete(request.project_id);
+      }
+    }).catch(() => undefined);
+    return trackOperation(operation);
+  }
+
   function approveAndRunCheck(request) {
     if (activeRuns.has(request.draft_id)) {
       const error = new Error('A project check is already in progress.');
@@ -278,6 +317,7 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
       readCurrentDraftAvailableChecks: readAvailableChecks,
       diagnoseCurrentDraftCheckEnvironment: diagnoseCheckEnvironment,
       diagnoseProjectEnvironment,
+      prepareProjectDependencies,
       approveAndRunCurrentDraftCheck: approveAndRunCheck,
       decideCurrentDraftDependencyPreparation: decideDependencyPreparation,
       skipCurrentDraftCheck,
@@ -298,6 +338,10 @@ function createBuilderCheckRunApprovalIpcRuntime(rawOptions) {
     Object.freeze({
       channel: DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
       invoke: adapter.channels.diagnoseProjectEnvironment.invoke,
+    }),
+    Object.freeze({
+      channel: PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
+      invoke: adapter.channels.prepareProjectDependencies.invoke,
     }),
     Object.freeze({
       channel: APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,

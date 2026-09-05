@@ -33,6 +33,7 @@ export type UseBuilderProjectControllerResult = Readonly<{
   generate: BuilderProjectController['generate'];
   generateApprovedPlan: BuilderProjectController['generateApprovedPlan'];
   retryGenerate: BuilderProjectController['retryGenerate'];
+  resumeInterruptedRun: BuilderProjectController['resumeInterruptedRun'];
   restoreDraft: BuilderProjectController['restoreDraft'];
   restoreRevisionAsDraft: BuilderProjectController['restoreRevisionAsDraft'];
   restorePreviousCheckpointAsDraft: BuilderProjectController['restorePreviousCheckpointAsDraft'];
@@ -67,6 +68,7 @@ export function useBuilderProjectController(
     generator,
     workspace,
     createPreview,
+    conversationScope,
     preserveSelectionWhenProjectIdUndefined = false,
     projectId,
     taskAddressId,
@@ -75,9 +77,10 @@ export function useBuilderProjectController(
     () => createBuilderProjectController({
       generator,
       workspace,
+      conversationScope,
       ...(createPreview === undefined ? {} : { createPreview }),
     }),
-    [generator, workspace, createPreview],
+    [generator, workspace, createPreview, conversationScope],
   );
   const disposalTokens = useRef(new WeakMap<BuilderProjectController, object>());
   const requestedProjectSelection = useRef<Readonly<{
@@ -214,6 +217,10 @@ export function useBuilderProjectController(
     () => controller.retryGenerate().catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
   );
+  const resumeInterruptedRun = useCallback<BuilderProjectController['resumeInterruptedRun']>(
+    (instruction, runId) => controller.resumeInterruptedRun(instruction, runId).catch(() => controller.getSnapshot()),
+    [controller],
+  );
   const save = useCallback<BuilderProjectController['save']>(
     () => controller.save().catch(() => UNAVAILABLE_SNAPSHOT),
     [controller],
@@ -248,8 +255,8 @@ export function useBuilderProjectController(
     () => controller.rejectDraft().catch(() => controller.getSnapshot()),
     [controller],
   );
-  const cancel = useCallback<BuilderProjectController['cancel']>(
-    () => controller.cancel().catch(() => controller.getSnapshot()),
+    const cancel = useCallback<BuilderProjectController['cancel']>(
+      (options) => controller.cancel(options).catch(() => controller.getSnapshot()),
     [controller],
   );
   const steer = useCallback<BuilderProjectController['steer']>(
@@ -273,6 +280,7 @@ export function useBuilderProjectController(
       generate,
       generateApprovedPlan,
       retryGenerate,
+      resumeInterruptedRun,
       restoreDraft,
       restoreRevisionAsDraft,
       restorePreviousCheckpointAsDraft,
@@ -296,6 +304,7 @@ export function useBuilderProjectController(
       generate,
       generateApprovedPlan,
       retryGenerate,
+      resumeInterruptedRun,
       restoreDraft,
       restoreRevisionAsDraft,
       restorePreviousCheckpointAsDraft,

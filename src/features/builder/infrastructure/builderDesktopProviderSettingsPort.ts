@@ -37,19 +37,26 @@ export type BuilderProviderSettingsWriteRequest = Readonly<{
   credential: string;
 }>;
 
+export type BuilderProviderSettingsSelectModelRequest = Readonly<{
+  model: string;
+  expected_config_digest: string;
+}>;
+
 export type BuilderProviderSettingsPort = Readonly<{
   readCurrent(): Promise<BuilderProviderSettingsCurrent>;
   replaceCurrent(request: BuilderProviderSettingsWriteRequest): Promise<BuilderProviderSettingsCurrent>;
+  selectModel(request: BuilderProviderSettingsSelectModelRequest): Promise<BuilderProviderSettingsCurrent>;
   status(): Promise<BuilderProviderSettingsStatus>;
 }>;
 
 type BuilderProviderSettingsBridge = Readonly<{
   readCurrent(): Promise<unknown>;
   replaceCurrent(request: unknown): Promise<unknown>;
+  selectModel(request: unknown): Promise<unknown>;
   status(): Promise<unknown>;
 }>;
 
-const BRIDGE_KEYS = new Set(['readCurrent', 'replaceCurrent', 'status']);
+const BRIDGE_KEYS = new Set(['readCurrent', 'replaceCurrent', 'selectModel', 'status']);
 const CONFIG_KEYS = new Set([
   'provider_id',
   'base_url',
@@ -63,6 +70,7 @@ const CURRENT_KEYS = new Set(['result_version', 'operation', 'configured', 'conf
 const STATUS_KEYS = new Set(['status_version', 'configured', 'config_digest', 'credential_status']);
 const WRITE_KEYS = new Set(['config', 'credential']);
 const WRITE_CONFIG_KEYS = new Set(['base_url', 'model', 'timeout_ms', 'temperature', 'max_tokens']);
+const SELECT_MODEL_KEYS = new Set(['model', 'expected_config_digest']);
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const MAX_TEXT_BYTES = 64 * 1024;
 const UTF8_ENCODER = new TextEncoder();
@@ -157,7 +165,7 @@ function sanitizeCurrent(value: unknown): BuilderProviderSettingsCurrent {
   const descriptors = descriptorsFor(value, CURRENT_KEYS);
   if (
     descriptors.result_version.value !== 'builder-provider-settings-ipc-adapter.v1'
-    || !['current_loaded', 'current_replaced'].includes(descriptors.operation.value)
+    || !['current_loaded', 'current_replaced', 'current_model_selected'].includes(descriptors.operation.value)
     || typeof descriptors.configured.value !== 'boolean'
   ) throw portError();
   const credentialStatus = descriptors.credential_status.value;
@@ -175,6 +183,21 @@ function sanitizeCurrent(value: unknown): BuilderProviderSettingsCurrent {
     configured: true,
     config: sanitizeConfig(descriptors.config.value),
     credential_status: 'stored',
+  });
+}
+
+function sanitizeSelectModelRequest(
+  value: BuilderProviderSettingsSelectModelRequest,
+): unknown {
+  const descriptors = descriptorsFor(value, SELECT_MODEL_KEYS);
+  const model = sanitizeBuilderProviderModel(descriptors.model.value);
+  const expectedConfigDigest = descriptors.expected_config_digest.value;
+  if (typeof expectedConfigDigest !== 'string' || !DIGEST_PATTERN.test(expectedConfigDigest)) {
+    throw portError();
+  }
+  return Object.freeze({
+    model,
+    expected_config_digest: expectedConfigDigest,
   });
 }
 
@@ -245,6 +268,7 @@ function sanitizeBridge(value: unknown): BuilderProviderSettingsBridge {
   return Object.freeze({
     readCurrent: methods.readCurrent,
     replaceCurrent: methods.replaceCurrent,
+    selectModel: methods.selectModel,
     status: methods.status,
   });
 }
@@ -283,6 +307,19 @@ async function callReplace(
   }
 }
 
+async function callSelectModel(
+  receiver: BuilderProviderSettingsBridge,
+  request: BuilderProviderSettingsSelectModelRequest,
+): Promise<BuilderProviderSettingsCurrent> {
+  try {
+    return sanitizeCurrent(await Reflect.apply(receiver.selectModel, receiver, [
+      sanitizeSelectModelRequest(request),
+    ]));
+  } catch {
+    throw portError();
+  }
+}
+
 export function createBuilderDesktopProviderSettingsPort(
   value: unknown,
 ): BuilderProviderSettingsPort {
@@ -293,6 +330,9 @@ export function createBuilderDesktopProviderSettingsPort(
     },
     replaceCurrent(request) {
       return callReplace(bridge, request);
+    },
+    selectModel(request) {
+      return callSelectModel(bridge, request);
     },
     status() {
       return callStatus(bridge);

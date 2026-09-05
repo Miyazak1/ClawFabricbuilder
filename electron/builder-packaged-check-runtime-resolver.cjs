@@ -9,6 +9,7 @@ const {
 
 const BUILDER_PACKAGED_CHECK_RUNTIME_RESOLVER_VERSION = 'builder-packaged-check-runtime-resolver.v1';
 const MAX_RUNTIME_IDENTITY_LIFETIME_MS = 10 * 60 * 1000;
+const MINIMUM_REUSABLE_RUNTIME_IDENTITY_REMAINING_MS = (5 * 60 * 1000) + 1;
 const CREATE_KEYS = Object.freeze([
   'runtime_registry',
   'launcher_path',
@@ -94,7 +95,7 @@ function createBuilderPackagedCheckRuntimeResolver(rawOptions) {
   function reusableIdentity(resolvedAtMs) {
     return cachedIdentity !== null
       && resolvedAtMs >= cachedIdentity.resolved_at_ms
-      && resolvedAtMs < cachedIdentity.expires_at_ms
+      && resolvedAtMs + MINIMUM_REUSABLE_RUNTIME_IDENTITY_REMAINING_MS <= cachedIdentity.expires_at_ms
       ? cachedIdentity
       : null;
   }
@@ -144,6 +145,7 @@ function createBuilderPackagedCheckRuntimeResolver(rawOptions) {
 module.exports = Object.freeze({
   BUILDER_PACKAGED_CHECK_RUNTIME_RESOLVER_VERSION,
   MAX_RUNTIME_IDENTITY_LIFETIME_MS,
+  MINIMUM_REUSABLE_RUNTIME_IDENTITY_REMAINING_MS,
   BuilderPackagedCheckRuntimeResolverError,
   createBuilderPackagedCheckRuntimeResolver,
 });

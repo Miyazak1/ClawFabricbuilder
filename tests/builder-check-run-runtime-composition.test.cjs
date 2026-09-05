@@ -13,6 +13,7 @@ const {
   createBuilderCheckRunProcessAdapter,
 } = require('../electron/builder-check-run-process-adapter.cjs');
 const {
+  DEPENDENCY_ENVIRONMENT_DIRECTORY,
   CHECK_WORKSPACE_DIRECTORY,
   createBuilderCheckRunRuntimeComposition,
 } = require('../electron/builder-check-run-runtime-composition.cjs');
@@ -97,7 +98,9 @@ test('composes a current-draft service from one shared main-owned CheckRun runti
     'builder-check-skip-current-draft-service.v1',
   );
   const workspaceRoot = path.join(root, CHECK_WORKSPACE_DIRECTORY);
+  const dependencyEnvironmentRoot = path.join(root, DEPENDENCY_ENVIRONMENT_DIRECTORY);
   assert.equal(fs.lstatSync(workspaceRoot).isDirectory(), true);
+  assert.equal(fs.lstatSync(dependencyEnvironmentRoot).isDirectory(), true);
   assert.equal(Object.isFrozen(composition), true);
 });
 
@@ -139,4 +142,5 @@ test('composition source contains no IPC, renderer, provider, save, or project m
   assert.match(source, /createBuilderCheckRunCurrentDraftService/u);
   assert.match(source, /toolchain_probe_spawn_process/u);
   assert.match(source, /dependency_prepare_spawn_process/u);
+  assert.match(source, /createBuilderDependencyEnvironmentStore/u);
 });

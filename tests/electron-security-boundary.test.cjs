@@ -25,6 +25,14 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /BUILDER_PACKAGED_CANARY/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY_USER_DATA_PATH/u);
   assert.match(main, /BUILDER_PACKAGED_CANARY_PROJECT_ROOT_PATH/u);
+  assert.match(
+    main,
+    /const packagedCanary = app\.isPackaged && process\.env\[PACKAGED_CANARY_SENTINEL\] === ['"]1['"]/u,
+  );
+  assert.match(main, /backgroundThrottling:\s*!packagedCanary/u);
+  assert.match(main, /opacity:\s*packagedCanary \? 0 : 1/u);
+  assert.match(main, /skipTaskbar:\s*packagedCanary/u);
+  assert.match(main, /if \(packagedCanary\) window\.showInactive\(\)/u);
   assert.match(main, /clawfabric-builder-packaged-canary-/u);
   assert.match(main, /fs\.lstatSync/u);
   assert.match(main, /fs\.realpathSync\.native/u);
@@ -55,7 +63,7 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(main, /await shutdownIpcRuntimes/u);
   assert.match(main, /quitAfterIpcShutdown/u);
   assert.doesNotMatch(main, /webSecurity:\s*false|enableRemoteModule|clawfabricDesktop/u);
-  assert.match(preload, /builder-preload\.v38/u);
+  assert.match(preload, /builder-preload\.v40/u);
   assert.match(main, /createBuilderUserWebMainService/u);
   assert.match(main, /createBuilderUserWebIpcRuntime/u);
   assert.match(preload, /\buserWeb\b/u);
@@ -68,10 +76,12 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /readCurrentDraftAvailableChecks/u);
   assert.match(preload, /approveAndRunCurrentDraftCheck/u);
   assert.match(preload, /decideCurrentDraftDependencyPreparation/u);
+  assert.match(preload, /prepareProjectDependencies/u);
   assert.match(preload, /skipCurrentDraftCheck/u);
   assert.match(preload, /clawfabric-builder:check-run:read-current-draft-available/u);
   assert.match(preload, /clawfabric-builder:check-run:approve-current-draft-check/u);
   assert.match(preload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
+  assert.match(preload, /clawfabric-builder:check-run:prepare-project-dependencies/u);
   assert.match(preload, /clawfabric-builder:check-run:skip-current-draft-check/u);
   assert.match(preload, /projectWorkspace/u);
   assert.match(preload, /\bopen\b/u);
@@ -160,6 +170,8 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /clawfabric-builder:agent-project-tree:rename-task/u);
   assert.match(preload, /archiveTask/u);
   assert.match(preload, /clawfabric-builder:agent-project-tree:archive-task/u);
+  assert.match(preload, /exportTaskTranscript/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:export-task-transcript/u);
   assert.match(preload, /agentWorkbench/u);
   assert.match(preload, /clawfabric-builder:agent-workbench:read/u);
   assert.match(preload, /clawfabric-builder:agent-workbench:update-message-state/u);
@@ -189,14 +201,20 @@ test('Electron shell exposes only sender-bound Builder authorities', () => {
   assert.match(preload, /sideWorkspaceFiles/u);
   assert.match(preload, /readCurrentDraftFileTree/u);
   assert.match(preload, /readCurrentDraftFileContent/u);
+  assert.match(preload, /readRuntimeToolFileTree/u);
   assert.match(preload, /clawfabric-builder:side-workspace-files:read-current-draft-tree/u);
   assert.match(preload, /clawfabric-builder:side-workspace-files:read-current-draft-content/u);
+  assert.match(preload, /clawfabric-builder:side-workspace-files:read-runtime-tool-tree/u);
   assert.match(preload, /windowControls/u);
   assert.match(preload, /clawfabric-builder:window-controls:minimize/u);
   assert.match(preload, /clawfabric-builder:window-controls:toggle-maximize/u);
   assert.match(preload, /clawfabric-builder:window-controls:close/u);
   assert.match(preload, /clawfabric-builder:window-controls:read-state/u);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 75);
+  assert.match(preload, /resumeInterruptedRun/u);
+  assert.match(preload, /clawfabric-builder:code-generator:resume-interrupted-run/u);
+  assert.match(preload, /selectModel/u);
+  assert.match(preload, /clawfabric-builder:provider-settings:select-model/u);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 83);
   assert.doesNotMatch(preload, /conversationStream|projectActivity|readStream/u);
   const preloadWithoutAllowedListeners = preload
     .replace(/ipcRenderer\.on\(GENERATION_STARTED_CHANNEL,\s*handler\);/u, '')
@@ -225,17 +243,35 @@ test('build and package scripts require production artifact verification', () =>
   assert.match(packageJson.scripts.dist, /verify:package/u);
   assert.match(packageJson.scripts['verify:release'], /npm run lint/u);
   assert.match(packageJson.scripts['verify:release'], /npm run test:unit/u);
-  assert.match(packageJson.scripts['verify:release'], /npm run test:boundaries/u);
+  assert.match(
+    packageJson.scripts['verify:release'],
+    /node --test --experimental-test-isolation=none tests\/builder-live-preview-dev-server-runtime\.test\.cjs/u,
+  );
+  assert.match(packageJson.scripts['verify:release'], /node scripts\/run-boundary-tests\.cjs/u);
   assert.match(packageJson.scripts['verify:release'], /npm run dist/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-launch/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-epipe-fault/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-canary(?:\s|$)/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-plan-mode/u);
   assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-ui/u);
-  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-failure/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-acceptance/u);
+  assert.match(packageJson.scripts['verify:release'], /npm run verify:packaged-harness-compaction/u);
   assert.doesNotMatch(packageJson.scripts['verify:release'], /verify:packaged-live-preview/u);
   assert.doesNotMatch(packageJson.scripts['verify:release'], /deepseek/u);
-  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:release/u);
-  assert.match(packageJson.scripts['verify:release:deepseek'], /npm run verify:packaged-harness:deepseek/u);
+  assert.equal(
+    packageJson.scripts['verify:release:deepseek'],
+    'node scripts/verify-deepseek-packaged-release-acceptance.cjs --execute',
+  );
+  const deepseekRelease = fs.readFileSync(
+    path.join(root, 'scripts', 'verify-deepseek-packaged-release-acceptance.cjs'),
+    'utf8',
+  );
+  assert.match(deepseekRelease, /runOrdinaryRelease/u);
+  assert.match(deepseekRelease, /\[npmCliPath\(env\), 'run', 'verify:release'\]/u);
+  assert.match(deepseekRelease, /shell:\s*false/u);
+  assert.match(deepseekRelease, /input:\s*''/u);
+  assert.match(deepseekRelease, /stdio:\s*\['pipe', 'inherit', 'inherit'\]/u);
+  assert.match(deepseekRelease, /runDeepSeekAcceptance/u);
   const verifier = fs.readFileSync(path.join(root, 'scripts', 'verify-package.cjs'), 'utf8');
   assert.match(verifier, /connect-src 'none'/u);
   assert.match(verifier, /CompanyName:\s*'ClawFabric'/u);

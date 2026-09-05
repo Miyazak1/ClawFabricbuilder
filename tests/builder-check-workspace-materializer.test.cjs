@@ -32,6 +32,9 @@ const {
 const {
   createBuilderCheckDependencyPreparer,
 } = require('../electron/builder-check-dependency-preparer.cjs');
+const {
+  createBuilderDependencyEnvironmentStore,
+} = require('../electron/builder-dependency-environment-store.cjs');
 
 const PROJECT_ID = 'builder-project:11111111-1111-4111-8111-111111111111';
 const CANDIDATE_DIGEST = `sha256:${'2'.repeat(64)}`;
@@ -325,6 +328,76 @@ test('keeps a real npm file dependency install readable for approved check readi
   assert.deepEqual(materializer.cleanup(workspace_admission), { cleaned: true, reason: 'removed' });
 });
 
+test('restores a prepared dependency environment for a later candidate with the same dependency graph', (t) => {
+  const { outerRoot, checksRoot } = fixture(t);
+  const dependencyEnvironmentStore = createBuilderDependencyEnvironmentStore({
+    environment_root: path.join(outerRoot, 'dependency-envs'),
+  });
+  const materializer = createBuilderCheckWorkspaceMaterializer({
+    checks_root: checksRoot,
+    dependency_environment_store: dependencyEnvironmentStore,
+  });
+  const packageJson = '{"scripts":{"test":"vite --version"},"devDependencies":{"vite":"^5.0.0"}}\n';
+  const firstTree = sourceTree([
+    { path: 'package.json', content: packageJson },
+    { path: 'src/index.js', content: 'export const version = 1;\n' },
+  ]);
+  const firstAdmission = checkRunAdmission(firstTree);
+  const firstWorkspaceAdmission = materializer.materialize_candidate({
+    check_run_admission: firstAdmission,
+    source_tree: firstTree,
+  });
+  const firstWorkspacePath = materializer.read_workspace_path(firstWorkspaceAdmission);
+  fs.mkdirSync(path.join(firstWorkspacePath, 'node_modules', 'vite'), { recursive: true });
+  fs.writeFileSync(path.join(firstWorkspacePath, 'node_modules', 'vite', 'package.json'), '{"name":"vite"}\n');
+  const stored = materializer.record_prepared_dependencies(firstWorkspaceAdmission);
+  assert.equal(stored.status, 'stored');
+  assert.equal(stored.authority.project_workspace_write, false);
+  assert.equal(stored.authority.provider_dispatch, false);
+  assert.doesNotMatch(JSON.stringify(stored), /candidate-|dependency-envs|node_modules/iu);
+  assert.deepEqual(materializer.cleanup(firstWorkspaceAdmission), { cleaned: true, reason: 'removed' });
+
+  const secondTree = sourceTree([
+    { path: 'package.json', content: packageJson },
+    { path: 'src/index.js', content: 'export const version = 2;\n' },
+  ]);
+  const secondAdmission = checkRunAdmission(secondTree);
+  const secondWorkspaceAdmission = materializer.materialize_candidate({
+    check_run_admission: secondAdmission,
+    source_tree: secondTree,
+  });
+  const secondWorkspacePath = materializer.read_workspace_path(secondWorkspaceAdmission);
+  assert.equal(
+    fs.readFileSync(path.join(secondWorkspacePath, 'node_modules', 'vite', 'package.json'), 'utf8'),
+    '{"name":"vite"}\n',
+  );
+  const readiness = materializer.read_workspace_readiness_snapshot({
+    check_run_admission: secondAdmission,
+    workspace_admission: secondWorkspaceAdmission,
+    project_root_path: null,
+    host_toolchain_state: 'visible',
+    toolchain_probe: null,
+    install_permission: 'not_requested',
+    updated_at_ms: 125,
+  });
+  assert.equal(readiness.check_workspace_dependency_state, 'install_present');
+  assert.equal(readiness.dependency_strategy, 'can_run_without_install');
+  assert.deepEqual(materializer.cleanup(secondWorkspaceAdmission), { cleaned: true, reason: 'removed' });
+
+  const changedDependencyTree = sourceTree([
+    { path: 'package.json', content: '{"scripts":{"test":"vite --version"},"devDependencies":{"vite":"^6.0.0"}}\n' },
+    { path: 'src/index.js', content: 'export const version = 3;\n' },
+  ]);
+  const changedAdmission = checkRunAdmission(changedDependencyTree);
+  const changedWorkspaceAdmission = materializer.materialize_candidate({
+    check_run_admission: changedAdmission,
+    source_tree: changedDependencyTree,
+  });
+  const changedWorkspacePath = materializer.read_workspace_path(changedWorkspaceAdmission);
+  assert.equal(fs.existsSync(path.join(changedWorkspacePath, 'node_modules')), false);
+  assert.deepEqual(materializer.cleanup(changedWorkspaceAdmission), { cleaned: true, reason: 'removed' });
+});
+
 test('rejects non-dependency artifacts added after materialization', (t) => {
   const { checksRoot } = fixture(t);
   const tree = sourceTree();
@@ -525,6 +598,7 @@ test('source is main-only filesystem materialization without IPC, provider, Git,
     './builder-project-source-tree.cjs',
     './builder-check-run-admission.cjs',
     './builder-runtime-readiness-snapshot.cjs',
+    './builder-dependency-environment-store.cjs',
   ]);
   assert.match(source, /sanitizeBuilderProjectSourceTree/u);
   assert.match(source, /sanitizeBuilderCheckRunAdmission/u);

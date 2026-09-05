@@ -9,7 +9,11 @@ const asar = require('@electron/asar');
 const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
-const unpacked = path.join(root, 'release', 'win-unpacked');
+const configuredUnpacked = process.env.BUILDER_VERIFY_UNPACKED;
+assert.notEqual(configuredUnpacked, '', 'BUILDER_VERIFY_UNPACKED must not be empty.');
+const unpacked = configuredUnpacked === undefined
+  ? path.join(root, 'release', 'win-unpacked')
+  : path.resolve(configuredUnpacked);
 const executable = path.join(unpacked, 'ClawFabric Builder.exe');
 const archive = path.join(unpacked, 'resources', 'app.asar');
 const unpackedArchive = path.join(unpacked, 'resources', 'app.asar.unpacked');
@@ -73,6 +77,8 @@ for (const expected of [
   '/electron/builder-conversation-records.cjs',
   '/electron/builder-conversation-replay.cjs',
   '/electron/builder-conversation-main-service.cjs',
+  '/electron/builder-task-transcript-export.cjs',
+  '/electron/builder-context-usage-projection.cjs',
   '/electron/builder-task-stream-projection.cjs',
   '/electron/builder-task-stream-ipc-adapter.cjs',
   '/electron/builder-product-metadata-schema.cjs',
@@ -123,6 +129,7 @@ for (const expected of [
   '/electron/builder-harness-runtime-composition.cjs',
   '/electron/builder-harness-runtime-event-normalizer.cjs',
   '/electron/builder-harness-tool-broker-server.cjs',
+  '/electron/builder-main-stdio-boundary.cjs',
   '/electron/builder-programming-runtime-contract.cjs',
   '/electron/builder-programming-runtime-events.cjs',
   '/electron/builder-programming-runtime-main-fact-recorder.cjs',
@@ -186,6 +193,7 @@ for (const forbiddenTest of [
 }
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-canary.cjs'), false);
 assert.equal(packagedFiles.includes('/scripts/verify-packaged-launch-smoke.cjs'), false);
+assert.equal(packagedFiles.includes('/scripts/verify-packaged-epipe-fault-canary.cjs'), false);
 const allowedPackagedNodeModuleRoots = Object.freeze([
   '/node_modules/@npmcli/promise-spawn/',
   '/node_modules/b4a/',
@@ -258,6 +266,10 @@ assert.equal(
   'node scripts/verify-packaged-launch-smoke.cjs',
 );
 assert.equal(
+  workspacePackageJson.scripts['verify:packaged-epipe-fault'],
+  'node scripts/verify-packaged-epipe-fault-canary.cjs',
+);
+assert.equal(
   workspacePackageJson.scripts['verify:packaged-canary'],
   'node scripts/verify-packaged-canary-default.cjs',
 );
@@ -299,6 +311,7 @@ for (const harnessAsset of [
   'builder-coding-loop.cordis.yml',
   'builder-coding-loop-compaction-canary.cordis.yml',
   'builder-tool-broker-plugin.mjs',
+  'builder-session-resume-server.mjs',
 ]) {
   assert.equal(fs.statSync(path.join(
     unpackedArchive,
@@ -500,6 +513,7 @@ const packagedSideWorkspaceFileIpcRuntime = packagedSource('electron/builder-sid
 const packagedConversationRecords = packagedSource('electron/builder-conversation-records.cjs');
 const packagedConversationReplay = packagedSource('electron/builder-conversation-replay.cjs');
 const packagedConversationMainService = packagedSource('electron/builder-conversation-main-service.cjs');
+const packagedContextUsageProjection = packagedSource('electron/builder-context-usage-projection.cjs');
 const packagedTaskStreamProjection = packagedSource('electron/builder-task-stream-projection.cjs');
 const packagedTaskStreamIpcAdapter = packagedSource('electron/builder-task-stream-ipc-adapter.cjs');
 const packagedAgentProjectTreeProjection = packagedSource('electron/builder-agent-project-tree-projection.cjs');
@@ -541,6 +555,7 @@ const generationChannels = [
   'clawfabric-builder:code-generator:output',
   'clawfabric-builder:code-generator:retry',
   'clawfabric-builder:code-generator:answer',
+  'clawfabric-builder:code-generator:answer-plan',
   'clawfabric-builder:code-generator:answer-draft',
   'clawfabric-builder:code-generator:restore-draft',
   'clawfabric-builder:code-generator:restore-revision-as-draft',
@@ -553,10 +568,13 @@ const generationChannels = [
   'clawfabric-builder:code-generator:decide-command-approval',
   'clawfabric-builder:code-generator:command-approval-requested',
   'clawfabric-builder:code-generator:command-output',
+  'clawfabric-builder:code-generator:resume-interrupted-run',
+  'clawfabric-builder:code-generator:manual-compact-context',
 ];
 const providerSettingsChannels = [
   'clawfabric-builder:provider-settings:read-current',
   'clawfabric-builder:provider-settings:replace-current',
+  'clawfabric-builder:provider-settings:select-model',
   'clawfabric-builder:provider-settings:status',
 ];
 const taskStreamChannels = [
@@ -569,6 +587,7 @@ const agentProjectTreeChannels = [
   'clawfabric-builder:agent-project-tree:archive-project',
   'clawfabric-builder:agent-project-tree:rename-task',
   'clawfabric-builder:agent-project-tree:archive-task',
+  'clawfabric-builder:agent-project-tree:export-task-transcript',
 ];
 const agentWorkbenchChannels = [
   'clawfabric-builder:agent-workbench:read',
@@ -590,6 +609,7 @@ const checkRunChannels = [
   'clawfabric-builder:check-run:read-current-draft-available',
   'clawfabric-builder:check-run:approve-current-draft-check',
   'clawfabric-builder:check-run:decide-current-draft-dependency-preparation',
+  'clawfabric-builder:check-run:prepare-project-dependencies',
   'clawfabric-builder:check-run:skip-current-draft-check',
 ];
 const livePreviewChannels = [
@@ -765,7 +785,7 @@ assert.equal(ts.isPropertyAssignment(userWebProperty), true);
 assert.equal(ts.isPropertyAssignment(sideWorkspaceFilesProperty), true);
 assert.equal(ts.isPropertyAssignment(windowControlsProperty), true);
 assert.equal(ts.isStringLiteral(bridgeVersionProperty.initializer), true);
-assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v38');
+assert.equal(bridgeVersionProperty.initializer.text, 'builder-preload.v40');
 const agentProjectTreeBridge = frozenObjectLiteral(agentProjectTreeProperty.initializer);
 const agentWorkbenchBridge = frozenObjectLiteral(agentWorkbenchProperty.initializer);
 const workspaceBridge = frozenObjectLiteral(workspaceProperty.initializer);
@@ -789,9 +809,10 @@ exactObjectKeys(agentProjectTreeBridge, [
   'archiveProject',
   'renameTask',
   'archiveTask',
+  'exportTaskTranscript',
 ]);
 exactObjectKeys(agentWorkbenchBridge, [
-  'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'controlTask',
+  'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'decideAgentPlan', 'controlTask',
   'subscribeChanged',
 ]);
 exactObjectKeys(workspaceBridge, [
@@ -817,6 +838,8 @@ exactObjectKeys(generationBridge, [
   'prepareCurrentProjectWriteApproval',
   'approveCurrentProjectWrite',
   'retry',
+  'resumeInterruptedRun',
+  'manualCompactContext',
   'answer',
   'answerPlan',
   'answerDraft',
@@ -834,7 +857,7 @@ exactObjectKeys(generationBridge, [
   'subscribeCommandApproval',
   'subscribeCommandOutput',
 ]);
-exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'status']);
+exactObjectKeys(providerSettingsBridge, ['readCurrent', 'replaceCurrent', 'selectModel', 'status']);
 exactObjectKeys(taskStreamBridge, ['read', 'subscribeChanged']);
 exactObjectKeys(planReviewBridge, ['review']);
 exactObjectKeys(permissionsBridge, ['evaluate']);
@@ -843,6 +866,7 @@ exactObjectKeys(checkRunBridge, [
   'readCurrentDraftAvailableChecks',
   'diagnoseCurrentDraftCheckEnvironment',
   'diagnoseProjectEnvironment',
+  'prepareProjectDependencies',
   'approveAndRunCurrentDraftCheck',
   'decideCurrentDraftDependencyPreparation',
   'skipCurrentDraftCheck',
@@ -866,22 +890,22 @@ exactObjectKeys(sideWorkspaceFilesBridge, [
 ]);
 exactObjectKeys(windowControlsBridge, ['minimize', 'toggleMaximize', 'close', 'readState']);
 assert.deepEqual(rendererPropertyAccesses, [
-  ...Array.from({ length: 10 }, () => 'invoke'),
+  ...Array.from({ length: 12 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 32 }, () => 'invoke'),
-  'on',
-  'removeListener',
-  'on',
-  'removeListener',
+  ...Array.from({ length: 34 }, () => 'invoke'),
   'on',
   'removeListener',
   'on',
   'removeListener',
-  ...Array.from({ length: 4 }, () => 'invoke'),
   'on',
   'removeListener',
-  ...Array.from({ length: 17 }, () => 'invoke'),
+  'on',
+  'removeListener',
+  ...Array.from({ length: 5 }, () => 'invoke'),
+  'on',
+  'removeListener',
+  ...Array.from({ length: 18 }, () => 'invoke'),
   'on',
   'removeListener',
   ...Array.from({ length: 14 }, () => 'invoke'),
@@ -956,9 +980,12 @@ assert.equal(preloadConstants.get('AVAILABILITY_CHANNEL'), generationChannels[23
 assert.equal(preloadConstants.get('DECIDE_COMMAND_APPROVAL_CHANNEL'), generationChannels[24]);
 assert.equal(preloadConstants.get('COMMAND_APPROVAL_REQUESTED_CHANNEL'), generationChannels[25]);
 assert.equal(preloadConstants.get('COMMAND_OUTPUT_CHANNEL'), generationChannels[26]);
+assert.equal(preloadConstants.get('RESUME_INTERRUPTED_RUN_CHANNEL'), generationChannels[27]);
+assert.equal(preloadConstants.get('MANUAL_COMPACT_CONTEXT_CHANNEL'), generationChannels[28]);
 assert.equal(preloadConstants.get('READ_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[0]);
 assert.equal(preloadConstants.get('REPLACE_PROVIDER_SETTINGS_CHANNEL'), providerSettingsChannels[1]);
-assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[2]);
+assert.equal(preloadConstants.get('SELECT_PROVIDER_SETTINGS_MODEL_CHANNEL'), providerSettingsChannels[2]);
+assert.equal(preloadConstants.get('PROVIDER_SETTINGS_STATUS_CHANNEL'), providerSettingsChannels[3]);
 assert.equal(preloadConstants.get('READ_TASK_STREAM_CHANNEL'), taskStreamChannels[0]);
 assert.equal(preloadConstants.get('TASK_STREAM_CHANGED_CHANNEL'), taskStreamChannels[1]);
 assert.equal(preloadConstants.get('READ_AGENT_PROJECT_TREE_CHANNEL'), agentProjectTreeChannels[0]);
@@ -990,8 +1017,12 @@ assert.equal(
   checkRunChannels[2],
 );
 assert.equal(
-  preloadConstants.get('SKIP_CURRENT_DRAFT_CHECK_CHANNEL'),
+  preloadConstants.get('PREPARE_PROJECT_DEPENDENCIES_CHANNEL'),
   checkRunChannels[3],
+);
+assert.equal(
+  preloadConstants.get('SKIP_CURRENT_DRAFT_CHECK_CHANNEL'),
+  checkRunChannels[4],
 );
 assert.equal(
   preloadConstants.get('REQUEST_CURRENT_DRAFT_LIVE_PREVIEW_CHANNEL'),
@@ -1056,6 +1087,8 @@ exactInvokeMethod(
   ['request'],
 );
 exactInvokeMethod(generationBridge, 'retry', 'RETRY_GENERATE_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'resumeInterruptedRun', 'RESUME_INTERRUPTED_RUN_CHANNEL', ['request']);
+exactInvokeMethod(generationBridge, 'manualCompactContext', 'MANUAL_COMPACT_CONTEXT_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answer', 'ANSWER_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answerPlan', 'ANSWER_PLAN_CHANNEL', ['request']);
 exactInvokeMethod(generationBridge, 'answerDraft', 'ANSWER_DRAFT_CHANNEL', ['request']);
@@ -1088,10 +1121,21 @@ exactSubscribeMethod(
 exactSubscribeMethod(generationBridge, 'subscribeCommandOutput', 'COMMAND_OUTPUT_CHANNEL');
 exactInvokeMethod(providerSettingsBridge, 'readCurrent', 'READ_PROVIDER_SETTINGS_CHANNEL', []);
 exactInvokeMethod(providerSettingsBridge, 'replaceCurrent', 'REPLACE_PROVIDER_SETTINGS_CHANNEL', ['request']);
+exactInvokeMethod(providerSettingsBridge, 'selectModel', 'SELECT_PROVIDER_SETTINGS_MODEL_CHANNEL', ['request']);
 exactInvokeMethod(providerSettingsBridge, 'status', 'PROVIDER_SETTINGS_STATUS_CHANNEL', []);
 exactInvokeMethod(taskStreamBridge, 'read', 'READ_TASK_STREAM_CHANNEL', ['request']);
 exactSubscribeMethod(taskStreamBridge, 'subscribeChanged', 'TASK_STREAM_CHANGED_CHANNEL');
 exactInvokeMethod(agentProjectTreeBridge, 'read', 'READ_AGENT_PROJECT_TREE_CHANNEL', ['request']);
+exactInvokeMethod(agentProjectTreeBridge, 'renameProject', 'RENAME_AGENT_PROJECT_CHANNEL', ['request']);
+exactInvokeMethod(agentProjectTreeBridge, 'archiveProject', 'ARCHIVE_AGENT_PROJECT_CHANNEL', ['request']);
+exactInvokeMethod(agentProjectTreeBridge, 'renameTask', 'RENAME_AGENT_TASK_CHANNEL', ['request']);
+exactInvokeMethod(agentProjectTreeBridge, 'archiveTask', 'ARCHIVE_AGENT_TASK_CHANNEL', ['request']);
+exactInvokeMethod(
+  agentProjectTreeBridge,
+  'exportTaskTranscript',
+  'EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL',
+  ['request'],
+);
 exactInvokeMethod(agentWorkbenchBridge, 'read', 'READ_AGENT_WORKBENCH_CHANNEL', ['request']);
 exactInvokeMethod(
   agentWorkbenchBridge,
@@ -1142,6 +1186,12 @@ exactInvokeMethod(
   checkRunBridge,
   'diagnoseProjectEnvironment',
   'DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL',
+  ['request'],
+);
+exactInvokeMethod(
+  checkRunBridge,
+  'prepareProjectDependencies',
+  'PREPARE_PROJECT_DEPENDENCIES_CHANNEL',
   ['request'],
 );
 exactInvokeMethod(
@@ -1700,6 +1750,8 @@ assert.match(packagedPreload, /clawfabric-builder:code-generator:prepare-current
 assert.match(packagedPreload, /approveCurrentProjectWrite/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:approve-current-project-write/u);
 assert.match(packagedPreload, /\bretry\b/u);
+assert.match(packagedPreload, /manualCompactContext/u);
+assert.match(packagedPreload, /clawfabric-builder:code-generator:manual-compact-context/u);
 assert.match(packagedPreload, /\banswer\b/u);
 assert.match(packagedPreload, /answerDraft/u);
 assert.match(packagedPreload, /clawfabric-builder:code-generator:answer-draft/u);
@@ -1732,6 +1784,7 @@ assert.match(packagedPreload, /clawfabric-builder:check-run:diagnose-current-dra
 assert.match(packagedPreload, /clawfabric-builder:check-run:diagnose-project-environment/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:approve-current-draft-check/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
+assert.match(packagedPreload, /clawfabric-builder:check-run:prepare-project-dependencies/u);
 assert.match(packagedPreload, /clawfabric-builder:check-run:skip-current-draft-check/u);
 assert.match(packagedPreload, /livePreview/u);
 assert.match(packagedPreload, /clawfabric-builder:live-preview:request-current-draft/u);
@@ -1753,7 +1806,9 @@ assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:rename-proj
 assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:archive-project/u);
 assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:rename-task/u);
 assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:archive-task/u);
-assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 76);
+assert.match(packagedPreload, /clawfabric-builder:agent-project-tree:export-task-transcript/u);
+assert.match(packagedPreload, /exportTaskTranscript/u);
+assert.equal((packagedPreload.match(/ipcRenderer\.invoke/g) || []).length, 83);
 assert.match(packagedAgentProjectTreeProjection, /agent-project-tree-projection\.v1/u);
 assert.match(packagedAgentProjectTreeProjection, /main_owned_session_task_address_store/u);
 assert.match(packagedAgentProjectTreeProjection, /permission_grant:\s*false/u);
@@ -1943,7 +1998,25 @@ assert.doesNotMatch(
   packagedConversationMainService,
   /require\(['"]electron['"]\)|ipcMain|ipcRenderer|contextBridge|BrowserWindow|safeStorage|builder-provider|builder-git-(?:command-runner|project-repository)|persist_candidate_commit|fetch\s*\(|https?:|local-provider-executor/iu,
 );
+assert.match(packagedContextUsageProjection, /builder-context-usage-projection\.v2/u);
+assert.match(packagedContextUsageProjection, /main_owned_context_usage_projection/u);
+assert.match(packagedContextUsageProjection, /deepseek_harness_session_projection/u);
+assert.match(packagedContextUsageProjection, /uncached_input_tokens/u);
+assert.match(packagedContextUsageProjection, /cache_read_tokens/u);
+assert.match(packagedContextUsageProjection, /pressure_tokens/u);
+assert.match(packagedContextUsageProjection, /projected_tokens/u);
+assert.match(packagedContextUsageProjection, /output_tokens/u);
+assert.match(packagedContextUsageProjection, /context_window_tokens/u);
+assert.match(packagedContextUsageProjection, /context_compacting/u);
+assert.match(packagedContextUsageProjection, /context_compacted/u);
+assert.match(packagedContextUsageProjection, /task_conversation/u);
+assert.doesNotMatch(
+  packagedContextUsageProjection,
+  /node:sqlite|node:fs|builder-product-metadata|builder-git|ipcMain|ipcRenderer|BrowserWindow|preload|fetch\s*\(|provider_(?:secret|config|envelope|dispatch|context_body)|credential|source_tree/iu,
+);
 assert.match(packagedTaskStreamProjection, /builder-task-stream-read-result\.v1/u);
+assert.match(packagedTaskStreamProjection, /projectBuilderContextUsage/u);
+assert.match(packagedTaskStreamProjection, /context_usage_projection/u);
 assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_ITEMS = 512/u);
 assert.match(packagedTaskStreamProjection, /MAX_PUBLIC_BYTES = 4 \* 1_024 \* 1_024/u);
 assert.match(packagedTaskStreamProjection, /replayBuilderConversation/u);

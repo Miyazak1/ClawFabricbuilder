@@ -24,6 +24,7 @@ const {
   GENERATE_RESULT_VERSION,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  MANUAL_COMPACT_CONTEXT_CHANNEL,
   PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
@@ -33,6 +34,7 @@ const {
   RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  RESUME_INTERRUPTED_RUN_CHANNEL,
   STEER_CHANNEL,
   SUBMIT_CHANNEL,
 } = require('../electron/builder-generation-ipc-adapter.cjs');
@@ -57,6 +59,7 @@ const {
 const {
   ARCHIVE_AGENT_PROJECT_CHANNEL,
   ARCHIVE_AGENT_TASK_CHANNEL,
+  EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
   READ_AGENT_PROJECT_TREE_CHANNEL,
   RENAME_AGENT_PROJECT_CHANNEL,
   RENAME_AGENT_TASK_CHANNEL,
@@ -66,6 +69,7 @@ const {
   UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
   CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
   DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+  DECIDE_AGENT_PLAN_CHANNEL,
   CONTROL_WORKBENCH_TASK_CHANNEL,
   WORKBENCH_CHANGED_CHANNEL,
 } = require('../electron/builder-workbench-ipc-adapter.cjs');
@@ -216,6 +220,7 @@ async function waitForProbe(predicate) {
 }
 
 function runtimeWithService(service, probes = {}) {
+  service.pause_for_shutdown ??= service.cancel;
   const runtimePath = path.join(__dirname, '..', 'electron', 'builder-generation-ipc-runtime.cjs');
   const source = fs.readFileSync(runtimePath, 'utf8');
   const context = vm.createContext({
@@ -229,12 +234,14 @@ function runtimeWithService(service, probes = {}) {
       if (specifier === './builder-generation-ipc-adapter.cjs') {
         return {
           ANSWER_CHANNEL,
+          ANSWER_PLAN_CHANNEL,
           ANSWER_DRAFT_CHANNEL,
           CONTINUE_DRAFT_CHANNEL,
           DECIDE_COMMAND_APPROVAL_CHANNEL,
           CLASSIFY_INTENT_CHANNEL,
           GENERATE_CHANNEL,
           GENERATE_APPROVED_PLAN_CHANNEL,
+          MANUAL_COMPACT_CONTEXT_CHANNEL,
           PROPOSE_PLAN_CHANNEL,
           PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
           APPROVE_PLAN_SOURCE_READ_CHANNEL,
@@ -252,6 +259,7 @@ function runtimeWithService(service, probes = {}) {
           RESTORE_REVISION_AS_DRAFT_CHANNEL,
           REJECT_DRAFT_CHANNEL,
           RETRY_GENERATE_CHANNEL,
+          RESUME_INTERRUPTED_RUN_CHANNEL,
           createBuilderGenerationIpcAdapter: (options) => ({
             channels: {
               generate: { invoke: (_event, body) => options.generate(body) },
@@ -271,7 +279,10 @@ function runtimeWithService(service, probes = {}) {
               submit: { invoke: (_event, body) => options.submit(body) },
               classifyIntent: { invoke: (_event, body) => options.classifyIntent(body) },
               retry: { invoke: (_event, body) => options.retry(body) },
+              resumeInterruptedRun: { invoke: (_event, body) => options.resumeInterruptedRun(body) },
+              manualCompactContext: { invoke: (_event, body) => options.manualCompactContext(body) },
               answer: { invoke: (_event, body) => options.answer(body) },
+              answerPlan: { invoke: (_event, body) => options.answerPlan(body) },
               answerDraft: { invoke: (_event, body) => options.answerDraft(body) },
               restoreDraft: { invoke: (_event, body) => options.restoreDraft(body) },
               restoreRevisionAsDraft: { invoke: (_event, body) => options.restoreRevisionAsDraft(body) },
@@ -307,6 +318,15 @@ function runtimeWithService(service, probes = {}) {
               },
             };
             return context.__workbenchMessageStore;
+          },
+        };
+      }
+      if (specifier === './builder-agent-conversation-service.cjs') {
+        const actual = require('../electron/builder-agent-conversation-service.cjs');
+        return {
+          createBuilderAgentConversationService(options) {
+            probes.agentConversationOptions = options;
+            return actual.createBuilderAgentConversationService(options);
           },
         };
       }
@@ -490,6 +510,7 @@ function runtimeWithService(service, probes = {}) {
           UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
           CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
           DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+          DECIDE_AGENT_PLAN_CHANNEL,
           CONTROL_WORKBENCH_TASK_CHANNEL,
           WORKBENCH_CHANGED_CHANNEL,
           createBuilderWorkbenchIpcAdapter: (options) => ({
@@ -503,6 +524,9 @@ function runtimeWithService(service, probes = {}) {
               },
               decideTaskProposal: {
                 invoke: (_event, body) => options.decideTaskProposal(body),
+              },
+              decideAgentPlan: {
+                invoke: (_event, body) => options.decideAgentPlan(body),
               },
               controlTask: {
                 invoke: (_event, body) => options.controlTask(body),
@@ -779,6 +803,7 @@ function runtimeWithService(service, probes = {}) {
         return {
           ARCHIVE_AGENT_PROJECT_CHANNEL,
           ARCHIVE_AGENT_TASK_CHANNEL,
+          EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
           READ_AGENT_PROJECT_TREE_CHANNEL,
           RENAME_AGENT_PROJECT_CHANNEL,
           RENAME_AGENT_TASK_CHANNEL,
@@ -800,6 +825,10 @@ function runtimeWithService(service, probes = {}) {
               archiveTask: {
                 channel: ARCHIVE_AGENT_TASK_CHANNEL,
                 invoke: (_event, body) => options.archiveTask(body),
+              },
+              exportTaskTranscript: {
+                channel: EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
+                invoke: (_event, body) => options.exportTaskTranscript(body),
               },
             },
           }),
@@ -1066,6 +1095,29 @@ function runtimeWithService(service, probes = {}) {
           },
         };
       }
+      if (specifier === './builder-project-dependency-preparer.cjs') {
+        return {
+          createBuilderProjectDependencyPreparer: (options) => {
+            probes.projectDependencyPreparerOptions = options;
+            assert.equal(
+              options.project_environment_diagnosis_service,
+              context.__projectEnvironmentDiagnosisService,
+            );
+            assert.equal(
+              options.project_workspace_path_service.service_version,
+              'builder-project-workspace-path-service.v1',
+            );
+            assert.equal(typeof options.spawn_process, 'function');
+            assert.equal(typeof options.terminate_process_tree, 'function');
+            assert.equal(options.clock.clock_version, 'builder-clock.v1');
+            context.__projectDependencyPreparer = {
+              preparer_version: 'builder-project-dependency-preparer.v1',
+              prepare_project_dependencies() {},
+            };
+            return context.__projectDependencyPreparer;
+          },
+        };
+      }
       if (specifier === './builder-conversation-transcript-archive.cjs') {
         return {
           createBuilderConversationTranscriptArchive: (options) => {
@@ -1107,6 +1159,10 @@ function runtimeWithService(service, probes = {}) {
               context.__contextCompactionRecordingService,
             );
             context.__conversationService = {
+              recover_inactive_run(body) {
+                probes.recoveredInactiveRuns ??= [];
+                probes.recoveredInactiveRuns.push(body);
+              },
               begin_work() {},
               begin_queued_followup_work() {},
               begin_queued_followup_question() {},
@@ -1124,6 +1180,11 @@ function runtimeWithService(service, probes = {}) {
               record_queued_followup() {},
               accept_candidate() {},
               reject_candidate() {},
+              read_monitor_stream(body) {
+                probes.readMonitorStreamRequests ??= [];
+                probes.readMonitorStreamRequests.push(body);
+                return { stream_version: 'builder-task-stream-read-result.v1', project_id: body.project_id, conversation: null };
+              },
               read_stream(body) {
                 probes.readStreamRequests ??= [];
                 probes.readStreamRequests.push({ project_id: body.project_id });
@@ -1479,8 +1540,8 @@ function runtimeWithService(service, probes = {}) {
                     metadata_evidence: {
                       database_id: "builder-product-metadata-database.v3",
                       schema_fingerprint_digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-                      schema_version: "builder-product-metadata-schema.v6",
-                      user_version: 6,
+                      schema_version: "builder-product-metadata-schema.v7",
+                      user_version: 7,
                       runtime_pragmas: {
                         foreign_keys: "on",
                         journal_mode: "wal",
@@ -1615,6 +1676,8 @@ test('registers exactly the controlled generation channels and keeps provider st
     SUBMIT_CHANNEL,
     CLASSIFY_INTENT_CHANNEL,
     RETRY_GENERATE_CHANNEL,
+    RESUME_INTERRUPTED_RUN_CHANNEL,
+    MANUAL_COMPACT_CONTEXT_CHANNEL,
     ANSWER_CHANNEL,
     ANSWER_PLAN_CHANNEL,
     ANSWER_DRAFT_CHANNEL,
@@ -1642,10 +1705,12 @@ test('registers exactly the controlled generation channels and keeps provider st
     ARCHIVE_AGENT_PROJECT_CHANNEL,
     RENAME_AGENT_TASK_CHANNEL,
     ARCHIVE_AGENT_TASK_CHANNEL,
+    EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
     READ_AGENT_WORKBENCH_CHANNEL,
     UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
     CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
     DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+    DECIDE_AGENT_PLAN_CHANNEL,
     CONTROL_WORKBENCH_TASK_CHANNEL,
     REVIEW_PLAN_CHANNEL,
   ]);
@@ -1856,6 +1921,25 @@ test('incubates an Agent task proposal, requires approval, and restores the mate
     { sender: mainWindow.webContents },
     { project_id: null, project_title: 'Focus tools' },
   );
+  const workbenchChangedBeforePlan = mainWindow.webContents.sent.filter(
+    ({ channel }) => channel === WORKBENCH_CHANGED_CHANNEL,
+  ).length;
+  const planEnvelope = await ipcMain.handlers.get(ANSWER_PLAN_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { instruction: 'hi', task_address_id: null },
+  );
+  assert.equal(planEnvelope.ok, true);
+  assert.equal(planEnvelope.result.project_id, null);
+  const plannedWorkbench = await ipcMain.handlers.get(READ_AGENT_WORKBENCH_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { agent_id: DEFAULT_BUILDER_AGENT_ID, after_cursor: null, limit: 100 },
+  );
+  assert.equal(plannedWorkbench.agent_plan.artifact.markdown, planEnvelope.result.explanation);
+  assert.ok(
+    mainWindow.webContents.sent.filter(({ channel }) => channel === WORKBENCH_CHANGED_CHANNEL).length
+      > workbenchChangedBeforePlan,
+  );
+  assert.equal(mainWindow.webContents.sent.at(-1).channel, WORKBENCH_CHANGED_CHANNEL);
   const created = await ipcMain.handlers.get(CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL)(
     { sender: mainWindow.webContents },
     {
@@ -3260,6 +3344,14 @@ test('publishes typed durable task stream change events to the active renderer',
   const service = {
     generate() { throw new Error('unexpected generate'); },
     async submit() {
+      const invalidationsBefore = probes.workbenchTaskMonitorInvalidations?.length ?? 0;
+      const syncsBefore = probes.workbenchSynchronizedTaskMonitors?.length ?? 0;
+      probes.agentConversationOptions.onChanged(Object.assign(Object.create(null), {
+        event_version: 'builder-task-stream-changed.v1', agent_id: DEFAULT_BUILDER_AGENT_ID,
+      }));
+      assert.equal(probes.workbenchTaskMonitorInvalidations?.length ?? 0, invalidationsBefore);
+      assert.equal(probes.workbenchSynchronizedTaskMonitors?.length ?? 0, syncsBefore);
+      mainWindow.webContents.sent.length = 0;
       probes.conversationOptions.onTaskStreamChanged(Object.assign(Object.create(null), {
         event_version: 'builder-task-stream-changed.v2',
         project_id: PROJECT_ID,
@@ -3357,6 +3449,77 @@ test('publishes typed durable task stream change events to the active renderer',
   runtime.dispose();
 });
 
+test('publishes check-run activity projection as typed runtime task stream hints', (t) => {
+  const mainWindow = activeWindow();
+  const ipcMain = fakeIpcMain();
+  const probes = {};
+  const service = {
+    generate() { throw new Error('unexpected generate'); },
+    submit() { throw new Error('unexpected submit'); },
+    retry_generate() { throw new Error('unexpected retry'); },
+    answer() { throw new Error('unexpected answer'); },
+    restore_draft() { throw new Error('unexpected restore'); },
+    reject_draft() { throw new Error('unexpected reject'); },
+    cancel() { return { request_id: hostRequestDigest(), cancelled: true }; },
+    availability() {
+      return {
+        version: 'builder-generation-availability.v1',
+        available: false,
+        reason: 'not_configured',
+        supports_cancel: true,
+      };
+    },
+  };
+  const harness = runtimeWithService(service, probes);
+  const runtime = harness.createRuntime({
+    fetchImpl: unreachableFetch,
+    grantPermissionForExplicitApproval,
+    ipcMain,
+    mainWindow,
+    userDataPath: temporaryUserData(t),
+  });
+  runtime.register();
+
+  mainWindow.webContents.sent.length = 0;
+  probes.checkRunActivityRegistryOptions.on_activity_changed(Object.assign(Object.create(null), {
+    event_version: 'builder-check-run-activity-changed.v1',
+    project_id: PROJECT_ID,
+    candidate_id: CANDIDATE_ID,
+    activity: 'check_run',
+  }));
+  probes.checkRunActivityRegistryOptions.on_activity_changed(Object.assign(Object.create(null), {
+    event_version: 'builder-check-run-activity-changed.v1',
+    project_id: PROJECT_ID,
+    candidate_id: CANDIDATE_ID,
+    activity: null,
+  }));
+
+  const taskStreamChangedEvents = mainWindow.webContents.sent.filter(
+    (event) => event.channel === TASK_STREAM_CHANGED_CHANNEL,
+  );
+  assert.deepEqual(taskStreamChangedEvents.map((event) => ({ ...event.payload })), [
+    {
+      event_version: 'builder-task-stream-changed.v2',
+      project_id: PROJECT_ID,
+      change_kind: 'runtime_append',
+      cursor: 1,
+    },
+    {
+      event_version: 'builder-task-stream-changed.v2',
+      project_id: PROJECT_ID,
+      change_kind: 'runtime_append',
+      cursor: 2,
+    },
+  ]);
+  assert.equal(
+    mainWindow.webContents.sent.filter((event) => event.channel === WORKBENCH_CHANGED_CHANNEL).length,
+    0,
+  );
+  assert.equal(probes.workbenchTaskMonitorInvalidations?.length ?? 0, 0);
+  assert.equal(probes.workbenchSynchronizedTaskMonitors?.length ?? 0, 0);
+  runtime.dispose();
+});
+
 test('publishes generation started hints to bind live reads without exposing source or credentials', async (t) => {
   const mainWindow = activeWindow();
   const ipcMain = fakeIpcMain();
@@ -3450,6 +3613,17 @@ test('publishes display-safe generation output deltas without exposing provider 
         run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
         retain_text_bytes: 0,
       }));
+      probes.serviceOptions.onProviderOutputDelta(Object.assign(Object.create(null), {
+        event_version: 'builder-generation-activity.v2',
+        request_id: requestId,
+        project_id: PROJECT_ID,
+        conversation_id: `builder-conversation:${PROJECT_ID.slice('builder-project:'.length)}`,
+        turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+        task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174002',
+        run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+        activity_kind: 'context_compacting',
+        activity_text: '上下文较长，正在整理',
+      }));
       return { ok: true };
     },
     retry_generate() { throw new Error('unexpected retry'); },
@@ -3485,7 +3659,7 @@ test('publishes display-safe generation output deltas without exposing provider 
     vm.runInContext('({ instruction: "Make a timer." })', harness.context),
   );
 
-  assert.equal(mainWindow.webContents.sent.length, 2);
+  assert.equal(mainWindow.webContents.sent.length, 3);
   assert.equal(mainWindow.webContents.sent[0].channel, GENERATION_OUTPUT_CHANNEL);
   assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[0].payload), [
     'event_version',
@@ -3507,6 +3681,21 @@ test('publishes display-safe generation output deltas without exposing provider 
   assert.equal(mainWindow.webContents.sent[1].payload.request_id, requestId);
   assert.equal(mainWindow.webContents.sent[1].payload.project_id, PROJECT_ID);
   assert.equal(mainWindow.webContents.sent[1].payload.retain_text_bytes, 0);
+  assert.equal(mainWindow.webContents.sent[2].channel, GENERATION_OUTPUT_CHANNEL);
+  assert.deepEqual(Reflect.ownKeys(mainWindow.webContents.sent[2].payload), [
+    'event_version',
+    'request_id',
+    'project_id',
+    'conversation_id',
+    'turn_id',
+    'task_id',
+    'run_id',
+    'activity_kind',
+    'activity_text',
+  ]);
+  assert.equal(mainWindow.webContents.sent[2].payload.event_version, 'builder-generation-activity.v2');
+  assert.equal(mainWindow.webContents.sent[2].payload.activity_kind, 'context_compacting');
+  assert.equal(mainWindow.webContents.sent[2].payload.activity_text, '上下文较长，正在整理');
   assert.doesNotMatch(
     JSON.stringify(mainWindow.webContents.sent[0].payload),
     /credential|provider|source_tree|commit_oid|tree_oid|receipt|operations|index\.html/iu,
@@ -3536,7 +3725,10 @@ test('rolls back partial registration and rejects malformed runtime authority', 
     RESTORE_REVISION_AS_DRAFT_CHANNEL,
     RESTORE_DRAFT_CHANNEL,
     ANSWER_DRAFT_CHANNEL,
+    ANSWER_PLAN_CHANNEL,
     ANSWER_CHANNEL,
+    MANUAL_COMPACT_CONTEXT_CHANNEL,
+    RESUME_INTERRUPTED_RUN_CHANNEL,
     RETRY_GENERATE_CHANNEL,
     CLASSIFY_INTENT_CHANNEL,
     SUBMIT_CHANNEL,
@@ -3760,8 +3952,16 @@ test('composes project main authority and closes it on dispose', (t) => {
     runtime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime(),
     runtimeModule.context.__projectEnvironmentDiagnosisService,
   );
+  assert.equal(
+    runtime.readProjectDependencyPreparerForMainOnlyApprovalRuntime(),
+    runtimeModule.context.__projectDependencyPreparer,
+  );
   assert.equal(probes.projectEnvironmentDiagnosisOptions.project_read_authority.authority_version,
     'builder-project-read-authority.v1');
+  assert.equal(
+    probes.projectDependencyPreparerOptions.project_environment_diagnosis_service,
+    runtimeModule.context.__projectEnvironmentDiagnosisService,
+  );
   assert.equal(probes.checkRunCompositionOptions.user_data_path, userDataPath);
   assert.equal(probes.checkRunCompositionOptions.conversation_service,
     runtimeModule.context.__conversationService);
@@ -4783,7 +4983,7 @@ test('ignores stale Open and Save completions when a newer project selection win
   runtime.dispose();
 });
 
-test('cancels every accepted generation, submit, retry, or answer before removing its cancel channel', async (t) => {
+test('pauses every accepted generation, submit, retry, or answer before removing its cancel channel', async (t) => {
   const projectIds = {
     generate: PROJECT_ID,
     submit: 'builder-project:123e4567-e89b-42d3-a456-426614174001',
@@ -4808,7 +5008,8 @@ test('cancels every accepted generation, submit, retry, or answer before removin
     answer() {
       return new Promise((_resolve, reject) => { rejectAnswer = reject; });
     },
-    cancel(body) {
+    cancel() { assert.fail('Desktop shutdown must not request a user Stop'); },
+    pause_for_shutdown(body) {
       cancelRequests.push(body);
       const error = new Error('private provider request');
       error.code = 'builder_generation_cancelled';

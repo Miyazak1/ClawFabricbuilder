@@ -77,6 +77,7 @@ describe('BuilderAgentWorkbenchController', () => {
       updateMessageState: vi.fn(),
       createTaskProposal: vi.fn(),
       decideTaskProposal: vi.fn(),
+      decideAgentPlan: vi.fn(),
       controlTask: vi.fn(),
       subscribeChanged(listener) {
         changed.current = listener;
@@ -103,6 +104,7 @@ describe('BuilderAgentWorkbenchController', () => {
       updateMessageState,
       createTaskProposal: vi.fn(),
       decideTaskProposal: vi.fn(),
+      decideAgentPlan: vi.fn(),
       controlTask: vi.fn(),
       subscribeChanged: () => () => undefined,
     };
@@ -124,6 +126,7 @@ describe('BuilderAgentWorkbenchController', () => {
       updateMessageState: vi.fn(),
       createTaskProposal: vi.fn(),
       decideTaskProposal: vi.fn(),
+      decideAgentPlan: vi.fn(),
       controlTask,
       subscribeChanged: () => () => undefined,
     };

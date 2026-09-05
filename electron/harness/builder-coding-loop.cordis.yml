@@ -3,7 +3,7 @@
 # authenticated loopback tool broker registered below.
 
 - id: sdk-jsonrpc-server
-  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+  name: './builder-session-resume-server.mjs'
   config:
     maxTokensAsSuccess: true
 
@@ -48,6 +48,9 @@
 
 - id: session-checkpoints
   name: '@deepseek-ai/dsh-session-checkpoint-policy'
+
+- id: session-projections
+  name: '@deepseek-ai/dsh-session-projection'
 
 - id: token-meter
   name: '@deepseek-ai/dsh-token-meter'

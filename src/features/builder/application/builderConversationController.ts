@@ -203,7 +203,10 @@ export function createBuilderConversationController(
       ? current.agent_id === event.agent_id
       : current.project_id === event.project_id;
     if (disposed || !matches) return;
-    if (event.event_version === 'builder-task-stream-changed.v2') {
+    if (
+      event.event_version === 'builder-task-stream-changed.v2'
+      && event.change_kind === 'durable_append'
+    ) {
       if (event.cursor <= latestDurableCursor) {
         incrementBuilderPerformance('renderer.task_stream.changed.coalesced_count');
         return;

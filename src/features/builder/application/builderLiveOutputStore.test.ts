@@ -60,15 +60,21 @@ function reset(retainTextBytes: number): BuilderGenerationOutputEvent {
   });
 }
 
-function activity(text: string): BuilderGenerationOutputEvent {
+function activity(
+  text: string,
+  activityKind: Extract<BuilderGenerationOutputEvent, {
+    event_version: 'builder-generation-activity.v2';
+  }>['activity_kind'] = 'reasoning',
+): BuilderGenerationOutputEvent {
   return Object.freeze({
-    event_version: 'builder-generation-activity.v1',
+    event_version: 'builder-generation-activity.v2',
     request_id: REQUEST_ID,
     project_id: PROJECT_ID,
     conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
     turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
     task_id: 'builder-task:123e4567-e89b-42d3-a456-426614174001',
     run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174001',
+    activity_kind: activityKind,
     activity_text: text,
   });
 }
@@ -92,7 +98,30 @@ it('replaces bounded activity status without appending it to assistant text', ()
 
   expect(store.getSnapshot()).toMatchObject({
     text: '已完成分析。',
+    activity_kind: 'reasoning',
     waiting_text: '正在验证结果',
+  });
+});
+
+it('retains semantic context compaction activity for the chat animation', () => {
+  const store = createBuilderLiveOutputStore(manualScheduler().scheduler);
+  store.start(Object.freeze({
+    state: 'streaming',
+    request_id: REQUEST_ID,
+    project_id: PROJECT_ID,
+    text: '',
+    chunk_count: 0,
+  }));
+
+  expect(store.append(activity('上下文较长，正在整理', 'context_compacting'))).toBe(true);
+  expect(store.getSnapshot()).toMatchObject({
+    activity_kind: 'context_compacting',
+    waiting_text: '上下文较长，正在整理',
+  });
+  expect(store.append(activity('上下文整理完成，继续处理', 'context_compacted'))).toBe(true);
+  expect(store.getSnapshot()).toMatchObject({
+    activity_kind: 'context_compacted',
+    waiting_text: '上下文整理完成，继续处理',
   });
 });
 

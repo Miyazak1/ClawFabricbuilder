@@ -10,6 +10,7 @@ const {
   BuilderOpenAICompatibleTransportError,
   createBuilderOpenAICompatibleTransport,
 } = require('../electron/builder-openai-compatible-transport.cjs');
+const { MAX_GENERATED_TEXT_BYTES } = require('../electron/builder-generation-kernel.cjs');
 
 const PRIVATE_MARKER = 'private-provider-marker-do-not-leak';
 
@@ -18,6 +19,7 @@ function request(overrides = {}) {
     base_url: 'https://provider.example/v1',
     model: 'builder-model',
     credential: 'provider-key-value',
+    output_format: 'json_object',
     messages: [
       { role: 'system', content: 'Return one exact JSON object.' },
       { role: 'user', content: 'Build a small timer.' },
@@ -164,6 +166,23 @@ test('posts a fixed streaming Builder request when an output observer is supplie
   assert.equal(Object.isFrozen(deltas[0]), true);
 });
 
+test('omits JSON response forcing for an explicit text request', async () => {
+  const calls = [];
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return response(providerPayload('# Complete plan'));
+    },
+  });
+
+  const result = await transport(request({ output_format: 'text' }));
+
+  assert.equal(result.generated_text, '# Complete plan');
+  const body = JSON.parse(calls[0][1].body);
+  assert.equal(body.response_format, undefined);
+  assert.equal(body.stream, false);
+});
+
 test('rejects malformed streaming provider events behind fixed errors', async () => {
   const cases = [
     response(providerPayload(), { headers: new Headers({ 'content-type': 'application/json' }) }),
@@ -308,6 +327,57 @@ test('accepts bounded repair prompts with a third user message', async () => {
   assert.equal(requests.length, 1);
   assert.equal(requests[0].messages.length, 3);
   assert.equal(requests[0].messages[2].role, 'user');
+});
+
+test('accepts a four-message Agent plan repair without reordering the current instruction', async () => {
+  const requests = [];
+  const messages = [
+    ...request().messages,
+    { role: 'user', content: 'The previous plan was incomplete. Return the complete plan.' },
+    { role: 'user', content: JSON.stringify({ response_mode: 'plan', instruction: 'Plan a small timer.' }) },
+  ];
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return response(providerPayload());
+    },
+  });
+  await transport(request({ messages }));
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].messages, messages);
+});
+
+test('keeps Agent plan repair message count, roles, data properties, and total bytes bounded', async () => {
+  let fetchCalls = 0;
+  const transport = createBuilderOpenAICompatibleTransport({
+    fetchImpl: async () => { fetchCalls += 1; return response(providerPayload()); },
+  });
+  const messages = () => [
+    ...request().messages,
+    { role: 'user', content: 'Repair the plan.' },
+    { role: 'user', content: 'Plan a small timer.' },
+  ];
+  const replaceLast = (last) => [...messages().slice(0, 3), last];
+  const sparse = messages();
+  delete sparse[3];
+  const accessor = messages();
+  Object.defineProperty(accessor, '3', { enumerable: true, get() { throw new Error(PRIVATE_MARKER); } });
+  const byteLimit = MAX_GENERATED_TEXT_BYTES + (64 * 1024);
+  const cases = [
+    [...messages(), { role: 'user', content: 'Unbounded retry.' }],
+    ...['system', 'assistant', 'tool'].map((role) => replaceLast({ role, content: 'Wrong role.' })),
+    replaceLast({ role: 'user', content: '' }),
+    replaceLast({ role: 'user', content: 'Plan.', extra: true }),
+    replaceLast(new Proxy({ role: 'user', content: 'Plan.' }, {})),
+    new Proxy(messages(), {}),
+    sparse,
+    accessor,
+    messages().map((message) => ({ ...message, content: 'x'.repeat(Math.ceil(byteLimit / 4)) })),
+  ];
+  for (const candidate of cases) {
+    await expectCode(transport(request({ messages: candidate })), 'builder_provider_request_invalid');
+  }
+  assert.equal(fetchCalls, 0);
 });
 
 test('maps explicit cancellation and timeout to distinct fixed errors', async () => {

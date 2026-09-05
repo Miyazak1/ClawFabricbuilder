@@ -7,6 +7,10 @@ import {
   type BuilderProviderContextDisclosureStatusProjectionWire,
 } from './builderProviderContextDisclosureStatusProjection';
 import {
+  sanitizeBuilderContextUsageProjectionWire,
+  type BuilderContextUsageProjectionWire,
+} from './builderContextUsageProjection';
+import {
   sanitizeBuilderDraftCheckpointStatusProjectionWire,
   type BuilderDraftCheckpointStatusProjectionWire,
 } from './builderDraftCheckpointStatusProjection';
@@ -260,7 +264,7 @@ export type BuilderConversationItem =
     turn_id: string;
     message: BuilderConversationMessage;
     role: 'assistant' | 'user';
-    message_kind: 'submitted' | 'steering' | 'queued_followup' | 'run_result';
+    message_kind: 'submitted' | 'steering' | 'queued_followup' | 'run_result' | 'incomplete_result';
     context_route?: 'answer' | 'clarify' | 'update_brief' | 'plan' | 'build';
     recovery_admission: 'sqlite_derived_public_transcript_only';
   }>
@@ -333,6 +337,28 @@ export type BuilderConversationItem =
     result: BuilderConversationAgentStepResult | null;
     summary: BuilderConversationAgentStepSummary;
     lifecycle: BuilderConversationAgentStepLifecycle;
+  }>
+  | Readonly<{
+    item_kind: 'context_compaction_recorded';
+    sequence: number;
+    turn_id: string;
+    run_id: string;
+    task_id: string;
+    task_address_id: string;
+    admission_id: string;
+    operation: 'manual_compaction_completed' | 'manual_compaction_noop';
+    status: 'compaction_completed' | 'compaction_not_needed';
+    compaction_id: string | null;
+    start_seq: number | null;
+    summary_seq: number | null;
+    end_seq: number | null;
+    shadowed_token_count: number | null;
+    recorded_at_ms: number;
+    lifecycle: Readonly<{
+      conversation_admission: 'main_recorded_after_verified_manual_compaction';
+      renderer_authority: 'not_present';
+      revision_admission: 'not_created';
+    }>;
   }>
   | Readonly<{
     item_kind: 'run_control_requested';
@@ -525,6 +551,7 @@ export type BuilderConversationReadySnapshot = Readonly<{
   provider_context_disclosure_status_projection?:
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
+  context_usage_projection?: BuilderContextUsageProjectionWire | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   draft_checkpoint_timeline_projection?: BuilderDraftCheckpointTimelineProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
@@ -561,6 +588,7 @@ export type BuilderConversationAbsentSnapshot = Readonly<{
   provider_context_disclosure_status_projection?:
     | BuilderProviderContextDisclosureStatusProjectionWire
     | null;
+  context_usage_projection?: BuilderContextUsageProjectionWire | null;
   draft_checkpoint_status_projection?: BuilderDraftCheckpointStatusProjectionWire | null;
   draft_checkpoint_timeline_projection?: BuilderDraftCheckpointTimelineProjectionWire | null;
   review_state_projection?: BuilderReviewStateProjectionWire | null;
@@ -597,6 +625,9 @@ const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
 const RUN_ID_PATTERN = new RegExp(`^builder-run:${UUID_SOURCE}$`, 'u');
 const STEP_ID_PATTERN = new RegExp(`^builder-run-step:${UUID_SOURCE}$`, 'u');
 const TOOL_CALL_ID_PATTERN = new RegExp(`^builder-tool-call:${UUID_SOURCE}$`, 'u');
+const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
+const CONTEXT_COMPACTION_ADMISSION_ID_PATTERN = /^builder-context-compaction-admission:[0-9a-f]{64}$/u;
+const CONTEXT_COMPACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$/u;
 const DRAFT_ID_PATTERN = /^builder-generation-draft:[0-9a-f]{64}$/u;
 const RUNTIME_RESULT_REF_PATTERN = /^builder-runtime-tool-result:[0-9a-f]{64}$/u;
 const RUNTIME_CHANGE_REF_PATTERN = /^builder-runtime-file-change:[0-9a-f]{64}$/u;
@@ -618,6 +649,7 @@ const TOP_LEVEL_OPTIONAL_KEYS = Object.freeze([
   'agent_id',
   'context_status_projection',
   'provider_context_disclosure_status_projection',
+  'context_usage_projection',
   'draft_checkpoint_status_projection',
   'draft_checkpoint_timeline_projection',
   'review_state_projection',
@@ -779,6 +811,29 @@ const AGENT_STEP_SUMMARY_KEYS = Object.freeze([
 const AGENT_STEP_LIFECYCLE_KEYS = Object.freeze([
   'conversation_admission',
   'raw_output_admission',
+  'revision_admission',
+]);
+const CONTEXT_COMPACTION_RECORDED_KEYS = Object.freeze([
+  'item_kind',
+  'sequence',
+  'turn_id',
+  'run_id',
+  'task_id',
+  'task_address_id',
+  'admission_id',
+  'operation',
+  'status',
+  'compaction_id',
+  'start_seq',
+  'summary_seq',
+  'end_seq',
+  'shadowed_token_count',
+  'recorded_at_ms',
+  'lifecycle',
+]);
+const CONTEXT_COMPACTION_LIFECYCLE_KEYS = Object.freeze([
+  'conversation_admission',
+  'renderer_authority',
   'revision_admission',
 ]);
 const TASK_BRIEF_UPDATED_KEYS = Object.freeze([
@@ -1125,6 +1180,17 @@ function optionalProviderContextDisclosureStatusProjection(
   return projection;
 }
 
+function optionalContextUsageProjection(
+  source: Record<string, unknown>,
+): BuilderContextUsageProjectionWire | null | undefined {
+  if (!Object.hasOwn(source, 'context_usage_projection')) return undefined;
+  const value = source.context_usage_projection;
+  if (value === null) return null;
+  const projection = sanitizeBuilderContextUsageProjectionWire(value);
+  if (projection === null) throw unavailable();
+  return projection;
+}
+
 function optionalDraftCheckpointStatusProjection(
   source: Record<string, unknown>,
 ): BuilderDraftCheckpointStatusProjectionWire | null | undefined {
@@ -1332,14 +1398,14 @@ function nullableId(value: unknown, pattern: RegExp): string | null {
   return value === null ? null : safePattern(value, pattern);
 }
 
-function sanitizeMessage(value: unknown): BuilderConversationMessage {
+function sanitizeMessage(value: unknown, agentTranscript = false): BuilderConversationMessage {
   const source = exactRecord(value, MESSAGE_KEYS);
   return {
     message_id: safePattern(source.message_id, MESSAGE_ID_PATTERN),
     text: safeText(
       source.text,
-      MAX_MESSAGE_CODE_POINTS,
-      MAX_MESSAGE_UTF8_BYTES,
+      agentTranscript ? 12_000 : MAX_MESSAGE_CODE_POINTS,
+      agentTranscript ? 48_000 : MAX_MESSAGE_UTF8_BYTES,
       true,
     ),
   };
@@ -1450,6 +1516,7 @@ function sanitizeUserMessage(
 function sanitizeTranscriptMessage(
   source: Record<string, unknown>,
   sequence: number,
+  agentTranscript = false,
 ): Extract<BuilderConversationItem, { item_kind: 'transcript_message' }> {
   const role = source.role;
   const messageKind = source.message_kind;
@@ -1459,6 +1526,7 @@ function sanitizeTranscriptMessage(
     && messageKind !== 'steering'
     && messageKind !== 'queued_followup'
     && messageKind !== 'run_result'
+    && !(agentTranscript && role === 'assistant' && messageKind === 'incomplete_result')
   ) throw unavailable();
   if (source.recovery_admission !== 'sqlite_derived_public_transcript_only') throw unavailable();
   const contextRoute = Object.hasOwn(source, 'context_route') ? source.context_route : undefined;
@@ -1474,7 +1542,7 @@ function sanitizeTranscriptMessage(
     item_kind: 'transcript_message',
     sequence,
     turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
-    message: sanitizeMessage(source.message),
+    message: sanitizeMessage(source.message, agentTranscript),
     role,
     message_kind: messageKind,
     ...(contextRoute === undefined
@@ -2221,6 +2289,90 @@ function sanitizeProgrammingRuntimeStatus(
   };
 }
 
+function nullableBoundedPositiveInteger(value: unknown, maximum: number): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > maximum) {
+    throw unavailable();
+  }
+  return Number(value);
+}
+
+function sanitizeContextCompactionLifecycle(value: unknown): Extract<
+  BuilderConversationItem,
+  { item_kind: 'context_compaction_recorded' }
+>['lifecycle'] {
+  const source = exactRecord(value, CONTEXT_COMPACTION_LIFECYCLE_KEYS);
+  if (
+    source.conversation_admission !== 'main_recorded_after_verified_manual_compaction'
+    || source.renderer_authority !== 'not_present'
+    || source.revision_admission !== 'not_created'
+  ) throw unavailable();
+  return {
+    conversation_admission: 'main_recorded_after_verified_manual_compaction',
+    renderer_authority: 'not_present',
+    revision_admission: 'not_created',
+  };
+}
+
+function sanitizeContextCompactionRecorded(
+  source: Record<string, unknown>,
+  sequence: number,
+): Extract<BuilderConversationItem, { item_kind: 'context_compaction_recorded' }> {
+  const operation = source.operation;
+  const status = source.status;
+  const compactionId = source.compaction_id === null
+    ? null
+    : safePattern(source.compaction_id, CONTEXT_COMPACTION_ID_PATTERN);
+  const startSeq = nullableBoundedPositiveInteger(source.start_seq, 10_000_000);
+  const summarySeq = nullableBoundedPositiveInteger(source.summary_seq, 10_000_000);
+  const endSeq = nullableBoundedPositiveInteger(source.end_seq, 10_000_000);
+  const shadowedTokenCount = nullableBoundedPositiveInteger(source.shadowed_token_count, 1_000_000_000);
+  if (
+    !['manual_compaction_completed', 'manual_compaction_noop'].includes(operation as string)
+    || !['compaction_completed', 'compaction_not_needed'].includes(status as string)
+    || (operation === 'manual_compaction_completed') !== (status === 'compaction_completed')
+  ) throw unavailable();
+  if (
+    status === 'compaction_completed'
+    && (
+      compactionId === null
+      || startSeq === null
+      || summarySeq === null
+      || endSeq === null
+      || shadowedTokenCount === null
+      || !(startSeq < summarySeq && summarySeq < endSeq)
+    )
+  ) throw unavailable();
+  if (
+    status === 'compaction_not_needed'
+    && (
+      compactionId !== null
+      || startSeq !== null
+      || summarySeq !== null
+      || endSeq !== null
+      || shadowedTokenCount !== null
+    )
+  ) throw unavailable();
+  return {
+    item_kind: 'context_compaction_recorded',
+    sequence,
+    turn_id: safePattern(source.turn_id, TURN_ID_PATTERN),
+    run_id: safePattern(source.run_id, RUN_ID_PATTERN),
+    task_id: safePattern(source.task_id, TASK_ID_PATTERN),
+    task_address_id: safePattern(source.task_address_id, TASK_ADDRESS_ID_PATTERN),
+    admission_id: safePattern(source.admission_id, CONTEXT_COMPACTION_ADMISSION_ID_PATTERN),
+    operation: operation as 'manual_compaction_completed' | 'manual_compaction_noop',
+    status: status as 'compaction_completed' | 'compaction_not_needed',
+    compaction_id: compactionId,
+    start_seq: startSeq,
+    summary_seq: summarySeq,
+    end_seq: endSeq,
+    shadowed_token_count: shadowedTokenCount,
+    recorded_at_ms: safeTimestamp(source.recorded_at_ms),
+    lifecycle: sanitizeContextCompactionLifecycle(source.lifecycle),
+  };
+}
+
 function sanitizeRunCompleted(
   source: Record<string, unknown>,
   sequence: number,
@@ -2356,7 +2508,7 @@ function sanitizeTurnCompleted(
   };
 }
 
-function sanitizeItem(value: unknown): BuilderConversationItem {
+function sanitizeItem(value: unknown, agentTranscript = false): BuilderConversationItem {
   if (!isPlainObject(value)) throw unavailable();
   const itemKindDescriptor = Object.getOwnPropertyDescriptor(value, 'item_kind');
   if (
@@ -2388,6 +2540,8 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
     source = exactRecord(value, RUN_PROGRESS_KEYS);
   } else if (itemKind === 'agent_step_progress_recorded') {
     source = exactRecord(value, AGENT_STEP_PROGRESS_RECORDED_KEYS);
+  } else if (itemKind === 'context_compaction_recorded') {
+    source = exactRecord(value, CONTEXT_COMPACTION_RECORDED_KEYS);
   } else if (itemKind === 'task_brief_updated') {
     source = exactRecord(value, TASK_BRIEF_UPDATED_KEYS);
   } else if (itemKind === 'tool_call_result_recorded') {
@@ -2417,7 +2571,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   }
   const sequence = safeSequence(source.sequence);
   if (itemKind === 'user_message') return sanitizeUserMessage(source, sequence);
-  if (itemKind === 'transcript_message') return sanitizeTranscriptMessage(source, sequence);
+  if (itemKind === 'transcript_message') return sanitizeTranscriptMessage(source, sequence, agentTranscript);
   if (itemKind === 'queued_followup_consumed') {
     return sanitizeQueuedFollowupConsumed(source, sequence);
   }
@@ -2435,6 +2589,7 @@ function sanitizeItem(value: unknown): BuilderConversationItem {
   }
   if (itemKind === 'run_progress_recorded') return sanitizeRunProgress(source, sequence);
   if (itemKind === 'agent_step_progress_recorded') return sanitizeAgentStepProgress(source, sequence);
+  if (itemKind === 'context_compaction_recorded') return sanitizeContextCompactionRecorded(source, sequence);
   if (itemKind === 'task_brief_updated') return sanitizeTaskBriefUpdated(source, sequence);
   if (itemKind === 'tool_call_result_recorded') {
     return sanitizeToolCallResultRecorded(source, sequence);
@@ -2626,6 +2781,8 @@ function validateCompleteWindow(
   >();
   const runtimeToolActivities = new Map<string, RuntimeToolValidationState>();
   const checkpointRuns = new Set<string>();
+  const compactionAdmissions = new Set<string>();
+  const compactionIds = new Set<string>();
   const recoveryActions = new Map<
     string,
     Readonly<{ action: 'restore_checkpoint' | 'restore_revision'; phase: 'requested' | 'completed' | 'failed' }>
@@ -2637,12 +2794,14 @@ function validateCompleteWindow(
     turn_id: string;
   }>();
   let activeTurn: ReplayTurn | null = null;
+  let pausedTurn: ReplayTurn | null = null;
 
   for (const item of items) {
     if (item.item_kind === 'user_message') {
       if (messageIds.has(item.message.message_id)) throw unavailable();
       messageIds.add(item.message.message_id);
       if (item.message_kind === 'submitted') {
+        pausedTurn = null;
         if (activeTurn !== null || turns.has(item.turn_id)) throw unavailable();
         if (item.task !== null) {
           if (taskIds.has(item.task.task_id)) throw unavailable();
@@ -2732,8 +2891,36 @@ function validateCompleteWindow(
       continue;
     }
 
+    if (item.item_kind === 'context_compaction_recorded') {
+      if (
+        activeTurn !== null
+        || compactionAdmissions.has(item.admission_id)
+        || (item.compaction_id !== null && compactionIds.has(item.compaction_id))
+      ) throw unavailable();
+      const compactedTurn = turns.get(item.turn_id);
+      const compactedRun = compactedTurn?.runs.find((run) => run.run_id === item.run_id) ?? null;
+      if (
+        compactedTurn === undefined
+        || compactedTurn.mode !== 'work'
+        || compactedTurn.task?.task_id !== item.task_id
+        || compactedRun === null
+        || compactedRun.status !== 'completed'
+        || compactedRun.terminal_status !== 'succeeded'
+        || !['candidate', 'explanation'].includes(compactedRun.result_kind as string)
+      ) throw unavailable();
+      compactionAdmissions.add(item.admission_id);
+      if (item.compaction_id !== null) compactionIds.add(item.compaction_id);
+      continue;
+    }
+
+    if (activeTurn === null && item.item_kind === 'run_started' && pausedTurn !== null
+      && pausedTurn.turn_id === item.turn_id && pausedTurn.mode === 'work'
+      && pausedTurn.runs.at(-1)?.run_id === item.retry_of_run_id) {
+      activeTurn = pausedTurn;
+      pausedTurn = null;
+    }
     if (activeTurn === null || activeTurn.turn_id !== item.turn_id) throw unavailable();
-    const currentRun = activeTurn.runs.at(-1) ?? null;
+    const currentRun: ReplayTurn['runs'][number] | null = activeTurn.runs.at(-1) ?? null;
     if (item.item_kind === 'run_started') {
       if (runIds.has(item.run_id)) throw unavailable();
       if (
@@ -2980,6 +3167,7 @@ function validateCompleteWindow(
           : expectedOutcome(currentRun)
       )
     ) throw unavailable();
+    pausedTurn = item.outcome === 'interrupted' ? activeTurn : null;
     activeTurn = null;
   }
   if ((activeTurn?.turn_id ?? null) !== recordedActiveTurnId) throw unavailable();
@@ -3056,6 +3244,8 @@ function validateTruncatedWindow(
   >();
   const runtimeToolActivities = new Map<string, RuntimeToolValidationState>();
   const checkpointRuns = new Set<string>();
+  const compactionAdmissions = new Set<string>();
+  const compactionIds = new Set<string>();
   const recoveryActions = new Map<
     string,
     Readonly<{ action: 'restore_checkpoint' | 'restore_revision'; phase: 'requested' | 'completed' | 'failed' }>
@@ -3068,6 +3258,10 @@ function validateTruncatedWindow(
     string,
     Readonly<{ turn_id: string; review: 'approved' | 'rejected' | null }>
   >();
+  const completedWorkRuns = new Map<
+    string,
+    Readonly<{ turn_id: string; task_id: string }>
+  >();
   const queuedFollowups = new Map<string, {
     consumed: boolean;
     run_id: string;
@@ -3075,6 +3269,7 @@ function validateTruncatedWindow(
     turn_id: string;
   }>();
   let activeTurn: SuffixTurn | null = null;
+  let pausedTurn: SuffixTurn | null = null;
 
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
@@ -3084,6 +3279,7 @@ function validateTruncatedWindow(
       if (messageIds.has(item.message.message_id)) throw unavailable();
       messageIds.add(item.message.message_id);
       if (item.message_kind === 'submitted') {
+        pausedTurn = null;
         if (activeTurn !== null || turnIds.has(item.turn_id)) throw unavailable();
         turnIds.add(item.turn_id);
         if (item.task !== null) {
@@ -3228,6 +3424,42 @@ function validateTruncatedWindow(
       continue;
     }
 
+    if (item.item_kind === 'context_compaction_recorded') {
+      if (
+        activeTurn !== null
+        || compactionAdmissions.has(item.admission_id)
+        || (item.compaction_id !== null && compactionIds.has(item.compaction_id))
+      ) throw unavailable();
+      const completedWorkRun = completedWorkRuns.get(item.run_id) ?? null;
+      if (completedWorkRun === null) {
+        if (
+          !mayUsePrefixState
+          || turnIds.has(item.turn_id)
+          || runIds.has(item.run_id)
+          || taskIds.has(item.task_id)
+        ) throw unavailable();
+        turnIds.add(item.turn_id);
+        runIds.add(item.run_id);
+        taskIds.add(item.task_id);
+        compactionAdmissions.add(item.admission_id);
+        if (item.compaction_id !== null) compactionIds.add(item.compaction_id);
+        continue;
+      }
+      if (
+        completedWorkRun.turn_id !== item.turn_id
+        || completedWorkRun.task_id !== item.task_id
+      ) throw unavailable();
+      compactionAdmissions.add(item.admission_id);
+      if (item.compaction_id !== null) compactionIds.add(item.compaction_id);
+      continue;
+    }
+
+    if (activeTurn === null && item.item_kind === 'run_started' && pausedTurn !== null
+      && pausedTurn.turn_id === item.turn_id && pausedTurn.mode !== 'question'
+      && pausedTurn.current_run?.run_id === item.retry_of_run_id) {
+      activeTurn = pausedTurn;
+      pausedTurn = null;
+    }
     if (activeTurn === null) {
       if (!mayUsePrefixState) throw unavailable();
       if (turnIds.has(item.turn_id)) throw unavailable();
@@ -3236,6 +3468,17 @@ function validateTruncatedWindow(
         if (item.run_id === null) throw unavailable();
         if (runIds.has(item.run_id)) throw unavailable();
         runIds.add(item.run_id);
+        if (item.outcome === 'interrupted') {
+          pausedTurn = {
+            turn_id: item.turn_id, mode: 'unknown', task_id: null, origin: 'prefix',
+            submitted_message_id: null, submitted_text: null,
+            current_run: { run_id: item.run_id, attempt_number: null, status: 'completed',
+              terminal_status: 'interrupted', result_kind: 'failure', candidate_draft_id: null,
+              plan_review: null, candidate_review: null, pending_tool_calls: 0,
+              control: 'interrupt', context_snapshot_recorded: false, programming_run_admitted: false,
+              progress_stages: [], agent_step_progress: new Map() },
+          };
+        }
         continue;
       }
       activeTurn = {
@@ -3944,6 +4187,18 @@ function validateTruncatedWindow(
         review: currentRun.plan_review,
       });
     }
+    if (
+      currentRun.terminal_status === 'succeeded'
+      && activeTurn.mode === 'work'
+      && activeTurn.task_id !== null
+      && ['candidate', 'explanation'].includes(currentRun.result_kind as string)
+    ) {
+      completedWorkRuns.set(currentRun.run_id, {
+        turn_id: activeTurn.turn_id,
+        task_id: activeTurn.task_id,
+      });
+    }
+    pausedTurn = item.outcome === 'interrupted' ? activeTurn : null;
     activeTurn = null;
   }
 
@@ -4019,6 +4274,7 @@ export function sanitizeBuilderConversationSnapshot(
     const contextStatusProjection = optionalContextStatusProjection(source);
     const providerContextDisclosureStatusProjection =
       optionalProviderContextDisclosureStatusProjection(source);
+    const contextUsageProjection = optionalContextUsageProjection(source);
     const draftCheckpointStatusProjection = optionalDraftCheckpointStatusProjection(source);
     const draftCheckpointTimelineProjection = optionalDraftCheckpointTimelineProjection(source);
     const reviewStateProjection = optionalReviewStateProjection(source);
@@ -4029,6 +4285,7 @@ export function sanitizeBuilderConversationSnapshot(
       && [
         contextStatusProjection,
         providerContextDisclosureStatusProjection,
+        contextUsageProjection,
         draftCheckpointStatusProjection,
         draftCheckpointTimelineProjection,
         reviewStateProjection,
@@ -4037,6 +4294,7 @@ export function sanitizeBuilderConversationSnapshot(
       ].some((projection) => projection !== undefined && projection !== null)
     ) throw unavailable();
     if (source.conversation === null) {
+      if (contextUsageProjection !== undefined && contextUsageProjection !== null) throw unavailable();
       if (reviewStateProjection !== undefined && reviewStateProjection !== null) throw unavailable();
       if (checkRunOutcomeProjection !== undefined && checkRunOutcomeProjection !== null) throw unavailable();
       if (agentActivityProjection !== undefined && agentActivityProjection !== null) throw unavailable();
@@ -4056,6 +4314,9 @@ export function sanitizeBuilderConversationSnapshot(
             provider_context_disclosure_status_projection:
               providerContextDisclosureStatusProjection,
           }),
+        ...(contextUsageProjection === undefined
+          ? {}
+          : { context_usage_projection: contextUsageProjection }),
         ...(draftCheckpointStatusProjection === undefined
           ? {}
           : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),
@@ -4089,6 +4350,14 @@ export function sanitizeBuilderConversationSnapshot(
       conversationSource.conversation_id,
       projectId,
     );
+    if (
+      contextUsageProjection !== undefined
+      && contextUsageProjection !== null
+      && (
+        contextUsageProjection.project_id !== projectId
+        || contextUsageProjection.conversation_id !== conversationId
+      )
+    ) throw unavailable();
     const conversationSourceKind = Object.hasOwn(conversationSource, 'source')
       ? conversationSource.source
       : undefined;
@@ -4099,6 +4368,11 @@ export function sanitizeBuilderConversationSnapshot(
     ) throw unavailable();
     const isTranscriptRestored = conversationSourceKind === 'sqlite_derived_public_transcript';
     const isAgentTranscript = conversationSourceKind === 'sqlite_canonical_agent_conversation';
+    if (
+      isTranscriptRestored
+      && contextUsageProjection !== undefined
+      && contextUsageProjection !== null
+    ) throw unavailable();
     if (
       (isTranscriptRestored && authority.conversation !== 'sqlite_derived_public_transcript_restore')
       || (isAgentTranscript && authority.conversation !== 'sqlite_canonical_agent_conversation')
@@ -4121,7 +4395,7 @@ export function sanitizeBuilderConversationSnapshot(
     const lastSequence = safeSequence(windowSource.last_sequence);
     if (typeof windowSource.has_earlier !== 'boolean') throw unavailable();
     const rawItems = denseArray(conversationSource.items);
-    const items = rawItems.map((item) => sanitizeItem(item));
+    const items = rawItems.map((item) => sanitizeItem(item, isAgentTranscript));
     if (
       firstSequence !== items[0].sequence
       || lastSequence < (items.at(-1)?.sequence ?? 0)
@@ -4138,7 +4412,9 @@ export function sanitizeBuilderConversationSnapshot(
     ) throw unavailable();
     if (
       (isTranscriptRestored || isAgentTranscript)
-      && items.some((item) => item.item_kind !== 'transcript_message')
+      && items.some((item) => item.item_kind !== 'transcript_message'
+        && !(isAgentTranscript && item.item_kind === 'turn_completed'
+          && item.run_id !== null && ['cancelled', 'interrupted', 'failed'].includes(item.outcome)))
     ) throw unavailable();
     if (
       !isAgentTranscript
@@ -4176,6 +4452,9 @@ export function sanitizeBuilderConversationSnapshot(
           provider_context_disclosure_status_projection:
             providerContextDisclosureStatusProjection,
         }),
+      ...(contextUsageProjection === undefined
+        ? {}
+        : { context_usage_projection: contextUsageProjection }),
       ...(draftCheckpointStatusProjection === undefined
         ? {}
         : { draft_checkpoint_status_projection: draftCheckpointStatusProjection }),

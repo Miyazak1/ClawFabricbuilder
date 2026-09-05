@@ -557,8 +557,12 @@ function sanitizeConversationVerification(value, draft) {
       || (status === 'not_recorded' && Object.hasOwn(materialization, 'reason'))
       || (status === 'not_materialized'
         && valueAt(materialization, 'reason') !== 'current_projection_unavailable')
-      || (status === 'not_attempted'
-        && valueAt(materialization, 'reason') !== 'current_projection_not_configured')
+      || (
+        status === 'not_attempted'
+        && !['current_projection_not_configured', 'automatic_check_not_passed'].includes(
+          valueAt(materialization, 'reason'),
+        )
+      )
     ) fail('builder_project_save_invalid');
     currentMaterializationStatus = status;
   }

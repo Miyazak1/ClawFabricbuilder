@@ -40,6 +40,30 @@ function authority() {
   };
 }
 
+function runtimeLaunchProjection() {
+  return {
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    preview_kind: 'live_static_web',
+    source_status: 'not_requested',
+    command_profile: 'none',
+    user_approval: 'not_required',
+    command_execution: 'not_applicable',
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: 'static_preview_no_command_execution',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+      renderer_authority: 'status_projection_only',
+      path_disclosure: 'not_serialized',
+    },
+  };
+}
+
 function status() {
   return {
     status_version: 'builder-live-preview-status-projection.v1',
@@ -59,6 +83,7 @@ function status() {
     window_open_block_count: 0,
     message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
     dev_server_approval: null,
+    runtime_launch_projection: runtimeLaunchProjection(),
     unavailable_reason: 'preview_source_resolver_not_connected',
     updated_at_ms: 10,
     authority: authority(),
@@ -236,6 +261,13 @@ describe('createBuilderDesktopLivePreviewPort', () => {
         authority: {
           ...authority(),
           source_tree_from_renderer: 'accepted',
+        },
+      },
+      {
+        ...status(),
+        runtime_launch_projection: {
+          ...runtimeLaunchProjection(),
+          package_install: 'allowed',
         },
       },
     ]) {

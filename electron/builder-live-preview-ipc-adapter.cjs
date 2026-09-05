@@ -57,9 +57,32 @@ const STATUS_KEYS = Object.freeze([
   'window_open_block_count',
   'message',
   'dev_server_approval',
+  'runtime_launch_projection',
   'unavailable_reason',
   'updated_at_ms',
   'authority',
+]);
+const RUNTIME_LAUNCH_KEYS = Object.freeze([
+  'projection_version',
+  'project_id',
+  'conversation_id',
+  'preview_kind',
+  'source_status',
+  'command_profile',
+  'user_approval',
+  'command_execution',
+  'dependency_preparation',
+  'package_install',
+  'sandbox_policy',
+  'provider_dispatch',
+  'tool_dispatch',
+  'project_workspace_write',
+  'authority',
+]);
+const RUNTIME_LAUNCH_AUTHORITY_KEYS = Object.freeze([
+  'projection_authority',
+  'renderer_authority',
+  'path_disclosure',
 ]);
 const AUTHORITY_KEYS = Object.freeze([
   'live_preview_authority',
@@ -357,14 +380,83 @@ function safeAuthority(value) {
   return authority;
 }
 
+function safeRuntimeLaunchProjection(value, request, previewKind) {
+  const descriptors = exactObject(value, RUNTIME_LAUNCH_KEYS, 'builder_live_preview_unavailable');
+  const authorityDescriptors = exactObject(
+    descriptors.authority.value,
+    RUNTIME_LAUNCH_AUTHORITY_KEYS,
+    'builder_live_preview_unavailable',
+  );
+  const projection = Object.freeze(Object.fromEntries(RUNTIME_LAUNCH_KEYS.map((key) => [
+    key,
+    descriptors[key].value,
+  ])));
+  const authority = Object.freeze(Object.fromEntries(RUNTIME_LAUNCH_AUTHORITY_KEYS.map((key) => [
+    key,
+    authorityDescriptors[key].value,
+  ])));
+  if (
+    projection.projection_version !== 'builder-project-runtime-launch-projection.v1'
+    || projection.project_id !== request.project_id
+    || projection.conversation_id !== request.conversation_id
+    || projection.preview_kind !== previewKind
+    || !['not_requested', 'main_owned_verified'].includes(projection.source_status)
+    || !['none', 'main_owned_dev_server_profile'].includes(projection.command_profile)
+    || !['not_required', 'required', 'approved_once', 'denied_or_expired']
+      .includes(projection.user_approval)
+    || !['not_applicable', 'approval_required', 'started', 'stopped', 'failed']
+      .includes(projection.command_execution)
+    || projection.dependency_preparation !== 'not_allowed'
+    || projection.package_install !== 'not_allowed'
+    || !['static_preview_no_command_execution', 'dev_server_only_no_dependency_install']
+      .includes(projection.sandbox_policy)
+    || projection.provider_dispatch !== false
+    || projection.tool_dispatch !== false
+    || projection.project_workspace_write !== 'not_granted_by_preview'
+    || authority.projection_authority !== 'main_owned_project_runtime_launch_projection_v1'
+    || authority.renderer_authority !== 'status_projection_only'
+    || authority.path_disclosure !== 'not_serialized'
+  ) throw ipcError();
+  if (
+    (previewKind === 'live_static_web' && (
+      projection.command_profile !== 'none'
+      || projection.user_approval !== 'not_required'
+      || projection.command_execution !== 'not_applicable'
+      || projection.sandbox_policy !== 'static_preview_no_command_execution'
+    ))
+    || (previewKind === 'live_dev_server_web' && (
+      projection.command_profile !== 'main_owned_dev_server_profile'
+      || projection.sandbox_policy !== 'dev_server_only_no_dependency_install'
+    ))
+  ) throw ipcError();
+  return Object.freeze({
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    preview_kind: previewKind,
+    source_status: projection.source_status,
+    command_profile: projection.command_profile,
+    user_approval: projection.user_approval,
+    command_execution: projection.command_execution,
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: projection.sandbox_policy,
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority,
+  });
+}
+
 function safeStatus(value, request) {
   const descriptors = exactObject(value, STATUS_KEYS, 'builder_live_preview_unavailable');
   const status = descriptors.status.value;
+  const previewKind = descriptors.preview_kind.value;
   if (
     descriptors.status_version.value !== 'builder-live-preview-status-projection.v1'
     || descriptors.project_id.value !== request.project_id
     || descriptors.conversation_id.value !== request.conversation_id
-    || !['live_static_web', 'live_dev_server_web'].includes(descriptors.preview_kind.value)
+    || !['live_static_web', 'live_dev_server_web'].includes(previewKind)
     || !STATUSES.includes(status)
     || typeof descriptors.can_start.value !== 'boolean'
     || typeof descriptors.can_reload.value !== 'boolean'
@@ -395,11 +487,16 @@ function safeStatus(value, request) {
   if (
     (status === 'approval_required') !== (devServerApproval !== null)
   ) throw ipcError();
+  const runtimeLaunchProjection = safeRuntimeLaunchProjection(
+    descriptors.runtime_launch_projection.value,
+    request,
+    previewKind,
+  );
   return Object.freeze({
     status_version: 'builder-live-preview-status-projection.v1',
     project_id: request.project_id,
     conversation_id: request.conversation_id,
-    preview_kind: descriptors.preview_kind.value,
+    preview_kind: previewKind,
     entry_url: entryUrl,
     status,
     can_start: descriptors.can_start.value,
@@ -413,6 +510,7 @@ function safeStatus(value, request) {
     window_open_block_count: windowOpenBlockCount,
     message: safeMessage(descriptors.message.value),
     dev_server_approval: devServerApproval,
+    runtime_launch_projection: runtimeLaunchProjection,
     unavailable_reason: safeNullableReason(descriptors.unavailable_reason.value),
     updated_at_ms: safeTimestamp(descriptors.updated_at_ms.value),
     authority: safeAuthority(descriptors.authority.value),

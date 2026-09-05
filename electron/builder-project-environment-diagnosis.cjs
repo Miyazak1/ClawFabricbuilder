@@ -457,23 +457,50 @@ async function runVersionProbe(name, options) {
 }
 
 function projectReadResult(rawValue, projectId) {
-  const descriptors = exactObject(rawValue, [
-    'result_version',
-    'operation',
-    'project_id',
-    'title',
-    'summary',
-    'source_tree',
-    'base_revision',
-    'authority_evidence',
-  ]);
+  const envelope = exactObject(rawValue, Reflect.ownKeys(rawValue));
+  const resultVersion = envelope.result_version?.value;
+  const operation = envelope.operation?.value;
+  if (resultVersion === 'builder-project-read-result.v1' && operation === 'current_loaded') {
+    const descriptors = exactObject(rawValue, [
+      'result_version',
+      'product_revision_receipt',
+      'current',
+      'source_tree',
+      'git_candidate_receipt',
+      'git_verification_receipt',
+      'authority_evidence',
+      'operation',
+    ]);
+    const receipt = exactObject(
+      descriptors.product_revision_receipt.value,
+      Reflect.ownKeys(descriptors.product_revision_receipt.value),
+    );
+    const sourceTree = sanitizeBuilderProjectSourceTree(descriptors.source_tree.value);
+    if (
+      !Object.hasOwn(receipt, 'project_id')
+      || !Object.hasOwn(receipt, 'resulting_tree_digest')
+      || receipt.project_id.value !== projectId
+      || sourceTree.source_tree_digest !== receipt.resulting_tree_digest.value
+    ) fail();
+    return freezeDeep({ source_tree: sourceTree });
+  }
   if (
-    descriptors.result_version.value !== 'builder-project-read-result.v1'
-    || descriptors.operation.value !== 'current_loaded'
-    || descriptors.project_id.value !== projectId
-  ) fail();
-  const sourceTree = sanitizeBuilderProjectSourceTree(descriptors.source_tree.value);
-  return freezeDeep({ source_tree: sourceTree });
+    resultVersion === 'builder-project-local-workspace-read-result.v1'
+    && operation === 'local_workspace_loaded'
+  ) {
+    const descriptors = exactObject(rawValue, [
+      'result_version',
+      'operation',
+      'project_id',
+      'source_tree',
+      'authority_evidence',
+    ]);
+    if (descriptors.project_id.value !== projectId) fail();
+    return freezeDeep({
+      source_tree: sanitizeBuilderProjectSourceTree(descriptors.source_tree.value),
+    });
+  }
+  fail();
 }
 
 function projectRootPathResult(rawValue, projectId) {

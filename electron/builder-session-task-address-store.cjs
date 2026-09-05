@@ -16,7 +16,7 @@ const {
 } = require('./builder-session-task-address.cjs');
 const {
   CONVERSATION_ID_PATTERN,
-  sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 } = require('./builder-conversation-address.cjs');
 
 const BUILDER_SESSION_TASK_ADDRESS_STORE_VERSION = 'builder-session-task-address-store.v1';
@@ -216,10 +216,10 @@ function safeListLimit(value) {
   return value;
 }
 
-function safeConversationId(value, projectId) {
+function safeTaskConversationId(value, projectId) {
   const conversationId = safePattern(value, CONVERSATION_ID_PATTERN);
   try {
-    return sanitizeBuilderConversationAddress(projectId, conversationId);
+    return sanitizeBuilderTaskConversationAddress(projectId, conversationId);
   } catch {
     fail('builder_session_task_address_store_invalid');
   }
@@ -398,7 +398,7 @@ function addressEvidence(db) {
     review_authority: false,
     revision_authority: false,
     export_materialization: false,
-    archive_authority: false,
+    archive_authority: 'main_owned_task_address_soft_archive',
     delete_authority: false,
     fork_authority: false,
     schema_version: schema.schema_version,
@@ -743,7 +743,7 @@ function createBuilderSessionTaskAddressStore(databasePath) {
     read_current_session_task_for_conversation(rawRequest) {
       exactObject(rawRequest, READ_CURRENT_SESSION_TASK_KEYS);
       const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
-      const conversationId = safeConversationId(valueAt(rawRequest, 'conversation_id'), projectId);
+      const conversationId = safeTaskConversationId(valueAt(rawRequest, 'conversation_id'), projectId);
       const database = activeDb();
       const taskRow = one(
         database,

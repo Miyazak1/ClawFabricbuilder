@@ -63,6 +63,7 @@ test('persists an agent-scoped conversation without creating a project identity'
   });
 
   const ready = service.read_stream({ agent_id: AGENT_ID });
+  assert.equal(service.read_stream({ agent_id: AGENT_ID }), ready);
   assert.notEqual(ready.conversation, null);
   assert.equal(ready.project_id, null);
   assert.match(ready.conversation.conversation_id, /^builder-agent-conversation:/u);
@@ -80,6 +81,86 @@ test('persists an agent-scoped conversation without creating a project identity'
   assert.deepEqual(restarted.read_stream({ agent_id: AGENT_ID }), ready);
   restarted.close();
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('recovers an abandoned Agent request once after restart without inventing an answer', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-agent-recovery-'));
+  const databasePath = path.join(root, 'agent-conversations.sqlite');
+  let service = fixture(databasePath);
+  try {
+    service.begin_question({ agent_id: AGENT_ID, question: 'Plan the timer', request_digest: REQUEST_DIGEST });
+    assert.notEqual(service.read_stream({ agent_id: AGENT_ID }).conversation.recorded_active_turn_id, null);
+    service.close();
+    service = fixture(databasePath);
+    const recovered = service.read_stream({ agent_id: AGENT_ID });
+    assert.equal(recovered.conversation.recorded_active_turn_id, null);
+    assert.equal(recovered.conversation.items.length, 2);
+    assert.equal(recovered.conversation.items[1].item_kind, 'turn_completed');
+    assert.equal(recovered.conversation.items[1].outcome, 'interrupted');
+    assert.equal(recovered.conversation.head_sequence, 4);
+    service.close();
+    service = fixture(databasePath);
+    assert.deepEqual(service.read_stream({ agent_id: AGENT_ID }), recovered);
+  } finally {
+    service.close();
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const outcome of ['cancelled', 'failed']) {
+  test(`retains ${outcome} Agent turn completion without inventing an answer`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-agent-terminal-'));
+    const databasePath = path.join(root, 'agent-conversations.sqlite');
+    let service = fixture(databasePath);
+    t.after(() => { service.close(); fs.rmSync(root, { recursive: true, force: true }); });
+    let context = service.begin_question({
+      agent_id: AGENT_ID, question: 'Revise the plan', request_digest: REQUEST_DIGEST,
+    });
+    if (outcome === 'cancelled') context = service.request_cancel({ context });
+    service.record_retryable_failure({ context, failure_code: 'builder_generation_failed' });
+    const stream = service.read_stream({ agent_id: AGENT_ID });
+    assert.equal(stream.conversation.recorded_active_turn_id, null);
+    assert.deepEqual(stream.conversation.items.map((item) => item.item_kind),
+      ['transcript_message', 'turn_completed']);
+    assert.deepEqual(stream.conversation.items[1], {
+      item_kind: 'turn_completed', sequence: stream.conversation.head_sequence,
+      turn_id: context.ids.turn_id, run_id: context.ids.run_id, outcome,
+    });
+    service.close();
+    service = fixture(databasePath);
+    assert.deepEqual(service.read_stream({ agent_id: AGENT_ID }), stream);
+  });
+}
+
+test('persists retained plan text as a failed run across restart, never a completed plan', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-agent-partial-plan-'));
+  const databasePath = path.join(root, 'agent-conversations.sqlite');
+  let service = fixture(databasePath);
+  t.after(() => {
+    service.close();
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const context = service.begin_question({
+    agent_id: AGENT_ID, question: 'Plan the timer', request_digest: REQUEST_DIGEST,
+    route_decision_hint: { route: 'plan', dispatch: 'reply', matched_signals: ['explicit_plan'] },
+  });
+  const assistantText = '> Incomplete plan, not approved.\n\n## Timer\n\nPause must retain the remaining duration.';
+  const terminal = service.record_retryable_failure({
+    context, failure_code: 'builder_generation_structured_response_invalid', assistant_text: assistantText,
+  });
+  assert.equal(terminal.events.at(-2).payload.terminal_status, 'failed');
+  assert.equal(terminal.events.at(-2).payload.result_kind, 'failure');
+  const stream = service.read_stream({ agent_id: AGENT_ID });
+  assert.equal(stream.conversation.recorded_active_turn_id, null);
+  assert.deepEqual(stream.conversation.items.map((item) => item.item_kind),
+    ['transcript_message', 'transcript_message', 'turn_completed']);
+  assert.equal(stream.conversation.items[1].message.text, assistantText);
+  assert.equal(stream.conversation.items[1].message_kind, 'incomplete_result');
+  service.close();
+  service = fixture(databasePath);
+  assert.deepEqual(service.read_stream({ agent_id: AGENT_ID }), stream);
 });
 
 test('projects work discussion as resumable Agent context without promoting every clarification', () => {

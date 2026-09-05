@@ -10,9 +10,12 @@ const {
   COMPACTION_MODE,
   COMPACTION_PRIVATE_MARKER,
   DEFAULT_MODE,
+  MANUAL_COMPACTION_MODE,
   compactionInput,
   compactionLifecycleEvidence,
+  contextUsageLifecycleEvidence,
   isCompactionRequest,
+  manualCompactionLifecycleEvidence,
   parseCanaryMode,
 } = require('../scripts/verify-builder-harness-coding-loop.cjs');
 
@@ -27,6 +30,7 @@ const configPath = path.join(
 test('selects compaction canary mode only through the explicit worker argument', () => {
   assert.equal(parseCanaryMode([]), DEFAULT_MODE);
   assert.equal(parseCanaryMode(['--compaction']), COMPACTION_MODE);
+  assert.equal(parseCanaryMode(['--manual-compaction']), MANUAL_COMPACTION_MODE);
   assert.throws(() => parseCanaryMode(['--unknown']), /unsupported canary mode/u);
   assert.throws(() => parseCanaryMode(['--compaction', '--extra']), /unsupported canary mode/u);
 });
@@ -64,6 +68,104 @@ test('derives lifecycle evidence from real SDK notification shapes', () => {
   });
 });
 
+test('derives manual compaction lifecycle evidence from native turn-null events', () => {
+  const sourceCommandId = `builder-context-compaction-admission:${'c'.repeat(64)}`;
+  const event = (type, data) => ({
+    method: 'session.event',
+    params: { sessionId: 'session-one', event: { type, data } },
+  });
+  assert.deepEqual(manualCompactionLifecycleEvidence([
+    event('compaction/start', {
+      compactionId: 'compaction:manual-1',
+      turn: null,
+      sourceCommandId,
+    }),
+    event('compaction/summary', {
+      compactionId: 'compaction:manual-1',
+      shadowedTokenCount: 2048,
+    }),
+    event('compaction/end', {
+      compactionId: 'compaction:manual-1',
+      turn: null,
+      sourceCommandId,
+    }),
+    event('compaction/start', {
+      compactionId: 'compaction:auto-1',
+      turn: 1,
+    }),
+  ], sourceCommandId), {
+    manual_compaction_start_count: 1,
+    manual_compaction_summary_count: 1,
+    manual_compaction_end_count: 1,
+    manual_compaction_turn_null_observed: true,
+    manual_compaction_source_command_observed: true,
+  });
+});
+
+test('projects token pressure through compaction and the first refreshed usage', () => {
+  const runId = 'builder-run:12345678-1234-4234-8234-123456789abc';
+  const event = (eventType, occurredAtMs, payload) => ({
+    event_version: 'builder-programming-runtime-event.v1',
+    event_type: eventType,
+    runtime_kind: 'deepseek_harness.v1',
+    run_id: runId,
+    turn_id: 'builder-turn:12345678-1234-4234-8234-123456789abc',
+    step_id: null,
+    tool_call_id: null,
+    verification_step_id: null,
+    occurred_at_ms: occurredAtMs,
+    payload,
+  });
+  const usage = (
+    occurredAtMs,
+    pressureTokens,
+    projectionSeq,
+    totalInputTokens = pressureTokens,
+    projectedTokens = pressureTokens,
+  ) => event(
+    'context_usage_projected',
+    occurredAtMs,
+    {
+      harness_projection_seq: projectionSeq,
+      uncached_input_tokens: totalInputTokens,
+      output_tokens: 8,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      pressure_tokens: pressureTokens,
+      projected_tokens: projectedTokens,
+      context_window_tokens: 20_000,
+    },
+  );
+
+  assert.deepEqual(contextUsageLifecycleEvidence([
+    usage(1_000, 17_000, 42),
+    usage(1_050, 32, 43, 17_032, 379),
+    event('runtime_activity_status', 1_100, {
+      activity_kind: 'context_compacting',
+      state: 'running',
+      status_label: 'Compacting context',
+    }),
+    event('runtime_activity_status', 1_200, {
+      activity_kind: 'context_compacted',
+      state: 'completed',
+      status_label: 'Context compacted',
+    }),
+    event('context_compaction_recorded', 1_250, {
+      run_id: runId,
+      status: 'compaction_completed',
+      recorded_at_ms: 1_250,
+    }),
+    usage(1_300, 32, 52, 17_032, 15_200),
+  ]), {
+    context_window_tokens: 20_000,
+    usage_before_compaction_percent: 85,
+    compacting_state_observed: true,
+    post_compaction_usage_refresh_observed: true,
+    usage_after_compaction_percent: 76,
+    usage_drop_observed: true,
+  });
+});
+
 test('uses an isolated native Harness compaction policy without changing production thresholds', () => {
   const canary = fs.readFileSync(configPath, 'utf8');
   const production = fs.readFileSync(path.join(
@@ -74,6 +176,8 @@ test('uses an isolated native Harness compaction policy without changing product
   ), 'utf8');
 
   assert.match(canary, /name:\s+'@deepseek-ai\/dsh-token-meter'/u);
+  assert.match(canary, /name:\s+'@deepseek-ai\/dsh-session-projection'/u);
+  assert.match(canary, /name:\s+'\.\/builder-session-resume-server\.mjs'/u);
   assert.match(canary, /name:\s+'@deepseek-ai\/dsh-compaction-tool-result-pruner'/u);
   assert.match(canary, /name:\s+'@deepseek-ai\/dsh-compaction-basic'/u);
   assert.match(canary, /^\s+contextWindow:\s+20000\s*$/mu);
@@ -96,6 +200,10 @@ test('wires the packaged compaction gate into release verification and package a
     'node scripts/verify-builder-harness-coding-loop.cjs --compaction',
   );
   assert.equal(
+    manifest.scripts['verify:harness-manual-compaction'],
+    'node scripts/verify-builder-harness-coding-loop.cjs --manual-compaction',
+  );
+  assert.equal(
     manifest.scripts['verify:packaged-harness-compaction'],
     'node scripts/verify-packaged-harness-compaction-canary.cjs',
   );
@@ -103,5 +211,10 @@ test('wires the packaged compaction gate into release verification and package a
   assert.match(verifier, /builder-coding-loop-compaction-canary\.cordis\.yml/u);
   assert.match(wrapper, /verify-builder-harness-coding-loop\.cjs/u);
   assert.match(wrapper, /--compaction/u);
+  assert.match(wrapper, /--manual-compaction/u);
   assert.match(wrapper, /builder-packaged-harness-compaction-canary\.v1/u);
+  assert.match(wrapper, /builder-harness-manual-compaction-canary\.v1/u);
+  assert.match(wrapper, /usage_before_compaction_percent:\s*85/u);
+  assert.match(wrapper, /usage_after_compaction_percent:\s*76/u);
+  assert.match(wrapper, /manual_compaction_closed_failure_observed/u);
 });

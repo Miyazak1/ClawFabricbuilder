@@ -118,6 +118,8 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /subscribeChanged/u);
   assert.match(preload, /agentProjectTree/u);
   assert.match(preload, /clawfabric-builder:agent-project-tree:read/u);
+  assert.match(preload, /exportTaskTranscript/u);
+  assert.match(preload, /clawfabric-builder:agent-project-tree:export-task-transcript/u);
   assert.match(preload, /agentWorkbench/u);
   assert.match(preload, /createTaskProposal/u);
   assert.match(preload, /clawfabric-builder:agent-workbench:create-task-proposal/u);
@@ -131,6 +133,8 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:permissions:evaluate/u);
   assert.match(preload, /decideCurrentDraftDependencyPreparation/u);
   assert.match(preload, /clawfabric-builder:check-run:decide-current-draft-dependency-preparation/u);
+  assert.match(preload, /prepareProjectDependencies/u);
+  assert.match(preload, /clawfabric-builder:check-run:prepare-project-dependencies/u);
   assert.match(preload, /skipCurrentDraftCheck/u);
   assert.match(preload, /clawfabric-builder:check-run:skip-current-draft-check/u);
   assert.match(preload, /livePreview/u);
@@ -148,7 +152,13 @@ test('provider settings storage is main-only and safeStorage is isolated to the 
   assert.match(preload, /clawfabric-builder:side-workspace-files:read-current-draft-content/u);
   assert.match(preload, /windowControls/u);
   assert.doesNotMatch(preload, /secret|safeStorage|credential|encrypted|binding|Authorization|Bearer/iu);
-  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 75);
+  assert.match(preload, /resumeInterruptedRun/u);
+  assert.match(preload, /clawfabric-builder:code-generator:resume-interrupted-run/u);
+  assert.match(preload, /manualCompactContext/u);
+  assert.match(preload, /clawfabric-builder:code-generator:manual-compact-context/u);
+  assert.match(preload, /selectModel/u);
+  assert.match(preload, /clawfabric-builder:provider-settings:select-model/u);
+  assert.equal((preload.match(/ipcRenderer\.invoke/g) || []).length, 83);
 });
 
 test('provider settings IPC runtime is wired only through Electron main and preload channels', () => {

@@ -190,6 +190,7 @@ function createBuilderAgentConversationService(rawOptions) {
   const conversationId = agentConversationId(agentId);
   const database = initializeDatabase(databasePath);
   let closed = false;
+  let cachedStream = null;
 
   function now() {
     return safeTimestamp(Reflect.apply(nowMs, undefined, []));
@@ -404,8 +405,12 @@ function createBuilderAgentConversationService(rawOptions) {
     return updatedContext(context, head);
   }
 
-  function recordRetryableFailure({ context: rawContext, failure_code: failureCode }) {
+  function recordRetryableFailure({ context: rawContext, failure_code: failureCode, assistant_text: assistantText = null }) {
     const context = assertContext(rawContext);
+    const assistantMessage = assistantText === null ? null : {
+      message_id: `builder-message:${safeUuid(createUuid)}`,
+      text: safeText(assistantText),
+    };
     const code = typeof failureCode === 'string' && /^[a-z0-9_]{1,120}$/u.test(failureCode)
       ? failureCode
       : 'builder_generation_failed';
@@ -419,7 +424,7 @@ function createBuilderAgentConversationService(rawOptions) {
           result_kind: 'failure',
           failure_phase: 'not_recorded',
           failure_code: code,
-          assistant_message: null,
+          assistant_message: assistantMessage,
           candidate: null,
         },
       },
@@ -498,8 +503,17 @@ function createBuilderAgentConversationService(rawOptions) {
           turn_id: payload.turn_id,
           message: payload.assistant_message,
           role: 'assistant',
-          message_kind: 'run_result',
+          message_kind: payload.terminal_status === 'succeeded' ? 'run_result' : 'incomplete_result',
           recovery_admission: 'sqlite_derived_public_transcript_only',
+        });
+      } else if (event.event_type === 'turn_completed'
+        && ['cancelled', 'interrupted', 'failed'].includes(payload.outcome)) {
+        items.push({
+          item_kind: 'turn_completed',
+          sequence: event.sequence,
+          turn_id: payload.turn_id,
+          run_id: payload.run_id,
+          outcome: payload.outcome,
         });
       }
     }
@@ -515,6 +529,7 @@ function createBuilderAgentConversationService(rawOptions) {
     ) fail();
     const conversation = ensureConversation();
     const headSequence = Number(conversation.head_sequence);
+    if (cachedStream?.conversation?.head_sequence === headSequence) return cachedStream;
     const authority = {
       conversation: 'sqlite_canonical_agent_conversation',
       project_source: 'not_included',
@@ -539,7 +554,7 @@ function createBuilderAgentConversationService(rawOptions) {
     const active = [...events].reverse().find((event) => (
       event.event_type === 'turn_submitted' && !completedTurnIds.has(event.payload.turn_id)
     ));
-    return freezeDeep({
+    cachedStream = freezeDeep({
       stream_version: 'builder-task-stream-read-result.v1',
       scope_kind: 'agent_conversation',
       agent_id: agentId,
@@ -551,7 +566,7 @@ function createBuilderAgentConversationService(rawOptions) {
         recorded_active_turn_id: active?.payload.turn_id ?? null,
         source: 'sqlite_canonical_agent_conversation',
         window: {
-          first_sequence: items[0].sequence,
+          first_sequence: items[0]?.sequence ?? headSequence,
           last_sequence: headSequence,
           has_earlier: items.length === MAX_PUBLIC_MESSAGES && items[0].sequence > 1,
         },
@@ -559,9 +574,36 @@ function createBuilderAgentConversationService(rawOptions) {
       },
       authority,
     });
+    return cachedStream;
   }
 
-  ensureConversation();
+  function recoverInterruptedRuns() {
+    const conversation = ensureConversation();
+    const pending = new Map();
+    for (const event of readEvents()) {
+      if (event.event_type === 'run_started') pending.set(event.payload.run_id, event.payload);
+      if (event.event_type === 'run_completed') pending.delete(event.payload.run_id);
+    }
+    if (pending.size === 0) return;
+    appendEvents(Number(conversation.head_sequence), [...pending.values()].flatMap((run) => [{
+      event_type: 'run_completed',
+      payload: {
+        turn_id: run.turn_id,
+        run_id: run.run_id,
+        terminal_status: 'interrupted',
+        result_kind: 'failure',
+        failure_phase: 'not_recorded',
+        failure_code: 'builder_generation_interrupted',
+        assistant_message: null,
+        candidate: null,
+      },
+    }, {
+      event_type: 'turn_completed',
+      payload: { turn_id: run.turn_id, run_id: run.run_id, outcome: 'interrupted' },
+    }]));
+  }
+
+  recoverInterruptedRuns();
 
   return Object.freeze({
     service_version: BUILDER_AGENT_CONVERSATION_SERVICE_VERSION,

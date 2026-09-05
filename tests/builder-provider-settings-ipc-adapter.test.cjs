@@ -8,6 +8,7 @@ const test = require('node:test');
 const {
   READ_CURRENT_CHANNEL,
   REPLACE_CURRENT_CHANNEL,
+  SELECT_MODEL_CHANNEL,
   STATUS_CHANNEL,
   BuilderProviderSettingsIpcError,
   createBuilderProviderSettingsIpcAdapter,
@@ -91,6 +92,10 @@ function adapter(overrides = {}) {
       calls.push(['writeCurrent', request]);
       return repositoryEnvelope({ config: repositoryConfig(request.config) });
     },
+    selectCurrentModel: (request) => {
+      calls.push(['selectCurrentModel', request]);
+      return repositoryEnvelope({ config: repositoryConfig({ model: request.model }) });
+    },
     mainWindowRef: () => windowRef,
     ...overrides,
   });
@@ -111,10 +116,10 @@ test('exposes only dedicated provider settings channels and redacts repository a
   assert.equal(value.adapter_id, 'builder_provider_settings.controlled_ipc_adapter.v1');
   assert.equal(value.namespace, 'providerSettings');
   assert.equal(value.preload_namespace, 'window.clawfabricBuilder.providerSettings');
-  assert.deepEqual(value.exposed_methods, ['readCurrent', 'replaceCurrent', 'status']);
+  assert.deepEqual(value.exposed_methods, ['readCurrent', 'replaceCurrent', 'selectModel', 'status']);
   assert.deepEqual(
     Object.values(value.channels).map(({ channel }) => channel),
-    [READ_CURRENT_CHANNEL, REPLACE_CURRENT_CHANNEL, STATUS_CHANNEL],
+    [READ_CURRENT_CHANNEL, REPLACE_CURRENT_CHANNEL, SELECT_MODEL_CHANNEL, STATUS_CHANNEL],
   );
 
   const loaded = value.channels.readCurrent.invoke({ sender: windowRef.webContents });
@@ -148,6 +153,8 @@ test('exposes only dedicated provider settings channels and redacts repository a
   assert.deepEqual(value.authority, {
     provider_config_repository_injected: true,
     active_renderer_required: true,
+    model_selection_preserves_existing_credential: true,
+    model_selection_stale_config_rejected: true,
     generic_provider_authority_reused: false,
     direct_electron_registration: false,
     direct_preload_exposure: false,
@@ -186,6 +193,27 @@ test('replaces config and credential without returning credential or secret bind
   }]]);
   assert.notEqual(calls[0][1], request);
   assert.notEqual(calls[0][1].config, request.config);
+});
+
+test('selects the current model without accepting or returning credential data', () => {
+  const { calls, value, windowRef } = adapter();
+  const request = Object.freeze({
+    model: 'builder-model-pro',
+    expected_config_digest: DEFAULT_CONFIG_DIGEST,
+  });
+
+  const selected = value.channels.selectModel.invoke({ sender: windowRef.webContents }, request);
+
+  assert.equal(selected.operation, 'current_model_selected');
+  assert.equal(selected.config.model, 'builder-model-pro');
+  assert.equal(selected.credential_status, 'stored');
+  assertRedacted(selected);
+  assert.deepEqual(calls, [['selectCurrentModel', {
+    model: 'builder-model-pro',
+    expected_config_digest: DEFAULT_CONFIG_DIGEST,
+  }]]);
+  assert.notEqual(calls[0][1], request);
+  assert.doesNotMatch(JSON.stringify(calls[0][1]), /credential|real-key-value|secret/iu);
 });
 
 test('reports missing current config as redacted unconfigured status', () => {
@@ -252,6 +280,25 @@ test('rejects inactive renderers, exact payload drift, and malformed write reque
     (error) => error.code === 'builder_provider_settings_request_invalid',
   );
   assert.throws(
+    () => value.channels.selectModel.invoke({ sender: windowRef.webContents }),
+    (error) => error.code === 'builder_provider_settings_request_invalid',
+  );
+  assert.throws(
+    () => value.channels.selectModel.invoke(
+      { sender: windowRef.webContents },
+      { model: 'replacement-model', expected_config_digest: 'sha256:not-valid' },
+    ),
+    (error) => error.code === 'builder_provider_settings_request_invalid',
+  );
+  assert.throws(
+    () => value.channels.selectModel.invoke(
+      { sender: windowRef.webContents },
+      { model: 'replacement-model', expected_config_digest: DEFAULT_CONFIG_DIGEST, credential: marker },
+    ),
+    (error) => error.code === 'builder_provider_settings_request_invalid'
+      && !error.message.includes(marker),
+  );
+  assert.throws(
     () => value.channels.replaceCurrent.invoke(
       { sender: windowRef.webContents },
       { config: rendererConfig(), credential: marker, extra: true },
@@ -281,6 +328,7 @@ test('normalizes known repository failures into fresh fixed errors', () => {
       throw mutated;
     },
     writeCurrent: () => ({}),
+    selectCurrentModel: () => ({}),
     mainWindowRef: () => windowRef,
   });
 
@@ -320,6 +368,7 @@ test('rejects forged repository config values before redacting for the renderer'
     const value = createBuilderProviderSettingsIpcAdapter({
       readCurrent: () => repositoryEnvelope({ config: forgedConfig }),
       writeCurrent: () => repositoryEnvelope({ config: forgedConfig }),
+      selectCurrentModel: () => repositoryEnvelope({ config: forgedConfig }),
       mainWindowRef: () => windowRef,
     });
 
@@ -378,6 +427,7 @@ test('rejects forged repository envelopes without invoking accessors or proxy tr
     const value = createBuilderProviderSettingsIpcAdapter({
       readCurrent: () => forgedEnvelope,
       writeCurrent: () => forgedEnvelope,
+      selectCurrentModel: () => forgedEnvelope,
       mainWindowRef: () => windowRef,
     });
 
@@ -411,6 +461,7 @@ test('rejects hostile options, proxy failures, and accessor payloads without lea
   const valid = {
     readCurrent: () => repositoryEnvelope(),
     writeCurrent: () => repositoryEnvelope(),
+    selectCurrentModel: () => repositoryEnvelope(),
     mainWindowRef: activeWindow,
   };
   const accessor = { ...valid };
@@ -501,6 +552,7 @@ test('source is a pure controlled adapter and shell wiring exposes only settings
   assert.match(preload, /providerSettings/u);
   assert.match(preload, new RegExp(READ_CURRENT_CHANNEL, 'u'));
   assert.match(preload, new RegExp(REPLACE_CURRENT_CHANNEL, 'u'));
+  assert.match(preload, new RegExp(SELECT_MODEL_CHANNEL, 'u'));
   assert.match(preload, new RegExp(STATUS_CHANNEL, 'u'));
   assert.doesNotMatch(preload, /credential|secret_ref|secret_binding|encrypted_secret_digest|safeStorage/iu);
 });

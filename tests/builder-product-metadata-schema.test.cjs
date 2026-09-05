@@ -189,9 +189,9 @@ function assertSchemaError(fn) {
 }
 
 test('defines the exact C0 product metadata schema surface', () => {
-  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v6');
+  assert.equal(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v7');
   assert.equal(BUILDER_PRODUCT_METADATA_RESULT_VERSION, 'builder-product-metadata-result.v4');
-  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 6);
+  assert.equal(BUILDER_PRODUCT_METADATA_USER_VERSION, 7);
   assert.deepEqual(METADATA_TABLES, [
     'projects',
     'project_workspaces',
@@ -219,6 +219,7 @@ test('defines the exact C0 product metadata schema surface', () => {
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /command_digest/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /previous_event_digest/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'), /record_json TEXT NOT NULL/u);
+  assert.match(CREATE_SCHEMA_SQL.join('\n'), /sequence BETWEEN 1 AND 4096/u);
   assert.match(CREATE_SCHEMA_SQL.join('\n'),
     /UNIQUE \(project_id, conversation_id, command_id\)/u);
   assert.doesNotMatch(CREATE_SCHEMA_SQL.join('\n'),

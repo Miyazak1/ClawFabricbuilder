@@ -20,7 +20,7 @@ const BUILDER_CONTEXT_COMPACTION_SUMMARY_STORE_USER_VERSION = 1;
 const DATABASE_ID = 'builder-context-compaction-summary-store.v1';
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}(?::${UUID_SOURCE})?$`, 'u');
 const TASK_ADDRESS_ID_PATTERN = new RegExp(`^builder-task-address:${UUID_SOURCE}$`, 'u');
 const SUMMARY_ID_PATTERN = /^builder-context-compaction-summary:[0-9a-f]{64}$/u;
 const RECORD_KEYS = Object.freeze(['context_compaction_summary']);

@@ -22,6 +22,7 @@ import {
   createGenerationAnswer,
   createGenerationDraft,
   createHistoryWire,
+  createInterruptedTaskStreamWire,
   createPlanTaskStreamWire,
   createPlanReviewTaskStreamWire,
   createReadWire,
@@ -47,6 +48,30 @@ const MATERIALIZED_TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a4
 const MATERIALIZED_SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174009';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+function livePreviewRuntimeLaunchProjection(request: unknown) {
+  return {
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: (request as { project_id: string }).project_id,
+    conversation_id: (request as { conversation_id: string }).conversation_id,
+    preview_kind: 'live_static_web',
+    source_status: 'main_owned_verified',
+    command_profile: 'none',
+    user_approval: 'not_required',
+    command_execution: 'not_applicable',
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: 'static_preview_no_command_execution',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+      renderer_authority: 'status_projection_only',
+      path_disclosure: 'not_serialized',
+    },
+  };
+}
 
 function isReactActWarning(args: readonly unknown[]): boolean {
   const message = typeof args[0] === 'string' ? args[0] : '';
@@ -168,6 +193,66 @@ async function waitFor(assertion: () => void, maximumAttempts = 80): Promise<voi
     }
   }
   throw lastError;
+}
+
+function createTaskTranscriptExportWire(taskAddressId = TASK_ADDRESS_ID): Record<string, unknown> {
+  const markdown = [
+    '# ClawFabric Task Transcript',
+    '',
+    'Task: Create Builder project',
+    `Task address: ${taskAddressId}`,
+    '',
+    '## Conversation',
+    '',
+    'User: Make a small focus timer.',
+    'Assistant: Done.',
+    '',
+  ].join('\n');
+  const jsonl = `${JSON.stringify({
+    entry_kind: 'task_transcript_export',
+    task_address_id: taskAddressId,
+  })}\n`;
+  return {
+    export_version: 'builder-task-transcript-export.v1',
+    export_id: `builder-task-transcript-export:${'1'.repeat(64)}`,
+    project_id: PROJECT_ID,
+    task_address_id: taskAddressId,
+    task_id: taskAddressId,
+    session_id: SESSION_ID,
+    conversation_id: CONVERSATION_ID,
+    exported_at_ms: 1_700_000_000_000,
+    task: {
+      title: 'Create Builder project',
+      goal: 'Create and improve the current project.',
+      status: 'active',
+    },
+    source: {
+      authority: 'main_task_address_to_sqlite_conversation_replay_read_only',
+      event_count: 2,
+      current_sequence: 2,
+      conversation_export_id: `builder-conversation-export:${'2'.repeat(64)}`,
+    },
+    formats: {
+      markdown: {
+        media_type: 'text/markdown; charset=utf-8',
+        byte_length: markdown.length,
+        text: markdown,
+      },
+      jsonl: {
+        media_type: 'application/x-ndjson',
+        byte_length: jsonl.length,
+        text: jsonl,
+      },
+    },
+    lifecycle: {
+      export_authority: 'main_task_transcript_export_contract_v1',
+      renderer_authority: 'task_export_request_only',
+      source_read: 'not_performed',
+      source_write: 'not_performed',
+      provider_dispatch: 'not_performed',
+      git_mutation: 'not_performed',
+    },
+  };
 }
 
 function createContextualBuildTaskStreamWire() {
@@ -549,6 +634,7 @@ async function setup(options: Readonly<{
   deferredPlanProposal?: boolean;
   failFirstAnswer?: boolean;
   failAnswerAfterFirst?: boolean;
+  retainedIncompleteAnswer?: boolean;
   consecutiveAnswerActivity?: boolean;
   recordedFirstAnswerAfterFailedPublicResult?: boolean;
   recordedAnswerAfterFailedPublicResult?: boolean;
@@ -560,6 +646,7 @@ async function setup(options: Readonly<{
   deferredPlanReview?: boolean;
   failSubmitOnce?: boolean;
   initiallySaved?: boolean;
+  livePreviewReply?: (operation: 'read' | 'start', status: Record<string, unknown>) => Promise<Record<string, unknown>>;
   planSourceReadApprovalRequired?: boolean;
   failPlanSourceReadApprovalPrepare?: boolean;
   failPlanSourceReadApproval?: boolean;
@@ -593,6 +680,7 @@ async function setup(options: Readonly<{
   deferredCheckRunRead?: boolean;
   failCheckRunReadAttempts?: number;
   failSideWorkspaceFileTreeReadAttempts?: number;
+  sideWorkspaceSourceKind?: 'current_draft' | 'saved_revision';
   checkRunStatus?: 'passed' | 'failed' | 'incomplete';
   dependencyBlockedCheck?: boolean;
   dependencyBlockedUntilPreparation?: boolean;
@@ -831,6 +919,56 @@ async function setup(options: Readonly<{
     }
     return approveAndRunCurrentDraftCheck(request);
   });
+  const prepareProjectDependencies = vi.fn(async (request: unknown) => {
+    const projectId = (request as { project_id: string }).project_id;
+    const diagnosed = await diagnoseProjectEnvironment({ project_id: projectId });
+    return {
+      result_version: 'builder-project-dependency-preparation-result.v1',
+      service_version: 'builder-project-dependency-preparer.v1',
+      operation: 'project_dependencies_prepared',
+      project_id: projectId,
+      preparation_receipt: {
+        receipt_version: 'builder-project-dependency-preparation-receipt.v1',
+        project_id: projectId,
+        package_manager: 'npm',
+        install_command: 'npm ci',
+        status: 'prepared',
+        exit_code: 0,
+        started_at_ms: 1236,
+        completed_at_ms: 1240,
+        output_digest: `sha256:${'a'.repeat(64)}`,
+        authority: {
+          preparation_authority: 'main_owned_project_dependency_preparation_v1',
+          workspace_authority: 'main_owned_bound_project_workspace_path',
+          renderer_authority: 'project_id_only_explicit_user_action',
+          browser_preview_authority: 'readiness_context_only_no_install_decision',
+          provider_dispatch: false,
+          harness_dispatch: false,
+          command_execution: true,
+          dependency_preparation: true,
+          project_workspace_write: true,
+          check_workspace_write: false,
+          git_write: false,
+          sqlite_write: false,
+          save_authority: false,
+          network_access: 'package_manager_default',
+          install_authority: 'explicit_project_prepare_once',
+          raw_output: 'digest_only',
+          path_disclosure: 'not_serialized',
+          environment_variable_disclosure: false,
+          secret_access: 'not_present',
+        },
+        receipt_digest: `sha256:${'b'.repeat(64)}`,
+      },
+      environment_diagnosis: {
+        ...diagnosed.environment_diagnosis,
+        project_dependency_state: 'install_present',
+        readiness_state: 'ready',
+        primary_action: 'none',
+        safe_summary: 'The project environment appears ready.',
+      },
+    };
+  });
   const skipCurrentDraftCheck = vi.fn(async (request: unknown) => ({
     result_version: 'builder-check-skip-current-draft-public-result.v1',
     operation: 'current_draft_check_skipped',
@@ -841,9 +979,10 @@ async function setup(options: Readonly<{
   }));
   const sideWorkspaceSourceTreeDigest = `sha256:${'8'.repeat(64)}`;
   const sideWorkspaceFileContentDigest = `sha256:${'9'.repeat(64)}`;
+  const sideWorkspaceSourceKind = options.sideWorkspaceSourceKind ?? 'current_draft';
   const sideWorkspaceFileRef = Object.freeze({
     file_ref_version: 'builder-side-workspace-file-ref.v1' as const,
-    source_kind: 'current_draft' as const,
+    source_kind: sideWorkspaceSourceKind,
     source_tree_digest: sideWorkspaceSourceTreeDigest,
     path: 'index.html',
     content_digest: sideWorkspaceFileContentDigest,
@@ -878,8 +1017,8 @@ async function setup(options: Readonly<{
       projection_version: 'builder-side-workspace-file-tree.v1' as const,
       project_id: ids.project_id,
       conversation_id: ids.conversation_id,
-      source_kind: 'current_draft' as const,
-      root_label: 'Current draft',
+      source_kind: sideWorkspaceSourceKind,
+      root_label: sideWorkspaceSourceKind === 'saved_revision' ? 'Saved revision 1' : 'Current draft',
       source_tree_digest: sideWorkspaceSourceTreeDigest,
       entries: [{
         entry_kind: 'text_file' as const,
@@ -891,7 +1030,9 @@ async function setup(options: Readonly<{
         file_ref: sideWorkspaceFileRef,
       }],
       selected_file_ref: sideWorkspaceFileRef,
-      source_ref: { source_ref_kind: 'current_draft_checkpoint_candidate' },
+      source_ref: sideWorkspaceSourceKind === 'saved_revision'
+        ? { source_ref_kind: 'saved_project_revision' }
+        : { source_ref_kind: 'current_draft_checkpoint_candidate' },
       authority: sideWorkspaceFileAuthority,
     };
   });
@@ -901,7 +1042,7 @@ async function setup(options: Readonly<{
       projection_version: 'builder-side-workspace-file-content.v1' as const,
       project_id: ids.project_id,
       conversation_id: ids.conversation_id,
-      source_kind: 'current_draft' as const,
+      source_kind: sideWorkspaceSourceKind,
       source_tree_digest: sideWorkspaceSourceTreeDigest,
       file_ref: sideWorkspaceFileRef,
       path: 'index.html',
@@ -940,6 +1081,7 @@ async function setup(options: Readonly<{
       for (const listener of [...taskStreamChangedListeners]) listener(event);
     });
   };
+  const resumeInterruptedRun = vi.fn(async (request: unknown): Promise<unknown> => { void request; return null; });
   const generate = vi.fn(async (request: unknown) => {
     const instruction = (request as { instruction: string }).instruction;
     const hostRequest = await hostRequestFor(request, instruction);
@@ -996,12 +1138,13 @@ async function setup(options: Readonly<{
       result: latestDraft,
     };
   });
-  const answer = vi.fn(async (request: unknown) => {
+  let completedAgentPlanMarkdown: string | null = null;
+  const answer = vi.fn(async (request: unknown, projectId = selectedProjectId) => {
     answerAttempts += 1;
     const instruction = (request as { instruction: string }).instruction;
     latestAnswerInstruction = instruction;
     answerInstructions.push(instruction);
-    const hostRequest = await hostRequestFor(request, instruction);
+    const hostRequest = await hostRequestFor(request, instruction, projectId);
     const shouldFailAnswer = (options.failFirstAnswer === true && answerAttempts === 1)
       || (options.failAnswerAfterFirst === true && answerAttempts > 1);
     if (shouldFailAnswer) {
@@ -1061,7 +1204,11 @@ async function setup(options: Readonly<{
       result,
     };
   });
-  const answerPlan = vi.fn((request: unknown) => answer(request));
+  const answerPlan = vi.fn(async (request: unknown) => {
+    const response = await answer(request, null) as { ok: boolean; result?: { explanation: string } };
+    if (response.ok && response.result) completedAgentPlanMarkdown = response.result.explanation;
+    return response;
+  });
   const answerDraft = vi.fn(async (request: unknown) => {
     expect(request).toEqual({
       draft_id: latestDraft.draft_id,
@@ -1460,7 +1607,12 @@ async function setup(options: Readonly<{
         && decideCurrentDraftDependencyPreparation.mock.calls.length > 0)
       ? dependencyBlockedReviewTaskStreamWire()
       : checkedReviewTaskStreamWire();
-    const wire = options.planAfterPropose === true && proposePlan.mock.calls.length > 0
+    const wire = completedAgentPlanMarkdown !== null && 'agent_id' in request
+      ? createAnswerTaskStreamWire({
+        questionText: latestAnswerInstruction ?? 'Plan',
+        answerText: completedAgentPlanMarkdown,
+      })
+      : options.planAfterPropose === true && proposePlan.mock.calls.length > 0
       ? createPlanTaskStreamWire()
       : options.rejectedPlanActivity === true
         ? createPlanReviewTaskStreamWire('rejected')
@@ -1541,7 +1693,13 @@ async function setup(options: Readonly<{
                       : options.pendingActivity === true
                         ? pendingCandidateTaskStreamWire('proposed')
                         : reviewReadyTaskStreamWire();
-    return 'agent_id' in request ? asAgentConversationWire(wire, request.agent_id) : wire;
+    if (!('agent_id' in request)) return wire;
+    const agentWire = asAgentConversationWire(wire, request.agent_id);
+    if (options.retainedIncompleteAnswer && answerAttempts > 1) {
+      const retained = agentWire.conversation?.items.filter((item) => item.role === 'assistant').at(-1);
+      if (retained) retained.message_kind = 'incomplete_result';
+    }
+    return agentWire;
   });
   const readAgentWorkbench = vi.fn(async (request: {
     agent_id: string;
@@ -1646,6 +1804,24 @@ async function setup(options: Readonly<{
     return {
       projection_version: 'builder-agent-workbench-projection.v2',
       agent_id: request.agent_id,
+      agent_plan: completedAgentPlanMarkdown === null ? null : {
+        status: 'ready',
+        artifact: {
+          artifact_version: 'builder-agent-plan-artifact.v1',
+          content_digest: `sha256:${'d'.repeat(64)}`,
+          agent_plan_id: 'builder-agent-plan:123e4567-e89b-42d3-a456-426614174030',
+          agent_id: request.agent_id,
+          source_conversation_id: `builder-agent-conversation:${request.agent_id.slice('builder-agent:'.length)}`,
+          source_turn_id: TURN_ID,
+          source_run_id: RUN_ID,
+          source_message_id: items.filter((item) => item.content_type === 'builder.chat.agent_message.v1').at(-1)!.message_id,
+          version: 1,
+          markdown: completedAgentPlanMarkdown,
+          state: 'proposed',
+          created_at_ms: 5,
+        },
+        decision: null,
+      },
       stream: {
         items: workbenchItems,
         after_cursor: request.after_cursor,
@@ -2041,6 +2217,9 @@ async function setup(options: Readonly<{
       operation: 'command_approval_decided',
     },
   }));
+  const exportTaskTranscript = vi.fn(async (request: unknown) => createTaskTranscriptExportWire(
+    (request as { task_address_id?: string }).task_address_id ?? TASK_ADDRESS_ID,
+  ));
   const userWebStatus = () => ({
     status_version: 'builder-user-web-status.v1' as const,
     status: 'idle' as const,
@@ -2077,12 +2256,14 @@ async function setup(options: Readonly<{
       archiveProject: vi.fn(async (request: unknown) => ({ operation: 'project_archived', request })),
       renameTask: vi.fn(async (request: unknown) => ({ operation: 'task_address_renamed', request })),
       archiveTask: vi.fn(async (request: unknown) => ({ operation: 'task_address_archived', request })),
+      exportTaskTranscript,
     },
     agentWorkbench: {
       read: readAgentWorkbench,
       updateMessageState: vi.fn(async () => ({ operation: 'message_state_updated' })),
       createTaskProposal,
       decideTaskProposal,
+      decideAgentPlan: vi.fn(async () => ({ operation: 'decision_recorded' })),
       controlTask: vi.fn(async () => ({ operation: 'task_not_active' })),
       subscribeChanged(listener: (event: unknown) => void) {
         workbenchChangedListeners.add(listener);
@@ -2093,6 +2274,7 @@ async function setup(options: Readonly<{
       ...(options.semanticIntentRoute === undefined ? {} : { classifyIntent }),
       submit,
       generate,
+      resumeInterruptedRun,
       continueDraft,
       generateApprovedPlan,
       proposePlan,
@@ -2157,6 +2339,7 @@ async function setup(options: Readonly<{
       readCurrentDraftAvailableChecks,
       diagnoseCurrentDraftCheckEnvironment,
       diagnoseProjectEnvironment,
+      prepareProjectDependencies,
       approveAndRunCurrentDraftCheck,
       decideCurrentDraftDependencyPreparation,
       skipCurrentDraftCheck,
@@ -2181,6 +2364,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2222,6 +2406,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2263,6 +2448,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is stopped.',
         unavailable_reason: null,
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2304,6 +2490,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2345,6 +2532,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is unavailable until a main-owned preview source resolver is connected.',
         unavailable_reason: 'preview_source_resolver_not_connected',
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2386,6 +2574,7 @@ async function setup(options: Readonly<{
         message: 'Live preview is stopped.',
         unavailable_reason: null,
         dev_server_approval: null,
+        runtime_launch_projection: livePreviewRuntimeLaunchProjection(request),
         updated_at_ms: 10,
         authority: {
           live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -2454,6 +2643,13 @@ async function setup(options: Readonly<{
       }),
     },
   };
+  if (options.livePreviewReply) {
+    const previewBridge = bridge.livePreview as Record<string, (request: unknown) => Promise<Record<string, unknown>>>;
+    for (const [method, operation] of [['readCurrentPreviewStatus', 'read'], ['requestCurrentDraftPreview', 'start']] as const) {
+      const original = previewBridge[method];
+      previewBridge[method] = async (request) => options.livePreviewReply!(operation, await original(request));
+    }
+  }
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -2470,6 +2666,7 @@ async function setup(options: Readonly<{
     decideCurrentDraftDependencyPreparation,
     diagnoseCurrentDraftCheckEnvironment,
     diagnoseProjectEnvironment,
+    prepareProjectDependencies,
     decideTaskProposal,
     skipCurrentDraftCheck,
     container,
@@ -2495,6 +2692,7 @@ async function setup(options: Readonly<{
       });
     },
     generate,
+    resumeInterruptedRun,
     generateApprovedPlan,
     resolveAnswer: async () => {
       for (let attempt = 0; resolveAnswer === null && attempt < 20; attempt += 1) {
@@ -2535,6 +2733,7 @@ async function setup(options: Readonly<{
     open,
     readAgentProjectTree,
     readTaskStream,
+    exportTaskTranscript,
     decideCommandApproval,
     emitTaskStreamChanged(projectId = PROJECT_ID) {
       const listenerCount = taskStreamChangedListeners.size;
@@ -2790,6 +2989,10 @@ async function openSavedProject(
 }
 
 async function openVersionsPanel(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    expect(container.querySelector('[data-builder-page="true"]')
+      ?.getAttribute('data-builder-project-status')).toBe('ready');
+  });
   await waitFor(() => {
     expect(container.querySelector('[data-builder-workspace-menu-button="true"]')).not.toBeNull();
   });
@@ -3117,6 +3320,54 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-workbench-context="true"]')).not.toBeNull();
   });
 
+  it('ignores a late preview operation after leaving and reopening a task', async () => {
+    let resolveStart: (() => void) | null = null;
+    const { container } = await setup({ initiallySaved: true,
+      livePreviewReply: async (operation, status) => {
+        if (operation === 'start') return new Promise((resolve) => {
+          resolveStart = () => resolve({ ...status, status: 'ready', can_start: false, can_reload: true,
+            can_stop: true, unavailable_reason: null, entry_url: 'http://127.0.0.1:34567/index.html' });
+        });
+        return { ...status, status: 'idle', can_start: true, unavailable_reason: null };
+      },
+    });
+    await openSavedProject(container);
+    await waitFor(() => expect(container.querySelector<HTMLButtonElement>('[data-builder-run-project="true"]')?.disabled).toBe(false));
+    click(container, '[data-builder-run-project="true"]');
+    await waitFor(() => expect(resolveStart).not.toBeNull());
+    click(container, '[data-builder-agent-id]');
+    await waitFor(() => expect(container.querySelector('[data-builder-agent-id]')?.getAttribute('data-selected')).toBe('true'));
+    await openSavedProject(container);
+    await waitFor(() => expect(container.querySelector<HTMLButtonElement>('[data-builder-run-project="true"]')?.disabled).toBe(false));
+    await act(async () => { (resolveStart as (() => void) | null)?.(); });
+    expect(container.querySelector('[data-builder-live-preview-status="ready"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-builder-run-project="true"]')?.disabled).toBe(false);
+  });
+
+  it('resumes a reopened paused task only after an explicit click and the normal write approval', async () => {
+    const wire = createInterruptedTaskStreamWire();
+    const { container, submit, generate, resumeInterruptedRun, answer, approveCurrentProjectWrite } = await setup({
+      initiallySaved: true, currentProjectWriteApprovalRequired: true, taskStreamWireOverride: wire,
+    });
+    await openSavedProject(container);
+    await waitFor(() => expect(container.querySelector('[data-builder-resume-interrupted-run="true"]')).not.toBeNull());
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
+    click(container, '[data-builder-resume-interrupted-run="true"]');
+    await waitFor(() => expect(container.querySelector('[data-builder-approve-current-project-write="true"]')).not.toBeNull());
+    expect(submit).not.toHaveBeenCalled();
+    expect(approveCurrentProjectWrite).not.toHaveBeenCalled();
+    click(container, '[data-builder-approve-current-project-write="true"]');
+    await waitFor(() => expect(resumeInterruptedRun).toHaveBeenCalledOnce());
+    expect(resumeInterruptedRun).toHaveBeenCalledWith({
+      run_id: expect.stringMatching(/^builder-run:/u), task_address_id: TASK_ADDRESS_ID,
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(approveCurrentProjectWrite).toHaveBeenCalledOnce();
+  });
+
   it('keeps the Agent conversation reachable after opening a project task', async () => {
     const { container, readTaskStream } = await setup({ initiallySaved: true });
     await openSavedProject(container);
@@ -3313,6 +3564,102 @@ describe('BuilderApp v2', () => {
     });
   });
 
+  it('downloads a Markdown transcript from the task context menu', async () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalBlob = globalThis.Blob;
+    const createdBlobParts: BlobPart[][] = [];
+    class RecordingBlob extends originalBlob {
+      constructor(parts?: BlobPart[], options?: BlobPropertyBag) {
+        super(parts, options);
+        createdBlobParts.push([...(parts ?? [])]);
+      }
+    }
+    const createObjectURL = vi.fn((blob: Blob) => {
+      void blob;
+      return 'blob:builder-task-transcript';
+    });
+    const revokeObjectURL = vi.fn();
+    let clickedDownload: string | null = null;
+    let clickedHref: string | null = null;
+    Object.defineProperty(globalThis, 'Blob', { configurable: true, value: RecordingBlob });
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function clickAnchor(
+      this: HTMLAnchorElement,
+    ) {
+      clickedDownload = this.download;
+      clickedHref = this.href;
+    });
+    try {
+      const { container, exportTaskTranscript } = await setup({ initiallySaved: true });
+      await waitFor(() => {
+        expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)).not.toBeNull();
+      });
+
+      act(() => {
+        container.querySelector<HTMLElement>(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 36, clientY: 72 }));
+      });
+      click(container, `[data-builder-agent-context-export-task-transcript="${TASK_ADDRESS_ID}"]`);
+
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+      expect(exportTaskTranscript).toHaveBeenCalledExactlyOnceWith({
+        agent_id: AGENT_ID,
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      const blob = createObjectURL.mock.calls[0]?.[0];
+      expect(blob).toBeInstanceOf(Blob);
+      if (!(blob instanceof Blob)) throw new Error('missing transcript blob');
+      expect(String(createdBlobParts[0]?.[0])).toContain('# ClawFabric Task Transcript');
+      expect(clickedDownload).toBe('clawfabric-create-builder-project-transcript-2023-11-14T22-13-20-000Z.md');
+      expect(clickedHref).toBe('blob:builder-task-transcript');
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:builder-task-transcript');
+      expect(container.querySelector('[data-builder-task-transcript-export-status="ready"]')?.textContent)
+        .toContain('Downloaded clawfabric-create-builder-project-transcript');
+    } finally {
+      clickSpy.mockRestore();
+      Object.defineProperty(globalThis, 'Blob', { configurable: true, value: originalBlob });
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+    }
+  });
+
+  it('shows a failure when the task transcript export result is not downloadable', async () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      void blob;
+      return 'blob:builder-task-transcript';
+    });
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    try {
+      const { container, exportTaskTranscript } = await setup({ initiallySaved: true });
+      exportTaskTranscript.mockResolvedValueOnce({ export_version: 'builder-task-transcript-export.v1' });
+      await waitFor(() => {
+        expect(container.querySelector(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)).not.toBeNull();
+      });
+
+      act(() => {
+        container.querySelector<HTMLElement>(`[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`)
+          ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 36, clientY: 72 }));
+      });
+      click(container, `[data-builder-agent-context-export-task-transcript="${TASK_ADDRESS_ID}"]`);
+
+      await waitFor(() => {
+        const failure = container.querySelector('[data-builder-task-transcript-export-status="failed"]');
+        expect(failure?.getAttribute('role')).toBe('alert');
+        expect(failure?.textContent).toContain('Transcript export failed.');
+      });
+      expect(createObjectURL).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectURL });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
+    }
+  });
+
   it('opens the selected project location through the main-owned workspace port', async () => {
     const { container, openLocation } = await setup({ initiallySaved: true });
     await openSavedProject(container);
@@ -3322,18 +3669,14 @@ describe('BuilderApp v2', () => {
     expect(openLocation).toHaveBeenCalledExactlyOnceWith({ project_id: PROJECT_ID });
   });
 
-  it('clears the current composer workspace without deleting projects or starting a build', async () => {
+  it('does not expose current workspace clearing from the composer', async () => {
     const { container, createLocalProject, open, submit } = await setup({ initiallySaved: true });
     await openSavedProject(container);
     open.mockClear();
 
     setComposerInstruction(container, 'Create a notes page.');
-    click(container, '[data-builder-clear-workspace-selection="true"]');
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
-      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
-    });
+    expect(container.querySelector('[data-builder-clear-workspace-selection="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     expect(open).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Create a notes page.');
     await waitFor(() => {
@@ -3345,52 +3688,34 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Create a notes page.' }));
     });
-    expect(submit).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(createLocalProject).not.toHaveBeenCalled();
   });
 
-  it('routes the sidebar new-project command into source folder binding before work starts', async () => {
+  it('creates a new local project from the sidebar command without submitting work', async () => {
     const { container, createLocalProject, generate, submit } = await setup();
 
     click(container, '[data-builder-catalog-new-project="true"]');
 
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
-        .toContain('Source folders');
-    });
-    expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
-      .toContain('No source folder selected.');
-    expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-      .not.toContain('Choose or create a project before I build.');
-    expect(createLocalProject).not.toHaveBeenCalled();
-    expect(submit).not.toHaveBeenCalled();
-    expect(generate).not.toHaveBeenCalled();
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
-        .toBe('new');
-    });
-    expect(container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]')?.value)
-      .toBe('New project');
-    expect(container.querySelector<HTMLButtonElement>('[data-builder-add-source-folder="true"]')?.disabled)
-      .toBe(false);
-
-    click(container, '[data-builder-add-source-folder="true"]');
     await waitFor(() => {
       expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
         project_id: null,
         project_title: 'New project',
       });
     });
-
+    expect(container.querySelector('[data-builder-new-project-panel="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Source folder: focus-timer');
+      expect(container.querySelector('[data-builder-page="true"]')?.getAttribute('data-builder-project-status'))
+        .toBe('ready');
     });
+    expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).toBeNull();
+    expect(submit).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it('keeps prior read-only chat visible while the next answer is running without a source folder', async () => {
@@ -3747,7 +4072,7 @@ describe('BuilderApp v2', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it('streams a projectless Agent plan as full conversation Markdown without creating a task proposal', async () => {
+  it.each([false, true])('finishes and shows Agent plan review without another reply (retained project: %s)', async (initiallySaved) => {
     const {
       answerPlan,
       container,
@@ -3755,10 +4080,20 @@ describe('BuilderApp v2', () => {
       emitGenerationOutput,
       emitGenerationStarted,
       resolveAnswer,
+      open,
     } = await setup({
       agentTaskIncubation: true,
       deferredAnswer: true,
+      initiallySaved,
     });
+    if (initiallySaved) {
+      click(container, `[data-builder-project-id="${PROJECT_ID}"]`);
+      await waitFor(() => expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID }));
+      await waitFor(() => expect(container.querySelector('[data-builder-page="true"]')?.getAttribute(
+        'data-builder-project-status',
+      )).toBe('ready'));
+      click(container, '[data-builder-agent-id]');
+    }
     const instruction = '为摄影博客制定完整实施计划。';
     await waitFor(() => {
       expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
@@ -3791,12 +4126,122 @@ describe('BuilderApp v2', () => {
       expect(livePlan?.querySelector('h2')?.textContent).toBe('实施计划');
     });
     expect(createTaskProposal).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-agent-plan-decision="true"]')).toBeNull();
 
     await act(async () => {
       await resolveAnswer();
       await Promise.resolve();
     });
     expect(createTaskProposal).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).toBeNull();
+      expect(container.querySelector('[data-builder-submit-in-flight="true"]')).toBeNull();
+      const review = container.querySelector('[data-builder-agent-plan-decision="true"]');
+      expect(review?.textContent).toContain('Ready for review');
+      expect(review?.querySelector<HTMLButtonElement>('button')?.disabled).toBe(false);
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    });
+    expect(answerPlan).toHaveBeenCalledOnce();
+  });
+
+  it.each(['cancel', 'complete'] as const)('retains an Agent plan across Task navigation until %s', async (ending) => {
+    const { container, answerPlan, cancel, emitGenerationStarted, emitGenerationOutput, resolveAnswer } = await setup({
+      agentTaskIncubation: true, deferredAnswer: true, initiallySaved: true,
+    });
+    const instruction = 'Prepare a complete implementation plan.';
+    setComposerInstruction(container, instruction);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => expect(answerPlan).toHaveBeenCalledOnce());
+    const request = await createBuilderGenerationRequest(instruction, null);
+    act(() => {
+      emitGenerationStarted(request.request_digest, null);
+      emitGenerationOutput(request.request_digest, '## Plan\n\nFirst step.', null);
+    });
+    await waitFor(() => expect(container.querySelector('[data-builder-live-output="true"]')?.textContent).toContain('First step.'));
+    click(container, `[data-builder-task-address-id="${TASK_ADDRESS_ID}"]`);
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    });
+    expect(cancel).not.toHaveBeenCalled();
+    act(() => { emitGenerationOutput(request.request_digest, '\n\nSecond step while hidden.', null); });
+    if (ending === 'complete') {
+      await act(async () => { await resolveAnswer(); });
+      await waitFor(() => expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull());
+    }
+    click(container, '[data-builder-agent-id]');
+    await waitFor(() => expect(container.querySelector('[data-builder-composer-mode-chip="plan"]')).not.toBeNull());
+    if (ending === 'cancel') {
+      await waitFor(() => {
+        expect(container.querySelector('[data-builder-cancel-work="true"]')).not.toBeNull();
+        expect(container.querySelector('[data-builder-live-output="true"]')?.textContent).toContain('Second step while hidden.');
+      });
+      click(container, '[data-builder-cancel-work="true"]');
+      await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith({ request_id: request.request_digest }));
+      await act(async () => { await resolveAnswer(); });
+    }
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-submit-in-flight="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
+    });
+    if (ending === 'complete') {
+      await waitFor(() => expect(container.querySelector('[data-builder-agent-plan-decision="true"]')?.textContent).toContain('Ready for review'));
+    }
+    expect(answerPlan).toHaveBeenCalledOnce();
+  });
+
+  it('restores a failed projectless Agent Plan request for an immediate retry', async () => {
+    const { answer, answerPlan, container } = await setup({
+      answerActivity: true,
+      failAnswerAfterFirst: true,
+    });
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => expect(answer).toHaveBeenCalledOnce());
+
+    const instruction = '为一个空项目制定完整实施计划。';
+    setComposerInstruction(container, instruction);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+
+    await waitFor(() => {
+      expect(answerPlan).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction }));
+      expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).not.toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(instruction);
+    });
+  });
+
+  it('does not mistake a retained incomplete Agent plan for a successful answer', async () => {
+    const { answer, answerPlan, container } = await setup({
+      answerActivity: true, failAnswerAfterFirst: true,
+      recordedAnswerAfterFailedPublicResult: true, retainedIncompleteAnswer: true,
+    });
+    setComposerInstruction(container, 'hi');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    const instruction = 'Prepare a complete implementation plan.';
+    setComposerInstruction(container, instruction);
+    click(container, '[data-builder-composer-add-menu-button="true"]');
+    click(container, '[data-builder-composer-add-plan-mode="true"]');
+    await waitForComposerSubmitReady(container);
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => {
+      expect(answerPlan).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-builder-conversation-notice="answer_failed"]')).not.toBeNull();
+      expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe(instruction);
+      expect(container.querySelector('[data-builder-agent-plan-decision="true"]')).toBeNull();
+      expect(container.querySelector('[data-builder-cancel-work="true"]')).toBeNull();
+    });
   });
 
   it('auto-starts a foreground Agent task proposal after creating a new project', async () => {
@@ -3848,7 +4293,7 @@ describe('BuilderApp v2', () => {
         operation: 'approve_existing_project',
         project_id: PROJECT_ID,
       });
-      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      expect(generate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         instruction: '按这个计划创建一个专注计时器：先写 index.html，再运行检查。',
         task_address_id: MATERIALIZED_TASK_ADDRESS_ID,
       }));
@@ -3865,7 +4310,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(container.querySelector('[data-builder-submit-in-flight="true"]')).toBeNull();
     });
-    expect(generate).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
@@ -3874,7 +4319,7 @@ describe('BuilderApp v2', () => {
       container,
       createLocalProject,
       decideTaskProposal,
-      submit,
+      generate,
     } = await setup({
       agentTaskProposalMaterializes: true,
       agentTaskProposalPending: true,
@@ -3896,13 +4341,13 @@ describe('BuilderApp v2', () => {
     });
 
     await waitFor(() => {
-      expect(submit).toHaveBeenCalledOnce();
+      expect(generate).toHaveBeenCalledOnce();
     });
     expect(createLocalProject).toHaveBeenCalledOnce();
     expect(decideTaskProposal).toHaveBeenCalledOnce();
   });
 
-  it('continues a gated build turn after the user binds a source folder', async () => {
+  it('keeps a gated build turn pending without a composer workspace picker', async () => {
     const { container, createLocalProject, generate, listCurrent, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3920,9 +4365,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
     });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
@@ -3931,7 +4377,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
-    let composer = container.querySelector('[data-builder-composer="true"]');
+    const composer = container.querySelector('[data-builder-composer="true"]');
     expect(composer?.getAttribute('data-builder-route')).toBe('build');
     expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('ask_workspace');
     expect(composer?.getAttribute('data-builder-route-decision-id')).
@@ -3940,50 +4386,22 @@ describe('BuilderApp v2', () => {
       toBe('builder-composer-message:local:1');
     expect(composer?.getAttribute('data-builder-route-project-id')).toBeNull();
 
-    click(container, '[data-builder-workspace-new-project="true"]');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
-        .toContain('Source folders');
-    });
-    expect(createLocalProject).not.toHaveBeenCalled();
-
-    const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
-    expect(title?.value).toBe('New project');
-    click(container, '[data-builder-add-source-folder="true"]');
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: null,
-      project_title: 'New project',
-    });
-    await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
-    });
-    composer = container.querySelector('[data-builder-composer="true"]');
-    expect(composer?.getAttribute('data-builder-route')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-dispatch')).toBe('build');
-    expect(composer?.getAttribute('data-builder-route-decision-id')).
-      toBe('builder-composer-route-decision:local:2');
-    expect(composer?.getAttribute('data-builder-route-message-id')).
-      toBe('builder-composer-message:local:1');
-    expect(composer?.getAttribute('data-builder-route-project-id')).toBe(PROJECT_ID);
+    expect(createLocalProject).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
-    await waitFor(() => {
-      expectDraftWaitingForReviewEvidence(container);
-    });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 
-  it('shows live AI output for the first build after a source folder is bound', async () => {
+  it('does not auto-start the first build after a source folder is bound from the sidebar', async () => {
     const {
       container,
       createLocalProject,
-      emitGenerationOutput,
-      emitGenerationStarted,
-      resolveGenerate,
       submit,
     } = await setup({ deferredGenerate: true });
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
@@ -4001,45 +4419,23 @@ describe('BuilderApp v2', () => {
     });
     click(container, '[data-builder-submit-turn="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
+    });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+
+    click(container, '[data-builder-catalog-new-project="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')).toBeNull();
     });
 
-    click(container, '[data-builder-workspace-new-project="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
-        .toContain('Source folders');
+      expect(createLocalProject).not.toHaveBeenCalled();
     });
-    click(container, '[data-builder-add-source-folder="true"]');
-
-    await waitFor(() => {
-      expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-        project_id: null,
-        project_title: 'New project',
-      });
-      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
-    });
-    const expected = await createBuilderGenerationRequest('Make a timer.', PROJECT_ID, TASK_ADDRESS_ID);
-    expect(emitGenerationStarted(expected.request_digest, PROJECT_ID)).toBeGreaterThan(0);
-    expect(emitGenerationOutput(expected.request_digest, 'Building the first project draft.', PROJECT_ID))
-      .toBeGreaterThan(0);
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
-        .toContain('Building the first project draft.');
-    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
-    expect(container.querySelector('[data-builder-live-output="true"]')?.textContent)
-      .not.toMatch(/request_id|provider|credential|source_tree|commit_oid|tree_oid/iu);
-
-    await act(async () => {
-      await resolveGenerate();
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-live-output="true"]')).toBeNull();
-      expectDraftWaitingForReviewEvidence(container);
-    });
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 
   it('continues an unsaved draft from the same composer without saving first', async () => {
@@ -4192,7 +4588,7 @@ describe('BuilderApp v2', () => {
     expect(composer?.getAttribute('data-builder-route-signals')).toBe('clear_plan_deliverable');
   });
 
-  it('does not keep a gated build pending after the workspace picker is closed', async () => {
+  it('creates a clean local project from a gated build without a composer workspace picker', async () => {
     const { container, createLocalProject, generate, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -4207,11 +4603,8 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
-    });
-    click(container, '[data-builder-workspace-chip="true"]');
-    await waitFor(() => {
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
       expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     });
 
@@ -4219,9 +4612,8 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-composer-add-files="true"]')).toBeNull();
     click(container, '[data-builder-catalog-new-project="true"]');
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-builder-new-project-panel="true"]')).toBeNull();
     });
-    click(container, '[data-builder-add-source-folder="true"]');
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -4237,7 +4629,7 @@ describe('BuilderApp v2', () => {
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('does not submit edited composer text from the source folder action', async () => {
+  it('keeps edited composer text when build is gated without a source-folder action', async () => {
     const { container, createLocalProject, generate, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -4252,9 +4644,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
     });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     act(() => {
       if (textarea) {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -4263,19 +4656,13 @@ describe('BuilderApp v2', () => {
         textarea.dispatchEvent(new Event('change', { bubbles: true }));
       }
     });
-    click(container, '[data-builder-workspace-new-project="true"]');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')).not.toBeNull();
-    });
-    click(container, '[data-builder-add-source-folder="true"]');
+    expect(container.querySelector('[data-builder-workspace-new-project="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-add-source-folder="true"]')).toBeNull();
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: null,
-      project_title: 'New project',
-    });
+    expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
@@ -4292,10 +4679,7 @@ describe('BuilderApp v2', () => {
       expect(listCurrent).toHaveBeenCalled();
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('site-source');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     });
 
     expect(createLocalProject).not.toHaveBeenCalled();
@@ -4335,13 +4719,12 @@ describe('BuilderApp v2', () => {
       expect(container.querySelector('[data-builder-unsaved-draft="true"]')).not.toBeNull();
     });
     expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('Unsaved dashboard');
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     expectDraftDecisionCard(container);
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
-  it('opens an existing bound workspace from a gated build without auto-submit', async () => {
+  it('does not open an existing bound workspace from a gated composer build', async () => {
     const { container, createLocalProject, listCurrent, listWorkspaces, open, submit } = await setup({
       multipleWorkspaceOnlyCatalog: true,
     });
@@ -4363,25 +4746,18 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
+      expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     });
-    click(container, `[data-builder-workspace-bound-project="${PROJECT_ID}"]`);
-
-    await waitFor(() => {
-      expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
-    });
+    expect(open).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
     expect(container.querySelector('[data-builder-save-version="true"]')).toBeNull();
   });
 
-  it('creates the first project only when a later build turn binds source folders', async () => {
+  it('keeps a later build turn gated when there is no composer workspace picker', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup({
       answerActivity: true,
     });
@@ -4432,38 +4808,22 @@ describe('BuilderApp v2', () => {
     expect(submit).not.toHaveBeenCalled();
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
     });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
 
-    click(container, '[data-builder-workspace-new-project="true"]');
-    await waitFor(() => {
-      expect(container.querySelector('[data-builder-new-project-panel="true"]')?.textContent)
-        .toContain('Source folders');
-    });
-    click(container, '[data-builder-add-source-folder="true"]');
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(createLocalProject).toHaveBeenCalledExactlyOnceWith({
-      project_id: null,
-      project_title: 'New project',
-    });
-    await waitFor(() => {
-      expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instruction: 'Make a timer.' }));
-    });
+    expect(container.querySelector('[data-builder-workspace-new-project="true"]')).toBeNull();
+    expect(createLocalProject).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
     expect(saveDraft).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
-    await waitFor(() => {
-      expectDraftWaitingForReviewEvidence(container);
-    });
+    expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('Make a timer.');
+    expect(container.querySelector('[data-builder-unsaved-draft="true"]')).toBeNull();
   });
 
-  it('routes clear Chinese edit turns to the project picker before any draft work', async () => {
+  it('routes clear Chinese edit turns to workspace gating before any draft work', async () => {
     const { answer, container, createLocalProject, generate, saveDraft, submit } = await setup();
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -4479,9 +4839,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
     });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(answer).not.toHaveBeenCalled();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -5361,9 +5722,10 @@ describe('BuilderApp v2', () => {
     click(container, '[data-builder-submit-turn="true"]');
 
     await waitFor(() => {
-      expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-        .toContain('Choose or create a project before I build.');
+      expect(container.querySelector('[data-builder-composer="true"]')?.getAttribute('data-builder-route-dispatch'))
+        .toBe('ask_workspace');
     });
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(answer).toHaveBeenCalledOnce();
     expect(createLocalProject).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
@@ -5663,6 +6025,31 @@ describe('BuilderApp v2', () => {
     expect(readTaskStream).toHaveBeenCalledWith({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
     expect(container.querySelector<HTMLTextAreaElement>('#builder-idea')?.value).toBe('');
     expect(container.textContent).not.toMatch(/request_digest|existing_project_id|provider|credential/iu);
+  });
+
+  it('does not refill the original instruction when paused work settles late', async () => {
+    const { cancel, container, readTaskStream, emitTaskStreamChanged, resolveGenerate, submit, saveDraft } = await setup({
+      deferredGenerate: true, initiallySaved: true,
+    });
+    await openSavedProject(container);
+    const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(textarea, 'Make a timer.');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    click(container, '[data-builder-submit-turn="true"]');
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    readTaskStream.mockResolvedValue(waitingForUserAnswerTaskStreamWire());
+    emitTaskStreamChanged(PROJECT_ID);
+    await waitFor(() => expect(container.querySelector('[data-builder-pause-task="true"]')).not.toBeNull());
+    readTaskStream.mockResolvedValue(createInterruptedTaskStreamWire());
+    click(container, '[data-builder-pause-task="true"]');
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith({ request_id: expect.any(String), pause: true }));
+    await act(async () => { await resolveGenerate(); });
+    await waitFor(() => expect(container.querySelector('[data-builder-resume-interrupted-run="true"]')).not.toBeNull());
+    expect(textarea.value).toBe('');
+    expect(submit).toHaveBeenCalledOnce();
+    expect(saveDraft).not.toHaveBeenCalled();
   });
 
   it('cancels active draft generation through request-id-only control', async () => {
@@ -6673,8 +7060,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     });
     setComposerInstruction(container, '帮我先做下方案');
     await waitForComposerSubmitReady(container);
@@ -6720,8 +7106,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     });
 
     setComposerInstruction(container, '我打算做一个博客，给我一些建议');
@@ -6779,8 +7164,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Unsaved dashboard');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     });
 
     const firstInstruction = '我想先聊一下这个作品集首页怎么做，目标是星空背景和项目列表。';
@@ -6960,8 +7344,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Source folder:');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     });
     setComposerInstruction(container, 'Make a timer.');
     await waitForComposerSubmitReady(container);
@@ -7250,8 +7633,7 @@ describe('BuilderApp v2', () => {
     await waitFor(() => {
       expect(listWorkspaces).toHaveBeenCalled();
       expect(open).toHaveBeenCalledWith({ project_id: PROJECT_ID });
-      expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-        .toContain('Source folder:');
+      expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-current-version="true"]')).toBeNull();
       expect(container.querySelector('[data-builder-plan-review-actions="true"]')).not.toBeNull();
     });
@@ -8211,6 +8593,40 @@ describe('BuilderApp v2', () => {
     expect(container.textContent).not.toContain('Current draft files are not available yet.');
   });
 
+  it('loads saved project files from the side workspace when no draft is active', async () => {
+    const {
+      container,
+      readCurrentDraftFileTree,
+    } = await setup({
+      initiallySaved: true,
+      sideWorkspaceFilesAvailable: true,
+      sideWorkspaceSourceKind: 'saved_revision',
+    });
+    await openSavedProject(container);
+
+    click(container, '[data-builder-workspace-menu-button="true"]');
+    await waitFor(() => {
+      expect(container.querySelector('[data-builder-workspace-menu="true"]')).not.toBeNull();
+    });
+    click(container, '[data-builder-workspace-control-tab="source"]');
+
+    await waitFor(() => {
+      expect(readCurrentDraftFileTree).toHaveBeenCalledWith({
+        project_id: PROJECT_ID,
+        conversation_id: expect.stringMatching(/^builder-conversation:/u),
+      });
+      expect(container.querySelector(
+        '[data-builder-side-workspace-files-status="ready"]',
+      )).not.toBeNull();
+      expect(container.querySelector('[data-builder-side-workspace-files="true"]')?.textContent)
+        .toContain('Saved revision 1');
+      expect(container.querySelector(
+        '[data-builder-side-workspace-file-content="index.html"]',
+      )?.textContent).toContain('Focus timer');
+    });
+    expect(container.textContent).not.toContain('Loading files...');
+  });
+
   it('keeps unchecked drafts blocked without exposing manual check controls', async () => {
     const {
       container,
@@ -8282,30 +8698,40 @@ describe('BuilderApp v2', () => {
     expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();
   });
 
-  it('diagnoses the selected project environment from Settings before a current draft exists', async () => {
+  it('diagnoses the selected saved project environment before local launch actions', async () => {
     const {
       container,
       decideCurrentDraftDependencyPreparation,
       diagnoseCurrentDraftCheckEnvironment,
       diagnoseProjectEnvironment,
+      prepareProjectDependencies,
     } = await setup({ initiallySaved: true });
     await openSavedProject(container);
 
-    click(container, 'Settings');
     await waitFor(() => {
-      const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
-      expect(card?.textContent).toContain('Project environment');
-      expect(container.querySelector<HTMLButtonElement>(
-        '[data-builder-settings-diagnose-environment="true"]',
-      )?.disabled).toBe(false);
+      const setupCard = container.querySelector('[data-builder-project-environment-setup="true"]');
+      expect(setupCard?.textContent).toContain('Saved project dependencies needed');
+      expect(setupCard?.textContent).toContain('Prepare once runs npm install in the saved project folder for local launch');
+      expect(setupCard?.textContent).toContain('Current-draft checks still use their isolated workspace.');
     });
-    click(container, '[data-builder-settings-diagnose-environment="true"]');
+    expect(diagnoseProjectEnvironment).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+
+    click(container, '[data-builder-prepare-project-dependencies="true"]');
+    await waitFor(() => {
+      expect(prepareProjectDependencies).toHaveBeenCalledExactlyOnceWith({
+        project_id: PROJECT_ID,
+      });
+      expect(container.querySelector('[data-builder-project-environment-setup="true"]')).toBeNull();
+    });
+
+    click(container, 'Settings');
 
     await waitFor(() => {
       const card = container.querySelector('[data-builder-environment-diagnosis-settings="true"]');
-      expect(card?.textContent).toContain('This project declares dependencies');
+      expect(card?.textContent).toContain('The project environment appears ready.');
       expect(card?.textContent).toContain('Project dependencies');
-      expect(card?.textContent).toContain('Project dependency setup is diagnostic-only in this phase');
       expect(container.querySelector(
         '[data-builder-settings-environment-section="toolchain"]',
       )?.textContent).toContain('Node');
@@ -8314,15 +8740,15 @@ describe('BuilderApp v2', () => {
       )?.textContent).toContain('Git');
       expect(container.querySelector(
         '[data-builder-settings-environment-row="project_dependency_state"]',
-      )?.textContent).toContain('Install Missing');
+      )?.textContent).toContain('Install Present');
       expect(container.querySelector(
         '[data-builder-settings-environment-diagnosis="ready"]',
       )?.getAttribute('data-builder-settings-environment-primary-action'))
-        .toBe('show_project_dependency_setup');
+        .toBe('none');
       expect(container.querySelector('[data-builder-settings-prepare-dependencies="true"]')).toBeNull();
-    });
-    expect(diagnoseProjectEnvironment).toHaveBeenCalledExactlyOnceWith({
-      project_id: PROJECT_ID,
+      expect(container.querySelector(
+        '[data-builder-settings-project-dependency-setup-read-only="true"]',
+      )?.textContent).toContain('Settings only diagnoses and never installs into the project folder.');
     });
     expect(diagnoseCurrentDraftCheckEnvironment).not.toHaveBeenCalled();
     expect(decideCurrentDraftDependencyPreparation).not.toHaveBeenCalled();

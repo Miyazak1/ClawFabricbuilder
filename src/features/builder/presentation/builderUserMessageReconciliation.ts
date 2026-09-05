@@ -50,6 +50,7 @@ export function builderDurableUserMessage(
     item.item_kind !== 'transcript_message'
     || item.role !== 'user'
     || item.message_kind === 'run_result'
+    || item.message_kind === 'incomplete_result'
   ) return null;
   return Object.freeze({
     message_id: item.message.message_id,

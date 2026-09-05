@@ -78,6 +78,7 @@ const EVENT_TYPES = Object.freeze([
   'assistant_reasoning_status',
   'runtime_activity_status',
   'model_usage_recorded',
+  'context_usage_projected',
   'model_finish_recorded',
   'tool_call_started',
   'tool_call_updated',
@@ -397,6 +398,7 @@ function sanitizePayload(eventType, value) {
       'cache_read_tokens',
       'cache_write_tokens',
       'reasoning_tokens',
+      'context_window_tokens',
     ]);
     const optionalCount = (count) => count === null ? null : safeInteger(count, 0, 1_000_000_000);
     return freezeDeep({
@@ -405,6 +407,37 @@ function sanitizePayload(eventType, value) {
       cache_read_tokens: optionalCount(valueAt(source, 'cache_read_tokens')),
       cache_write_tokens: optionalCount(valueAt(source, 'cache_write_tokens')),
       reasoning_tokens: optionalCount(valueAt(source, 'reasoning_tokens')),
+      context_window_tokens: valueAt(source, 'context_window_tokens') === null
+        ? null
+        : safeInteger(valueAt(source, 'context_window_tokens'), 1, 1_000_000_000),
+    });
+  }
+  if (eventType === 'context_usage_projected') {
+    const source = exactObject(value, [
+      'harness_projection_seq',
+      'uncached_input_tokens',
+      'output_tokens',
+      'cache_read_tokens',
+      'cache_write_tokens',
+      'pressure_tokens',
+      'projected_tokens',
+      'context_window_tokens',
+    ]);
+    const optionalCount = (count, minimum = 0) => count === null
+      ? null
+      : safeInteger(count, minimum, 1_000_000_000);
+    const pressureTokens = optionalCount(valueAt(source, 'pressure_tokens'));
+    const projectedTokens = optionalCount(valueAt(source, 'projected_tokens'));
+    if (projectedTokens !== null && pressureTokens === null) fail();
+    return freezeDeep({
+      harness_projection_seq: safeInteger(valueAt(source, 'harness_projection_seq'), -1),
+      uncached_input_tokens: safeInteger(valueAt(source, 'uncached_input_tokens'), 0, 1_000_000_000),
+      output_tokens: safeInteger(valueAt(source, 'output_tokens'), 0, 1_000_000_000),
+      cache_read_tokens: safeInteger(valueAt(source, 'cache_read_tokens'), 0, 1_000_000_000),
+      cache_write_tokens: safeInteger(valueAt(source, 'cache_write_tokens'), 0, 1_000_000_000),
+      pressure_tokens: pressureTokens,
+      projected_tokens: projectedTokens,
+      context_window_tokens: optionalCount(valueAt(source, 'context_window_tokens'), 1),
     });
   }
   if (eventType === 'model_finish_recorded') {
@@ -663,6 +696,13 @@ function createBuilderProgrammingRuntimeEventJournal(rawOptions) {
         || (candidate.turn_id !== null && candidate.turn_id !== runContract.admission.turn_id)
         || (candidate.step_id !== null && candidate.step_id !== activeStepId)
       ) fail('builder_programming_runtime_event_conflict');
+      return;
+    }
+    if (type === 'context_usage_projected') {
+      requiredIds(candidate, runContract, []);
+      if (eventSource !== 'runtime' || !runStarted) {
+        fail('builder_programming_runtime_event_conflict');
+      }
       return;
     }
     if (type === 'model_usage_recorded' || type === 'model_finish_recorded') {

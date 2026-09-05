@@ -27,6 +27,7 @@ const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174203';
 const LATER_TASK_ADDRESS_ID = 'builder-task-address:423e4567-e89b-42d3-a456-426614174203';
 const ARCHIVED_TASK_ADDRESS_ID = 'builder-task-address:523e4567-e89b-42d3-a456-426614174203';
+const ROOT_CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200';
 const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174206';
 
@@ -47,7 +48,7 @@ function sessionAddress(overrides = {}) {
     display_id: 'S-A1B2C3',
     title: 'Management dashboard work line',
     status: 'active',
-    root_conversation_id: CONVERSATION_ID,
+    root_conversation_id: ROOT_CONVERSATION_ID,
     current_task_id: TASK_ADDRESS_ID,
     parent_session_id: null,
     forked_from_session_id: null,
@@ -120,7 +121,7 @@ test('records session and task addresses and restores them after restart', (t) =
   assert.equal(recordedSession.address_evidence.git_mutation, false);
   assert.equal(recordedSession.address_evidence.permission_grant_authority, false);
   assert.equal(recordedSession.address_evidence.export_materialization, false);
-  assert.equal(recordedSession.address_evidence.archive_authority, false);
+  assert.equal(recordedSession.address_evidence.archive_authority, 'main_owned_task_address_soft_archive');
   assert.equal(recordedSession.address_evidence.delete_authority, false);
   assert.equal(recordedSession.address_evidence.fork_authority, false);
   assert.equal(recordedSession.address_evidence.schema_version, BUILDER_SESSION_TASK_ADDRESS_STORE_SCHEMA_VERSION);
@@ -230,6 +231,12 @@ test('reads the current non-archived Session and Task Address for a conversation
       conversation_id: CONVERSATION_ID,
     }),
   );
+  assertStoreError(
+    () => store.read_current_session_task_for_conversation({
+      project_id: PROJECT_ID,
+      conversation_id: ROOT_CONVERSATION_ID,
+    }),
+  );
   assert.equal(
     store.read_current_session_task_for_conversation({
       project_id: PROJECT_ID,
@@ -265,6 +272,8 @@ test('rejects task addresses before their session and keeps project reads scoped
   const wrongProjectTask = taskAddress({
     task_address_id: 'builder-task-address:323e4567-e89b-42d3-a456-426614174203',
     project_id: OTHER_PROJECT_ID,
+    conversation_id:
+      'builder-conversation:223e4567-e89b-42d3-a456-426614174200:323e4567-e89b-42d3-a456-426614174205',
   });
   assertStoreError(
     () => store.record_task_address({ task_address: wrongProjectTask }),
@@ -406,7 +415,7 @@ test('source boundary remains a main-only Session/Task Address store without run
   assert.match(source, /conversation_append: false/u);
   assert.match(source, /provider_dispatch: false/u);
   assert.match(source, /source_write: 'not_present'/u);
-  assert.match(source, /archive_authority: false/u);
+  assert.match(source, /archive_authority: 'main_owned_task_address_soft_archive'/u);
   assert.match(source, /delete_authority: false/u);
   assert.match(source, /fork_authority: false/u);
   assert.doesNotMatch(

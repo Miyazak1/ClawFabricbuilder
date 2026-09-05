@@ -205,6 +205,79 @@ test('task stream adapter returns full, unchanged, and append-only cursor result
   })));
 });
 
+test('task stream adapter omits unchanged top-level projections from append-only cursor results', async () => {
+  const authority = windowAuthority();
+  const contextStatusProjection = Object.freeze({
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Ready',
+    tone: 'info',
+    next_action_hint: null,
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+    authority: Object.freeze({
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'pending_count_only',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    }),
+  });
+  let current = streamWire({ context_status_projection: contextStatusProjection });
+  const value = createBuilderTaskStreamIpcAdapter({
+    readStream: async () => current,
+    mainWindowRef: authority.mainWindowRef,
+  });
+  const initialRequest = {
+    project_id: PROJECT_ID,
+    task_address_id: TASK_ADDRESS_ID,
+    cursor: {
+      protocol_version: 'builder-task-stream-cursor.v1',
+      snapshot_digest: null,
+    },
+  };
+
+  const full = await value.channels.read.invoke(authority.event, initialRequest);
+  const secondItem = {
+    ...current.conversation.items[0],
+    sequence: 2,
+    message: {
+      ...current.conversation.items[0].message,
+      text: 'Refine the timer.',
+    },
+  };
+  current = streamWire({
+    context_status_projection: contextStatusProjection,
+    conversation: {
+      ...current.conversation,
+      head_sequence: 2,
+      window: { first_sequence: 1, last_sequence: 2, has_earlier: false },
+      items: [...current.conversation.items, secondItem],
+    },
+  });
+
+  const incremental = await value.channels.read.invoke(authority.event, {
+    ...initialRequest,
+    cursor: {
+      ...initialRequest.cursor,
+      snapshot_digest: full.snapshot_digest,
+    },
+  });
+
+  assert.equal(incremental.result_kind, 'incremental');
+  assert.equal(Object.hasOwn(incremental.snapshot, 'context_status_projection'), false);
+  assert.deepEqual(incremental.snapshot.conversation.items, [secondItem]);
+});
+
 test('task stream adapter records non-cursor result bytes without stringifying the IPC result', async () => {
   const outputPath = path.join(__dirname, '..', '.tmp-task-stream-ipc-trace.json');
   const { authority, value } = adapter();

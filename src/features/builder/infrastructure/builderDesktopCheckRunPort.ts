@@ -11,6 +11,7 @@ import type {
   BuilderCheckRunReadRequest,
   BuilderCheckRunStatusProjection,
   BuilderCheckRunSkippedResult,
+  BuilderProjectDependencyPreparationResult,
   BuilderProjectEnvironmentDiagnosis,
   BuilderProjectEnvironmentDiagnosisResult,
 } from '../application/builderPorts';
@@ -19,6 +20,7 @@ type BuilderCheckRunBridge = Readonly<{
   readCurrentDraftAvailableChecks(request: unknown): Promise<unknown>;
   diagnoseCurrentDraftCheckEnvironment(request: unknown): Promise<unknown>;
   diagnoseProjectEnvironment(request: unknown): Promise<unknown>;
+  prepareProjectDependencies(request: unknown): Promise<unknown>;
   approveAndRunCurrentDraftCheck(request: unknown): Promise<unknown>;
   decideCurrentDraftDependencyPreparation(request: unknown): Promise<unknown>;
   skipCurrentDraftCheck(request: unknown): Promise<unknown>;
@@ -28,6 +30,7 @@ const BRIDGE_KEYS = Object.freeze([
   'readCurrentDraftAvailableChecks',
   'diagnoseCurrentDraftCheckEnvironment',
   'diagnoseProjectEnvironment',
+  'prepareProjectDependencies',
   'approveAndRunCurrentDraftCheck',
   'decideCurrentDraftDependencyPreparation',
   'skipCurrentDraftCheck',
@@ -54,6 +57,15 @@ const DIAGNOSIS_RESULT_KEYS = Object.freeze([
 ]);
 const PROJECT_DIAGNOSIS_RESULT_KEYS = Object.freeze([
   'result_version', 'service_version', 'operation', 'project_id', 'environment_diagnosis',
+]);
+const PROJECT_DEPENDENCY_PREPARATION_RESULT_KEYS = Object.freeze([
+  'result_version', 'service_version', 'operation', 'project_id',
+  'preparation_receipt', 'environment_diagnosis',
+]);
+const PROJECT_DEPENDENCY_PREPARATION_RECEIPT_KEYS = Object.freeze([
+  'receipt_version', 'project_id', 'package_manager', 'install_command', 'status',
+  'exit_code', 'started_at_ms', 'completed_at_ms', 'output_digest', 'authority',
+  'receipt_digest',
 ]);
 const PROJECT_DIAGNOSIS_KEYS = Object.freeze([
   'diagnosis_version', 'diagnosis_id', 'project_id', 'source_tree_digest',
@@ -153,6 +165,14 @@ const ENVIRONMENT_REASONS = new Set([
 const DEPENDENCY_PREPARATION_DECISIONS = new Set(['allow_once', 'deny']);
 const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const PROJECT_PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'none']);
+const PROJECT_DEPENDENCY_PREPARATION_STATUSES = new Set([
+  'prepared',
+  'already_prepared',
+  'not_needed',
+  'unsupported',
+  'failed',
+  'timed_out',
+]);
 const MANIFEST_STATES = new Set(['absent', 'present', 'unreadable']);
 const LOCKFILES = new Set([
   'none',
@@ -320,7 +340,9 @@ function sanitizeBridge(value: unknown): BuilderCheckRunBridge {
   const source = exactRecord(value, BRIDGE_KEYS);
   if (
     typeof source.readCurrentDraftAvailableChecks !== 'function'
+    || typeof source.diagnoseCurrentDraftCheckEnvironment !== 'function'
     || typeof source.diagnoseProjectEnvironment !== 'function'
+    || typeof source.prepareProjectDependencies !== 'function'
     || typeof source.approveAndRunCurrentDraftCheck !== 'function'
     || typeof source.decideCurrentDraftDependencyPreparation !== 'function'
     || typeof source.skipCurrentDraftCheck !== 'function'
@@ -331,6 +353,8 @@ function sanitizeBridge(value: unknown): BuilderCheckRunBridge {
       source.diagnoseCurrentDraftCheckEnvironment as (request: unknown) => Promise<unknown>,
     diagnoseProjectEnvironment:
       source.diagnoseProjectEnvironment as (request: unknown) => Promise<unknown>,
+    prepareProjectDependencies:
+      source.prepareProjectDependencies as (request: unknown) => Promise<unknown>,
     approveAndRunCurrentDraftCheck: source.approveAndRunCurrentDraftCheck as (request: unknown) => Promise<unknown>,
     decideCurrentDraftDependencyPreparation:
       source.decideCurrentDraftDependencyPreparation as (request: unknown) => Promise<unknown>,
@@ -775,6 +799,69 @@ function projectDiagnosisResult(
   });
 }
 
+function safePreparationTimestamp(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw unavailable();
+  }
+  return value;
+}
+
+function safeExitCode(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 255) {
+    throw unavailable();
+  }
+  return value;
+}
+
+function projectDependencyPreparationResult(
+  value: unknown,
+  projectId: string,
+): BuilderProjectDependencyPreparationResult {
+  const source = exactRecord(value, PROJECT_DEPENDENCY_PREPARATION_RESULT_KEYS);
+  if (
+    source.result_version !== 'builder-project-dependency-preparation-result.v1'
+    || source.service_version !== 'builder-project-dependency-preparer.v1'
+    || source.operation !== 'project_dependencies_prepared'
+    || source.project_id !== projectId
+  ) throw unavailable();
+  const receipt = exactRecord(source.preparation_receipt, PROJECT_DEPENDENCY_PREPARATION_RECEIPT_KEYS);
+  if (
+    receipt.receipt_version !== 'builder-project-dependency-preparation-receipt.v1'
+    || receipt.project_id !== projectId
+    || !PROJECT_PACKAGE_MANAGERS.has(String(receipt.package_manager))
+    || typeof receipt.install_command !== 'string'
+    || receipt.install_command.length > 64
+    || !PROJECT_DEPENDENCY_PREPARATION_STATUSES.has(String(receipt.status))
+    || typeof receipt.output_digest !== 'string'
+    || !DIGEST_PATTERN.test(receipt.output_digest)
+    || typeof receipt.receipt_digest !== 'string'
+    || !DIGEST_PATTERN.test(receipt.receipt_digest)
+  ) throw unavailable();
+  const startedAtMs = safePreparationTimestamp(receipt.started_at_ms);
+  const completedAtMs = safePreparationTimestamp(receipt.completed_at_ms);
+  if (completedAtMs < startedAtMs) throw unavailable();
+  return Object.freeze({
+    result_version: 'builder-project-dependency-preparation-result.v1',
+    service_version: 'builder-project-dependency-preparer.v1',
+    operation: 'project_dependencies_prepared',
+    project_id: projectId,
+    preparation_receipt: Object.freeze({
+      receipt_version: 'builder-project-dependency-preparation-receipt.v1',
+      project_id: projectId,
+      package_manager: receipt.package_manager as BuilderProjectDependencyPreparationResult['preparation_receipt']['package_manager'],
+      install_command: receipt.install_command,
+      status: receipt.status as BuilderProjectDependencyPreparationResult['preparation_receipt']['status'],
+      exit_code: safeExitCode(receipt.exit_code),
+      started_at_ms: startedAtMs,
+      completed_at_ms: completedAtMs,
+      output_digest: receipt.output_digest,
+      receipt_digest: receipt.receipt_digest,
+    }),
+    environment_diagnosis: projectEnvironmentDiagnosis(source.environment_diagnosis, projectId),
+  });
+}
+
 function skippedResult(value: unknown, draftId: string): BuilderCheckRunSkippedResult {
   const source = exactRecord(value, SKIP_RESULT_KEYS);
   if (
@@ -829,6 +916,18 @@ export function createBuilderDesktopCheckRunPort(value: unknown): BuilderCheckRu
         const safe = projectDiagnosisRequest(request);
         return projectDiagnosisResult(await Reflect.apply(
           bridge.diagnoseProjectEnvironment,
+          bridge,
+          [safe],
+        ), safe.project_id);
+      } catch (error) {
+        throw unavailable(safeErrorCode(error));
+      }
+    },
+    async prepareProjectDependencies(request: Readonly<{ project_id: string }>) {
+      try {
+        const safe = projectDiagnosisRequest(request);
+        return projectDependencyPreparationResult(await Reflect.apply(
+          bridge.prepareProjectDependencies,
           bridge,
           [safe],
         ), safe.project_id);

@@ -4,6 +4,7 @@ const { types: utilTypes } = require('node:util');
 
 const {
   createBuilderApprovedPlanGenerationPromptDescriptor,
+  createBuilderAgentPlanMarkdownPromptDescriptor,
   createBuilderExplanationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,
   createBuilderPlanPromptDescriptor,
@@ -62,6 +63,7 @@ const EXPLANATION_CONTEXT_KEYS = Object.freeze([
   'task_id',
   'run_id',
 ]);
+const AGENT_PLAN_EXPLANATION_CONTEXT_KEYS = Object.freeze([...EXPLANATION_CONTEXT_KEYS, 'prior_agent_plan']);
 const PLAN_CONTEXT_KEYS = Object.freeze([
   'project_id',
   'source_context_result',
@@ -96,10 +98,17 @@ const EXPLANATION_REPAIR_USER_INSTRUCTION = [
   'Use exactly kind, title, summary, and explanation.',
   'Set kind to builder_conversation_explanation.',
   'Put the full user-facing answer in explanation.',
-  'If the user asked for a plan, scheme, proposal, outline, or steps, write that plan as normal text in explanation.',
+  'If the user asked for a plan, scheme, proposal, outline, or steps, write the complete implementation blueprint in explanation, not a summary or generic recommendation list.',
+  'For response_mode plan, preserve detailed Markdown covering product scope, user flows, interaction and visual behavior, architecture, data and interfaces, modules and files, phases and dependencies, acceptance criteria, tests, performance, security, accessibility, risks and rollback, deployment and maintenance, and unresolved decisions.',
+  'A plan must contain at least 8 substantive Markdown sections and at least 12 concrete action, requirement, or acceptance list items. Expand underspecified sections instead of padding or repeating text.',
   'Do not set kind to builder_project_plan_proposal or builder_code_change_operations.',
   'Do not use markdown fences or add any other fields.',
 ].join(' ');
+
+function isCompletePlanExplanation(markdown) {
+  // Markdown formatting is not evidence of plan completeness. Keep the outline floor.
+  return typeof markdown === 'string' && [...markdown].length >= 1_200;
+}
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_request_invalid: 'This project request could not be verified.',
   builder_generation_base_unavailable: 'The current project source is unavailable.',
@@ -315,6 +324,30 @@ function createJsonStringFieldOutputProjector(fieldName, emit) {
   };
 }
 
+function createPlanTextOutputProjector(emit) {
+  const projectJsonExplanation = createJsonStringFieldOutputProjector('explanation', emit);
+  let undecided = '';
+  let mode = null;
+  return async function project(deltaText) {
+    if (mode === 'markdown') {
+      await emit(deltaText);
+      return;
+    }
+    if (mode === 'json') {
+      await projectJsonExplanation(deltaText);
+      return;
+    }
+    undecided += deltaText;
+    const firstVisible = undecided.match(/\S/u)?.[0] ?? '';
+    if (firstVisible.length === 0) return;
+    mode = firstVisible === '{' ? 'json' : 'markdown';
+    const buffered = undecided;
+    undecided = '';
+    if (mode === 'json') await projectJsonExplanation(buffered);
+    else await emit(buffered);
+  };
+}
+
 function sanitizeCancelRequest(value) {
   const source = exactObject(value, ['request_id'], 'builder_generation_request_invalid');
   const requestId = ownValue(source, 'request_id', 'builder_generation_request_invalid');
@@ -336,8 +369,8 @@ function mapTransportError(error, signal) {
   if (code === 'builder_provider_transport_error') fail('builder_generation_provider_transport_error');
   if (code === 'builder_provider_structured_response_invalid'
     || code === 'builder_provider_response_too_large') fail('builder_generation_structured_response_invalid');
-  if (code === 'builder_provider_unavailable'
-    || code === 'builder_provider_request_invalid') fail('builder_generation_provider_unavailable');
+  if (code === 'builder_provider_request_invalid') fail('builder_generation_request_invalid');
+  if (code === 'builder_provider_unavailable') fail('builder_generation_provider_unavailable');
   fail('builder_generation_failed');
 }
 
@@ -390,6 +423,11 @@ function createBuilderGenerationHostAdapter(options = {}) {
     : requiredMethod(options.transport);
   const onProgress = options.onProgress === undefined ? null : requiredMethod(options.onProgress);
   const onOutputDelta = options.onOutputDelta === undefined ? null : requiredMethod(options.onOutputDelta);
+  const onOutputReset = options.onOutputReset === undefined ? null : requiredMethod(options.onOutputReset);
+  const onPlanResponseValidation = options.onPlanResponseValidation === undefined
+    ? null : requiredMethod(options.onPlanResponseValidation);
+  const onIncompletePlan = options.onIncompletePlan === undefined
+    ? null : requiredMethod(options.onIncompletePlan);
   const inFlight = new Map();
   const draftContinuationInFlight = new Map();
   const explanationInFlight = new Map();
@@ -480,6 +518,11 @@ function createBuilderGenerationHostAdapter(options = {}) {
       : GENERATION_CONTEXT_KEYS;
   }
 
+  function explanationContextKeys(context) {
+    return Object.hasOwn(context, 'prior_agent_plan')
+      ? AGENT_PLAN_EXPLANATION_CONTEXT_KEYS : EXPLANATION_CONTEXT_KEYS;
+  }
+
   async function admittedProviderContext(context, providerConfigDigest, signal, keys) {
     if (admitProviderDispatch === null) return context;
     if (signal.aborted) fail('builder_generation_cancelled');
@@ -541,6 +584,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
         base_url: config.base_url,
         model: config.model,
         credential,
+        output_format: 'json_object',
         messages: [
           { role: 'system', content: descriptor.system_instruction },
           { role: 'user', content: descriptor.user_instruction },
@@ -631,6 +675,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
         base_url: config.base_url,
         model: config.model,
         credential,
+        output_format: 'json_object',
         messages: [
           { role: 'system', content: descriptor.system_instruction },
           { role: 'user', content: descriptor.user_instruction },
@@ -697,7 +742,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
       request,
       controller.signal,
       buildExplanationContext,
-      EXPLANATION_CONTEXT_KEYS,
+      explanationContextKeys,
     );
     let descriptor;
     try {
@@ -705,32 +750,80 @@ function createBuilderGenerationHostAdapter(options = {}) {
         request,
         base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
         conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
+        ...(Object.hasOwn(context, 'prior_agent_plan') ? {
+          prior_agent_plan: ownValue(context, 'prior_agent_plan', 'builder_generation_base_unavailable'),
+        } : {}),
       });
     } catch (error) {
       mapKernelError(error);
     }
-    context = await progressContext(context, 'context_ready', EXPLANATION_CONTEXT_KEYS, controller.signal);
+    let planResponse = false;
+    try {
+      planResponse = JSON.parse(descriptor.user_instruction)?.response_mode === 'plan';
+    } catch {
+      fail('builder_generation_structured_response_invalid');
+    }
+    if (planResponse) {
+      try {
+        descriptor = createBuilderAgentPlanMarkdownPromptDescriptor({
+          request,
+          base_source_tree: ownValue(context, 'base_source_tree', 'builder_generation_base_unavailable'),
+          conversation_events: ownValue(context, 'conversation_events', 'builder_generation_base_unavailable'),
+          ...(Object.hasOwn(context, 'prior_agent_plan') ? {
+            prior_agent_plan: ownValue(context, 'prior_agent_plan', 'builder_generation_base_unavailable'),
+          } : {}),
+        });
+      } catch (error) {
+        mapKernelError(error);
+      }
+    }
+    context = await progressContext(context, 'context_ready', explanationContextKeys, controller.signal);
     if (controller.signal.aborted) fail('builder_generation_cancelled');
     const { config, credential } = providerAuthority();
     context = await progressContext(
       context,
       'provider_request_started',
-      EXPLANATION_CONTEXT_KEYS,
+      explanationContextKeys,
       controller.signal,
     );
+    let visiblePlanText = '';
+    async function preserveIncompletePlan() {
+      if (!planResponse || onIncompletePlan === null || visiblePlanText.trim().length === 0) return;
+      try {
+        const note = /\p{Script=Han}/u.test(visiblePlanText)
+          ? '> 未完成的计划：本轮未通过校验或已中断，正文已保留，不能批准执行。'
+          : '> Incomplete plan: this run failed validation or was interrupted. The text is preserved and cannot be approved.';
+        // Retained text crosses the same safety boundary as a completed answer, not approval.
+        const retained = projectBuilderExplanationResult({ request, generated_text: JSON.stringify({
+          kind: 'builder_conversation_explanation', title: 'Incomplete plan',
+          summary: 'Unfinished plan text preserved for review.',
+          explanation: `${note}\n\n${Array.from(visiblePlanText.trim()).slice(0, 11_800).join('')}`,
+        }) }, 'plan');
+        await onIncompletePlan({ context, explanation: retained.explanation });
+      } catch { /* Unsafe or unavailable partial text must not obscure the original failure. */ }
+    }
     async function requestExplanationTransport(repair = false) {
       let transportResult;
-      const projectVisibleOutput = onOutputDelta === null || repair
+      if (repair && onOutputReset !== null && !controller.signal.aborted) {
+        try { await onOutputReset({ context }); } catch { /* observation cannot fail generation */ }
+      }
+      const emitVisibleText = (deltaText) => {
+        if (planResponse && visiblePlanText.length < 48_000) {
+          visiblePlanText += deltaText.slice(0, 48_000 - visiblePlanText.length);
+        }
+        return notifyOutputDelta(context, { delta_text: deltaText }, controller.signal);
+      };
+      const projectVisibleOutput = (!planResponse && onOutputDelta === null) || (repair && onOutputReset === null)
         ? null
-        : createJsonStringFieldOutputProjector(
-          'explanation',
-          (deltaText) => notifyOutputDelta(context, { delta_text: deltaText }, controller.signal),
-        );
+        : planResponse
+          ? createPlanTextOutputProjector(emitVisibleText)
+          : createJsonStringFieldOutputProjector('explanation', emitVisibleText);
       try {
         transportResult = await Reflect.apply(transport, undefined, [{
           base_url: config.base_url,
           model: config.model,
           credential,
+          output_format: planResponse ? 'text' : 'json_object',
           messages: [
             { role: 'system', content: descriptor.system_instruction },
             { role: 'user', content: descriptor.user_instruction },
@@ -773,27 +866,62 @@ function createBuilderGenerationHostAdapter(options = {}) {
         mapTransportError(error, controller.signal);
       }
       if (controller.signal.aborted) fail('builder_generation_cancelled');
-      return sanitizeTransportResult(transportResult);
+      const text = sanitizeTransportResult(transportResult);
+      if (planResponse && visiblePlanText.length === 0) await projectVisibleOutput(text);
+      return text;
     }
     if (controller.signal.aborted) fail('builder_generation_cancelled');
-    const generatedText = await requestExplanationTransport(false);
+    let generatedText;
+    try {
+      generatedText = await requestExplanationTransport(false);
+    } catch (error) {
+      await preserveIncompletePlan();
+      throw error;
+    }
     context = await progressContext(
       context,
       'provider_response_received',
-      EXPLANATION_CONTEXT_KEYS,
+      explanationContextKeys,
       controller.signal,
     );
-    context = await progressContext(context, 'result_preparing', EXPLANATION_CONTEXT_KEYS, controller.signal);
+    context = await progressContext(context, 'result_preparing', explanationContextKeys, controller.signal);
     function buildExplanationResult(text) {
-      return projectBuilderExplanationResult({
-        request,
-        generated_text: text,
-      });
+      let accepted = false;
+      let validatedPlanText = '';
+      try {
+        const answer = projectBuilderExplanationResult(
+          { request, generated_text: text }, planResponse ? 'plan' : 'answer',
+        );
+        if (planResponse) validatedPlanText = answer.explanation;
+        if (planResponse && !isCompletePlanExplanation(answer.explanation)) {
+          fail('builder_generation_structured_response_invalid');
+        }
+        accepted = true;
+        return answer;
+      } finally {
+        if (planResponse && onPlanResponseValidation !== null) {
+          try {
+            const markdown = validatedPlanText || visiblePlanText;
+            onPlanResponseValidation(Object.freeze({
+              accepted: Number(accepted),
+              code_points: [...markdown].length,
+              utf8_bytes: Buffer.byteLength(markdown, 'utf8'),
+              outer_whitespace: Number(markdown.trim() !== markdown),
+              headings: (markdown.match(/^#{1,6}\s+\S.*$/gmu) ?? []).length,
+              list_items: (markdown.match(/^\s*(?:[-*+]\s+|\d+[.)]\s+)\S.*$/gmu) ?? []).length,
+            }));
+          } catch { /* diagnostics never alter validation */ }
+        }
+      }
     }
     try {
       const answer = buildExplanationResult(generatedText);
       return Object.freeze({ ...answer, context });
     } catch (error) {
+      if (planResponse) {
+        await preserveIncompletePlan();
+        mapKernelError(error);
+      }
       if (kernelErrorCode(error) !== 'builder_generation_structured_response_invalid') {
         mapKernelError(error);
       }
@@ -834,6 +962,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
           base_url: config.base_url,
           model: config.model,
           credential,
+          output_format: 'json_object',
           messages: [
             { role: 'system', content: descriptor.system_instruction },
             { role: 'user', content: descriptor.user_instruction },
@@ -906,6 +1035,7 @@ function createBuilderGenerationHostAdapter(options = {}) {
           base_url: config.base_url,
           model: config.model,
           credential,
+          output_format: 'json_object',
           messages: [
             { role: 'system', content: descriptor.system_instruction },
             { role: 'user', content: descriptor.user_instruction },

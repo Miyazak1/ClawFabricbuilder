@@ -111,6 +111,75 @@ test('correlates concurrent responses by id and accepts CRLF framing', async () 
   peer.close();
 });
 
+test('allows manual compaction requests through the bounded whitelist', async () => {
+  const { input, output, peer } = createPeer();
+  const sourceCommandId = `builder-context-compaction-admission:${'a'.repeat(64)}`;
+  const outgoing = nextFrame(input);
+  const compact = peer.request({
+    method: 'session/compact',
+    params: {
+      sessionId: 'builder-harness-11111111-1111-4111-8111-111111111111',
+      sourceCommandId,
+    },
+  });
+  const request = await outgoing;
+  assert.deepEqual(request, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'session/compact',
+    params: {
+      sessionId: 'builder-harness-11111111-1111-4111-8111-111111111111',
+      sourceCommandId,
+    },
+  });
+  writeFrame(output, {
+    jsonrpc: '2.0',
+    id: 1,
+    result: {
+      compactionId: 'compaction:manual-1',
+      sourceCommandId,
+      startSeq: 10,
+      summarySeq: 11,
+      endSeq: 13,
+      shadowedTokenCount: 48_000,
+    },
+  });
+  assert.deepEqual(await compact, {
+    compactionId: 'compaction:manual-1',
+    sourceCommandId,
+    startSeq: 10,
+    summarySeq: 11,
+    endSeq: 13,
+    shadowedTokenCount: 48_000,
+  });
+  peer.close();
+});
+
+test('accepts the bounded native context-usage notification as an ordered whole value', async () => {
+  const { output, notifications, peer } = createPeer();
+  writeFrame(output, {
+    jsonrpc: '2.0',
+    method: 'session.context-usage',
+    params: {
+      sessionId: 'builder-harness-11111111-1111-4111-8111-111111111111',
+      projectionSeq: 42,
+      uncachedInputTokens: 20_000,
+      outputTokens: 5_000,
+      cacheReadTokens: 180_000,
+      cacheWriteTokens: 0,
+      pressureTokens: 200_000,
+      projectedTokens: 205_000,
+      contextWindowTokens: 258_000,
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].method, 'session.context-usage');
+  assert.equal(notifications[0].params.cacheReadTokens, 180_000);
+  assert.ok(Object.isFrozen(notifications[0].params));
+  peer.close();
+});
+
 test('sends shutdown without params and rejects requests after close', async () => {
   const { input, output, peer } = createPeer();
   const outgoing = nextFrame(input);

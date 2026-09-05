@@ -126,6 +126,33 @@ function appendStart(journal) {
   }), 113);
 }
 
+test('admits native Harness context projection snapshots without a turn or step identity', () => {
+  const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract() });
+  journal.append(candidate('run_started', { mode: 'build' }), 111);
+  const projected = journal.append(candidate('context_usage_projected', {
+    harness_projection_seq: 42,
+    uncached_input_tokens: 20_000,
+    output_tokens: 5_000,
+    cache_read_tokens: 180_000,
+    cache_write_tokens: 0,
+    pressure_tokens: 200_000,
+    projected_tokens: 205_000,
+    context_window_tokens: 258_000,
+  }), 112);
+  assert.equal(projected.event_type, 'context_usage_projected');
+  assert.equal(projected.turn_id, null);
+  assert.equal(projected.step_id, null);
+  assert.equal(projected.payload.cache_read_tokens, 180_000);
+  assert.throws(() => journal.append(candidate('context_usage_projected', {
+    ...projected.payload,
+    projected_tokens: 1,
+    pressure_tokens: null,
+  }, { runtime_event_ref: 'fake:context:forged' }), 113), (error) => (
+    error instanceof BuilderProgrammingRuntimeEventError
+    && error.code === 'builder_programming_runtime_event_invalid'
+  ));
+});
+
 test('commits an immutable chained coding run with append-only assistant text', () => {
   const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract() });
   appendStart(journal);

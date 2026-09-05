@@ -32,6 +32,9 @@ const {
   createBuilderCheckWorkspaceMaterializer,
 } = require('./builder-check-workspace-materializer.cjs');
 const {
+  createBuilderDependencyEnvironmentStore,
+} = require('./builder-dependency-environment-store.cjs');
+const {
   createBuilderPackagedCheckRuntimeResolver,
 } = require('./builder-packaged-check-runtime-resolver.cjs');
 const {
@@ -41,6 +44,7 @@ const {
 const BUILDER_CHECK_RUN_RUNTIME_COMPOSITION_VERSION =
   'builder-check-run-runtime-composition.v1';
 const CHECK_WORKSPACE_DIRECTORY = 'builder-check-workspaces-v1';
+const DEPENDENCY_ENVIRONMENT_DIRECTORY = 'builder-check-dependency-environments-v1';
 const CREATE_KEYS = Object.freeze([
   'user_data_path',
   'launcher_path',
@@ -165,6 +169,7 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
     serviceMethod(clock, 'clock_version', 'builder-clock.v1', 'clear_timeout');
     const checksRoot = path.join(userDataPath, CHECK_WORKSPACE_DIRECTORY);
     fs.mkdirSync(checksRoot, { recursive: true, mode: 0o700 });
+    const dependencyEnvironmentRoot = path.join(userDataPath, DEPENDENCY_ENVIRONMENT_DIRECTORY);
     const runtimeRegistry = createBuilderCheckRuntimeRegistry();
     const runtimeResolver = createBuilderPackagedCheckRuntimeResolver({
       runtime_registry: runtimeRegistry,
@@ -172,8 +177,12 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
       worker_path: workerPath,
       clock,
     });
+    const dependencyEnvironmentStore = createBuilderDependencyEnvironmentStore({
+      environment_root: dependencyEnvironmentRoot,
+    });
     const workspaceMaterializer = createBuilderCheckWorkspaceMaterializer({
       checks_root: checksRoot,
+      dependency_environment_store: dependencyEnvironmentStore,
     });
     const toolchainProbeService = createBuilderRuntimeToolchainProbe({
       spawn_process: toolchainProbeSpawnProcess,
@@ -242,6 +251,7 @@ function createBuilderCheckRunRuntimeComposition(rawOptions) {
 module.exports = Object.freeze({
   BUILDER_CHECK_RUN_RUNTIME_COMPOSITION_VERSION,
   CHECK_WORKSPACE_DIRECTORY,
+  DEPENDENCY_ENVIRONMENT_DIRECTORY,
   BuilderCheckRunRuntimeCompositionError,
   createBuilderCheckRunRuntimeComposition,
 });

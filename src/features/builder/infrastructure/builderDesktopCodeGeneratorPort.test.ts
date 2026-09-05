@@ -17,11 +17,77 @@ import {
 } from '../../../test/builderV2Fixtures';
 
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174001';
+const ADMISSION_ID = `builder-context-compaction-admission:${'a'.repeat(64)}`;
+const PROJECTION_DIGEST = `sha256:${'b'.repeat(64)}`;
+
+function compactResult(overrides: Record<string, unknown> = {}) {
+  return {
+    result_version: 'builder-context-compaction-execution-result.v1',
+    operation: 'manual_compaction_completed',
+    status: 'compaction_completed',
+    admission_id: ADMISSION_ID,
+    conversation_compaction_projection_digest: PROJECTION_DIGEST,
+    compaction_id: 'deepseek-compaction:manual-1',
+    start_seq: 2,
+    summary_seq: 3,
+    end_seq: 4,
+    shadowed_token_count: 12000,
+    authority: {
+      bridge_authority: 'main_context_compaction_execution_bridge_v1',
+      admission_authority: 'verified_main_context_compaction_admission_contract_v1',
+      harness_authority: 'manual_compactNow_invoked_after_admission',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: 'harness_owned_compaction_only',
+      tool_dispatch: 'not_performed_by_bridge',
+      source_write: 'not_performed_by_bridge',
+      sqlite_write: 'not_performed_by_bridge',
+      permission_grant_authority: 'not_present',
+      revision_authority: 'not_present',
+      summary_materialization: 'not_performed_by_bridge',
+    },
+    ...overrides,
+  };
+}
+
+function bridge(overrides: Record<string, unknown> = {}) {
+  return {
+    submit: async () => null,
+    generateApprovedPlan: async () => null,
+    continueDraft: async () => null,
+    proposePlan: async () => null,
+    preparePlanSourceReadApproval: async () => null,
+    approvePlanSourceRead: async () => null,
+    prepareCurrentProjectWriteApproval: async () => null,
+    approveCurrentProjectWrite: async () => null,
+    generate: async () => null,
+    retry: async () => null,
+    answer: async () => null,
+    answerPlan: async () => null,
+    answerDraft: async () => null,
+    restoreDraft: async () => null,
+    restoreRevisionAsDraft: async () => null,
+    restorePreviousCheckpointAsDraft: async () => null,
+    rejectDraft: async () => null,
+    cancel: async () => null,
+    steer: async () => null,
+    queueFollowup: async () => null,
+    availability: async () => null,
+    subscribeStarted: () => () => undefined,
+    subscribeOutput: () => () => undefined,
+    ...overrides,
+  };
+}
 
 describe('createBuilderDesktopCodeGeneratorPort', () => {
   it('forwards one v2 request and unwraps a fresh success envelope', async () => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const draft = await createGenerationDraft(request);
+    const resumeInterruptedRun = vi.fn(async () => ({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: draft,
+    }));
     const generate = vi.fn(async (request: unknown) => {
       void request;
       return {
@@ -40,8 +106,10 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       prepareCurrentProjectWriteApproval: async () => null,
       approveCurrentProjectWrite: async () => null,
       generate,
+      resumeInterruptedRun,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -66,6 +134,66 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(result).toEqual(draft);
     expect(result).not.toBe(draft);
     expect(Object.isFrozen(result)).toBe(true);
+    await port.resumeInterruptedRun!({ task_address_id: TASK_ADDRESS_ID, run_id: RUN_ID });
+    expect(resumeInterruptedRun).toHaveBeenCalledWith({ task_address_id: TASK_ADDRESS_ID, run_id: RUN_ID });
+    expect(generate).toHaveBeenCalledOnce();
+    await expect(port.resumeInterruptedRun!({ task_address_id: '../forged', run_id: RUN_ID })).rejects.toThrow();
+    expect(resumeInterruptedRun).toHaveBeenCalledOnce();
+  });
+
+  it('forwards manual context compaction with only current task identity and validates Main result authority', async () => {
+    const manualCompactContext = vi.fn(async (request: unknown) => {
+      expect(request).toEqual({
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        task_address_id: TASK_ADDRESS_ID,
+      });
+      return {
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: compactResult(),
+      };
+    });
+    const port = createBuilderDesktopCodeGeneratorPort(bridge({ manualCompactContext }));
+
+    const result = await port.manualCompactContext?.({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      task_address_id: TASK_ADDRESS_ID,
+      instruction: 'try to smuggle renderer text',
+      source_tree: { secret: true },
+    } as never);
+
+    expect(manualCompactContext).toHaveBeenCalledOnce();
+    expect(JSON.stringify(manualCompactContext.mock.calls[0]![0])).
+      not.toMatch(/instruction|source_tree|secret|provider|compactNow/iu);
+    expect(result).toEqual(compactResult());
+    expect(result).not.toBe(compactResult());
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result?.authority)).toBe(true);
+
+    expect(() => port.manualCompactContext?.({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      task_address_id: '../forged',
+    })).toThrow(BuilderDesktopCodeGeneratorPortError);
+    expect(manualCompactContext).toHaveBeenCalledOnce();
+
+    manualCompactContext.mockResolvedValueOnce({
+      version: 'builder-generation-ipc-result.v1',
+      ok: true,
+      result: compactResult({
+        authority: {
+          ...compactResult().authority,
+          renderer_authority: 'renderer_owned',
+        },
+      }),
+    });
+    await expect(port.manualCompactContext?.({
+      project_id: PROJECT_ID,
+      conversation_id: CONVERSATION_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    })).rejects.toThrow(BuilderDesktopCodeGeneratorPortError);
   });
 
   it('forwards the current instruction and Task Address for semantic routing', async () => {
@@ -112,6 +240,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -176,6 +305,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -232,6 +362,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -300,6 +431,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -347,6 +479,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       retry: async () => null,
       answer: async () => null,
       answerDraft,
+      answerPlan: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
       restorePreviousCheckpointAsDraft: async () => null,
@@ -432,6 +565,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -518,6 +652,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -581,6 +716,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -630,6 +766,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -684,6 +821,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -725,6 +863,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -787,6 +926,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -828,13 +968,14 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       retain_text_bytes: 0,
     });
     listeners[0]!({
-      event_version: 'builder-generation-activity.v1',
+      event_version: 'builder-generation-activity.v2',
       request_id: request.request_digest,
       project_id: PROJECT_ID,
       conversation_id: conversationId,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
       task_id: null,
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+      activity_kind: 'reasoning',
       activity_text: '正在思考',
     });
     listeners[0]!({
@@ -847,6 +988,17 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
       display_delta_text: '',
       provider: 'private',
+    });
+    listeners[0]!({
+      event_version: 'builder-generation-activity.v2',
+      request_id: request.request_digest,
+      project_id: PROJECT_ID,
+      conversation_id: conversationId,
+      turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
+      task_id: null,
+      run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+      activity_kind: 'provider_internal',
+      activity_text: 'private',
     });
     unsubscribe();
     listeners[0]!({
@@ -881,13 +1033,14 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       retain_text_bytes: 0,
     });
     expect(listener).toHaveBeenNthCalledWith(3, {
-      event_version: 'builder-generation-activity.v1',
+      event_version: 'builder-generation-activity.v2',
       request_id: request.request_digest,
       project_id: PROJECT_ID,
       conversation_id: conversationId,
       turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174001',
       task_id: null,
       run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174003',
+      activity_kind: 'reasoning',
       activity_text: '正在思考',
     });
     expect(listener).toHaveBeenCalledTimes(3);
@@ -918,6 +1071,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -972,6 +1126,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       }),
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -997,6 +1152,11 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       'builder_generation_workspace_changed',
       true,
       'The project changed while AI was working. Review it and try again.',
+    ],
+    [
+      'builder_generation_source_context_unavailable',
+      true,
+      'The previous coding session could not be resumed. Start a recovered run explicitly.',
     ],
     [
       'builder_generation_workspace_guard_denied',
@@ -1026,6 +1186,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       }),
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1081,6 +1242,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1126,6 +1288,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft,
       restoreRevisionAsDraft: async () => null,
@@ -1171,6 +1334,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft,
@@ -1230,6 +1394,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1279,6 +1444,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1299,7 +1465,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
-  it('forwards only request id when cancelling active AI work', async () => {
+  it.each([false, true])('forwards request id and only explicit pause intent for control (pause=%s)', async (pause) => {
     const request = await createBuilderGenerationRequest('Make a timer.');
     const cancel = vi.fn(async (request: unknown) => ({
       request_id: (request as { request_id: string }).request_id,
@@ -1317,6 +1483,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1330,9 +1497,10 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       subscribeOutput: () => () => undefined,
     });
 
-    const result = await port.cancel({ request_id: request.request_digest });
+    const control = { request_id: request.request_digest, ...(pause ? { pause: true as const } : {}) };
+    const result = await port.cancel(control);
 
-    expect(cancel).toHaveBeenCalledExactlyOnceWith({ request_id: request.request_digest });
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(control);
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');
     expect(result).toEqual({ request_id: request.request_digest, cancelled: true });
@@ -1357,6 +1525,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1410,6 +1579,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1456,6 +1626,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => ({
         version: 'builder-generation-ipc-result.v1',
@@ -1506,6 +1677,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1541,6 +1713,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
+      answerPlan: async (): Promise<unknown> => null,
       answerDraft: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
       restoreRevisionAsDraft: async (): Promise<unknown> => null,
@@ -1560,6 +1733,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       submit: async (): Promise<unknown> => null,
       retry: async (): Promise<unknown> => null,
       answer: async (): Promise<unknown> => null,
+      answerPlan: async () => null,
       answerDraft: async (): Promise<unknown> => null,
       restoreDraft: async (): Promise<unknown> => null,
       restoreRevisionAsDraft: async (): Promise<unknown> => null,
@@ -1601,6 +1775,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
         generate: async (): Promise<unknown> => response,
         retry: async (): Promise<unknown> => response,
         answer: async (): Promise<unknown> => response,
+        answerPlan: async () => null,
         answerDraft: async (): Promise<unknown> => response,
         restoreDraft: async (): Promise<unknown> => null,
         restoreRevisionAsDraft: async (): Promise<unknown> => null,
@@ -1633,6 +1808,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1669,6 +1845,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,
@@ -1706,6 +1883,7 @@ describe('createBuilderDesktopCodeGeneratorPort', () => {
       generate: async () => null,
       retry: async () => null,
       answer: async () => null,
+      answerPlan: async () => null,
       answerDraft: async () => null,
       restoreDraft: async () => null,
       restoreRevisionAsDraft: async () => null,

@@ -22,7 +22,8 @@ const {
 } = require('../electron/builder-product-metadata-database.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200';
+const CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 const OWNER_ID = 'builder-user:123e4567-e89b-42d3-a456-426614174201';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174202';
 const SESSION_UUID = '123e4567-e89b-42d3-a456-426614174301';

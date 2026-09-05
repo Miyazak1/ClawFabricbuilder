@@ -193,11 +193,41 @@ function projectDiagnosisResult() {
   };
 }
 
+function projectDependencyPreparationResult() {
+  return {
+    result_version: 'builder-project-dependency-preparation-result.v1',
+    service_version: 'builder-project-dependency-preparer.v1',
+    operation: 'project_dependencies_prepared',
+    project_id: PROJECT_ID,
+    preparation_receipt: {
+      receipt_version: 'builder-project-dependency-preparation-receipt.v1',
+      project_id: PROJECT_ID,
+      package_manager: 'npm',
+      install_command: 'npm ci',
+      status: 'prepared',
+      exit_code: 0,
+      started_at_ms: 41,
+      completed_at_ms: 52,
+      output_digest: `sha256:${'7'.repeat(64)}`,
+      authority: { preparation_authority: 'main_owned_project_dependency_preparation_v1' },
+      receipt_digest: `sha256:${'8'.repeat(64)}`,
+    },
+    environment_diagnosis: {
+      ...projectDiagnosisResult().environment_diagnosis,
+      project_dependency_state: 'install_present',
+      readiness_state: 'ready',
+      primary_action: 'none',
+      safe_summary: 'The project environment appears ready.',
+    },
+  };
+}
+
 function bridge(overrides = {}) {
   return {
     readCurrentDraftAvailableChecks: vi.fn(async () => available()),
     diagnoseCurrentDraftCheckEnvironment: vi.fn(async () => diagnosisResult()),
     diagnoseProjectEnvironment: vi.fn(async () => projectDiagnosisResult()),
+    prepareProjectDependencies: vi.fn(async () => projectDependencyPreparationResult()),
     approveAndRunCurrentDraftCheck: vi.fn(async () => completed()),
     decideCurrentDraftDependencyPreparation: vi.fn(async () => completed()),
     skipCurrentDraftCheck: vi.fn(async () => ({
@@ -224,6 +254,9 @@ describe('createBuilderDesktopCheckRunPort', () => {
     const projectDiagnosed = await port.diagnoseProjectEnvironment({
       project_id: PROJECT_ID,
     });
+    const projectPrepared = await port.prepareProjectDependencies({
+      project_id: PROJECT_ID,
+    });
     const run = await port.approveAndRunCurrentDraftCheck({
       draft_id: DRAFT_ID,
       command_profile_id: PROFILE_ID,
@@ -240,6 +273,9 @@ describe('createBuilderDesktopCheckRunPort', () => {
       command_profile_id: PROFILE_ID,
     });
     expect(source.diagnoseProjectEnvironment).toHaveBeenCalledExactlyOnceWith({
+      project_id: PROJECT_ID,
+    });
+    expect(source.prepareProjectDependencies).toHaveBeenCalledExactlyOnceWith({
       project_id: PROJECT_ID,
     });
     expect(source.approveAndRunCurrentDraftCheck).toHaveBeenCalledExactlyOnceWith({
@@ -260,6 +296,9 @@ describe('createBuilderDesktopCheckRunPort', () => {
     expect(projectDiagnosed.environment_diagnosis.primary_action).toBe('show_project_dependency_setup');
     expect(projectDiagnosed.environment_diagnosis.toolchains.node.state).toBe('visible');
     expect(projectDiagnosed.environment_diagnosis).not.toHaveProperty('authority');
+    expect(projectPrepared.environment_diagnosis.readiness_state).toBe('ready');
+    expect(projectPrepared.preparation_receipt.status).toBe('prepared');
+    expect(projectPrepared.preparation_receipt).not.toHaveProperty('authority');
     expect(run.check_run_status_projection.status).toBe('passed');
     expect(prepared.check_run_status_projection.status).toBe('passed');
     expect(run.check_run_status_projection).not.toHaveProperty('authority');

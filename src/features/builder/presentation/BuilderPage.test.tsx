@@ -74,6 +74,77 @@ const SIDE_WORKSPACE_APP_DIGEST = `sha256:${'b'.repeat(64)}`;
 const SIDE_WORKSPACE_STYLE_DIGEST = `sha256:${'c'.repeat(64)}`;
 const SIDE_WORKSPACE_ADD_DIGEST = `sha256:${'d'.repeat(64)}`;
 const SIDE_WORKSPACE_TOOL_DIGEST = `sha256:${'e'.repeat(64)}`;
+const LIVE_PREVIEW_CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174000';
+
+function projectDependencyMissingDiagnosis() {
+  return {
+    project_id: PROJECT_ID,
+    status: 'ready' as const,
+    diagnosis: {
+      diagnosis_version: 'builder-project-environment-diagnosis.v1' as const,
+      diagnosis_id: `builder-project-environment-diagnosis:${'7'.repeat(64)}`,
+      project_id: PROJECT_ID,
+      source_tree_digest: `sha256:${'8'.repeat(64)}`,
+      package_manager: 'npm' as const,
+      package_manifest: 'present' as const,
+      dependency_manifest: 'present' as const,
+      lockfile: 'none' as const,
+      project_dependency_state: 'install_missing' as const,
+      toolchains: {
+        node: { state: 'visible' as const, version: '22.17.0' },
+        npm: { state: 'visible' as const, version: '10.9.2' },
+        pnpm: { state: 'missing' as const, version: null },
+        yarn: { state: 'missing' as const, version: null },
+        git: { state: 'visible' as const, version: '2.50.0' },
+      },
+      readiness_state: 'project_dependencies_missing' as const,
+      primary_action: 'show_project_dependency_setup' as const,
+      safe_summary: 'This project declares dependencies, but the project folder does not have installed dependencies.',
+      diagnosed_at_ms: 1234,
+      diagnosis_digest: `sha256:${'9'.repeat(64)}`,
+    },
+  };
+}
+
+function livePreviewRuntimeLaunchProjection(
+  overrides: {
+    preview_kind?: 'live_static_web' | 'live_dev_server_web';
+    command_profile?: 'none' | 'main_owned_dev_server_profile';
+    user_approval?: 'not_required' | 'required' | 'approved_once' | 'denied_or_expired';
+    command_execution?: 'not_applicable' | 'approval_required' | 'started' | 'stopped' | 'failed';
+    sandbox_policy?: 'static_preview_no_command_execution' | 'dev_server_only_no_dependency_install';
+  } = {},
+) {
+  return {
+    ...livePreviewRuntimeLaunchProjectionBase(),
+    ...overrides,
+  };
+}
+
+function livePreviewRuntimeLaunchProjectionBase() {
+  return {
+    projection_version: 'builder-project-runtime-launch-projection.v1' as const,
+    project_id: PROJECT_ID,
+    conversation_id: LIVE_PREVIEW_CONVERSATION_ID,
+    preview_kind: 'live_static_web' as const,
+    source_status: 'main_owned_verified' as const,
+    command_profile: 'none' as const,
+    user_approval: 'not_required' as const,
+    command_execution: 'not_applicable' as const,
+    dependency_preparation: 'not_allowed' as const,
+    package_install: 'not_allowed' as const,
+    sandbox_policy: 'static_preview_no_command_execution' as const,
+    provider_dispatch: false as const,
+    tool_dispatch: false as const,
+    project_workspace_write: 'not_granted_by_preview' as const,
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1' as const,
+      renderer_authority: 'status_projection_only' as const,
+      path_disclosure: 'not_serialized' as const,
+    },
+  };
+}
 
 type SideWorkspaceFileFixture = Readonly<{
   contentDigest: string;
@@ -1221,7 +1292,7 @@ async function candidateProgressActivity() {
   return controller.load(PROJECT_ID, TASK_ADDRESS_ID);
 }
 
-async function failedRunActivity() {
+async function failedRunActivity(terminalStatus: 'failed' | 'interrupted' = 'failed') {
   const progressStages = [
     'context_ready',
     'provider_request_started',
@@ -1233,11 +1304,11 @@ async function failedRunActivity() {
     conversation: {
       conversation_id: CONVERSATION_ID,
       created_at_ms: 1234,
-      head_sequence: 7,
+      head_sequence: terminalStatus === 'interrupted' ? 8 : 7,
       recorded_active_turn_id: null,
       window: {
         first_sequence: 1,
-        last_sequence: 7,
+        last_sequence: terminalStatus === 'interrupted' ? 8 : 7,
         has_earlier: false,
       },
       items: [
@@ -1274,15 +1345,19 @@ async function failedRunActivity() {
           stage,
           recorded_state: 'recorded' as const,
         })),
+        ...(terminalStatus === 'interrupted' ? [{
+          item_kind: 'run_control_requested', sequence: 6, turn_id: TURN_ID,
+          run_id: RUN_ID, action: 'interrupt',
+        }] : []),
         {
           item_kind: 'run_completed',
-          sequence: 6,
+          sequence: terminalStatus === 'interrupted' ? 7 : 6,
           turn_id: TURN_ID,
           run_id: RUN_ID,
-          terminal_status: 'failed',
+          terminal_status: terminalStatus,
           result_kind: 'failure',
-          failure_phase: 'provider_response_received',
-          assistant_message: {
+          failure_phase: terminalStatus === 'interrupted' ? 'not_applicable' : 'provider_response_received',
+          assistant_message: terminalStatus === 'interrupted' ? null : {
             message_id: 'builder-message:223e4567-e89b-42d3-a456-426614174000',
             text: 'The draft could not be prepared for review.',
           },
@@ -1290,10 +1365,10 @@ async function failedRunActivity() {
         },
         {
           item_kind: 'turn_completed',
-          sequence: 7,
+          sequence: terminalStatus === 'interrupted' ? 8 : 7,
           turn_id: TURN_ID,
           run_id: RUN_ID,
-          outcome: 'failed',
+          outcome: terminalStatus,
         },
       ],
     },
@@ -2299,8 +2374,8 @@ describe('BuilderPage v2', () => {
     expect(canStopBuilderAgentTask({ ...baseTask, state: 'waiting_permission' })).toBe(true);
   });
 
-  it('renders projectless Agent chat from the declarative Workbench projection', async () => {
-    const { fresh } = await snapshots();
+  it.each(['fresh', 'draftReady'] as const)('renders projectless Agent chat and planning with retained %s state', async (selection) => {
+    const projectSnapshots = await snapshots();
     const agentId = 'builder-agent:123e4567-e89b-42d3-a456-426614174000';
     const agentController = createBuilderConversationController(taskStreamPort(async () => ({
       stream_version: 'builder-task-stream-read-result.v1',
@@ -2318,12 +2393,14 @@ describe('BuilderPage v2', () => {
     const conversationSnapshot = await agentController.load(null, null, agentId);
     const onUpdateMessageState = vi.fn();
     const onDecideTaskProposal = vi.fn();
+    const onDecideAgentPlan = vi.fn();
     const onCreateProjectForTaskProposal = vi.fn();
     const onOpenTaskProposal = vi.fn();
     const onControlAgentTask = vi.fn();
     const onArchiveAgentTask = vi.fn();
     const onRenameAgentTask = vi.fn();
     const onSelectComposerMode = vi.fn();
+    const onSelectPlanMode = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
@@ -2354,6 +2431,35 @@ describe('BuilderPage v2', () => {
                   actions: [],
                   task_ref: null,
                   created_at_ms: 1,
+                },
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174006',
+                  thread_id: 'builder-workbench-thread:123e4567-e89b-42d3-a456-426614174000',
+                  presentation_family: 'conversation',
+                  content_type: 'builder.chat.turn_status.v1',
+                  source_label: 'Agent',
+                  fallback_text: '已停止，本次请求未完成。',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'plain_text', body_text: '已停止，本次请求未完成。', metadata: [],
+                  },
+                  attention: 'normal', trust_label: 'local',
+                  state: { unread: false, acknowledged: false, archived: false },
+                  actions: [], task_ref: null, created_at_ms: 2,
+                },
+                {
+                  message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174007',
+                  thread_id: 'builder-workbench-thread:123e4567-e89b-42d3-a456-426614174000',
+                  presentation_family: 'conversation',
+                  content_type: 'builder.chat.user_message.v1',
+                  source_label: 'You', fallback_text: 'Try again.',
+                  presentation: {
+                    presentation_version: 'builder-workbench-declarative-presentation.v1',
+                    body_kind: 'plain_text', body_text: 'Try again.', metadata: [],
+                  },
+                  attention: 'normal', trust_label: 'local',
+                  state: { unread: false, acknowledged: false, archived: false },
+                  actions: [], task_ref: null, created_at_ms: 3,
                 },
                 {
                   message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002',
@@ -2480,6 +2586,24 @@ describe('BuilderPage v2', () => {
                 source_write: false,
               },
             },
+            agent_plan: {
+              status: 'ready',
+              artifact: {
+                artifact_version: 'builder-agent-plan-artifact.v1',
+                content_digest: `sha256:${'d'.repeat(64)}`,
+                agent_plan_id: 'builder-agent-plan:123e4567-e89b-42d3-a456-426614174030',
+                agent_id: agentId,
+                source_conversation_id: 'builder-agent-conversation:123e4567-e89b-42d3-a456-426614174000',
+                source_turn_id: 'builder-turn:123e4567-e89b-42d3-a456-426614174031',
+                source_run_id: 'builder-run:123e4567-e89b-42d3-a456-426614174032',
+                source_message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002',
+                version: 1,
+                markdown: '# Full plan',
+                state: 'proposed',
+                created_at_ms: 5,
+              },
+              decision: null,
+            },
             inbox: {
               unread_count: 1,
               action_required_count: 0,
@@ -2505,9 +2629,11 @@ describe('BuilderPage v2', () => {
         onArchiveAgentTask={onArchiveAgentTask}
         onControlAgentTask={onControlAgentTask}
         onDecideAgentTaskProposal={onDecideTaskProposal}
+        onDecideAgentPlan={onDecideAgentPlan}
         onOpenAgentTaskProposal={onOpenTaskProposal}
         onRenameAgentTask={onRenameAgentTask}
         onSelectComposerMode={onSelectComposerMode}
+        onSelectPlanMode={onSelectPlanMode}
         onUpdateAgentWorkbenchMessageState={onUpdateMessageState}
         projectCatalogSnapshot={{
           status: 'ready',
@@ -2524,11 +2650,33 @@ describe('BuilderPage v2', () => {
           }],
           workspaceProjects: [],
         }}
-        snapshot={fresh}
+        snapshot={projectSnapshots[selection]}
+        surfaceKind="workbench"
       />,
     );
 
     expect(container.querySelector('[data-builder-agent-workbench-stream="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-agent-plan-decision="true"]')?.textContent)
+      .toContain('Plan version 1');
+    const planReview = container.querySelector('[data-builder-agent-plan-decision="true"]')!;
+    const planMessage = container.querySelector('[data-builder-workbench-message="builder-message:123e4567-e89b-42d3-a456-426614174002"]');
+    expect(planMessage?.contains(planReview)).toBe(true);
+    const planBody = planMessage?.querySelector('.cf-builder-agent-workbench-message-body');
+    expect(planBody).not.toBeNull();
+    expect(planBody!.compareDocumentPosition(planReview) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    const approvePlan = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Approve plan');
+    act(() => approvePlan?.click());
+    expect(onDecideAgentPlan).toHaveBeenCalledWith(
+      'builder-agent-plan:123e4567-e89b-42d3-a456-426614174030',
+      `sha256:${'d'.repeat(64)}`,
+      'approved',
+    );
+    const revisePlan = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Revise');
+    act(() => revisePlan?.click());
+    expect(onSelectPlanMode).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain('# Full plan');
     expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-composer-approval-menu-button="true"]')).toBeNull();
     click(container, '[data-builder-composer-add-menu-button="true"]');
@@ -2546,7 +2694,13 @@ describe('BuilderPage v2', () => {
     expect(container.textContent).toContain('Builder');
     expect(container.textContent).toContain('Can we discuss the release?');
     expect(container.querySelector('a[href="https://example.com"]')?.getAttribute('target')).toBe('_blank');
+    const notice = container.querySelector('[data-builder-workbench-content-type="builder.chat.turn_status.v1"]');
+    expect(notice?.querySelector('[role="note"]')?.textContent).toBe('已停止，本次请求未完成。');
+    expect(notice?.previousElementSibling?.textContent).toContain('Can we discuss the release?');
+    expect(notice?.nextElementSibling?.textContent).toContain('Try again.');
     click(container, '[data-builder-agent-workbench-filter="conversation"]');
+    expect(container.querySelectorAll('[data-builder-workbench-content-type="builder.chat.turn_status.v1"]')).toHaveLength(1);
+    expect(container.textContent).toContain('已停止，本次请求未完成。');
     expect(container.textContent).toContain('Can we discuss the release?');
     expect(container.textContent).toContain('Yes. Review the release notes.');
     expect(container.textContent).not.toContain('Build a compact focus timer.');
@@ -2702,10 +2856,8 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-activity="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-result-flow="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-composer-status="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('[data-builder-composer-context-bar="true"]'))
-      .not.toBeNull();
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('.cf-builder-composer-footer'))
-      .toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-context-bar="true"]')).toBeNull();
     expect(container.textContent).not.toContain('Start from an idea');
     expect(container.textContent).not.toContain('Select a project to see activity.');
     expect(container.textContent).not.toContain('No activity yet.');
@@ -2720,87 +2872,50 @@ describe('BuilderPage v2', () => {
     expect(onSubmitInstruction).toHaveBeenCalledOnce();
   });
 
-  it('shows a composer project picker with saved projects and New project', async () => {
+  it('keeps project selection out of the composer surface', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
-    const onOpenProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
-        onOpenProject={onOpenProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot()}
         snapshot={fresh}
       />,
     );
 
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('Choose project');
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('Chat only until you choose a folder');
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.closest('[data-builder-composer-context-bar="true"]'))
-      .not.toBeNull();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-composer-context-bar="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
-
-    click(container, '[data-builder-workspace-chip="true"]');
-
-    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
-    expect(picker).not.toBeNull();
-    expect(picker?.querySelector('[data-builder-workspace-section="saved"]')?.textContent)
-      .toContain('Saved projects');
-    expect(picker?.textContent).toContain('Saved dashboard');
-    expect(picker?.textContent).toContain('New project');
-    expect(picker?.querySelector('[data-builder-workspace-search="true"]')).not.toBeNull();
-
-    click(container, `[data-builder-workspace-project="${PROJECT_ID}"]`);
-
-    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
-    expect(onCreateProject).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
-    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Chat only until you choose a folder');
   });
 
-  it('passes current workspace clearing through the composer context bar', async () => {
+  it('keeps workspace clearing out of the composer surface', async () => {
     const { saved } = await snapshots();
-    const onClearWorkspaceSelection = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Keep discussing."
-        onClearWorkspaceSelection={onClearWorkspaceSelection}
         snapshot={saved}
       />,
     );
 
     const clear = container.querySelector('[data-builder-clear-workspace-selection="true"]');
-    expect(clear).not.toBeNull();
-    expect(clear?.closest('[data-builder-composer-context-bar="true"]')).not.toBeNull();
-
-    click(container, '[data-builder-clear-workspace-selection="true"]');
-
-    expect(onClearWorkspaceSelection).toHaveBeenCalledOnce();
+    expect(clear).toBeNull();
+    expect(container.querySelector('[data-builder-composer-context-bar="true"]')).toBeNull();
   });
 
-  it('keeps the current source folder visible in the project picker before first save', async () => {
+  it('keeps the current source folder visible outside the composer before first save', async () => {
     const working = await workingProjectSnapshot();
-    const onCreateProject = vi.fn();
-    const onOpenProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
-        onOpenProject={onOpenProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
         snapshot={working}
       />,
     );
 
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('Unsaved dashboard');
-    expect(container.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('site-source');
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     const workspace = container.querySelector('[data-builder-chat-workspace="true"]');
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('false');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
@@ -2822,31 +2937,18 @@ describe('BuilderPage v2', () => {
       .toContain('Unsaved dashboard');
     expect(workspace?.getAttribute('data-builder-artifact-sidebar-visible')).toBe('true');
 
-    click(container, '[data-builder-workspace-chip="true"]');
-
-    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
-    expect(picker).not.toBeNull();
-    expect(picker?.querySelector('[data-builder-workspace-section="current"]')?.textContent)
-      .toContain('Current project');
-    expect(picker?.querySelector('[data-builder-workspace-current-project="true"]')?.textContent)
-      .toContain('Draft workspace - Source folder: site-source');
-    expect(picker?.textContent).not.toContain('No saved projects yet.');
-    expect(picker?.textContent).toContain('New project');
-    expect(onOpenProject).not.toHaveBeenCalled();
-    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-artifact-permissions="true"]')?.textContent)
+      .toContain('Unsaved dashboard');
   });
 
-  it('shows restart-restored bound workspaces in the composer project picker before first save', async () => {
+  it('keeps restart-restored bound workspaces out of the composer picker surface', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
-    const onOpenProject = vi.fn();
     const workspaceOnlyProjectId = 'builder-project:22222222-2222-4222-8222-222222222222';
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
-        onOpenProject={onOpenProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot('empty', [{
           project_id: workspaceOnlyProjectId,
           title: 'Unsaved dashboard',
@@ -2859,139 +2961,77 @@ describe('BuilderPage v2', () => {
       />,
     );
 
-    click(container, '[data-builder-workspace-chip="true"]');
-
-    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
-    expect(picker?.querySelector('[data-builder-workspace-section="in-progress"]')?.textContent)
-      .toContain('In progress');
-    expect(picker?.textContent).toContain('Unsaved dashboard');
-    expect(picker?.textContent).toContain('Draft workspace - Source folder: site-source');
-    expect(picker?.textContent).not.toContain('No projects yet.');
-
-    click(container, `[data-builder-workspace-bound-project="${workspaceOnlyProjectId}"]`);
-
-    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(workspaceOnlyProjectId);
-    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(container.textContent).not.toContain('Draft workspace - Source folder: site-source');
   });
 
-  it('keeps New project available when search has no matching project', async () => {
+  it('does not expose project search or creation from the composer', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot()}
         snapshot={fresh}
       />,
     );
 
-    click(container, '[data-builder-workspace-chip="true"]');
-    changeInput(container, '[data-builder-workspace-search="true"]', 'no matching project');
-
-    const picker = container.querySelector('[data-builder-workspace-picker="true"]');
-    expect(picker?.textContent).toContain('No matching projects.');
-    expect(picker?.textContent).toContain('New project');
-    expect(picker?.textContent).not.toContain('Saved dashboard');
-
-    click(container, '[data-builder-workspace-new-project="true"]');
-
-    expect(container.querySelector('[data-builder-new-project-panel="true"]')).not.toBeNull();
-    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-search="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-new-project="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-new-project-panel="true"]')).toBeNull();
   });
 
-  it('opens the composer project picker when build needs a workspace', async () => {
+  it('keeps workspace gating out of the composer UI', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
         snapshot={fresh}
-        workspacePickerRequest={1}
       />,
     );
 
     const picker = container.querySelector('[data-builder-workspace-picker="true"]');
-    expect(picker).not.toBeNull();
-    expect(picker?.textContent).toContain('Choose or create a project before I build.');
-    expect(picker?.textContent).toContain('Add a source folder so Builder knows where it can work.');
-    expect(picker?.textContent).toContain('No projects yet.');
-
-    click(container, '[data-builder-workspace-new-project="true"]');
-
-    const newProjectPanel = container.querySelector('[data-builder-new-project-panel="true"]');
-    expect(newProjectPanel).not.toBeNull();
-    expect(newProjectPanel?.textContent).toContain('Project name');
-    expect(newProjectPanel?.textContent).toContain('Source folders');
-    expect(newProjectPanel?.textContent).toContain('No source folder selected.');
-    expect(newProjectPanel?.textContent)
-      .toContain('Choose an empty local folder that Builder can read and edit for this project.');
-    const title = container.querySelector<HTMLInputElement>('[data-builder-new-project-title="true"]');
-    expect(title?.value).toBe('New project');
-
-    click(container, '[data-builder-add-source-folder="true"]');
-
-    expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('New project');
-    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
+    expect(picker).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-new-project="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-new-project-panel="true"]')).toBeNull();
   });
 
-  it('opens the source-folder new project panel from an external project command', async () => {
+  it('does not project an external project command into the composer', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction=""
-        onCreateProject={onCreateProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
         snapshot={fresh}
-        workspaceNewProjectRequest={1}
       />,
     );
 
     const panel = container.querySelector('[data-builder-new-project-panel="true"]');
-    expect(panel).not.toBeNull();
-    expect(panel?.textContent).toContain('Project name');
-    expect(panel?.textContent).toContain('Source folders');
-    expect(panel?.textContent).not.toContain('Choose or create a project before I build.');
-    expect(onCreateProject).not.toHaveBeenCalled();
-
-    click(container, '[data-builder-add-source-folder="true"]');
-
-    expect(onCreateProject).toHaveBeenCalledExactlyOnceWith('New project');
+    expect(panel).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
   });
 
-  it('explains a dismissed build workspace picker without sending work', async () => {
+  it('keeps gated build text editable without mounting a workspace picker', async () => {
     const { fresh } = await snapshots();
-    const onCreateProject = vi.fn();
-    const onDismissWorkspacePicker = vi.fn();
     const onInstructionChange = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onCreateProject={onCreateProject}
-        onDismissWorkspacePicker={onDismissWorkspacePicker}
         onInstructionChange={onInstructionChange}
         projectCatalogSnapshot={await trustedCatalogSnapshot('empty')}
         snapshot={fresh}
-        workspacePickerRequest={1}
       />,
     );
 
-    expect(container.querySelector('[data-builder-workspace-picker="true"]')).not.toBeNull();
-    click(container, '[data-builder-workspace-chip="true"]');
-
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
-    const note = container.querySelector('[data-builder-workspace-dismissed-build-note="true"]');
-    expect(note?.textContent).toContain("Choose a project folder when you're ready to build.");
-    expect(note?.textContent).toContain('Your text is still here.');
-    expect(onDismissWorkspacePicker).toHaveBeenCalledOnce();
-    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
 
     const textarea = container.querySelector<HTMLTextAreaElement>('#builder-idea');
     expect(textarea).not.toBeNull();
@@ -3008,28 +3048,17 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
   });
 
-  it('does not show the dismissed build note after choosing an existing project', async () => {
+  it('does not open an existing project from the gated composer surface', async () => {
     const { fresh } = await snapshots();
-    const onDismissWorkspacePicker = vi.fn();
-    const onOpenProject = vi.fn();
     const container = render(
       <BuilderPage
         activeFile={null}
         instruction="Make a timer."
-        onDismissWorkspacePicker={onDismissWorkspacePicker}
-        onOpenProject={onOpenProject}
         projectCatalogSnapshot={await trustedCatalogSnapshot()}
         snapshot={fresh}
-        workspacePickerRequest={1}
       />,
     );
 
-    expect(container.querySelector('[data-builder-workspace-picker="true"]')?.textContent)
-      .toContain('Choose or create a project before I build.');
-    click(container, `[data-builder-workspace-project="${PROJECT_ID}"]`);
-
-    expect(onOpenProject).toHaveBeenCalledExactlyOnceWith(PROJECT_ID);
-    expect(onDismissWorkspacePicker).toHaveBeenCalledOnce();
     expect(container.querySelector('[data-builder-workspace-picker="true"]')).toBeNull();
     expect(container.querySelector('[data-builder-workspace-dismissed-build-note="true"]')).toBeNull();
   });
@@ -3280,8 +3309,7 @@ describe('BuilderPage v2', () => {
     const workingPlanMode = workingContainer.querySelector<HTMLButtonElement>(
       '[data-builder-composer-add-plan-mode="true"]',
     );
-    expect(workingContainer.querySelector('[data-builder-workspace-chip="true"]')?.textContent)
-      .toContain('Source folder:');
+    expect(workingContainer.querySelector('[data-builder-workspace-chip="true"]')).toBeNull();
     expect(workingPlanMode).not.toBeNull();
     expect(workingPlanMode?.disabled).toBe(false);
     click(workingContainer, '[data-builder-composer-add-plan-mode="true"]');
@@ -4801,7 +4829,7 @@ describe('BuilderPage v2', () => {
           can_start: true,
           can_reload: false,
           can_stop: false,
-          blocked_request_count: 0,
+          blocked_request_count: 4,
           navigation_block_count: 0,
           network_block_count: 0,
           permission_block_count: 0,
@@ -4810,6 +4838,7 @@ describe('BuilderPage v2', () => {
           message: 'Live preview is ready to start.',
           unavailable_reason: null,
           dev_server_approval: null,
+          runtime_launch_projection: livePreviewRuntimeLaunchProjection(),
           updated_at_ms: 10,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -4851,6 +4880,11 @@ describe('BuilderPage v2', () => {
 
     expect(onRequestLivePreview).toHaveBeenCalledOnce();
     expect(onStopLivePreview).not.toHaveBeenCalled();
+    const safetyNotice = container.querySelector('[data-builder-live-preview-blocked-count="true"]');
+    expect(safetyNotice?.getAttribute('aria-label')).toBe('Blocked 4 unsafe preview requests');
+    expect(safetyNotice?.getAttribute('title')).toBe('Blocked 4 unsafe preview requests');
+    expect(safetyNotice?.querySelector('svg')).not.toBeNull();
+    expect(safetyNotice?.textContent).toBe('');
     expect(container.querySelector('[data-builder-artifact-sidebar="true"]')
       ?.getAttribute('data-builder-artifact-tab-active')).toBe('preview');
   });
@@ -4868,7 +4902,7 @@ describe('BuilderPage v2', () => {
           status_version: 'builder-live-preview-status-projection.v1',
           project_id: PROJECT_ID,
           conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174000',
-          preview_kind: 'live_static_web',
+          preview_kind: 'live_dev_server_web',
           entry_url: null,
           status: 'approval_required',
           can_start: false,
@@ -4894,6 +4928,13 @@ describe('BuilderPage v2', () => {
             expires_at_ms: 300_010,
             decisions: ['allow_once', 'deny'],
           },
+          runtime_launch_projection: livePreviewRuntimeLaunchProjection({
+            preview_kind: 'live_dev_server_web',
+            command_profile: 'main_owned_dev_server_profile',
+            user_approval: 'required',
+            command_execution: 'approval_required',
+            sandbox_policy: 'dev_server_only_no_dependency_install',
+          }),
           updated_at_ms: 10,
           authority: {
             live_preview_authority: 'main_owned_live_preview_ipc_adapter_v1',
@@ -4940,7 +4981,7 @@ describe('BuilderPage v2', () => {
       return 1;
     });
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
       this: HTMLElement,
     ) {
       if (this.matches('[data-builder-result-placement="artifact"]')) {
@@ -5030,7 +5071,7 @@ describe('BuilderPage v2', () => {
       return 1;
     });
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function mockedRect(
       this: HTMLElement,
     ) {
       if (this.matches('[data-builder-result-placement="artifact"]')) {
@@ -5425,6 +5466,28 @@ describe('BuilderPage v2', () => {
     expect(scroll?.scrollTop).toBe(960);
   });
 
+  it('pauses follow before an upward wheel scroll can race a new output frame', async () => {
+    const { saved } = await snapshots();
+    const initial = await candidateActivity();
+    const next = await answerActivity();
+    let update!: (value: typeof initial) => void;
+    function Page() {
+      const [activity, setActivity] = useState(initial);
+      update = setActivity;
+      return <BuilderPage activeFile={null} conversationSnapshot={activity} instruction="" snapshot={saved} />;
+    }
+    const container = render(<Page />);
+    const scroll = container.querySelector<HTMLElement>('[data-builder-chat-scroll="true"]')!;
+    setScrollMetrics(scroll, { clientHeight: 400, scrollHeight: 1200, scrollTop: 800 });
+    act(() => { scroll.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -30 })); });
+    act(() => update(next));
+    expect(scroll.scrollTop).toBe(800);
+    scroll.scrollTop = 770;
+    act(() => { scroll.dispatchEvent(new Event('scroll')); });
+    act(() => update(initial));
+    expect(scroll.scrollTop).toBe(770);
+  });
+
   it('keeps background activity refresh out of the visible chat when entries remain', async () => {
     const { saved } = await snapshots();
     const activity = await refreshingActivityWithVisibleEntries();
@@ -5757,6 +5820,20 @@ describe('BuilderPage v2', () => {
     );
   });
 
+  it('reopens interrupted work paused without historical progress animation or automatic resume', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity('interrupted');
+    const onResumeInterruptedRun = vi.fn();
+    const container = render(<BuilderPage activeFile={null} conversationSnapshot={activity}
+      instruction="" snapshot={saved} onResumeInterruptedRun={onResumeInterruptedRun} onInstructionChange={vi.fn()} />);
+    expect(container.querySelector('[data-builder-composer-state="paused"]')).not.toBeNull();
+    expect(container.querySelector('.animate-spin, .cf-builder-activity-spinner')).toBeNull();
+    expect(container.textContent).not.toContain('You asked to steer');
+    expect(onResumeInterruptedRun).not.toHaveBeenCalled();
+    act(() => container.querySelector<HTMLButtonElement>('[data-builder-resume-interrupted-run="true"]')?.click());
+    expect(onResumeInterruptedRun).toHaveBeenCalledOnce();
+  });
+
   it('explains failed work once without internal phases or a duplicate completion table', async () => {
     const { saved } = await snapshots();
     const activity = await failedRunActivity();
@@ -5903,6 +5980,34 @@ describe('BuilderPage v2', () => {
       .toBe('正在处理当前任务');
     expect(live?.textContent).not.toContain(committed);
     expect(container.querySelector('[data-builder-work-status="true"]')).toBeNull();
+  });
+
+  it('keeps the current thinking status after all live narration is committed to history', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false);
+    const committed = 'I found the relevant file and will update it now.';
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: committed,
+          chunk_count: 2,
+          waiting_text: '正在思考',
+        }}
+        snapshot={saved}
+      />,
+    );
+    const live = container.querySelector('[data-builder-live-output="true"]');
+    expect(live?.getAttribute('data-builder-live-output-state')).toBe('waiting');
+    expect(live?.querySelector('[data-builder-live-activity="true"]')?.textContent).toBe('正在思考');
+    expect(live?.querySelector('.cf-builder-live-output-text')?.textContent).toBe('');
+    expect(container.querySelector('[data-builder-runtime-assistant-message]')?.textContent).toContain(committed);
+    expect(container.querySelectorAll('[data-builder-live-activity="true"]')).toHaveLength(1);
   });
 
   it('does not refollow chat for live text updates within the same output chunk', async () => {
@@ -6568,6 +6673,33 @@ describe('BuilderPage v2', () => {
     expect(sidebar?.querySelector('[data-builder-agent-test-browser-surface="true"]')).not.toBeNull();
   });
 
+  it('hands the completed Agent Test tab to project preview without starting a server', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity();
+    const onRequestLivePreview = vi.fn();
+    const page = (runId: string | null) => <BuilderPage activeFile={null} instruction=""
+      activeAgentTestBrowserRunId={runId} conversationSnapshot={activity} snapshot={saved}
+      onRequestLivePreview={onRequestLivePreview} />;
+    const container = render(page(RUN_ID));
+    expect(container.querySelector('[data-builder-artifact-tab-active="browser_placeholder"]')).not.toBeNull();
+    act(() => mounted.at(-1)!.root.render(page(null)));
+    expect(container.querySelector('[data-builder-artifact-tab-active="preview"]')).not.toBeNull();
+    expect(container.querySelector('[data-builder-agent-test-browser-surface="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-side-workspace-tab="browser_placeholder"]')).toBeNull();
+    expect(onRequestLivePreview).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen a temporary browser tab the user already closed', async () => {
+    const { saved } = await snapshots();
+    const activity = await failedRunActivity();
+    const page = (runId: string | null) => <BuilderPage activeFile={null} instruction=""
+      activeAgentTestBrowserRunId={runId} conversationSnapshot={activity} snapshot={saved} />;
+    const container = render(page(RUN_ID));
+    click(container, '[data-builder-side-workspace-close-tab="browser_placeholder"]');
+    act(() => mounted.at(-1)!.root.render(page(null)));
+    expect(container.querySelector('[data-builder-artifact-sidebar="true"]')).toBeNull();
+  });
+
   it('replaces generic work status with the concrete active runtime action', async () => {
     const { saved } = await snapshots();
     const activity = await runtimeToolActivity(false);
@@ -6668,7 +6800,58 @@ describe('BuilderPage v2', () => {
       .toBe('正在准备工具调用');
   });
 
-  it('keeps completed file and command facts separate and only folds repeated kinds', async () => {
+  it('animates context compaction inline and settles when compaction completes', async () => {
+    const { saved } = await snapshots();
+    const activity = await runtimeToolActivity(false, ['index.html'], true, true, 'activity');
+    const compacting = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '',
+          chunk_count: 0,
+          activity_kind: 'context_compacting',
+          waiting_text: '上下文较长，正在整理',
+        }}
+        snapshot={saved}
+      />,
+    );
+
+    const compactingStatus = compacting.querySelector('[data-builder-live-activity="true"]');
+    expect(compactingStatus?.getAttribute('data-builder-live-activity-kind')).toBe('context_compacting');
+    expect(compactingStatus?.textContent).toBe('上下文较长，正在整理');
+    expect(compactingStatus?.querySelector('[data-builder-context-compaction-animation="true"]'))
+      .not.toBeNull();
+    expect(compactingStatus?.querySelector('.cf-builder-activity-spinner')).toBeNull();
+
+    const compacted = render(
+      <BuilderPage
+        activeFile={null}
+        conversationSnapshot={activity}
+        instruction=""
+        liveOutput={{
+          state: 'streaming',
+          request_id: 'builder-git-request:123e4567-e89b-42d3-a456-426614174000',
+          project_id: PROJECT_ID,
+          text: '',
+          chunk_count: 0,
+          activity_kind: 'context_compacted',
+          waiting_text: '上下文整理完成，继续处理',
+        }}
+        snapshot={saved}
+      />,
+    );
+    const compactedStatus = compacted.querySelector('[data-builder-live-activity="true"]');
+    expect(compactedStatus?.getAttribute('data-builder-live-activity-kind')).toBe('context_compacted');
+    expect(compactedStatus?.textContent).toBe('上下文整理完成，继续处理');
+    expect(compactedStatus?.querySelector('[data-builder-context-compacted="true"]')).not.toBeNull();
+  });
+
+  it('groups completed runtime file facts while keeping command facts separate', async () => {
     const { saved } = await snapshots();
     const activity = await runtimeToolActivity(true);
     const container = render(
@@ -6681,13 +6864,22 @@ describe('BuilderPage v2', () => {
     );
 
     const chat = container.querySelector('[data-builder-chat-main="true"]');
-    const files = chat?.querySelector<HTMLDetailsElement>(
-      '[data-builder-runtime-history-details="file"]',
-    );
+    const history = chat?.querySelector('[data-builder-run-history="true"]');
+    const fileGroup = chat?.querySelector('[data-builder-runtime-tool-group="file"]');
+    const fileGroupDetails = chat?.querySelector('[data-builder-runtime-history-details="file"]');
+    const commandGroup = chat?.querySelector('[data-builder-runtime-history-details="command"]');
+    const tools = chat?.querySelectorAll('[data-builder-runtime-tool-kind]');
+    const fileTools = chat?.querySelectorAll('[data-builder-runtime-tool-kind="edit"]');
     const command = chat?.querySelector('[data-builder-runtime-tool-kind="command"]');
-    expect(files).not.toBeNull();
-    expect(files?.open).toBe(false);
-    expect(files?.textContent).toContain('Edited 2 files');
+    expect(history).not.toBeNull();
+    expect(fileGroup).not.toBeNull();
+    expect(fileGroup?.textContent).toContain('Edited 2 files');
+    expect(fileGroupDetails).not.toBeNull();
+    expect(commandGroup).toBeNull();
+    expect(tools).toHaveLength(3);
+    expect(fileTools).toHaveLength(2);
+    expect(fileTools?.[0]?.textContent).toContain('Edited src/file-1.ts');
+    expect(fileTools?.[1]?.textContent).toContain('Edited src/file-2.ts');
     expect(command?.textContent).toContain('Ran npm test');
     expect(command?.textContent).toContain('project check completed successfully');
     expect(command?.getAttribute('data-builder-conversation-node')).toBe('tool_evidence');
@@ -6699,20 +6891,18 @@ describe('BuilderPage v2', () => {
       .toContain('Ran npm test');
     expect(command?.querySelector('.cf-builder-tool-evidence-detail')?.textContent)
       .toContain('project check completed successfully');
-    expect(files?.querySelector('.cf-builder-tool-evidence-row .cf-builder-tool-evidence-title')?.textContent)
-      .toContain('Edited src/file-1.ts');
-    expect(files?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
+    expect(fileTools?.[0]?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
       .toContain('src/file-1.ts');
-    expect(files?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
+    expect(fileTools?.[0]?.querySelector('[data-builder-tool-detail="diff"]')?.textContent)
       .toContain('+2');
     expect(chat?.querySelector('[data-builder-runtime-history-details="command"]')).toBeNull();
     expect(chat?.textContent).not.toContain('Completed work');
     const narration = chat?.querySelectorAll('[data-builder-runtime-assistant-message]') ?? [];
-    expect(narration).toHaveLength(2);
+    expect(narration).toHaveLength(3);
     expect(chat?.textContent).toContain('I found the relevant files and will update them now.');
     expect(chat?.textContent).toContain('The edits are complete. I will run the project check next.');
     expect(chat?.textContent?.match(/Implemented the requested changes and checked the project\./gu))
-      .toHaveLength(1);
+      .toHaveLength(2);
     const completion = chat?.querySelector('[data-builder-activity-card="Draft proposed"]');
     expect(completion?.getAttribute('data-builder-run-completion-message')).toBeTruthy();
     expect(completion?.textContent)
@@ -6755,9 +6945,11 @@ describe('BuilderPage v2', () => {
     );
 
     const chat = container.querySelector('[data-builder-chat-main="true"]');
-    const files = chat?.querySelector('[data-builder-runtime-history-details="file"]');
+    const files = chat?.querySelectorAll('[data-builder-runtime-tool-kind="edit"]');
     const command = chat?.querySelector('[data-builder-runtime-tool-kind="command"]');
-    expect(files?.textContent).toContain('Edited 2 files');
+    expect(files).toHaveLength(2);
+    expect(files?.[0]?.textContent).toContain('Edited src/file-1.ts');
+    expect(files?.[1]?.textContent).toContain('Edited src/file-2.ts');
     expect(command?.textContent).toContain('Ran npm test');
     expect(command?.textContent).toContain('The project check completed successfully.');
     click(container, '[data-builder-runtime-tool-open="terminal"]');
@@ -6766,6 +6958,44 @@ describe('BuilderPage v2', () => {
     expect(container.querySelector('[data-builder-command-result="passed"]')?.textContent)
       .toBe('The project check completed successfully.');
     expect(chat?.textContent).not.toContain('Completed work');
+  });
+
+  it('surfaces saved project dependency setup when the project folder is not launch ready', async () => {
+    const { draftReady, saved } = await snapshots();
+    const onOpenSettings = vi.fn();
+    const onPrepareProjectDependencies = vi.fn();
+    const savedContainer = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        onOpenSettings={onOpenSettings}
+        onPrepareProjectDependencies={onPrepareProjectDependencies}
+        projectEnvironmentDiagnosis={projectDependencyMissingDiagnosis()}
+        snapshot={saved}
+      />,
+    );
+
+    const setupCard = savedContainer.querySelector('[data-builder-project-environment-setup="true"]');
+    expect(setupCard?.textContent).toContain('Saved project dependencies needed');
+    expect(setupCard?.textContent).toContain('project folder does not have an install yet');
+    expect(setupCard?.textContent).toContain('Prepare once runs npm install in the saved project folder for local launch');
+    expect(setupCard?.textContent).toContain('Current-draft checks still use their isolated workspace.');
+    click(savedContainer, '[data-builder-prepare-project-dependencies="true"]');
+    expect(onPrepareProjectDependencies).toHaveBeenCalledExactlyOnceWith(
+      projectDependencyMissingDiagnosis().project_id,
+    );
+    click(savedContainer, '[data-builder-open-project-environment-diagnostics="true"]');
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+
+    const draftContainer = render(
+      <BuilderPage
+        activeFile={null}
+        instruction=""
+        projectEnvironmentDiagnosis={projectDependencyMissingDiagnosis()}
+        snapshot={draftReady}
+      />,
+    );
+    expect(draftContainer.querySelector('[data-builder-project-environment-setup="true"]')).toBeNull();
   });
 
   it('offers a one-shot dependency preparation action above the composer when a check is blocked by missing dependencies', async () => {
@@ -6839,6 +7069,15 @@ describe('BuilderPage v2', () => {
     const composer = container.querySelector('[data-builder-composer-stack="true"]');
     expect(card?.textContent).toContain('Prepare check dependencies?');
     expect(card?.textContent).toContain('npm test');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-status="needs_approval"]',
+    )?.textContent).toContain('Project folderNot changed by Prepare once');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-fact="check_workspace"]',
+    )?.textContent).toContain('Dependencies not prepared yet');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-fact="after_prepare"]',
+    )?.textContent).toContain('Builder will rerun npm test and enable Save if it passes.');
     expect(card?.textContent).toContain('Readiness: The isolated check workspace has not prepared this draft\'s dependencies yet.');
     expect(card?.textContent).toContain('Toolchain: visible');
     expect(card?.textContent).toContain('Check workspace: install_missing');
@@ -6936,6 +7175,12 @@ describe('BuilderPage v2', () => {
     const composer = container.querySelector('[data-builder-composer-stack="true"]');
     expect(card?.textContent).toContain('Prepare check dependencies?');
     expect(card?.textContent).toContain('Preparing...');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-status="preparing"]',
+    )?.textContent).toContain('Preparing dependencies now');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-fact="after_prepare"]',
+    )?.textContent).toContain('Builder will rerun npm test automatically.');
     expect(container.querySelector<HTMLButtonElement>('[data-builder-allow-dependency-preparation="true"]')?.disabled)
       .toBe(true);
     expect(container.querySelector<HTMLButtonElement>('[data-builder-deny-dependency-preparation="true"]')?.disabled)
@@ -6985,10 +7230,65 @@ describe('BuilderPage v2', () => {
     expect(card?.textContent).toContain('Check dependency preparation failed');
     expect(card?.textContent).toContain('Dependency preparation failed in the isolated check workspace.');
     expect(card?.textContent).toContain('You can retry this check preparation.');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-status="retryable"]',
+    )?.textContent).toContain('Needs another preparation attempt');
     expect(composer?.compareDocumentPosition(card as Node) ?? 0)
       .toBe(Node.DOCUMENT_POSITION_PRECEDING);
     click(container, '[data-builder-allow-dependency-preparation="true"]');
     expect(onDecideCheckDependencyPreparation).toHaveBeenCalledExactlyOnceWith('allow_once', profile);
+  });
+
+  it('routes local toolchain blocks to diagnosis instead of dependency preparation', async () => {
+    const { draftReady } = await snapshots();
+    const activity = await candidateActivity();
+    const profile = {
+      command_profile_id: `builder-command-profile:${'1'.repeat(32)}`,
+      command_kind: 'build' as const,
+      command_display: 'npm run build',
+      requires_user_approval: true as const,
+    };
+    const onDecideCheckDependencyPreparation = vi.fn();
+    const onDiagnoseCheckEnvironment = vi.fn();
+    const container = render(
+      <BuilderPage
+        activeFile={null}
+        checkRunProfiles={[profile]}
+        checkRunStatus={{
+          projection_version: 'builder-check-run-status-projection.v1',
+          project_id: PROJECT_ID,
+          candidate_id: `builder-code-change-candidate:${'2'.repeat(64)}`,
+          check_run_id: `builder-check-run:${'3'.repeat(64)}`,
+          command_kind: 'build',
+          command_label: 'Build',
+          status: 'incomplete',
+          label: 'Check unavailable',
+          summary: 'Builder cannot see the local Node/package-manager toolchain required for this check.',
+          environment_reason: 'host_toolchain_missing',
+          completed_at_ms: 1234,
+          result_digest: `sha256:${'4'.repeat(64)}`,
+        }}
+        conversationSnapshot={activity}
+        instruction=""
+        onDecideCheckDependencyPreparation={onDecideCheckDependencyPreparation}
+        onDiagnoseCheckEnvironment={onDiagnoseCheckEnvironment}
+        snapshot={draftReady}
+      />,
+    );
+
+    const card = container.querySelector('[data-builder-dependency-preparation="true"]');
+    expect(card?.textContent).toContain('Local toolchain unavailable');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-status="toolchain_unavailable"]',
+    )?.textContent).toContain('Waiting for local toolchain');
+    expect(card?.querySelector(
+      '[data-builder-dependency-preparation-fact="after_prepare"]',
+    )?.textContent).toContain('Diagnose local tools before preparing dependencies.');
+    expect(container.querySelector('[data-builder-allow-dependency-preparation="true"]')).toBeNull();
+    expect(container.querySelector('[data-builder-deny-dependency-preparation="true"]')).toBeNull();
+    click(container, '[data-builder-diagnose-check-environment="true"]');
+    expect(onDiagnoseCheckEnvironment).toHaveBeenCalledExactlyOnceWith(profile);
+    expect(onDecideCheckDependencyPreparation).not.toHaveBeenCalled();
   });
 
   it('explains dependency preparation decision failures without hiding the retry action', async () => {
@@ -7405,7 +7705,7 @@ describe('BuilderPage v2', () => {
     expect(completed?.textContent).not.toMatch(/tool|adapter|output|admission|summary_code|resource_kind|builder-tool-call:/iu);
   });
 
-  it('folds a tool failure into the completed run history', async () => {
+  it('keeps a completed tool failure in the canonical activity stream', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity({
       status: 'failed',
@@ -7424,13 +7724,13 @@ describe('BuilderPage v2', () => {
     const chat = container.querySelector('[data-builder-chat-main="true"]');
     expect(chat?.querySelector('[data-builder-activity-card="Draft proposed"]')).not.toBeNull();
     const history = chat?.querySelector<HTMLDetailsElement>('[data-builder-run-history="true"]');
-    const loggedFailure = history?.querySelector('[data-builder-tool-activity="failed"]');
-    expect(history?.open).toBe(false);
+    const loggedFailure = chat?.querySelector('[data-builder-tool-activity="failed"]');
+    expect(history).toBeNull();
     expect(loggedFailure?.textContent).toContain('Project context needs attention');
     expect(loggedFailure?.textContent).toContain('could not safely use the information from this step');
   });
 
-  it('maps unavailable tool results to safe text in completed run history', async () => {
+  it('maps unavailable tool results to safe text in the canonical activity stream', async () => {
     const { saved } = await snapshots();
     const activity = await toolActivity({
       status: 'failed',
@@ -7449,8 +7749,10 @@ describe('BuilderPage v2', () => {
     const history = container.querySelector<HTMLDetailsElement>(
       '[data-builder-chat-main="true"] [data-builder-run-history="true"]',
     );
-    const completed = history?.querySelector('[data-builder-tool-activity="failed"]');
-    expect(history?.open).toBe(false);
+    const completed = container.querySelector(
+      '[data-builder-chat-main="true"] [data-builder-tool-activity="failed"]',
+    );
+    expect(history).toBeNull();
     expect(completed).not.toBeNull();
     expect(completed?.textContent).toContain('Project context needs attention');
     expect(completed?.textContent).toContain('This project step is not available yet.');

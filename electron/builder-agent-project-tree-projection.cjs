@@ -1,6 +1,9 @@
 'use strict';
 
 const { types: utilTypes } = require('node:util');
+const {
+  sanitizeBuilderTaskAddress,
+} = require('./builder-session-task-address.cjs');
 
 const BUILDER_AGENT_PROJECT_TREE_PROJECTION_VERSION = 'agent-project-tree-projection.v1';
 const AGENT_ID_PATTERN = /^builder-agent:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -70,8 +73,12 @@ function currentResult(value) {
 }
 
 function taskNode(record) {
-  const task = record?.task_address;
-  if (!isPlainObject(task)) fail();
+  let task;
+  try {
+    task = sanitizeBuilderTaskAddress(record?.task_address);
+  } catch {
+    fail();
+  }
   return freezeDeep({
     task_address_id: task.task_address_id,
     task_id: task.task_address_id,

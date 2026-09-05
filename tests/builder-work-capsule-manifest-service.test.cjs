@@ -15,11 +15,14 @@ const {
   createBuilderWorkCapsuleManifestService,
 } = require('../electron/builder-work-capsule-manifest-service.cjs');
 
-const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174300';
+const PROJECT_UUID = '123e4567-e89b-42d3-a456-426614174300';
+const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
 const OTHER_PROJECT_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174300';
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174301';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174302';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174303';
+const ROOT_CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${PROJECT_UUID}:123e4567-e89b-42d3-a456-426614174303`;
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174304';
 const RUN_ID = 'builder-run:123e4567-e89b-42d3-a456-426614174305';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174306';
@@ -39,7 +42,7 @@ function sessionAddress(overrides = {}) {
     display_id: 'S-CAPSVC1',
     title: 'Portfolio capsule line',
     status: 'active',
-    root_conversation_id: CONVERSATION_ID,
+    root_conversation_id: ROOT_CONVERSATION_ID,
     current_task_id: TASK_ADDRESS_ID,
     parent_session_id: null,
     forked_from_session_id: null,

@@ -61,6 +61,99 @@ function agentTranscriptWire(
   };
 }
 
+function contextStatusProjection(): unknown {
+  return {
+    projection_version: 'builder-context-status-projection.v1',
+    label: 'Ready to execute current direction',
+    tone: 'success',
+    next_action_hint: 'You can ask me to make the change.',
+    has_pending_handoff: false,
+    pending_handoff_count: 0,
+    needs_confirmation: false,
+    can_contextual_execute: true,
+    authority: {
+      projection_authority: 'main_owned_context_status_projection_v1',
+      working_context_state: 'verified_not_exposed',
+      pending_handoff_packets: 'none',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      source_read: 'not_present',
+      source_write: 'not_present',
+      git_mutation: false,
+      permission_grant: false,
+      revision_admission: 'not_created',
+      secret_access: 'not_present',
+    },
+  };
+}
+
+function projectConversationWire(
+  items: readonly unknown[],
+  headSequence: number,
+  overrides: Record<string, unknown> = {},
+): unknown {
+  const firstItem = items[0] as { turn_id?: unknown } | undefined;
+  return {
+    stream_version: 'builder-task-stream-read-result.v1',
+    project_id: PROJECT_ID,
+    conversation: {
+      conversation_id:
+        'builder-conversation:123e4567-e89b-42d3-a456-426614174000:123e4567-e89b-42d3-a456-426614174003',
+      created_at_ms: 1,
+      head_sequence: headSequence,
+      recorded_active_turn_id: typeof firstItem?.turn_id === 'string' ? firstItem.turn_id : null,
+      window: {
+        first_sequence: 1,
+        last_sequence: headSequence,
+        has_earlier: false,
+      },
+      items,
+    },
+    authority: {
+      conversation: 'sqlite_canonical_event_replay_or_absent',
+      project_source: 'not_included',
+      candidate_source: 'not_loaded',
+      project_revision: 'not_inferred',
+    },
+    ...overrides,
+  };
+}
+
+function projectUserMessage(sequence: number, text: string): unknown {
+  const id = `123e4567-e89b-42d3-a456-${sequence.toString(16).padStart(12, '0')}`;
+  return {
+    item_kind: 'user_message',
+    sequence,
+    turn_id: `builder-turn:${id}`,
+    message: {
+      message_id: `builder-message:${id}`,
+      text,
+    },
+    message_kind: 'submitted',
+    mode: 'question',
+    task: null,
+  };
+}
+
+function projectSteeringMessage(sequence: number, turnSequence: number, text: string): unknown {
+  const messageId = `123e4567-e89b-42d3-a456-${sequence.toString(16).padStart(12, '0')}`;
+  const turnId = `123e4567-e89b-42d3-a456-${turnSequence.toString(16).padStart(12, '0')}`;
+  return {
+    item_kind: 'user_message',
+    sequence,
+    turn_id: `builder-turn:${turnId}`,
+    message: {
+      message_id: `builder-message:${messageId}`,
+      text,
+    },
+    message_kind: 'steering',
+    mode: null,
+    task: null,
+  };
+}
+
 function transcriptItem(sequence: number, role: 'assistant' | 'user', text: string): unknown {
   const id = `123e4567-e89b-42d3-a456-${sequence.toString(16).padStart(12, '0')}`;
   return {
@@ -190,6 +283,46 @@ describe('createBuilderDesktopTaskStreamPort', () => {
     expect(advanced.conversation.items[0]?.sequence).toBe(2);
     expect(advanced.conversation.items.at(-1)?.sequence).toBe(513);
     expect(advanced.conversation.window.first_sequence).toBe(2);
+  });
+
+  it('merges incremental snapshots that omit unchanged top-level projections', async () => {
+    const firstItem = projectUserMessage(1, 'Start the work.');
+    const secondItem = projectSteeringMessage(2, 1, 'Refine the work.');
+    const projection = contextStatusProjection();
+    const read = vi.fn()
+      .mockResolvedValueOnce({
+        result_version: 'builder-task-stream-cursor-read-result.v1',
+        result_kind: 'full',
+        base_snapshot_digest: null,
+        snapshot_digest: SNAPSHOT_DIGEST,
+        snapshot: projectConversationWire([firstItem], 1, {
+          context_status_projection: projection,
+        }),
+      })
+      .mockResolvedValueOnce({
+        result_version: 'builder-task-stream-cursor-read-result.v1',
+        result_kind: 'incremental',
+        base_snapshot_digest: SNAPSHOT_DIGEST,
+        snapshot_digest: 'b'.repeat(64),
+        snapshot: projectConversationWire([secondItem], 2),
+      });
+    const port = createBuilderDesktopTaskStreamPort({
+      read,
+      subscribeChanged: () => () => undefined,
+    });
+
+    await port.read({ project_id: PROJECT_ID, task_address_id: TASK_ADDRESS_ID });
+    const incremental = await port.read({
+      project_id: PROJECT_ID,
+      task_address_id: TASK_ADDRESS_ID,
+    }) as {
+      context_status_projection: unknown;
+      conversation: { items: readonly unknown[]; head_sequence: number };
+    };
+
+    expect(incremental.context_status_projection).toEqual(projection);
+    expect(incremental.conversation.items).toEqual([firstItem, secondItem]);
+    expect(incremental.conversation.head_sequence).toBe(2);
   });
 
   it('retries a legacy v1 read once when cursor negotiation is unavailable', async () => {

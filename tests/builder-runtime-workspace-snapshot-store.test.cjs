@@ -104,3 +104,20 @@ test('rejects forged project, tool, and raw path selectors', async (t) => {
     path: 'src/app.ts',
   }), BuilderRuntimeWorkspaceSnapshotStoreError);
 });
+
+test('retains the resume baseline and edited workspace across restart and refuses baseline replacement', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-resume-snapshot-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const createStore = () => createBuilderRuntimeWorkspaceSnapshotStore({ root_directory: root, now_ms: () => 10 });
+  const identity = { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID, run_id: RUN_ID };
+  const store = createStore();
+  await store.record_source_tree({ ...identity, source_tree: sourceTree(),
+    resume: { session_run_id: RUN_ID, base_source_tree: sourceTree() } });
+  await store.record_source_tree({ ...identity, source_tree: sourceTree('edited') });
+  const record = await createStore().read_run_source_tree(identity);
+  assert.equal(record.source_tree.files[0].content, 'edited');
+  assert.equal(record.resume.base_source_tree.files[0].content, 'before\n');
+  assert.equal(record.resume.session_run_id, RUN_ID);
+  await assert.rejects(store.record_source_tree({ ...identity, source_tree: sourceTree('edited'),
+    resume: { session_run_id: RUN_ID, base_source_tree: sourceTree('forged') } }));
+});

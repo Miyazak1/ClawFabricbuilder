@@ -17,7 +17,7 @@ const BUILDER_CONVERSATION_AUTHORITY_CONTRACT_VERSION =
 const BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION =
   'builder-conversation-authority-result.v1';
 const MAX_APPEND_EVENTS = 128;
-const MAX_CONVERSATION_EVENTS = 1_024;
+const MAX_CONVERSATION_EVENTS = 4_096;
 const MAX_CONVERSATION_BYTES = 24 * 1_024 * 1_024;
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';

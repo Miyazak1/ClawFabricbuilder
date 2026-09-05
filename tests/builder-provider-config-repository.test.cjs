@@ -137,6 +137,32 @@ test('restores current config after restart and exposes a bound exact4 authority
   );
 });
 
+test('selects a new current model while preserving the existing secret binding', (t) => {
+  const root = temporaryRoot(t);
+  const repository = repositoryWithFakeSecretStore(root);
+  const written = repository.write_current({ config: config(), credential: 'real-key-value' });
+
+  const selected = repository.select_current_model({
+    model: 'builder-model-pro',
+    expected_config_digest: written.config.config_digest,
+  });
+
+  assert.equal(selected.result_version, 'builder-provider-config-repository.v1');
+  assert.equal(selected.config.model, 'builder-model-pro');
+  assert.notEqual(selected.config.config_digest, written.config.config_digest);
+  assert.deepEqual(selected.secret_binding, written.secret_binding);
+  assert.equal(selected.persistence_evidence.operation, 'current_model_selected');
+  assert.equal(selected.persistence_evidence.secret_publish, 'not_performed');
+  assert.equal(repository.bind_current_authority().resolveSecret(secretRef()).credential, 'real-key-value');
+  assert.throws(
+    () => repository.select_current_model({
+      model: 'builder-model-flash',
+      expected_config_digest: written.config.config_digest,
+    }),
+    assertRepositoryError('builder_provider_config_repository_stale'),
+  );
+});
+
 test('reports only read_current missing current as not found while bound authority stays unavailable', (t) => {
   const root = temporaryRoot(t);
   const repository = repositoryWithFakeSecretStore(root);

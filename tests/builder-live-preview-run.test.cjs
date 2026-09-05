@@ -135,6 +135,22 @@ test('admits a saved revision without inventing a run or draft checkpoint identi
   assert.equal(admission.revision_receipt_digest, revisionReceiptDigest);
 });
 
+test('creates deterministic dev-server preview admission with package manifest entry', () => {
+  const first = createBuilderLivePreviewAdmission(admissionInput({
+    selected_entry_path: 'package.json',
+    preview_kind: 'live_dev_server_web',
+  }));
+  const second = createBuilderLivePreviewAdmission(structuredClone(admissionInput({
+    selected_entry_path: 'package.json',
+    preview_kind: 'live_dev_server_web',
+  })));
+
+  assert.deepEqual(second, first);
+  assert.equal(first.preview_kind, 'live_dev_server_web');
+  assert.equal(first.selected_entry_path, 'package.json');
+  assert.deepEqual(sanitizeBuilderLivePreviewAdmission(structuredClone(first)), first);
+});
+
 test('creates preview run evidence bound to admission without exposing raw preview body', () => {
   const run = createBuilderPreviewRun(previewRunInput());
 
@@ -206,6 +222,16 @@ test('fails closed on malformed admissions and stale runtime windows', () => {
   assertLivePreviewError(() => createBuilderLivePreviewAdmission({
     ...admissionInput(),
     selected_entry_path: 'src/app.js',
+  }));
+  assertLivePreviewError(() => createBuilderLivePreviewAdmission({
+    ...admissionInput(),
+    selected_entry_path: 'index.html',
+    preview_kind: 'live_dev_server_web',
+  }));
+  assertLivePreviewError(() => createBuilderLivePreviewAdmission({
+    ...admissionInput(),
+    selected_entry_path: 'package.json',
+    preview_kind: 'live_static_web',
   }));
   assertLivePreviewError(() => createBuilderLivePreviewAdmission({
     ...admissionInput(),

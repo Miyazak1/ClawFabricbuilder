@@ -58,6 +58,10 @@ export function useBuilderAgentWorkbenchController(port: BuilderAgentWorkbenchPo
     (request) => controller.decideTaskProposal(request),
     [controller],
   );
+  const decideAgentPlan = useCallback<BuilderAgentWorkbenchController['decideAgentPlan']>(
+    (request) => controller.decideAgentPlan(request),
+    [controller],
+  );
   const controlTask = useCallback<BuilderAgentWorkbenchController['controlTask']>(
     (request) => controller.controlTask(request),
     [controller],
@@ -69,8 +73,9 @@ export function useBuilderAgentWorkbenchController(port: BuilderAgentWorkbenchPo
       updateMessageState,
       createTaskProposal,
       decideTaskProposal,
+      decideAgentPlan,
       controlTask,
     }),
-    [controlTask, createTaskProposal, decideTaskProposal, refresh, snapshot, updateMessageState],
+    [controlTask, createTaskProposal, decideAgentPlan, decideTaskProposal, refresh, snapshot, updateMessageState],
   );
 }

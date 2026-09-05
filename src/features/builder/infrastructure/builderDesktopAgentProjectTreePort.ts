@@ -6,6 +6,7 @@ const BRIDGE_KEYS = Object.freeze([
   'archiveProject',
   'renameTask',
   'archiveTask',
+  'exportTaskTranscript',
 ]);
 const AGENT_ID_PATTERN =
   /^builder-agent:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -20,6 +21,7 @@ type Bridge = Readonly<{
   archiveProject(request: unknown): Promise<unknown>;
   renameTask(request: unknown): Promise<unknown>;
   archiveTask(request: unknown): Promise<unknown>;
+  exportTaskTranscript(request: unknown): Promise<unknown>;
 }>;
 
 export class BuilderDesktopAgentProjectTreePortError extends Error {
@@ -122,6 +124,18 @@ export function createBuilderDesktopAgentProjectTreePort(
         || !TASK_ADDRESS_ID_PATTERN.test(request.task_address_id)
       ) unavailable();
       return call(target.archiveTask, {
+        agent_id: request.agent_id,
+        project_id: request.project_id,
+        task_address_id: request.task_address_id,
+      });
+    },
+    async exportTaskTranscript(request: Parameters<BuilderAgentProjectTreePort['exportTaskTranscript']>[0]) {
+      if (
+        !AGENT_ID_PATTERN.test(request.agent_id)
+        || !PROJECT_ID_PATTERN.test(request.project_id)
+        || !TASK_ADDRESS_ID_PATTERN.test(request.task_address_id)
+      ) unavailable();
+      return call(target.exportTaskTranscript, {
         agent_id: request.agent_id,
         project_id: request.project_id,
         task_address_id: request.task_address_id,

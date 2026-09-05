@@ -8,6 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  BuilderCheckRunProcessAdapterError,
   createBuilderCheckRunProcessAdapter,
 } = require('../electron/builder-check-run-process-adapter.cjs');
 const {
@@ -152,9 +153,9 @@ function processAdapter() {
   });
 }
 
-function runtime(onOutput = () => undefined) {
+function runtime(onOutput = () => undefined, selectedProcessAdapter = processAdapter()) {
   return createBuilderLivePreviewDevServerRuntime({
-    process_adapter: processAdapter(),
+    process_adapter: selectedProcessAdapter,
     process_exec_path: path.resolve(process.execPath),
     worker_path: path.resolve(__dirname, '..', 'electron', 'builder-packaged-check-script-worker.cjs'),
     now_ms: () => Date.now(),
@@ -247,6 +248,42 @@ test('starts an admitted dev server on a runtime-owned loopback port and stops i
   assert.deepEqual(await restarted.stop(), { stopped: true, reason: 'process_tree_closed' });
   await assert.rejects(fetch(restarted.entry_url));
   assert.deepEqual(await server.stop(), { stopped: false, reason: 'already_stopped' });
+});
+
+test('retries a transient process-adapter spawn failure within the same preview start', async (t) => {
+  const workspaceRootPath = path.resolve(fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'builder-dev-preview-spawn-retry-')),
+  ));
+  const delegate = processAdapter();
+  let spawnAttempts = 0;
+  const retryingAdapter = {
+    adapter_version: delegate.adapter_version,
+    spawn_process(...args) {
+      spawnAttempts += 1;
+      if (spawnAttempts === 1) throw new BuilderCheckRunProcessAdapterError();
+      return delegate.spawn_process(...args);
+    },
+    terminate_process_tree: delegate.terminate_process_tree,
+  };
+  const selectedRuntime = runtime(() => undefined, retryingAdapter);
+  t.after(async () => {
+    await selectedRuntime.shutdown();
+    fs.rmSync(workspaceRootPath, { recursive: true, force: true });
+  });
+  writeProject(workspaceRootPath);
+  const selected = admissions(workspaceRootPath);
+
+  const server = await selectedRuntime.start({
+    source_admission: selected.source,
+    source_tree: selected.sourceTree,
+    runtime_admission: selected.runtime,
+    dev_admission: selected.dev,
+    workspace_root_path: workspaceRootPath,
+  });
+
+  assert.equal(spawnAttempts, 2);
+  assert.match(await (await fetch(server.entry_url)).text(), /Runtime preview is ready/u);
+  assert.deepEqual(await server.stop(), { stopped: true, reason: 'process_tree_closed' });
 });
 
 test('rejects source drift and a discovered public bind before process start', async (t) => {

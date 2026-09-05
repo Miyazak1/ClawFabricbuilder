@@ -8,6 +8,7 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
+  FileText,
   FolderOpen,
   MessageSquareText,
   PanelLeftClose,
@@ -20,6 +21,7 @@ import type { BuilderAgentProjectTreeSnapshot } from '../application/builderAgen
 import type { BuilderAgentTaskMonitorItem } from '../domain/builderAgentTaskMonitorProjection';
 
 export type BuilderAgentSidebarProps = Readonly<{
+  exportTranscriptFeedback?: BuilderTaskTranscriptExportFeedback | null;
   snapshot: BuilderAgentProjectTreeSnapshot;
   taskMonitor?: readonly BuilderAgentTaskMonitorItem[];
   selectedProjectId: string | null;
@@ -28,6 +30,7 @@ export type BuilderAgentSidebarProps = Readonly<{
   onCreateTask(projectId: string): void;
   onArchiveProject?: (projectId: string) => Promise<unknown> | void;
   onArchiveTask?: (projectId: string, taskAddressId: string) => Promise<unknown> | void;
+  onExportTaskTranscript?: (projectId: string, taskAddressId: string) => Promise<unknown> | void;
   onOpenProject(projectId: string): void;
   onOpenTask(projectId: string, taskAddressId: string): void;
   onRenameProject?: (projectId: string, title: string) => Promise<unknown> | void;
@@ -36,11 +39,18 @@ export type BuilderAgentSidebarProps = Readonly<{
   onRefresh(): void;
 }>;
 
+export type BuilderTaskTranscriptExportFeedback = Readonly<{
+  message: string;
+  state: 'exporting' | 'failed' | 'ready';
+  taskAddressId: string;
+}>;
+
 function taskStatusLabel(status: string): string {
   return ({ active: 'Ready', blocked: 'Blocked', review_needed: 'Review', completed: 'Done', planned: 'Planned', discussing: 'Discussing', draft: 'Draft', archived: 'Archived' } as Record<string, string>)[status] ?? status;
 }
 
 export function BuilderAgentSidebar({
+  exportTranscriptFeedback = null,
   snapshot,
   taskMonitor = [],
   selectedProjectId,
@@ -49,6 +59,7 @@ export function BuilderAgentSidebar({
   onCreateTask,
   onArchiveProject,
   onArchiveTask,
+  onExportTaskTranscript,
   onOpenProject,
   onOpenTask,
   onRenameProject,
@@ -166,6 +177,15 @@ export function BuilderAgentSidebar({
       {snapshot.status === 'loading' ? <p className="cf-builder-agent-sidebar-state" role="status">Loading Builder...</p> : null}
       {snapshot.status === 'unavailable' ? <div className="cf-builder-agent-sidebar-state" role="alert"><strong>Builder setup is unavailable.</strong><span>Retry after checking the local Agent data.</span></div> : null}
       {snapshot.status === 'stale' ? <p className="cf-builder-agent-sidebar-state" role="status">Showing the last available project tree.</p> : null}
+      {exportTranscriptFeedback !== null ? (
+        <p
+          className="cf-builder-agent-sidebar-state"
+          data-builder-task-transcript-export-status={exportTranscriptFeedback.state}
+          role={exportTranscriptFeedback.state === 'failed' ? 'alert' : 'status'}
+        >
+          {exportTranscriptFeedback.message}
+        </p>
+      ) : null}
       {tree !== null && tree.projects.length === 0 ? <p className="cf-builder-agent-sidebar-state">No projects yet.</p> : null}
       {tree !== null ? (
         <ul aria-label={`${tree.agent.display_name} projects`} className="cf-builder-agent-projects">
@@ -363,6 +383,22 @@ export function BuilderAgentSidebar({
             >
               <Archive className="size-4" aria-hidden="true" />
               Archive task
+            </button>
+          ) : null}
+          {contextMenu.projectId !== null
+          && contextMenu.taskAddressId !== null
+          && typeof onExportTaskTranscript === 'function' ? (
+            <button
+              data-builder-agent-context-export-task-transcript={contextMenu.taskAddressId}
+              onClick={() => runContextAction(() => onExportTaskTranscript(
+                contextMenu.projectId as string,
+                contextMenu.taskAddressId as string,
+              ))}
+              role="menuitem"
+              type="button"
+            >
+              <FileText className="size-4" aria-hidden="true" />
+              Export transcript
             </button>
           ) : null}
           <button onClick={() => runContextAction(onCreateProject)} role="menuitem" type="button">

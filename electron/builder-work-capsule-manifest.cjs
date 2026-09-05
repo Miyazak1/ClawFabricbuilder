@@ -11,7 +11,10 @@ const {
 const BUILDER_WORK_CAPSULE_MANIFEST_VERSION = 'builder-work-capsule-manifest.v1';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const PROJECT_ID_PATTERN = new RegExp(`^builder-project:${UUID_SOURCE}$`, 'u');
-const CONVERSATION_ID_PATTERN = new RegExp(`^builder-conversation:${UUID_SOURCE}$`, 'u');
+const CONVERSATION_ID_PATTERN = new RegExp(
+  `^builder-conversation:${UUID_SOURCE}(?::${UUID_SOURCE})?$`,
+  'u',
+);
 const TURN_ID_PATTERN = new RegExp(`^builder-turn:${UUID_SOURCE}$`, 'u');
 const REQUEST_ID_PATTERN = new RegExp(`^builder-git-request:${UUID_SOURCE}$`, 'u');
 const TASK_ID_PATTERN = new RegExp(`^builder-task:${UUID_SOURCE}$`, 'u');
@@ -176,6 +179,10 @@ function safePattern(value, pattern, maximum) {
 
 function safeProjectId(value) {
   return safePattern(value, PROJECT_ID_PATTERN, 64);
+}
+
+function rootConversationIdForProject(projectId) {
+  return projectId.replace(/^builder-project:/u, 'builder-conversation:');
 }
 
 function safeConversationId(value) {
@@ -374,7 +381,7 @@ function assertBindings({
     || taskAddress.conversation_id !== projectRevision.conversation_id
     || taskAddress.produced_revision_receipt_digest !== projectRevision.revision_receipt_digest
     || sessionAddress.project_id !== projectRevision.project_id
-    || sessionAddress.root_conversation_id !== projectRevision.conversation_id
+    || sessionAddress.root_conversation_id !== rootConversationIdForProject(projectRevision.project_id)
     || sessionAddress.status !== 'active'
     || sessionAddress.current_task_id !== taskAddress.task_address_id
     || !['completed', 'archived'].includes(taskAddress.status)

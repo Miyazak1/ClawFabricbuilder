@@ -12,6 +12,7 @@ const {
   DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL,
   DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL,
   DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
+  PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
   READ_CURRENT_DRAFT_AVAILABLE_CHECKS_CHANNEL,
   SKIP_CURRENT_DRAFT_CHECK_CHANNEL,
   createBuilderCheckRunApprovalIpcAdapter,
@@ -34,6 +35,9 @@ const {
 const {
   createBuilderProjectSourceTree,
 } = require('../electron/builder-project-source-tree.cjs');
+const {
+  createBuilderProjectDependencyPreparer,
+} = require('../electron/builder-project-dependency-preparer.cjs');
 
 const DRAFT_ID = `builder-generation-draft:${'a'.repeat(64)}`;
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174000';
@@ -195,13 +199,16 @@ async function projectEnvironmentDiagnosisResult() {
       load_current() {
         return {
           result_version: 'builder-project-read-result.v1',
-          operation: 'current_loaded',
-          project_id: PROJECT_ID,
-          title: 'Project',
-          summary: 'Project summary',
+          product_revision_receipt: {
+            project_id: PROJECT_ID,
+            resulting_tree_digest: sourceTree.source_tree_digest,
+          },
+          current: {},
           source_tree: sourceTree,
-          base_revision: null,
+          git_candidate_receipt: {},
+          git_verification_receipt: {},
           authority_evidence: {},
+          operation: 'current_loaded',
         };
       },
       load_revision() {},
@@ -251,6 +258,121 @@ async function projectEnvironmentDiagnosisResult() {
   }
 }
 
+async function projectDependencyPreparationResult() {
+  const spawns = [];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-project-deps-ipc-adapter-'));
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [
+      {
+        path: 'package.json',
+        content: `${JSON.stringify({ dependencies: { vite: '^5.0.0' } })}\n`,
+      },
+      { path: 'package-lock.json', content: '{}\n' },
+    ],
+  });
+  const diagnosisService = createBuilderProjectEnvironmentDiagnosisService({
+    project_read_authority: {
+      authority_version: 'builder-project-read-authority.v1',
+      load_current() {
+        return {
+          result_version: 'builder-project-read-result.v1',
+          product_revision_receipt: {
+            project_id: PROJECT_ID,
+            resulting_tree_digest: sourceTree.source_tree_digest,
+          },
+          current: {},
+          source_tree: sourceTree,
+          git_candidate_receipt: {},
+          git_verification_receipt: {},
+          authority_evidence: {},
+          operation: 'current_loaded',
+        };
+      },
+      load_revision() {},
+      list_current() {},
+      list_history() {},
+    },
+    project_workspace_path_service: {
+      service_version: 'builder-project-workspace-path-service.v1',
+      resolve_project_workspace_path() {
+        return {
+          result_version: 'builder-project-workspace-path-result.v1',
+          project_id: PROJECT_ID,
+          project_root_path: root,
+          authority: 'main_owned_bound_project_workspace_path',
+        };
+      },
+    },
+    spawn_process(file, args, options) {
+      const child = childProcess();
+      spawns.push({ file, args, options, child });
+      return child;
+    },
+    terminate_process_tree(input) {
+      return input.child.kill() === true;
+    },
+    clock: {
+      clock_version: 'builder-clock.v1',
+      now_ms: () => 40,
+      set_timeout(callback) { void callback; return 1; },
+      clear_timeout() {},
+    },
+    platform: process.platform,
+    windows_root: process.platform === 'win32'
+      ? (process.env.SystemRoot ?? path.join(path.parse(process.execPath).root, 'Windows'))
+      : null,
+  });
+  const preparer = createBuilderProjectDependencyPreparer({
+    project_environment_diagnosis_service: diagnosisService,
+    project_workspace_path_service: {
+      service_version: 'builder-project-workspace-path-service.v1',
+      resolve_project_workspace_path() {
+        return {
+          result_version: 'builder-project-workspace-path-result.v1',
+          project_id: PROJECT_ID,
+          project_root_path: root,
+          authority: 'main_owned_bound_project_workspace_path',
+        };
+      },
+    },
+    spawn_process(file, args, options) {
+      const child = childProcess();
+      spawns.push({ file, args, options, child, install: true });
+      return child;
+    },
+    terminate_process_tree(input) {
+      return input.child.kill() === true;
+    },
+    clock: {
+      clock_version: 'builder-clock.v1',
+      now_ms: () => 40,
+      set_timeout(callback) { void callback; return 1; },
+      clear_timeout() {},
+    },
+    platform: process.platform,
+    windows_root: process.platform === 'win32'
+      ? (process.env.SystemRoot ?? path.join(path.parse(process.execPath).root, 'Windows'))
+      : null,
+  });
+  try {
+    const pending = preparer.prepare_project_dependencies({ project_id: PROJECT_ID });
+    let processed = 0;
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+      while (processed < spawns.length) {
+        const spawn = spawns[processed];
+        processed += 1;
+        if (spawn.install === true) fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+        spawn.child.stdout.emit('data', Buffer.from('1.2.3\n'));
+        spawn.child.emit('close', 0, null);
+      }
+    }
+    return await pending;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 function harness(overrides = {}) {
   const calls = [];
   const mainFrame = {};
@@ -269,6 +391,11 @@ function harness(overrides = {}) {
       calls.push(['project-diagnose', request]);
       if (overrides.runError) throw overrides.runError;
       return overrides.projectDiagnosisResult ?? projectEnvironmentDiagnosisResult();
+    },
+    async prepareProjectDependencies(request) {
+      calls.push(['project-dependency', request]);
+      if (overrides.runError) throw overrides.runError;
+      return overrides.projectDependencyPreparationResult ?? projectDependencyPreparationResult();
     },
     async approveAndRunCurrentDraftCheck(request) {
       calls.push(['run', request]);
@@ -308,6 +435,10 @@ test('projects only fixed available checks and approved CheckRun status', async 
     DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL,
   );
   assert.equal(
+    value.adapter.channels.prepareProjectDependencies.channel,
+    PREPARE_PROJECT_DEPENDENCIES_CHANNEL,
+  );
+  assert.equal(
     value.adapter.channels.approveAndRunCurrentDraftCheck.channel,
     APPROVE_CURRENT_DRAFT_CHECK_CHANNEL,
   );
@@ -327,6 +458,10 @@ test('projects only fixed available checks and approved CheckRun status', async 
     value.event,
     { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID, decision: 'allow_once' },
   );
+  const projectPrepared = await value.adapter.channels.prepareProjectDependencies.invoke(
+    value.event,
+    { project_id: PROJECT_ID },
+  );
   const skipped = await value.adapter.channels.skipCurrentDraftCheck.invoke(
     value.event,
     { draft_id: DRAFT_ID },
@@ -335,6 +470,7 @@ test('projects only fixed available checks and approved CheckRun status', async 
     ['read', { draft_id: DRAFT_ID }],
     ['run', { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID }],
     ['dependency', { draft_id: DRAFT_ID, command_profile_id: PROFILE_ID, decision: 'allow_once' }],
+    ['project-dependency', { project_id: PROJECT_ID }],
     ['skip', { draft_id: DRAFT_ID }],
   ]);
   assert.deepEqual(available.available_checks, [{
@@ -345,6 +481,8 @@ test('projects only fixed available checks and approved CheckRun status', async 
   }]);
   assert.equal(completed.check_run_status_projection.status, 'passed');
   assert.equal(prepared.check_run_status_projection.status, 'passed');
+  assert.equal(projectPrepared.preparation_receipt.status, 'prepared');
+  assert.equal(projectPrepared.environment_diagnosis.readiness_state, 'ready');
   assert.equal(skipped.status, 'skipped');
   assert.deepEqual(Object.keys(skipped), [
     'result_version', 'operation', 'draft_id', 'project_id', 'candidate_id', 'status',

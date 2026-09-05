@@ -33,6 +33,9 @@ const COMMAND_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:command-output
 const DECIDE_COMMAND_APPROVAL_CHANNEL =
   'clawfabric-builder:code-generator:decide-command-approval';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
+const RESUME_INTERRUPTED_RUN_CHANNEL = 'clawfabric-builder:code-generator:resume-interrupted-run';
+const MANUAL_COMPACT_CONTEXT_CHANNEL =
+  'clawfabric-builder:code-generator:manual-compact-context';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const ANSWER_PLAN_CHANNEL = 'clawfabric-builder:code-generator:answer-plan';
 const ANSWER_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:answer-draft';
@@ -48,6 +51,7 @@ const RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL =
 const REJECT_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:reject-draft';
 const READ_PROVIDER_SETTINGS_CHANNEL = 'clawfabric-builder:provider-settings:read-current';
 const REPLACE_PROVIDER_SETTINGS_CHANNEL = 'clawfabric-builder:provider-settings:replace-current';
+const SELECT_PROVIDER_SETTINGS_MODEL_CHANNEL = 'clawfabric-builder:provider-settings:select-model';
 const PROVIDER_SETTINGS_STATUS_CHANNEL = 'clawfabric-builder:provider-settings:status';
 const READ_TASK_STREAM_CHANNEL = 'clawfabric-builder:task-stream:read';
 const TASK_STREAM_CHANGED_CHANNEL = 'clawfabric-builder:task-stream:changed';
@@ -56,6 +60,8 @@ const RENAME_AGENT_PROJECT_CHANNEL = 'clawfabric-builder:agent-project-tree:rena
 const ARCHIVE_AGENT_PROJECT_CHANNEL = 'clawfabric-builder:agent-project-tree:archive-project';
 const RENAME_AGENT_TASK_CHANNEL = 'clawfabric-builder:agent-project-tree:rename-task';
 const ARCHIVE_AGENT_TASK_CHANNEL = 'clawfabric-builder:agent-project-tree:archive-task';
+const EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL =
+  'clawfabric-builder:agent-project-tree:export-task-transcript';
 const READ_AGENT_WORKBENCH_CHANNEL = 'clawfabric-builder:agent-workbench:read';
 const UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL =
   'clawfabric-builder:agent-workbench:update-message-state';
@@ -63,6 +69,7 @@ const CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL =
   'clawfabric-builder:agent-workbench:create-task-proposal';
 const DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL =
   'clawfabric-builder:agent-workbench:decide-task-proposal';
+const DECIDE_AGENT_PLAN_CHANNEL = 'clawfabric-builder:agent-workbench:decide-agent-plan';
 const CONTROL_WORKBENCH_TASK_CHANNEL = 'clawfabric-builder:agent-workbench:control-task';
 const WORKBENCH_CHANGED_CHANNEL = 'clawfabric-builder:agent-workbench:changed';
 const REVIEW_PLAN_CHANNEL = 'clawfabric-builder:plan-review:review';
@@ -75,6 +82,8 @@ const DIAGNOSE_CURRENT_DRAFT_CHECK_ENVIRONMENT_CHANNEL =
   'clawfabric-builder:check-run:diagnose-current-draft-check-environment';
 const DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL =
   'clawfabric-builder:check-run:diagnose-project-environment';
+const PREPARE_PROJECT_DEPENDENCIES_CHANNEL =
+  'clawfabric-builder:check-run:prepare-project-dependencies';
 const APPROVE_CURRENT_DRAFT_CHECK_CHANNEL =
   'clawfabric-builder:check-run:approve-current-draft-check';
 const DECIDE_CURRENT_DRAFT_DEPENDENCY_PREPARATION_CHANNEL =
@@ -117,7 +126,7 @@ const CLOSE_WINDOW_CHANNEL = 'clawfabric-builder:window-controls:close';
 const READ_WINDOW_STATE_CHANNEL = 'clawfabric-builder:window-controls:read-state';
 
 contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
-  bridgeVersion: 'builder-preload.v38',
+  bridgeVersion: 'builder-preload.v40',
   agentProjectTree: Object.freeze({
     read(request) {
       return ipcRenderer.invoke(READ_AGENT_PROJECT_TREE_CHANNEL, request);
@@ -134,6 +143,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     archiveTask(request) {
       return ipcRenderer.invoke(ARCHIVE_AGENT_TASK_CHANNEL, request);
     },
+    exportTaskTranscript(request) {
+      return ipcRenderer.invoke(EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL, request);
+    },
   }),
   agentWorkbench: Object.freeze({
     read(request) {
@@ -147,6 +159,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     decideTaskProposal(request) {
       return ipcRenderer.invoke(DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL, request);
+    },
+    decideAgentPlan(request) {
+      return ipcRenderer.invoke(DECIDE_AGENT_PLAN_CHANNEL, request);
     },
     controlTask(request) {
       return ipcRenderer.invoke(CONTROL_WORKBENCH_TASK_CHANNEL, request);
@@ -223,6 +238,12 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     retry(request) {
       return ipcRenderer.invoke(RETRY_GENERATE_CHANNEL, request);
     },
+    resumeInterruptedRun(request) {
+      return ipcRenderer.invoke(RESUME_INTERRUPTED_RUN_CHANNEL, request);
+    },
+    manualCompactContext(request) {
+      return ipcRenderer.invoke(MANUAL_COMPACT_CONTEXT_CHANNEL, request);
+    },
     answer(request) {
       return ipcRenderer.invoke(ANSWER_CHANNEL, request);
     },
@@ -295,6 +316,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     replaceCurrent(request) {
       return ipcRenderer.invoke(REPLACE_PROVIDER_SETTINGS_CHANNEL, request);
     },
+    selectModel(request) {
+      return ipcRenderer.invoke(SELECT_PROVIDER_SETTINGS_MODEL_CHANNEL, request);
+    },
     status() {
       return ipcRenderer.invoke(PROVIDER_SETTINGS_STATUS_CHANNEL);
     },
@@ -338,6 +362,9 @@ contextBridge.exposeInMainWorld('clawfabricBuilder', Object.freeze({
     },
     diagnoseProjectEnvironment(request) {
       return ipcRenderer.invoke(DIAGNOSE_PROJECT_ENVIRONMENT_CHANNEL, request);
+    },
+    prepareProjectDependencies(request) {
+      return ipcRenderer.invoke(PREPARE_PROJECT_DEPENDENCIES_CHANNEL, request);
     },
     approveAndRunCurrentDraftCheck(request) {
       return ipcRenderer.invoke(APPROVE_CURRENT_DRAFT_CHECK_CHANNEL, request);

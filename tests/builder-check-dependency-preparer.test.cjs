@@ -35,6 +35,7 @@ function harness(t, options = {}) {
   let timeoutCallback = null;
   let timeoutDelay = null;
   const child = options.child ?? childProcess();
+  const recordPreparedDependencies = options.recordPreparedDependencies;
   const preparer = createBuilderCheckDependencyPreparer({
     spawn_process(file, args, spawnOptions) {
       calls.push(['spawn', file, args, spawnOptions]);
@@ -49,6 +50,12 @@ function harness(t, options = {}) {
         calls.push(['read_workspace_path', input === workspace]);
         return root;
       },
+      ...(recordPreparedDependencies === undefined ? {} : {
+        record_prepared_dependencies(input) {
+          calls.push(['record_prepared_dependencies', input === workspace]);
+          return recordPreparedDependencies(input);
+        },
+      }),
     },
     clock: {
       now_ms() { return now++; },
@@ -123,6 +130,44 @@ test('uses npm ci when the candidate check workspace has a package lockfile', as
     ? ['/d', '/s', '/c', 'npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund']
     : ['ci', '--ignore-scripts', '--no-audit', '--no-fund']);
   assert.equal(receipt.install_command, 'npm ci');
+});
+
+test('records a reusable dependency environment only after npm exits successfully', async (t) => {
+  const h = harness(t, {
+    recordPreparedDependencies() {
+      return Object.freeze({ status: 'stored' });
+    },
+  });
+  const pending = h.preparer.prepare_dependencies({
+    check_run_admission: h.selected.admission,
+    workspace_admission: h.workspace,
+    package_manager: 'npm',
+  });
+  h.child.emit('close', 0, null);
+  const receipt = await pending;
+
+  assert.equal(receipt.status, 'prepared');
+  assert.deepEqual(h.calls.filter((entry) => entry[0] === 'record_prepared_dependencies'), [
+    ['record_prepared_dependencies', true],
+  ]);
+});
+
+test('does not record a dependency environment when npm fails', async (t) => {
+  const h = harness(t, {
+    recordPreparedDependencies() {
+      throw new Error('record must not run after a failed install');
+    },
+  });
+  const pending = h.preparer.prepare_dependencies({
+    check_run_admission: h.selected.admission,
+    workspace_admission: h.workspace,
+    package_manager: 'npm',
+  });
+  h.child.emit('close', 1, null);
+  const receipt = await pending;
+
+  assert.equal(receipt.status, 'failed');
+  assert.deepEqual(h.calls.filter((entry) => entry[0] === 'record_prepared_dependencies'), []);
 });
 
 test('terminates and records a timed-out receipt without leaking output', async (t) => {

@@ -65,6 +65,15 @@ type MutableConversationItem = {
   stage?: string;
   action?: string;
   status?: string;
+  task_address_id?: string;
+  admission_id?: string;
+  operation?: string;
+  compaction_id?: string | null;
+  start_seq?: number | null;
+  summary_seq?: number | null;
+  end_seq?: number | null;
+  shadowed_token_count?: number | null;
+  recorded_at_ms?: number;
   changed_file_count?: number;
   verification_status?: string;
   step_id?: string;
@@ -115,6 +124,7 @@ type MutableConversationItem = {
     execution_admission?: string;
     result_admission?: string;
     raw_output_admission?: string;
+    renderer_authority?: string;
     revision_admission?: string;
   };
   step_index?: number;
@@ -143,6 +153,7 @@ type MutableWire = {
   stream_version: string;
   project_id: string;
   context_status_projection?: unknown;
+  context_usage_projection?: unknown;
   provider_context_disclosure_status_projection?: unknown;
   check_run_outcome_projection?: unknown;
   conversation: {
@@ -297,6 +308,32 @@ function providerContextDisclosureStatusProjection(
       ...base.authority,
       ...((overrides.authority as Record<string, unknown> | undefined) ?? {}),
     },
+  };
+}
+
+function contextUsageProjection(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    projection_version: 'builder-context-usage-projection.v2',
+    authority: 'main_owned_context_usage_projection',
+    source: 'deepseek_harness_session_projection',
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    run_id: id('run', 1),
+    harness_projection_seq: 42,
+    measurement_state: 'ready',
+    uncached_input_tokens: 20_000,
+    output_tokens: 5_000,
+    cache_read_tokens: 180_000,
+    cache_write_tokens: 0,
+    pressure_tokens: 200_000,
+    projected_tokens: 205_000,
+    context_window_tokens: 258_000,
+    usage_percent: 79,
+    cache_hit_percent: 90,
+    compaction_state: 'compacted',
+    last_compacted_at_ms: 1_000,
+    updated_at_ms: 1_100,
+    ...overrides,
   };
 }
 
@@ -986,6 +1023,66 @@ function expectUnavailable(value: unknown): void {
 }
 
 describe('Builder conversation snapshot', () => {
+  it('accepts same-turn native resume in complete and every truncated history window', () => {
+    const wire = candidateWire();
+    const [message, started, completed, terminal] = wire.conversation.items;
+    const nextRun = id('run', 40);
+    const items: MutableConversationItem[] = [message, started,
+      { item_kind: 'run_control_requested', sequence: 3, turn_id: started.turn_id,
+        run_id: started.run_id, action: 'interrupt' },
+      { ...completed, sequence: 4, terminal_status: 'interrupted', result_kind: 'failure',
+        assistant_message: null, candidate: null },
+      { ...terminal, sequence: 5, outcome: 'interrupted' },
+      { ...started, sequence: 6, run_id: nextRun, attempt_number: 2, retry_of_run_id: started.run_id },
+      { ...completed, sequence: 7, run_id: nextRun },
+      { ...terminal, sequence: 8, run_id: nextRun },
+    ];
+    wire.conversation.items = items;
+    wire.conversation.head_sequence = 8;
+    wire.conversation.window.last_sequence = 8;
+    expect(() => sanitizeBuilderConversationSnapshot(wire)).not.toThrow();
+    for (let start = 1; start < items.length; start += 1) {
+      const source = structuredClone(wire);
+      source.conversation.items = items.slice(start);
+      const padding = 512 - source.conversation.items.length;
+      const extraProgress = padding % 4;
+      for (let index = 0; index < Math.floor(padding / 4); index += 1) {
+        const turn = completedTurnItems(index + 1000, 1);
+        if (index === 0) {
+          turn.splice(2, 0, ...['context_ready', 'provider_request_started', 'provider_response_received']
+            .slice(0, extraProgress).map((stage) => ({
+              item_kind: 'run_progress_recorded', sequence: 1, turn_id: turn[1].turn_id,
+              run_id: turn[1].run_id, stage, recorded_state: 'recorded',
+            })));
+        }
+        source.conversation.items.push(...turn);
+      }
+      source.conversation.items = source.conversation.items.map((item, index) => ({
+        ...item, sequence: start + index + 1,
+      }));
+      source.conversation.head_sequence = start + 512;
+      source.conversation.window.last_sequence = start + 512;
+      source.conversation.window.first_sequence = start + 1;
+      source.conversation.window.has_earlier = true;
+      expect(() => sanitizeBuilderConversationSnapshot(source), `history starts at ${start + 1}`).not.toThrow();
+    }
+    const active = structuredClone(wire);
+    active.conversation.items = items.slice(0, 6);
+    active.conversation.head_sequence = 6;
+    active.conversation.window.last_sequence = 6;
+    active.conversation.recorded_active_turn_id = started.turn_id;
+    expect(() => sanitizeBuilderConversationSnapshot(active)).not.toThrow();
+    for (const mutate of [
+      (source: MutableWire) => { source.conversation.items[5].retry_of_run_id = id('run', 99); },
+      (source: MutableWire) => { source.conversation.items[5].task_id = id('task', 99); },
+      (source: MutableWire) => { source.conversation.items[5].attempt_number = 8; },
+      (source: MutableWire) => { source.conversation.items[4].outcome = 'cancelled'; },
+    ]) {
+      const forged = structuredClone(wire);
+      mutate(forged);
+      expect(() => sanitizeBuilderConversationSnapshot(forged)).toThrow();
+    }
+  });
   it('sanitizes a ready task stream into a fresh deeply frozen snapshot', () => {
     const wire = candidateWire();
     const snapshot = sanitizeBuilderConversationSnapshot(wire);
@@ -1297,6 +1394,90 @@ describe('Builder conversation snapshot', () => {
       .toBe(true);
     expect(JSON.stringify(snapshot.provider_context_disclosure_status_projection))
       .not.toMatch(/builder-provider-context-disclosure-request|builder-context-assembly|builder-task-address:|sha256:|"provider_context":|api[_-]?key|credential|source_tree/iu);
+  });
+
+  it('keeps Main-owned context token usage as a strict top-level renderer fact', () => {
+    const wire = candidateWire();
+    wire.context_usage_projection = contextUsageProjection();
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    expect(snapshot.context_usage_projection).toMatchObject({
+      pressure_tokens: 200_000,
+      projected_tokens: 205_000,
+      context_window_tokens: 258_000,
+      usage_percent: 79,
+      cache_hit_percent: 90,
+      compaction_state: 'compacted',
+    });
+    expect(Object.isFrozen(snapshot.context_usage_projection)).toBe(true);
+  });
+
+  it('keeps Main-recorded manual compaction as a bounded timeline item', () => {
+    const wire = candidateWire();
+    const taskItem = wire.conversation.items[0]!;
+    const runItem = wire.conversation.items[1]!;
+    wire.conversation.head_sequence = 5;
+    wire.conversation.window.last_sequence = 5;
+    wire.conversation.items.push({
+      item_kind: 'context_compaction_recorded',
+      sequence: 5,
+      turn_id: taskItem.turn_id,
+      run_id: runItem.run_id,
+      task_id: runItem.task_id,
+      task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-000000000006',
+      admission_id:
+        'builder-context-compaction-admission:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      operation: 'manual_compaction_completed',
+      status: 'compaction_completed',
+      compaction_id: 'deepseek-compaction:manual-1',
+      start_seq: 8,
+      summary_seq: 9,
+      end_seq: 10,
+      shadowed_token_count: 48_000,
+      recorded_at_ms: 1_200,
+      lifecycle: {
+        conversation_admission: 'main_recorded_after_verified_manual_compaction',
+        renderer_authority: 'not_present',
+        revision_admission: 'not_created',
+      },
+    });
+
+    const snapshot = sanitizeBuilderConversationSnapshot(wire);
+
+    expect(snapshot.state).toBe('ready');
+    if (snapshot.state !== 'ready') throw new Error('expected ready snapshot');
+    expect(snapshot.conversation.items.at(-1)).toMatchObject({
+      item_kind: 'context_compaction_recorded',
+      operation: 'manual_compaction_completed',
+      status: 'compaction_completed',
+      shadowed_token_count: 48_000,
+      lifecycle: {
+        conversation_admission: 'main_recorded_after_verified_manual_compaction',
+        renderer_authority: 'not_present',
+        revision_admission: 'not_created',
+      },
+    });
+    expect(JSON.stringify(snapshot.conversation.items.at(-1))).
+      not.toMatch(/source_tree|credential|api[_-]?key|provider_secret/iu);
+  });
+
+  it('rejects forged or cross-conversation context usage before renderer admission', () => {
+    const forgedPercent = candidateWire();
+    forgedPercent.context_usage_projection = contextUsageProjection({ usage_percent: 99 });
+    expect(() => sanitizeBuilderConversationSnapshot(forgedPercent)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
+
+    const crossConversation = candidateWire();
+    crossConversation.context_usage_projection = contextUsageProjection({
+      conversation_id:
+        'builder-conversation:123e4567-e89b-42d3-a456-426614174000:323e4567-e89b-42d3-a456-426614174000',
+    });
+    expect(() => sanitizeBuilderConversationSnapshot(crossConversation)).toThrowError(
+      BuilderConversationSnapshotError,
+    );
   });
 
   it('rejects forged context status projection before it reaches the renderer snapshot', () => {
@@ -2822,7 +3003,10 @@ describe('Builder conversation snapshot', () => {
     }
   });
 
-  it('accepts the canonical projectless Agent conversation projection', () => {
+  it.each([
+    ['Hello.', 'run_result'], ['计'.repeat(9000), 'run_result'],
+    ['> Incomplete plan\n\n' + '计'.repeat(9000), 'incomplete_result'],
+  ])('accepts canonical Agent transcripts including full-length plans (%#)', (assistantText, messageKind) => {
     const agentId = `builder-agent:${UUID}`;
     const result = sanitizeBuilderConversationSnapshot({
       stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
@@ -2853,10 +3037,10 @@ describe('Builder conversation snapshot', () => {
             turn_id: `builder-turn:${UUID}`,
             message: {
               message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174001',
-              text: 'Hello.',
+              text: assistantText,
             },
             role: 'assistant',
-            message_kind: 'run_result',
+            message_kind: messageKind,
             recovery_admission: 'sqlite_derived_public_transcript_only',
           },
         ],
@@ -2874,6 +3058,39 @@ describe('Builder conversation snapshot', () => {
     expect(result.state).toBe('ready');
     if (result.state !== 'ready') throw new Error('expected ready Agent conversation');
     expect(result.conversation.items[0]).toMatchObject({ context_route: 'update_brief' });
+    expect(result.conversation.items[1]).toMatchObject({ message: { text: assistantText }, message_kind: messageKind });
+  });
+
+  it.each(['cancelled', 'interrupted', 'failed'])('accepts durable %s Agent turn outcomes without assistant text', (outcome) => {
+    const wire = {
+      stream_version: BUILDER_TASK_STREAM_READ_RESULT_VERSION,
+      scope_kind: 'agent_conversation', agent_id: `builder-agent:${UUID}`, project_id: null,
+      conversation: {
+        conversation_id: `builder-agent-conversation:${UUID}`,
+        created_at_ms: 1, head_sequence: 4, recorded_active_turn_id: null,
+        source: 'sqlite_canonical_agent_conversation',
+        window: { first_sequence: 1, last_sequence: 4, has_earlier: false },
+        items: [{
+          item_kind: 'transcript_message', sequence: 1, turn_id: `builder-turn:${UUID}`,
+          message: { message_id: `builder-message:${UUID}`, text: 'Revise the plan.' },
+          role: 'user', message_kind: 'submitted', recovery_admission: 'sqlite_derived_public_transcript_only',
+        }, {
+          item_kind: 'turn_completed', sequence: 4, turn_id: `builder-turn:${UUID}`,
+          run_id: `builder-run:${UUID}`, outcome,
+        }],
+      },
+      authority: { conversation: 'sqlite_canonical_agent_conversation', project_source: 'not_included',
+        candidate_source: 'not_loaded', project_revision: 'not_inferred' },
+    };
+    const result = sanitizeBuilderConversationSnapshot(wire);
+    expect(result.state).toBe('ready');
+    if (result.state !== 'ready') throw new Error('expected ready');
+    expect(result.conversation.items[1]).toMatchObject({ item_kind: 'turn_completed', outcome });
+    expect(result.conversation.items).toHaveLength(2);
+    expectUnavailable({ ...wire, conversation: { ...wire.conversation,
+      items: [wire.conversation.items[0], { ...wire.conversation.items[1], outcome: 'answered' }] } });
+    expectUnavailable({ ...wire, conversation: { ...wire.conversation,
+      items: [wire.conversation.items[0], { ...wire.conversation.items[1], run_id: null }] } });
   });
 
   it('does not import React, host bridges, storage, Git, SQLite, or legacy Chat', () => {

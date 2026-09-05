@@ -134,6 +134,125 @@ function toolResult(callId, isError = false) {
   };
 }
 
+function commandMeta(command = 'npm run build', overrides = {}) {
+  return {
+    kind: 'command',
+    status: 'passed',
+    command,
+    exitCode: 0,
+    durationMs: 123,
+    stdoutPreview: '',
+    stderrPreview: '',
+    truncated: false,
+    ...overrides,
+  };
+}
+
+test('normalizes one bounded native Harness context projection snapshot', async () => {
+  const { journal, normalizer } = setup();
+  await normalizer.start();
+  assert.equal(await normalizer.handle_notification({
+    method: 'session.context-usage',
+    params: {
+      sessionId: 'builder-session-1',
+      projectionSeq: 42,
+      uncachedInputTokens: 20_000,
+      outputTokens: 5_000,
+      cacheReadTokens: 180_000,
+      cacheWriteTokens: 0,
+      pressureTokens: 200_000,
+      projectedTokens: 205_000,
+      contextWindowTokens: 258_000,
+    },
+  }), true);
+  const projected = journal.snapshot().events.find(
+    (item) => item.event_type === 'context_usage_projected',
+  );
+  assert.deepEqual(projected?.payload, {
+    harness_projection_seq: 42,
+    uncached_input_tokens: 20_000,
+    output_tokens: 5_000,
+    cache_read_tokens: 180_000,
+    cache_write_tokens: 0,
+    pressure_tokens: 200_000,
+    projected_tokens: 205_000,
+    context_window_tokens: 258_000,
+  });
+  assert.equal(projected?.turn_id, null);
+  await assert.rejects(normalizer.handle_notification({
+    method: 'session.context-usage',
+    params: {
+      sessionId: 'builder-session-1',
+      projectionSeq: 43,
+      uncachedInputTokens: 20_000,
+      outputTokens: 5_000,
+      cacheReadTokens: 180_000,
+      cacheWriteTokens: 0,
+      pressureTokens: null,
+      projectedTokens: 205_000,
+      contextWindowTokens: 258_000,
+    },
+  }), BuilderHarnessRuntimeEventNormalizerError);
+});
+
+test('serializes repair with the trailing SDK idle notification before continuing a token-limited turn', async () => {
+  const runContract = contract();
+  const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract });
+  let now = 1_000;
+  let emitting = 0;
+  let maximumEmitting = 0;
+  let holdRepair = false;
+  let enteredRepair;
+  let releaseRepair;
+  const entered = new Promise((resolve) => { enteredRepair = resolve; });
+  const released = new Promise((resolve) => { releaseRepair = resolve; });
+  const normalizer = createBuilderHarnessRuntimeEventNormalizer({
+    run_contract: runContract,
+    session_id: 'builder-session-1',
+    workspace_root: path.resolve('harness-workspace'),
+    clock: () => ++now,
+    event_sink: {
+      async emit(candidate) {
+        emitting += 1;
+        maximumEmitting = Math.max(maximumEmitting, emitting);
+        try {
+          const result = journal.append(candidate, candidate.occurred_at_ms + 1);
+          if (holdRepair && candidate.event_type === 'step_completed') {
+            enteredRepair();
+            await released;
+          }
+          return result;
+        } finally {
+          emitting -= 1;
+        }
+      },
+    },
+  });
+  await normalizer.start();
+  await normalizer.handle_notification(sessionEvent(event('turn/start', 1, { turn: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 2, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('step/end', 3, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('turn/end', 4, { turn: 1, reason: { kind: 'max-tokens' } })));
+  holdRepair = true;
+  const repairing = normalizer.prepare_repair({ failure_summary: 'No implementation before the output limit.' });
+  await entered;
+  const idle = normalizer.handle_notification({
+    method: 'session.status', params: { sessionId: 'builder-session-1', status: 'idle' },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRepair();
+  await repairing;
+  await idle;
+  holdRepair = false;
+  assert.equal(maximumEmitting, 1, 'lifecycle mutations must not race asynchronous persistence');
+  await normalizer.handle_notification(sessionEvent(event('turn/start', 5, { turn: 2 })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 6, { turn: 2, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('step/end', 7, { turn: 2, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('turn/end', 8, { turn: 2, reason: { kind: 'completed' } })));
+  await normalizer.complete_run({ checkpoint_status: 'not_applicable' });
+  assert.equal(journal.snapshot().status, 'run_completed');
+});
+
 test('normalizes a successful Agent Test browser checkpoint as a public browser tool fact', async () => {
   const { journal, normalizer } = setup();
   await normalizer.start();
@@ -311,6 +430,7 @@ test('normalizes Harness streaming text and distinct file and command tool facts
   })));
 
   assert.deepEqual(await normalizer.when_settled(), { status: 'settled', reason: 'completed' });
+  assert.equal(normalizer.snapshot().successful_mutation_tool_call_count, 1);
   await normalizer.complete_run({ checkpoint_status: 'created' });
   const events = journal.snapshot().events;
   assert.equal(journal.snapshot().status, 'run_completed');
@@ -360,6 +480,16 @@ test('projects reasoning chunks as a bounded Chinese status without exposing raw
     ['turn_preparing', 'step_analyzing'],
   );
   assert.doesNotMatch(JSON.stringify(snapshot), /private chain of thought marker|more private reasoning/u);
+  await normalizer.handle_notification(sessionEvent(event('step/end', 5, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 6, { turn: 1, step: 2 })));
+  await normalizer.handle_notification(sessionEvent(event('assistant/chunk', 7, {
+    turn: 1, step: 2,
+    chunk: { type: 'reasoning-delta', index: 0, text: 'private second-step reasoning' },
+  })));
+  const statuses = journal.snapshot().events.filter((item) => item.event_type === 'assistant_reasoning_status');
+  assert.equal(statuses.length, 2, 'each model step must publish its own bounded thinking status');
+  assert.notEqual(statuses[0].step_id, statuses[1].step_id);
+  assert.doesNotMatch(JSON.stringify(journal.snapshot()), /private second-step reasoning/u);
 });
 
 test('localizes tool activity labels and summaries for a Chinese end-user request', async () => {
@@ -430,8 +560,13 @@ test('preserves Harness usage, finish, todo, session, and subagent lifecycle fac
     params: { parentSessionId: 'builder-session-1', childSessionId: 'child-session-1' },
   }), true);
   await normalizer.handle_notification(sessionEvent(event('turn/start', 1, { turn: 1 })));
-  await normalizer.handle_notification(sessionEvent(event('step/start', 2, { turn: 1, step: 1 })));
-  await normalizer.handle_notification(sessionEvent(event('todo/write', 3, {
+  await normalizer.handle_notification(sessionEvent(event('request/context', 2, {
+    provider: 'deepseek-official',
+    model: 'deepseek-v4',
+    contextWindow: 258_000,
+  })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 3, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('todo/write', 4, {
     todos: [
       { content: 'Inspect the project', status: 'completed' },
       { content: 'Explain the result', status: 'in_progress' },
@@ -443,17 +578,17 @@ test('preserves Harness usage, finish, todo, session, and subagent lifecycle fac
     cacheReadTokens: 40,
     reasoningTokens: 8,
   };
-  await normalizer.handle_notification(sessionEvent(event('assistant/chunk', 4, {
+  await normalizer.handle_notification(sessionEvent(event('assistant/chunk', 5, {
     turn: 1,
     step: 1,
     chunk: { type: 'usage', usage },
   })));
-  await normalizer.handle_notification(sessionEvent(event('assistant/chunk', 5, {
+  await normalizer.handle_notification(sessionEvent(event('assistant/chunk', 6, {
     turn: 1,
     step: 1,
     chunk: { type: 'finish', reason: { kind: 'stop' } },
   })));
-  await normalizer.handle_notification(sessionEvent(event('assistant/message', 6, {
+  await normalizer.handle_notification(sessionEvent(event('assistant/message', 7, {
     turn: 1,
     step: 1,
     message: assistantMessage('已完成。'),
@@ -481,6 +616,7 @@ test('preserves Harness usage, finish, todo, session, and subagent lifecycle fac
       cache_read_tokens: 40,
       cache_write_tokens: null,
       reasoning_tokens: 8,
+      context_window_tokens: 258_000,
     }],
   );
   assert.deepEqual(
@@ -533,7 +669,7 @@ test('emits complete Plan Markdown when the provider did not stream chunks', asy
   assert.equal(events.at(-1).payload.outcome, 'planned');
 });
 
-test('preserves upstream assistant chunks before downstream durable batching', async () => {
+test('coalesces upstream assistant chunks before durable persistence without losing text', async () => {
   const { journal, normalizer } = setup('ask');
   await normalizer.start();
   await normalizer.handle_notification(sessionEvent(event('turn/start', 1, { turn: 1 })));
@@ -562,7 +698,8 @@ test('preserves upstream assistant chunks before downstream durable batching', a
     .filter((item) => item.event_type === 'assistant_text_delta')
     .map((item) => item.payload.delta_text);
   assert.equal(deltas.join(''), text);
-  assert.deepEqual(deltas, chunks);
+  assert.ok(deltas.length < chunks.length / 4);
+  assert.ok(deltas.every((delta) => Buffer.byteLength(delta, 'utf8') <= 16 * 1_024));
 });
 
 test('discards a failed streaming attempt and continues after a Harness model retry', async () => {
@@ -765,6 +902,57 @@ test('keeps concurrent Harness read tools distinct within one step', async () =>
       .map((item) => item.payload.target_label),
     ['index.html', 'styles.css'],
   );
+});
+
+test('scopes repeated Harness call ids by step across repaired turns', async () => {
+  const { journal, normalizer } = setup('build');
+  await normalizer.start();
+  await normalizer.handle_notification(sessionEvent(event('turn/start', 1, { turn: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 2, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('tool/call', 3, {
+    turn: 1,
+    step: 1,
+    callId: 'reused-command-id',
+    name: 'bash',
+    arguments: JSON.stringify({ command: 'npm run build' }),
+  })));
+  await normalizer.handle_notification(sessionEvent(event('tool/result', 4, {
+    turn: 1,
+    step: 1,
+    message: toolResult('reused-command-id'),
+    meta: commandMeta(),
+  })));
+  await normalizer.handle_notification(sessionEvent(event('step/end', 5, { turn: 1, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('turn/end', 6, {
+    turn: 1,
+    reason: { kind: 'completed' },
+  })));
+  await normalizer.prepare_repair({ failure_summary: 'The first candidate still needs repair.' });
+
+  await normalizer.handle_notification(sessionEvent(event('turn/start', 7, { turn: 2 })));
+  await normalizer.handle_notification(sessionEvent(event('step/start', 8, { turn: 2, step: 1 })));
+  await normalizer.handle_notification(sessionEvent(event('tool/call', 9, {
+    turn: 2,
+    step: 1,
+    callId: 'reused-command-id',
+    name: 'bash',
+    arguments: JSON.stringify({ command: 'npm run build' }),
+  })));
+  await normalizer.handle_notification(sessionEvent(event('tool/result', 10, {
+    turn: 2,
+    step: 1,
+    message: toolResult('reused-command-id'),
+    meta: commandMeta('npm run build', { durationMs: 456 }),
+  })));
+
+  const commandStarts = journal.snapshot().events.filter((item) => (
+    item.event_type === 'tool_call_started'
+    && item.payload.tool_kind === 'command'
+  ));
+  const checks = journal.snapshot().events.filter((item) => item.event_type === 'check_result_recorded');
+  assert.equal(commandStarts.length, 2);
+  assert.notEqual(commandStarts[0].tool_call_id, commandStarts[1].tool_call_id);
+  assert.deepEqual(checks.map((item) => item.payload.duration_ms), [123, 456]);
 });
 
 test('projects Harness tool presentation metadata without exposing source text or search previews', async () => {

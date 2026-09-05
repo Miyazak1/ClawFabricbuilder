@@ -47,6 +47,16 @@ function devTree() {
   });
 }
 
+function nextTreeWithoutHtml() {
+  return createBuilderProjectSourceTree({
+    files: [
+      { path: 'package.json', content: '{"private":true,"scripts":{"dev":"next dev"}}\n' },
+      { path: 'app/layout.tsx', content: 'export default function Layout({ children }) { return children; }\n' },
+      { path: 'app/page.tsx', content: 'export default function Page() { return <main>App router</main>; }\n' },
+    ],
+  });
+}
+
 function sourceResolverAuthority() {
   return {
     source_resolver_authority: 'main_owned_live_preview_source_resolver_v1',
@@ -70,6 +80,12 @@ function sourceResolverAuthority() {
 
 function sourceAdmission(sourceTree = tree(), sourceKind = 'current_draft') {
   const savedRevision = sourceKind === 'saved_revision';
+  const selectedEntryPath = sourceTree.files.some((file) => file.path === 'index.html')
+    ? 'index.html'
+    : 'package.json';
+  const previewKind = selectedEntryPath === 'package.json'
+    ? 'live_dev_server_web'
+    : 'live_static_web';
   return createBuilderLivePreviewSourceAdmission({
     source_resolver_result: {
       result_version: BUILDER_LIVE_PREVIEW_SOURCE_RESOLVER_RESULT_VERSION,
@@ -117,8 +133,8 @@ function sourceAdmission(sourceTree = tree(), sourceKind = 'current_draft') {
         authority: sourceResolverAuthority(),
       },
     },
-    selected_entry_path: 'index.html',
-    preview_kind: 'live_static_web',
+    selected_entry_path: selectedEntryPath,
+    preview_kind: previewKind,
     admitted_at_ms: 1_000,
     expires_at_ms: 61_000,
   });
@@ -274,7 +290,7 @@ function sourceServiceHarness({ fail = false, savedRevision = false, sourceTree 
       };
     },
   };
-  return { calls, service };
+  return { calls, service, setSourceTree(value) { sourceTree = value; }, setFailure(value) { fail = value; } };
 }
 
 function fixture(options = {}) {
@@ -376,6 +392,14 @@ test('requires one-time user approval before starting a discovered project devel
   assert.equal(first.status, 'approval_required');
   assert.equal(first.preview_kind, 'live_dev_server_web');
   assert.equal(first.dev_server_approval.command_display, 'npm run dev');
+  assert.equal(first.runtime_launch_projection.projection_version, 'builder-project-runtime-launch-projection.v1');
+  assert.equal(first.runtime_launch_projection.command_profile, 'main_owned_dev_server_profile');
+  assert.equal(first.runtime_launch_projection.user_approval, 'required');
+  assert.equal(first.runtime_launch_projection.command_execution, 'approval_required');
+  assert.equal(first.runtime_launch_projection.dependency_preparation, 'not_allowed');
+  assert.equal(first.runtime_launch_projection.package_install, 'not_allowed');
+  assert.equal(first.runtime_launch_projection.provider_dispatch, false);
+  assert.equal(first.runtime_launch_projection.tool_dispatch, false);
   assert.equal(first.authority.command_execution, true);
   assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace']);
   assert.equal(
@@ -399,6 +423,9 @@ test('requires one-time user approval before starting a discovered project devel
   });
   assert.equal(ready.status, 'ready');
   assert.equal(ready.entry_url, 'http://127.0.0.1:49321/');
+  assert.equal(ready.runtime_launch_projection.user_approval, 'approved_once');
+  assert.equal(ready.runtime_launch_projection.command_execution, 'started');
+  assert.equal(ready.runtime_launch_projection.sandbox_policy, 'dev_server_only_no_dependency_install');
   assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace', 'workspace', 'start']);
   await assert.rejects(selected.service.decide_current_live_preview_dev_server({
     ...request(),
@@ -409,6 +436,19 @@ test('requires one-time user approval before starting a discovered project devel
   const stopped = await selected.service.stop_current_live_preview(request());
   assert.equal(stopped.status, 'stopped');
   assert.equal(selected.devCalls.some(([name]) => name === 'stop'), true);
+});
+
+test('requires dev-server approval for app-router projects without root HTML', async (t) => {
+  const selected = fixture({ dev: true, source: { sourceTree: nextTreeWithoutHtml() } });
+  t.after(async () => { await selected.service.shutdown(); });
+
+  const first = await selected.service.request_current_draft_live_preview(request());
+
+  assert.equal(first.status, 'approval_required');
+  assert.equal(first.preview_kind, 'live_dev_server_web');
+  assert.equal(first.dev_server_approval.command_display, 'npm run dev');
+  assert.equal(first.runtime_launch_projection.command_execution, 'approval_required');
+  assert.deepEqual(selected.devCalls.map(([name]) => name), ['workspace']);
 });
 
 test('starts a live preview browser from the current saved revision when no draft exists', async (t) => {
@@ -467,6 +507,80 @@ test('reload updates bounds and stop detaches then cleans up runtime', async () 
   assert.deepEqual(selected.window.calls.map((item) => item[0]), ['add', 'remove']);
   assert.equal(selected.runtime.calls.some((item) => item[0] === 'reload'), true);
   assert.equal(selected.runtime.calls.some((item) => item[0] === 'stop'), true);
+});
+
+test('reload replaces an outdated snapshot with the latest admitted source', async (t) => {
+  const selected = fixture();
+  t.after(() => selected.service.shutdown());
+  const initial = await selected.service.request_current_draft_live_preview(request());
+  selected.source.setSourceTree(createBuilderProjectSourceTree({ files: [
+    { path: 'index.html', content: '<main>Updated preview</main>\n' },
+  ] }));
+  const updated = await selected.service.reload_current_live_preview(request());
+  assert.equal(updated.status, 'ready');
+  assert.notEqual(updated.entry_url, initial.entry_url);
+  assert.match(await (await fetch(updated.entry_url)).text(), /Updated preview/u);
+  assert.deepEqual(selected.runtime.calls.filter(([name]) => ['start', 'reload', 'stop'].includes(name))
+    .map(([name]) => name), ['start', 'stop', 'start']);
+  const unchanged = await selected.service.reload_current_live_preview(request());
+  assert.equal(unchanged.entry_url, updated.entry_url);
+  assert.equal(selected.runtime.calls.at(-1)[0], 'reload');
+});
+
+test('reload removes the stale view when the latest source cannot be admitted', async (t) => {
+  const selected = fixture();
+  t.after(() => selected.service.shutdown());
+  await selected.service.request_current_draft_live_preview(request());
+  selected.source.setFailure(true);
+  const failed = await selected.service.reload_current_live_preview(request());
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.unavailable_reason, 'no_current_draft_preview_source');
+  assert.equal(failed.entry_url, null);
+  assert.equal(selected.runtime.calls.some(([name]) => name === 'stop'), true);
+  assert.deepEqual(selected.window.calls.map(([name]) => name), ['add', 'remove']);
+  assert.equal(selected.service.read_current_live_preview_status(request()).status, 'failed');
+  selected.source.setFailure(false);
+  assert.equal((await selected.service.request_current_draft_live_preview(request())).status, 'ready');
+});
+
+test('serializes overlapping Run and Stop so a stopped view cannot reappear', async (t) => {
+  const selected = fixture();
+  t.after(() => selected.service.shutdown());
+  const start = selected.service.request_current_draft_live_preview(request());
+  const stop = selected.service.stop_current_live_preview(request());
+  assert.equal((await start).status, 'ready');
+  assert.equal((await stop).status, 'stopped');
+  assert.equal(selected.service.read_current_live_preview_status(request()).status, 'stopped');
+  assert.deepEqual(selected.window.calls.map(([name]) => name), ['add', 'remove']);
+});
+
+test('hides a preview when layout ownership moves to another conversation', async (t) => {
+  const selected = fixture();
+  t.after(() => selected.service.shutdown());
+  await selected.service.request_current_draft_live_preview(request());
+  const other = request({ conversation_id: `builder-conversation:${UUID}:323e4567-e89b-42d3-a456-426614174000`, view_bounds: null });
+  await selected.service.update_current_live_preview_layout(other);
+  assert.equal(selected.runtime.calls.at(-1)[0], 'visible');
+  assert.equal(selected.runtime.calls.at(-1)[1], false);
+  await selected.service.request_current_draft_live_preview(request());
+  assert.equal(selected.runtime.calls.filter(([name]) => name === 'visible').at(-1)[1], false);
+});
+
+test('changed development-server source requires a fresh one-time approval on reload', async (t) => {
+  const selected = fixture({ dev: true, source: { sourceTree: devTree() } });
+  t.after(() => selected.service.shutdown());
+  const first = await selected.service.request_current_draft_live_preview(request());
+  await selected.service.decide_current_live_preview_dev_server({ ...request(),
+    approval_request_id: first.dev_server_approval.approval_request_id, decision: 'allow_once' });
+  selected.source.setSourceTree(createBuilderProjectSourceTree({ files: [
+    ...devTree().files.filter((file) => file.path !== 'index.html').map(({ path, content }) => ({ path, content })),
+    { path: 'index.html', content: '<main>Updated development preview</main>\n' },
+  ] }));
+  const updated = await selected.service.reload_current_live_preview(request());
+  assert.equal(updated.status, 'approval_required');
+  assert.notEqual(updated.dev_server_approval.approval_request_id, first.dev_server_approval.approval_request_id);
+  assert.equal(selected.devCalls.filter(([name]) => name === 'start').length, 1);
+  assert.equal(selected.devCalls.filter(([name]) => name === 'stop').length, 1);
 });
 
 test('fallback bounds shrink inside narrow windows instead of overflowing', async (t) => {

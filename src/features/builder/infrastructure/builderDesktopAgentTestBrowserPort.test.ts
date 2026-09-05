@@ -17,6 +17,7 @@ describe('Builder desktop Agent Test Browser port', () => {
       applied_bounds: request.view_bounds,
     }));
     const port = createBuilderDesktopAgentTestBrowserPort({
+      stop: vi.fn(),
       subscribeLifecycle: () => () => undefined,
       updateLayout,
     });
@@ -41,6 +42,7 @@ describe('Builder desktop Agent Test Browser port', () => {
 
   it('rejects private or inconsistent result drift', async () => {
     const port = createBuilderDesktopAgentTestBrowserPort({
+      stop: vi.fn(),
       subscribeLifecycle: () => () => undefined,
       updateLayout: vi.fn(async () => ({
         result_version: 'builder-agent-test-browser-layout-result.v1',
@@ -59,6 +61,7 @@ describe('Builder desktop Agent Test Browser port', () => {
     let publish: ((value: unknown) => void) | null = null;
     const unsubscribe = vi.fn();
     const port = createBuilderDesktopAgentTestBrowserPort({
+      stop: vi.fn(),
       subscribeLifecycle(listener: (value: unknown) => void) {
         publish = listener;
         return unsubscribe;

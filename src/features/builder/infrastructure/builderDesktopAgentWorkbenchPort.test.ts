@@ -15,6 +15,7 @@ describe('BuilderDesktopAgentWorkbenchPort', () => {
     const updateMessageState = vi.fn(async (request) => ({ request }));
     const createTaskProposal = vi.fn(async (request) => ({ request }));
     const decideTaskProposal = vi.fn(async (request) => ({ request }));
+    const decideAgentPlan = vi.fn(async (request) => ({ request }));
     const controlTask = vi.fn(async (request) => ({ request }));
     const unsubscribe = vi.fn();
     const port = createBuilderDesktopAgentWorkbenchPort({
@@ -22,6 +23,7 @@ describe('BuilderDesktopAgentWorkbenchPort', () => {
       updateMessageState,
       createTaskProposal,
       decideTaskProposal,
+      decideAgentPlan,
       controlTask,
       subscribeChanged(listener: (event: unknown) => void) {
         bridgeListener.current = listener;
@@ -57,6 +59,7 @@ describe('BuilderDesktopAgentWorkbenchPort', () => {
       updateMessageState: vi.fn(),
       createTaskProposal: vi.fn(),
       decideTaskProposal: vi.fn(),
+      decideAgentPlan: vi.fn(),
       controlTask: vi.fn(),
       subscribeChanged: vi.fn(),
       execute: vi.fn(),
@@ -66,6 +69,7 @@ describe('BuilderDesktopAgentWorkbenchPort', () => {
       updateMessageState: vi.fn(),
       createTaskProposal: vi.fn(),
       decideTaskProposal: vi.fn(),
+      decideAgentPlan: vi.fn(),
       controlTask: vi.fn(),
       subscribeChanged: () => () => undefined,
     });

@@ -89,6 +89,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
     const bridge = {
       readCurrent: vi.fn(async () => current()),
       replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     };
 
@@ -127,6 +128,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,
@@ -171,6 +173,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
         credential_status: 'missing',
       })),
       replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,
@@ -200,6 +203,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,
@@ -236,6 +240,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,
@@ -269,6 +274,7 @@ describe('BuilderProviderSettingsRouteAdapter', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,

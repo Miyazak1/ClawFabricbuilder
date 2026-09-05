@@ -53,7 +53,10 @@ export function BuilderResultPanel({
       || livePreviewStatus.status === 'reloading'
       || livePreviewStatus.status === 'stopping'
     );
-  const visiblePreviewMode = canEnterLivePreview ? previewMode : 'static';
+  const showArtifactLiveState = placement === 'artifact' && (livePreviewOperation !== null
+    || (livePreviewStatus !== null && ['starting', 'ready', 'reloading', 'stopping', 'failed', 'approval_required']
+      .includes(livePreviewStatus.status)));
+  const visiblePreviewMode = showArtifactLiveState ? 'live' : canEnterLivePreview ? previewMode : 'static';
   const className = placement === 'artifact'
     ? 'cf-builder-flow-card cf-builder-preview-panel cf-builder-result-card cf-builder-artifact-preview-card'
     : placement === 'expanded'
@@ -165,6 +168,7 @@ export function BuilderResultPanel({
             className="cf-builder-live-preview-panel"
             data-builder-live-preview-panel="true"
             data-builder-live-preview-status={livePreviewStatus?.status ?? 'unknown'}
+            role={livePreviewStatus?.status === 'failed' ? 'alert' : 'status'}
           >
             <p className="cf-builder-live-preview-title">
               {livePreviewOperation === null

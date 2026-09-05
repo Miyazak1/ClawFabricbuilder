@@ -14,6 +14,7 @@ const BUILDER_HARNESS_RUNTIME_EVENT_NORMALIZER_VERSION =
 const NOTIFICATION_METHODS = Object.freeze([
   'session.event',
   'session.status',
+  'session.context-usage',
   'subagent.started',
   'subagent.finished',
 ]);
@@ -70,7 +71,9 @@ const UNSAFE_TEXT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
 const SECRET_LIKE_PATTERN = /(?:api[_-]?key|access[_-]?token|authorization|password|secret|credential|private[_-]?key)\s*[:=]/iu;
 // Preserve upstream text-delta granularity for the renderer. Durable SQLite
 // amplification is controlled downstream by the generation service batcher.
-const ASSISTANT_DELTA_FLUSH_BYTES = 1;
+// Keep the durable conversation chain bounded without sacrificing sentence-level
+// live progress. The final assistant/message event always flushes the remainder.
+const ASSISTANT_DELTA_FLUSH_BYTES = 512;
 const ASSISTANT_DELTA_MAX_BYTES = 16 * 1_024;
 
 class BuilderHarnessRuntimeEventNormalizerError extends Error {
@@ -172,6 +175,10 @@ function deterministicUuid(value) {
   const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   if (!UUID_PATTERN.test(uuid)) fail();
   return uuid;
+}
+
+function scopedToolKey(record, callId) {
+  return `${record.step_id}:${callId}`;
 }
 
 function safeRelativeTarget(rawValue, workspaceRoot) {
@@ -435,7 +442,7 @@ function assistantText(rawMessage) {
   return text;
 }
 
-function safeTokenUsage(rawUsage) {
+function safeTokenUsage(rawUsage, contextWindowTokens) {
   if (!isPlainObject(rawUsage)) fail();
   const usage = {
     input_tokens: safeInteger(objectValue(rawUsage, 'inputTokens')),
@@ -443,6 +450,7 @@ function safeTokenUsage(rawUsage) {
     cache_read_tokens: null,
     cache_write_tokens: null,
     reasoning_tokens: null,
+    context_window_tokens: contextWindowTokens,
   };
   for (const [sourceKey, targetKey] of [
     ['cacheReadTokens', 'cache_read_tokens'],
@@ -584,6 +592,8 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
   let lastAssistantText = '';
   let lastReasoningStatus = null;
   let lastRuntimeActivity = null;
+  let contextWindowTokens = null;
+  let successfulMutationToolCallCount = 0;
   let verificationStepId = null;
   let verificationIndex = 0;
   let settlement;
@@ -711,6 +721,15 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       return false;
     }
 
+    if (type === 'request/context') {
+      safeString(objectValue(data, 'provider'), 512);
+      safeString(objectValue(data, 'model'), 512);
+      const rawContextWindow = optionalObjectValue(data, 'contextWindow');
+      contextWindowTokens = rawContextWindow === undefined
+        ? null
+        : safeInteger(rawContextWindow, 1);
+      return false;
+    }
     if (type === 'compaction/prune') {
       safeShadowedSelection(data, seq);
       safeFiniteNumber(objectValue(data, 'shadowedTokenCount'));
@@ -786,6 +805,7 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
         active: true,
       };
       steps.set(key, record);
+      lastReasoningStatus = null;
       await emit('step_started', { step_index: expectedStepIndex }, {
         turn_id: runContract.admission.turn_id,
         step_id: record.step_id,
@@ -839,7 +859,7 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       }
       if (chunkType === 'usage') {
         if (record.usage !== null) fail('builder_harness_runtime_event_conflict');
-        record.usage = safeTokenUsage(objectValue(chunk, 'usage'));
+        record.usage = safeTokenUsage(objectValue(chunk, 'usage'), contextWindowTokens);
         await emit('model_usage_recorded', record.usage, {
           turn_id: runContract.admission.turn_id,
           step_id: record.step_id,
@@ -890,7 +910,7 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       const text = assistantText(objectValue(data, 'message'));
       const messageUsage = optionalObjectValue(data, 'usage');
       if (messageUsage !== undefined) {
-        const usage = safeTokenUsage(messageUsage);
+        const usage = safeTokenUsage(messageUsage, contextWindowTokens);
         if (record.usage === null) {
           record.usage = usage;
           await emit('model_usage_recorded', usage, {
@@ -1003,15 +1023,16 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       await flushAssistantText(record, observedAtMs);
       const callId = safeString(objectValue(data, 'callId'), 512);
       const name = safeString(objectValue(data, 'name'), 160);
-      if (tools.has(callId)) fail('builder_harness_runtime_event_conflict');
+      const toolKey = scopedToolKey(record, callId);
+      if (tools.has(toolKey)) fail('builder_harness_runtime_event_conflict');
       const parsed = parseArguments(objectValue(data, 'arguments'));
       const presentation = toolPresentation(name, parsed.value, workspaceRoot, useChinese);
-      const toolCallId = `builder-tool-call:${deterministicUuid(`${runContract.admission.run_id}:harness-tool:${callId}`)}`;
+      const toolCallId = `builder-tool-call:${deterministicUuid(`${runContract.admission.run_id}:harness-tool:${toolKey}`)}`;
       if (
         presentation === null
         || !runContract.admission.allowed_tools.includes(presentation.kind)
       ) {
-        tools.set(callId, {
+        tools.set(toolKey, {
           tool_call_id: toolCallId,
           step_id: record.step_id,
           kind: null,
@@ -1024,7 +1045,7 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
         });
         return true;
       }
-      tools.set(callId, {
+      tools.set(toolKey, {
         tool_call_id: toolCallId,
         step_id: record.step_id,
         kind: presentation.kind,
@@ -1057,7 +1078,7 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       const message = objectValue(data, 'message');
       const source = objectValue(message, 'source');
       const callId = safeString(objectValue(source, 'callId'), 512);
-      const tool = tools.get(callId);
+      const tool = tools.get(scopedToolKey(record, callId));
       if (!tool || tool.settled || tool.step_id !== record.step_id) {
         fail('builder_harness_runtime_event_conflict');
       }
@@ -1116,6 +1137,9 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
           summary: `${tool.completed_label}${useChinese ? '。' : '.'}`,
           presentation_detail: presentationDetail,
         }, ids, observedAtMs);
+        if (tool.kind === 'edit' || tool.kind === 'write') {
+          successfulMutationToolCallCount += 1;
+        }
       }
       tool.settled = true;
       return true;
@@ -1249,6 +1273,36 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       }
       const notificationSessionId = safeString(objectValue(params, 'sessionId'), 512);
       if (notificationSessionId !== sessionId) return false;
+      if (method === 'session.context-usage') {
+        const projection = exactObjectWithOptional(params, [
+          'sessionId',
+          'projectionSeq',
+          'uncachedInputTokens',
+          'outputTokens',
+          'cacheReadTokens',
+          'cacheWriteTokens',
+          'pressureTokens',
+          'projectedTokens',
+          'contextWindowTokens',
+        ]);
+        const nullableCount = (value, minimum = 0) => value === null
+          ? null
+          : safeInteger(value, minimum);
+        const pressureTokens = nullableCount(objectValue(projection, 'pressureTokens'));
+        const projectedTokens = nullableCount(objectValue(projection, 'projectedTokens'));
+        if (projectedTokens !== null && pressureTokens === null) fail();
+        await emit('context_usage_projected', {
+          harness_projection_seq: safeInteger(objectValue(projection, 'projectionSeq'), -1),
+          uncached_input_tokens: safeInteger(objectValue(projection, 'uncachedInputTokens')),
+          output_tokens: safeInteger(objectValue(projection, 'outputTokens')),
+          cache_read_tokens: safeInteger(objectValue(projection, 'cacheReadTokens')),
+          cache_write_tokens: safeInteger(objectValue(projection, 'cacheWriteTokens')),
+          pressure_tokens: pressureTokens,
+          projected_tokens: projectedTokens,
+          context_window_tokens: nullableCount(objectValue(projection, 'contextWindowTokens'), 1),
+        });
+        return true;
+      }
       if (method === 'session.status') {
         const status = safeString(objectValue(params, 'status'), 80);
         if (!['running', 'idle'].includes(status)) fail();
@@ -1413,19 +1467,30 @@ function createBuilderHarnessRuntimeEventNormalizer(rawOptions) {
       accepted_session_event_count: seenSeq.size,
       active_compaction_count: compactions.size,
       active_tool_count: [...tools.values()].filter((tool) => !tool.settled).length,
+      tool_call_count: tools.size,
+      successful_mutation_tool_call_count: successfulMutationToolCallCount,
       last_assistant_text: lastAssistantText,
       verification_step_id: verificationStepId,
     });
   }
 
+  // SDK notifications and Builder repair/finalization share one mutable journal.
+  // Keep the entire transition ordered, including its asynchronous persistence.
+  let transitionChain = Promise.resolve();
+  function serializeTransition(operation, args) {
+    const result = transitionChain.then(() => Reflect.apply(operation, undefined, args));
+    transitionChain = result.catch(() => {});
+    return result;
+  }
+
   return Object.freeze({
     normalizer_version: BUILDER_HARNESS_RUNTIME_EVENT_NORMALIZER_VERSION,
-    start,
-    handle_notification: handleNotification,
+    start: (...args) => serializeTransition(start, args),
+    handle_notification: (...args) => serializeTransition(handleNotification, args),
     when_settled: whenSettled,
-    prepare_repair: prepareRepair,
-    fail_run: failRun,
-    complete_run: completeRun,
+    prepare_repair: (...args) => serializeTransition(prepareRepair, args),
+    fail_run: (...args) => serializeTransition(failRun, args),
+    complete_run: (...args) => serializeTransition(completeRun, args),
     snapshot,
   });
 }

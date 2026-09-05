@@ -76,6 +76,7 @@ function setup(options: {
   approveCurrentProjectWrite?: BuilderCodeGeneratorPort['approveCurrentProjectWrite'];
   retry?: BuilderCodeGeneratorPort['retry'];
   answer?: BuilderCodeGeneratorPort['answer'];
+  answerPlan?: BuilderCodeGeneratorPort['answerPlan'];
   answerDraft?: BuilderCodeGeneratorPort['answerDraft'];
   restoreDraft?: BuilderCodeGeneratorPort['restoreDraft'];
   restoreRevisionAsDraft?: BuilderCodeGeneratorPort['restoreRevisionAsDraft'];
@@ -153,6 +154,7 @@ function setup(options: {
   } as const)));
   const retry = vi.fn(options.retry ?? (async (request) => createGenerationDraft(request)));
   const answer = vi.fn(options.answer ?? (async (request) => createGenerationAnswer(request)));
+  const answerPlan = vi.fn(options.answerPlan ?? (async (request) => createGenerationAnswer(request)));
   const answerDraft = vi.fn(options.answerDraft ?? (async (request) => {
     const hostRequest = await createBuilderGenerationRequest(request.instruction, PROJECT_ID);
     return createGenerationAnswer(hostRequest);
@@ -242,6 +244,7 @@ function setup(options: {
       approveCurrentProjectWrite,
       retry,
       answer,
+      answerPlan,
       answerDraft,
       restoreDraft,
       restoreRevisionAsDraft,
@@ -258,6 +261,7 @@ function setup(options: {
   });
   return {
     answer,
+    answerPlan,
     answerDraft,
     cancel,
     continueDraft,
@@ -864,6 +868,43 @@ describe('Builder project controller v2', () => {
     expect(JSON.stringify(result)).not.toContain('request_id');
   });
 
+  it.each(['saved', 'draft', 'history'] as const)('finishes projectless Agent planning while retaining %s project state', async (selection) => {
+    let release!: () => void;
+    const finished = new Promise<void>((resolve) => { release = resolve; });
+    let started!: Parameters<NonNullable<BuilderCodeGeneratorPort['subscribeStarted']>>[0];
+    const { controller, answerPlan, answerDraft, answer, saveDraft } = setup({
+      subscribeStarted(listener) { started = listener; return () => undefined; },
+      answerPlan: async (request) => {
+        started({ event_version: 'builder-generation-started.v1', request_id: request.request_digest, project_id: null });
+        await finished;
+        return { ...await createGenerationAnswer(request), explanation: 'A'.repeat(9000) };
+      },
+    });
+    await controller.open(PROJECT_ID);
+    if (selection === 'draft') await controller.generate('Make a timer.');
+    if (selection === 'history') await controller.inspectRevision(PROJECT_ID, (await createReadWire()).product_revision_receipt.revision_receipt_digest);
+    const before = controller.getSnapshot();
+    controller.selectTaskAddress('builder-task-address:123e4567-e89b-42d3-a456-426614174010');
+    const running = controller.answer('Write a complete plan with open review questions.', null, 'plan');
+    await vi.waitFor(() => expect(answerPlan).toHaveBeenCalledOnce());
+    expect(controller.getSnapshot().busy).toBe(true);
+    expect(answerPlan).toHaveBeenCalledExactlyOnceWith(await createBuilderGenerationRequest(
+      'Write a complete plan with open review questions.', null, null,
+    ));
+    release();
+    const result = await running;
+    expect(result.busy).toBe(false);
+    expect(result.error).toBeNull();
+    expect(result.answer?.project_id).toBeNull();
+    expect(result.answer?.explanation.length).toBe(9000);
+    expect(result.savedProject).toBe(before.savedProject);
+    expect(result.draft).toBe(before.draft);
+    expect(result.inspectedRevision).toBe(before.inspectedRevision);
+    expect(answerDraft).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('keeps consecutive read-only chat turns in the projectless Agent conversation', async () => {
     const { answer, controller } = setup();
     const first = await controller.answer('hi');
@@ -1403,7 +1444,7 @@ describe('Builder project controller v2', () => {
     expect(result.savedProject?.target.project_id).toBe(PROJECT_ID);
   });
 
-  it('cancels an active generation by request id without saving or accepting late drafts', async () => {
+  it.each([false, true])('cancels or pauses an active generation without saving or accepting late drafts (pause=%s)', async (pause) => {
     let resolveGenerate!: (value: unknown) => void;
     const pending = new Promise<unknown>((resolve) => {
       resolveGenerate = resolve;
@@ -1419,10 +1460,11 @@ describe('Builder project controller v2', () => {
     }
     expect(generate).toHaveBeenCalledOnce();
 
-    const cancelled = await controller.cancel();
+    const cancelled = await controller.cancel(pause ? { pause: true } : undefined);
 
     expect(cancel).toHaveBeenCalledExactlyOnceWith({
       request_id: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      ...(pause ? { pause: true } : {}),
     });
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('instruction');
     expect(cancel.mock.calls[0][0]).not.toHaveProperty('source_tree');

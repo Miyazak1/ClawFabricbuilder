@@ -11,6 +11,7 @@ describe('Builder Agent project tree controller', () => {
       archiveProject: vi.fn(),
       renameTask: vi.fn(),
       archiveTask: vi.fn(),
+      exportTaskTranscript: vi.fn(),
     }, agentTreeWire().agent_id);
     expect((await controller.load()).status).toBe('ready');
     const stale = await controller.refresh();

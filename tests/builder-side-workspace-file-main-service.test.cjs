@@ -36,6 +36,7 @@ const CANDIDATE_ID = `builder-code-change-candidate:${'4'.repeat(64)}`;
 const CANDIDATE_DIGEST = `sha256:${'5'.repeat(64)}`;
 const COMMIT_OID = '1'.repeat(40);
 const TREE_OID = '2'.repeat(40);
+const REVISION_DIGEST = `sha256:${'9'.repeat(64)}`;
 
 function sourceTree() {
   return createBuilderProjectSourceTree({
@@ -67,22 +68,36 @@ function sourceResolverAuthority() {
   };
 }
 
-function resolverResult(tree = sourceTree()) {
+function resolverResult(tree = sourceTree(), sourceKind = 'current_draft') {
+  const savedRevision = sourceKind === 'saved_revision';
   return {
     result_version: BUILDER_LIVE_PREVIEW_SOURCE_RESOLVER_RESULT_VERSION,
     resolver_version: BUILDER_LIVE_PREVIEW_SOURCE_RESOLVER_VERSION,
-    operation: 'current_draft_preview_source_resolved',
-    source_kind: 'current_draft',
+    operation: savedRevision
+      ? 'saved_revision_preview_source_resolved'
+      : 'current_draft_preview_source_resolved',
+    source_kind: sourceKind,
     status: 'ready',
     unavailable_reason: null,
     preview_source_snapshot: {
       snapshot_version: BUILDER_LIVE_PREVIEW_SOURCE_SNAPSHOT_VERSION,
-      source_kind: 'current_draft',
+      source_kind: sourceKind,
       project_id: PROJECT_ID,
       conversation_id: CONVERSATION_ID,
       source_tree: tree,
       source_tree_digest: tree.source_tree_digest,
-      source_ref: {
+      source_ref: savedRevision ? {
+        source_ref_kind: 'saved_project_revision',
+        project_id: PROJECT_ID,
+        conversation_id: CONVERSATION_ID,
+        revision_receipt_digest: REVISION_DIGEST,
+        revision_number: 4,
+        candidate_id: CANDIDATE_ID,
+        candidate_digest: CANDIDATE_DIGEST,
+        resulting_tree_digest: tree.source_tree_digest,
+        commit_oid: COMMIT_OID,
+        tree_oid: TREE_OID,
+      } : {
         source_ref_kind: 'current_draft_checkpoint_candidate',
         project_id: PROJECT_ID,
         conversation_id: CONVERSATION_ID,
@@ -103,9 +118,9 @@ function resolverResult(tree = sourceTree()) {
   };
 }
 
-function sourceAdmission(tree = sourceTree()) {
+function sourceAdmission(tree = sourceTree(), sourceKind = 'current_draft') {
   return createBuilderLivePreviewSourceAdmission({
-    source_resolver_result: resolverResult(tree),
+    source_resolver_result: resolverResult(tree, sourceKind),
     selected_entry_path: 'index.html',
     preview_kind: 'live_static_web',
     admitted_at_ms: 10,
@@ -113,26 +128,29 @@ function sourceAdmission(tree = sourceTree()) {
   });
 }
 
-function sourceResult(tree = sourceTree()) {
+function sourceResult(tree = sourceTree(), sourceKind = 'current_draft') {
+  const savedRevision = sourceKind === 'saved_revision';
   return {
     result_version: BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_RESULT_VERSION,
     service_version: BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_SERVICE_VERSION,
-    operation: 'current_draft_live_preview_source_admitted',
-    draft_id: DRAFT_ID,
+    operation: savedRevision
+      ? 'saved_revision_live_preview_source_admitted'
+      : 'current_draft_live_preview_source_admitted',
+    draft_id: savedRevision ? null : DRAFT_ID,
     project_id: PROJECT_ID,
     conversation_id: CONVERSATION_ID,
-    source_admission: sourceAdmission(tree),
+    source_admission: sourceAdmission(tree, sourceKind),
   };
 }
 
-function serviceFixture(tree = sourceTree()) {
+function serviceFixture(tree = sourceTree(), sourceKind = 'current_draft') {
   const calls = [];
   const service = createBuilderSideWorkspaceFileMainService({
     current_draft_source_service: {
       service_version: BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_SERVICE_VERSION,
       resolve_current_draft_preview_source(request) {
         calls.push(request);
-        return sourceResult(tree);
+        return sourceResult(tree, sourceKind);
       },
     },
     runtime_snapshot_source_service: {
@@ -178,6 +196,31 @@ test('reads current draft file tree from main-owned source admission', async () 
   assert.equal(projection.authority.renderer_source_tree, 'not_accepted');
   assert.equal(projection.authority.command_execution, false);
   assert.deepEqual(fixture.calls, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+});
+
+test('reads saved revision files from the same main-owned source admission', async () => {
+  const fixture = serviceFixture(sourceTree(), 'saved_revision');
+
+  const projection = await fixture.service.read_current_draft_file_tree({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  const fileEntry = projection.entries.find((entry) => entry.path === 'src/app.ts');
+  assert.equal(projection.source_kind, 'saved_revision');
+  assert.equal(projection.root_label, 'Saved revision 4');
+  assert.equal(fileEntry?.entry_kind, 'text_file');
+
+  const content = await fixture.service.read_current_draft_file_content({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+    file_ref: fileEntry.file_ref,
+  });
+
+  assert.equal(content.source_kind, 'saved_revision');
+  assert.equal(content.text_preview, 'export const answer = 42;\n');
+  assert.deepEqual(fixture.calls, [
+    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+  ]);
 });
 
 test('opens a persisted runtime tool file without renderer path authority', async () => {

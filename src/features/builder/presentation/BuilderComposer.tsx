@@ -1,14 +1,25 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react';
+import {
+  Archive,
   ArrowUp,
   Bot,
   ChevronDown,
-  FolderOpen,
   GitCompareArrows,
   Hammer,
   ListChecks,
+  Pause,
+  Play,
   Plus,
+  Settings,
   ShieldCheck,
+  Sparkles,
   StopCircle,
   X,
 } from 'lucide-react';
@@ -20,23 +31,13 @@ import type {
 } from '../application/builderComposerIntent';
 import type {
   BuilderProjectControllerStatus,
-  BuilderWorkingProject,
 } from '../application/builderProjectController';
-import type {
-  BuilderProjectCatalogItem,
-  BuilderProjectWorkspaceCatalogItem,
-} from '../domain/builderProjectCatalog';
 import type { BuilderComposerContextStatus } from '../domain/builderContextStatusProjection';
+import type { BuilderContextUsageProjectionWire } from '../domain/builderContextUsageProjection';
 import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../domain/builderProviderContextDisclosureStatusProjection';
-import { BuilderWorkspacePicker } from './BuilderWorkspacePicker';
 
 export type { BuilderComposerApprovalMode } from '../application/builderComposerIntent';
 export type { BuilderComposerContextStatus } from '../domain/builderContextStatusProjection';
-
-type SavedComposerProject = Readonly<{
-  revisionNumber: number;
-  title: string;
-}>;
 
 export type BuilderComposerWorkingBrief = Readonly<{
   key: string;
@@ -47,6 +48,24 @@ export type BuilderComposerWorkingBrief = Readonly<{
 
 export type BuilderComposerMode = 'ask' | 'plan' | 'build';
 export type BuilderComposerSurfaceKind = 'task' | 'workbench';
+export type BuilderManualContextCompactionFeedback =
+  | 'idle'
+  | 'compacting'
+  | 'compacted'
+  | 'not_needed'
+  | 'failed';
+export type BuilderComposerModelSelectionStatus =
+  | 'loading'
+  | 'unconfigured'
+  | 'ready'
+  | 'selecting'
+  | 'failed'
+  | 'unavailable';
+export type BuilderComposerModelSelection = Readonly<{
+  configDigest: string | null;
+  model: string | null;
+  status: BuilderComposerModelSelectionStatus;
+}>;
 
 export type BuilderComposerProps = Readonly<{
   activeRunFollowupQueued?: boolean;
@@ -56,36 +75,34 @@ export type BuilderComposerProps = Readonly<{
   canAllowCurrentProjectApproval?: boolean;
   canCancel: boolean;
   canEditInstruction: boolean;
+  canManualCompactContext?: boolean;
   canProposePlan: boolean;
   canSubmitComposer: boolean;
-  catalogBusy: boolean;
-  catalogProjects: readonly BuilderProjectCatalogItem[];
-  catalogWorkspaceProjects: readonly BuilderProjectWorkspaceCatalogItem[];
   composerRouteDecision?: BuilderComposerRouteDecision | BuilderComposerRouteDecisionEvidence | null;
   composerContextStatus?: BuilderComposerContextStatus;
+  contextUsageProjection?: BuilderContextUsageProjectionWire | null;
+  manualContextCompactionFeedback?: BuilderManualContextCompactionFeedback;
   providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
   composerMode?: BuilderComposerMode | null;
   hasUnsavedDraft: boolean;
   instruction: string;
   onCancel?: () => void;
-  onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
+  onManualCompactContext?: () => Promise<unknown> | void;
+  onPauseTask?: () => void;
+  onResumeInterruptedRun?: () => void;
+  paused?: boolean;
   onClearComposerMode?: () => void;
-  onClearWorkspaceSelection?: () => void;
-  onDismissWorkspacePicker?: () => void;
   onInstructionChange?: (value: string) => void;
-  onOpenProject?: (projectId: string) => Promise<unknown> | void;
+  onOpenSettings?: () => void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectComposerMode?: (mode: BuilderComposerMode) => void;
+  onSelectModel?: (model: string, expectedConfigDigest: string) => Promise<unknown> | void;
   onSelectPlanMode?: () => void;
   onSubmitInstruction?: () => void;
-  savedProject: SavedComposerProject | null;
-  showWorkspaceContext?: boolean;
+  modelSelection?: BuilderComposerModelSelection;
   surfaceKind?: BuilderComposerSurfaceKind;
   status: BuilderProjectControllerStatus;
   viewingHistory: boolean;
-  workingProject: BuilderWorkingProject | null;
-  workspaceNewProjectRequest?: number;
-  workspacePickerRequest?: number;
 }>;
 
 function routeDecisionEvidence(
@@ -102,10 +119,6 @@ function busyLabel(status: BuilderProjectControllerStatus): string {
   if (status === 'restoring') return 'Restoring draft...';
   if (status === 'rejecting') return 'Discarding...';
   return 'Saving...';
-}
-
-function sourceFolderBoundaryLabel(folderName: string | undefined): string {
-  return `Source folder: ${folderName ?? 'selected folder'}`;
 }
 
 function approvalModeLabel(mode: BuilderComposerApprovalMode): string {
@@ -133,10 +146,111 @@ function composerContextStatusLabel(status: BuilderComposerContextStatus): strin
 }
 
 function providerContextDisclosureStatusCode(
-  status: BuilderProviderContextDisclosureStatusProjectionWire,
-): 'allowed' | 'denied' | 'needs_approval' {
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+): 'allowed' | 'denied' | 'needs_approval' | undefined {
+  if (status === null) return undefined;
   if (status.can_use_provider_context) return 'allowed';
   return status.needs_user_approval ? 'needs_approval' : 'denied';
+}
+
+type BuilderComposerModelOption = Readonly<{
+  description: string;
+  label: string;
+  model: string;
+}>;
+
+const BUILDER_COMPOSER_MODEL_OPTIONS: readonly BuilderComposerModelOption[] = Object.freeze([
+  Object.freeze({
+    description: 'Fast iteration for everyday Builder work',
+    label: 'V4 Flash',
+    model: 'deepseek-v4-flash',
+  }),
+  Object.freeze({
+    description: 'Deeper reasoning for larger changes',
+    label: 'V4 Pro',
+    model: 'deepseek-v4-pro',
+  }),
+]);
+
+const UNAVAILABLE_MODEL_SELECTION: BuilderComposerModelSelection = Object.freeze({
+  configDigest: null,
+  model: null,
+  status: 'unavailable',
+});
+
+function modelOptionLabel(model: string): string {
+  return BUILDER_COMPOSER_MODEL_OPTIONS.find((option) => option.model === model)?.label ?? model;
+}
+
+function modelSelectionLabel(selection: BuilderComposerModelSelection): string {
+  if (selection.status === 'loading') return 'Model...';
+  if (selection.status === 'unconfigured') return 'Set model';
+  if (selection.status === 'failed') return selection.model === null ? 'Model failed' : modelOptionLabel(selection.model);
+  if (selection.status === 'unavailable') return 'Model unavailable';
+  if (selection.status === 'selecting' && selection.model === null) return 'Switching...';
+  return selection.model === null ? 'Set model' : modelOptionLabel(selection.model);
+}
+
+function formatContextGate(value: string): string {
+  return value
+    .split('_')
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function formatContextTokens(value: number): string {
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}m`;
+  }
+  if (value >= 1_000) {
+    const thousands = value / 1_000;
+    const digits = value >= 100_000 ? 0 : 1;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(digits)}k`;
+  }
+  return String(value);
+}
+
+function composerContextRows(
+  status: BuilderProviderContextDisclosureStatusProjectionWire | null,
+  composerStatus: BuilderComposerContextStatus,
+): readonly Readonly<{ key: string; label: string; value: string }>[] {
+  if (status === null) {
+    return Object.freeze([
+      Object.freeze({
+        key: 'state',
+        label: 'State',
+        value: composerContextStatusLabel(composerStatus) ?? 'No active context',
+      }),
+    ]);
+  }
+  const rows: Array<Readonly<{ key: string; label: string; value: string }>> = [
+    Object.freeze({ key: 'state', label: 'State', value: status.label }),
+  ];
+  const surface = status.inspection?.context_surface ?? null;
+  if (surface !== null) {
+    rows.push(
+      Object.freeze({ key: 'segments', label: 'Segments', value: String(surface.segment_count) }),
+      Object.freeze({
+        key: 'budget',
+        label: 'Budget',
+        value: `${surface.budget.used_prompt_bytes}/${surface.budget.max_prompt_bytes} bytes`,
+      }),
+      Object.freeze({ key: 'omitted', label: 'Omitted refs', value: String(surface.omitted_ref_count) }),
+      Object.freeze({
+        key: 'workspace',
+        label: 'Workspace gate',
+        value: formatContextGate(surface.permission_gate.workspace_state),
+      }),
+      Object.freeze({
+        key: 'writes',
+        label: 'Write gate',
+        value: formatContextGate(surface.permission_gate.write_permission),
+      }),
+    );
+  }
+  return Object.freeze(rows);
 }
 
 export function BuilderComposer({
@@ -147,91 +261,127 @@ export function BuilderComposer({
   canAllowCurrentProjectApproval = false,
   canCancel,
   canEditInstruction,
+  canManualCompactContext = false,
   canProposePlan,
   canSubmitComposer,
-  catalogBusy,
-  catalogProjects,
-  catalogWorkspaceProjects,
   composerContextStatus = null,
+  contextUsageProjection = null,
+  manualContextCompactionFeedback = 'idle',
   composerMode = null,
   composerRouteDecision = null,
   providerContextDisclosureStatus = null,
   hasUnsavedDraft,
   instruction,
+  modelSelection = UNAVAILABLE_MODEL_SELECTION,
   onCancel,
+  onManualCompactContext,
+  onPauseTask,
+  onResumeInterruptedRun,
+  paused = false,
   onClearComposerMode,
-  onClearWorkspaceSelection,
-  onCreateProject,
-  onDismissWorkspacePicker,
   onInstructionChange,
-  onOpenProject,
+  onOpenSettings,
   onSelectApprovalMode,
   onSelectComposerMode,
+  onSelectModel,
   onSelectPlanMode,
   onSubmitInstruction,
-  savedProject,
-  showWorkspaceContext = true,
   surfaceKind = 'task',
   status,
-  workingProject,
-  workspaceNewProjectRequest = 0,
-  workspacePickerRequest = 0,
 }: BuilderComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const resumeAction = paused && !busy && instruction.trim().length === 0
+    && canEditInstruction && typeof onResumeInterruptedRun === 'function';
   const restoreComposerFocusAfterSubmitRef = useRef(false);
   const restoreComposerFocusAfterLockedBusyRef = useRef(false);
   const restoreComposerFocusGraceTimerRef = useRef<number | null>(null);
-  const [workspacePickerState, setWorkspacePickerState] = useState<Readonly<{
-    buildPrompt: boolean;
-    createRequest: number;
-    creating: boolean;
-    open: boolean;
-    request: number;
-    search: string;
-    title: string;
-  }>>(() => ({
-    buildPrompt: false,
-    createRequest: 0,
-    creating: false,
-    open: false,
-    request: 0,
-    search: '',
-    title: 'New project',
-  }));
-  const [workspacePickerDismissedBuildPrompt, setWorkspacePickerDismissedBuildPrompt] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
-  const pendingWorkspacePickerRequest = workspacePickerRequest > workspacePickerState.request;
-  const pendingWorkspaceNewProjectRequest = workspaceNewProjectRequest > workspacePickerState.createRequest;
-  const workspacePickerOpen = workspacePickerState.open
-    || pendingWorkspacePickerRequest
-    || pendingWorkspaceNewProjectRequest;
-  const workspacePickerBuildPrompt = workspacePickerState.buildPrompt || pendingWorkspacePickerRequest;
-  const workspacePickerCreating = workspacePickerState.creating || pendingWorkspaceNewProjectRequest;
-  const workspaceSearch = workspacePickerState.search;
-  const newProjectTitle = workspacePickerState.title;
-  const canCreateProjectFromPicker = typeof onCreateProject === 'function'
-    && newProjectTitle.trim().length > 0
-    && !busy;
-  const workspaceLabel = savedProject !== null
-    ? savedProject.title
-    : workingProject !== null
-      ? workingProject.title
-      : 'Choose project';
-  const workspaceDetail = savedProject !== null
-    ? `Version ${savedProject.revisionNumber}`
-    : workingProject !== null
-      ? sourceFolderBoundaryLabel(workingProject.source_folders[0]?.name)
-      : 'Chat only until you choose a folder';
-  const hasWorkspaceSelection = savedProject !== null || workingProject !== null;
-  const workspaceOriginLabel = hasWorkspaceSelection ? 'Local' : null;
+  const [contextPopoverOpen, setContextPopoverOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [customModel, setCustomModel] = useState('');
   const contextStatusLabel = composerContextStatusLabel(composerContextStatus);
   const providerContextStatusLabel = providerContextDisclosureStatus?.label ?? null;
   const visibleContextStatusLabel = providerContextStatusLabel
     ?? (composerContextStatus === 'ready_to_execute' ? null : contextStatusLabel);
-  const canClearWorkspaceSelection = hasWorkspaceSelection
-    && !hasUnsavedDraft
-    && typeof onClearWorkspaceSelection === 'function';
+  const contextRows = composerContextRows(
+    providerContextDisclosureStatus,
+    composerContextStatus,
+  );
+  const contextUsagePercent = contextUsageProjection?.usage_percent ?? null;
+  const contextOccupiedTokens = contextUsageProjection?.projected_tokens
+    ?? contextUsageProjection?.pressure_tokens
+    ?? null;
+  const contextProgressDegrees = contextUsagePercent === null
+    ? 0
+    : Math.min(360, Math.max(0, contextUsagePercent * 3.6));
+  const contextUsageStateLabel = contextUsageProjection === null
+    || contextUsageProjection.context_window_tokens === null
+    || contextUsagePercent === null
+    ? 'Not measured'
+    : contextUsageProjection.compaction_state === 'compacting'
+      ? `${contextUsagePercent}% used · Compacting`
+      : contextUsageProjection.measurement_state === 'awaiting_post_compaction_projection'
+        ? `${contextUsagePercent}% last measured · Refreshing`
+        : contextUsageProjection.measurement_state === 'awaiting_usage'
+          ? 'Waiting for model usage'
+        : `${contextUsagePercent}% used`;
+  const contextTokenUsageLabel = contextUsageProjection === null
+    || contextUsageProjection.context_window_tokens === null
+    || contextOccupiedTokens === null
+    ? 'Token usage unavailable'
+    : `${formatContextTokens(contextOccupiedTokens)} / ${formatContextTokens(contextUsageProjection.context_window_tokens)} tokens`;
+  const contextTokenBreakdownLabel = contextUsageProjection === null
+    ? null
+    : `Uncached ${formatContextTokens(contextUsageProjection.uncached_input_tokens)} · Output ${formatContextTokens(contextUsageProjection.output_tokens)}`;
+  const contextCacheUsageLabel = contextUsageProjection === null
+    ? null
+    : `Cache hit ${contextUsageProjection.cache_hit_percent === null
+      ? 'n/a'
+      : `${contextUsageProjection.cache_hit_percent}%`} · Read ${formatContextTokens(contextUsageProjection.cache_read_tokens)} · Write ${formatContextTokens(contextUsageProjection.cache_write_tokens)}`;
+  const contextPressureLabel = contextUsageProjection?.pressure_tokens === null
+    || contextUsageProjection?.pressure_tokens === undefined
+    ? null
+    : `Provider prompt ${formatContextTokens(contextUsageProjection.pressure_tokens)}${contextUsageProjection.projected_tokens === null
+      ? ''
+      : ` · Projected ${formatContextTokens(contextUsageProjection.projected_tokens)}`}`;
+  const contextLastCompactedLabel = contextUsageProjection?.last_compacted_at_ms === null
+    || contextUsageProjection?.last_compacted_at_ms === undefined
+    ? null
+    : `Last compacted ${new Date(contextUsageProjection.last_compacted_at_ms).toLocaleString()}`;
+  const manualContextCompactionBusy = manualContextCompactionFeedback === 'compacting'
+    || contextUsageProjection?.compaction_state === 'compacting'
+    || contextUsageProjection?.measurement_state === 'awaiting_post_compaction_projection';
+  const canRequestManualContextCompaction = canManualCompactContext
+    && typeof onManualCompactContext === 'function'
+    && contextUsageProjection !== null
+    && !manualContextCompactionBusy;
+  const manualContextCompactionActionLabel =
+    manualContextCompactionFeedback === 'compacting'
+      ? 'Compacting...'
+      : manualContextCompactionFeedback === 'compacted'
+        ? 'Compacted'
+        : manualContextCompactionFeedback === 'not_needed'
+          ? 'Already compact'
+          : manualContextCompactionFeedback === 'failed'
+            ? 'Compact failed'
+            : 'Compact now';
+  const manualContextCompactionFeedbackLabel =
+    manualContextCompactionFeedback === 'compacting'
+      ? 'Manual compaction is running.'
+      : manualContextCompactionFeedback === 'compacted'
+        ? 'Manual compaction was recorded.'
+        : manualContextCompactionFeedback === 'not_needed'
+          ? 'No new compaction was needed.'
+          : manualContextCompactionFeedback === 'failed'
+            ? 'Manual compaction failed.'
+            : null;
+  const contextMeterStyle = {
+    '--cf-builder-context-progress': `${contextProgressDegrees}deg`,
+  } as CSSProperties;
+  const contextStateLabel = providerContextStatusLabel
+    ?? contextStatusLabel
+    ?? 'No active context';
   const composerRouteEvidence = routeDecisionEvidence(composerRouteDecision);
   const composerPlaceholder = (() => {
     if (surfaceKind === 'workbench') return 'Message Builder...';
@@ -241,6 +391,25 @@ export function BuilderComposer({
     return 'Ask a question, or describe what to build or change...';
   })();
   const hasInstruction = instruction.trim().length > 0;
+  const visibleModelOptions = modelSelection.model !== null
+    && BUILDER_COMPOSER_MODEL_OPTIONS.every((option) => option.model !== modelSelection.model)
+    ? Object.freeze([
+      Object.freeze({
+        description: 'Current configured model',
+        label: modelSelection.model,
+        model: modelSelection.model,
+      }),
+      ...BUILDER_COMPOSER_MODEL_OPTIONS,
+    ])
+    : BUILDER_COMPOSER_MODEL_OPTIONS;
+  const canSelectModel = typeof onSelectModel === 'function'
+    && modelSelection.configDigest !== null
+    && (modelSelection.status === 'ready' || modelSelection.status === 'failed');
+  const trimmedCustomModel = customModel.trim();
+  const canSelectCustomModel = canSelectModel
+    && trimmedCustomModel.length > 0
+    && trimmedCustomModel === customModel
+    && trimmedCustomModel !== modelSelection.model;
   const showSubmitAction = !busy || (canAddContext && hasInstruction);
   const showCancelAction = !showSubmitAction && canCancel;
   const showBusyAction = busy && !showSubmitAction && !showCancelAction;
@@ -293,28 +462,10 @@ export function BuilderComposer({
     if (canSubmitComposer) event.preventDefault();
   }
 
-  function closeWorkspacePicker(
-    options: Readonly<{
-      keepPendingBuild?: boolean;
-      showDismissedBuildNote?: boolean;
-    }> = Object.freeze({}),
-  ): void {
-    if (options.keepPendingBuild !== true) onDismissWorkspacePicker?.();
-    if (workspacePickerBuildPrompt && options.showDismissedBuildNote === true) {
-      setWorkspacePickerDismissedBuildPrompt(true);
-    }
-    setWorkspacePickerState((picker) => ({
-      ...picker,
-      buildPrompt: false,
-      createRequest: workspaceNewProjectRequest,
-      creating: false,
-      open: false,
-      request: workspacePickerRequest,
-    }));
-  }
-
   useEffect(() => {
-    if (!addMenuOpen && !approvalMenuOpen && !workspacePickerOpen) return undefined;
+    if (!addMenuOpen && !approvalMenuOpen && !contextPopoverOpen && !modelMenuOpen) {
+      return undefined;
+    }
     function closeFloatingPanels(event: PointerEvent): void {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -334,19 +485,20 @@ export function BuilderComposer({
         setApprovalMenuOpen(false);
       }
       if (
-        workspacePickerOpen
-        && target.closest('[data-builder-workspace-picker="true"], [data-builder-workspace-chip="true"]') === null
+        contextPopoverOpen
+        && target.closest(
+          '[data-builder-composer-context-popover="true"], [data-builder-composer-context-button="true"], [data-builder-composer-status="true"]',
+        ) === null
       ) {
-        onDismissWorkspacePicker?.();
-        if (workspacePickerBuildPrompt) setWorkspacePickerDismissedBuildPrompt(true);
-        setWorkspacePickerState((picker) => ({
-          ...picker,
-          buildPrompt: false,
-          createRequest: workspaceNewProjectRequest,
-          creating: false,
-          open: false,
-          request: workspacePickerRequest,
-        }));
+        setContextPopoverOpen(false);
+      }
+      if (
+        modelMenuOpen
+        && target.closest(
+          '[data-builder-composer-model-menu="true"], [data-builder-composer-model-menu-button="true"]',
+        ) === null
+      ) {
+        setModelMenuOpen(false);
       }
     }
     document.addEventListener('pointerdown', closeFloatingPanels);
@@ -354,32 +506,21 @@ export function BuilderComposer({
   }, [
     addMenuOpen,
     approvalMenuOpen,
-    onDismissWorkspacePicker,
-    workspaceNewProjectRequest,
-    workspacePickerBuildPrompt,
-    workspacePickerOpen,
-    workspacePickerRequest,
+    contextPopoverOpen,
+    modelMenuOpen,
   ]);
 
   useEffect(() => {
-    if (!addMenuOpen && !approvalMenuOpen && !workspacePickerOpen) return undefined;
+    if (!addMenuOpen && !approvalMenuOpen && !contextPopoverOpen && !modelMenuOpen) {
+      return undefined;
+    }
     function closeFloatingPanelsWithEscape(event: globalThis.KeyboardEvent): void {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       if (addMenuOpen) setAddMenuOpen(false);
       if (approvalMenuOpen) setApprovalMenuOpen(false);
-      if (workspacePickerOpen) {
-        onDismissWorkspacePicker?.();
-        if (workspacePickerBuildPrompt) setWorkspacePickerDismissedBuildPrompt(true);
-        setWorkspacePickerState((picker) => ({
-          ...picker,
-          buildPrompt: false,
-          createRequest: workspaceNewProjectRequest,
-          creating: false,
-          open: false,
-          request: workspacePickerRequest,
-        }));
-      }
+      if (contextPopoverOpen) setContextPopoverOpen(false);
+      if (modelMenuOpen) setModelMenuOpen(false);
       textareaRef.current?.focus({ preventScroll: true });
     }
     document.addEventListener('keydown', closeFloatingPanelsWithEscape);
@@ -387,60 +528,51 @@ export function BuilderComposer({
   }, [
     addMenuOpen,
     approvalMenuOpen,
-    onDismissWorkspacePicker,
-    workspaceNewProjectRequest,
-    workspacePickerBuildPrompt,
-    workspacePickerOpen,
-    workspacePickerRequest,
+    contextPopoverOpen,
+    modelMenuOpen,
   ]);
-
-  function toggleWorkspacePicker(): void {
-    if (busy && !canAddContext) return;
-    if (workspacePickerOpen) {
-      closeWorkspacePicker({ showDismissedBuildNote: true });
-      return;
-    }
-    setWorkspacePickerDismissedBuildPrompt(false);
-    setWorkspacePickerState((picker) => ({
-      ...picker,
-      buildPrompt: false,
-      createRequest: workspaceNewProjectRequest,
-      creating: false,
-      open: true,
-      request: workspacePickerRequest,
-    }));
-  }
-
-  function clearWorkspaceSelection(): void {
-    if (!canClearWorkspaceSelection || busy) return;
-    closeWorkspacePicker();
-    setAddMenuOpen(false);
-    onClearWorkspaceSelection?.();
-  }
 
   function toggleAddMenu(): void {
     if (busy && !canAddContext) return;
     setApprovalMenuOpen(false);
+    setContextPopoverOpen(false);
+    setModelMenuOpen(false);
     setAddMenuOpen((open) => !open);
   }
 
   function toggleApprovalMenu(): void {
     if (busy && !canAddContext) return;
     setAddMenuOpen(false);
+    setContextPopoverOpen(false);
+    setModelMenuOpen(false);
     setApprovalMenuOpen((open) => !open);
   }
 
-  function openFilesAndFoldersFromAddMenu(): void {
+  function toggleContextPopover(): void {
     setAddMenuOpen(false);
-    setWorkspacePickerDismissedBuildPrompt(false);
-    setWorkspacePickerState((picker) => ({
-      ...picker,
-      buildPrompt: false,
-      createRequest: workspaceNewProjectRequest,
-      creating: false,
-      open: true,
-      request: workspacePickerRequest,
-    }));
+    setApprovalMenuOpen(false);
+    setModelMenuOpen(false);
+    setContextPopoverOpen((open) => !open);
+  }
+
+  function toggleModelMenu(): void {
+    setAddMenuOpen(false);
+    setApprovalMenuOpen(false);
+    setContextPopoverOpen(false);
+    setModelMenuOpen((open) => !open);
+  }
+
+  function selectModel(model: string): void {
+    if (!canSelectModel || model === modelSelection.model || modelSelection.configDigest === null) return;
+    setModelMenuOpen(false);
+    void onSelectModel?.(model, modelSelection.configDigest);
+  }
+
+  function selectCustomModel(): void {
+    if (!canSelectCustomModel || modelSelection.configDigest === null) return;
+    setModelMenuOpen(false);
+    setCustomModel('');
+    void onSelectModel?.(trimmedCustomModel, modelSelection.configDigest);
   }
 
   function selectPlanMode(): void {
@@ -470,44 +602,7 @@ export function BuilderComposer({
     void onSelectApprovalMode(mode);
   }
 
-  function showNewProjectPanel(): void {
-    setWorkspacePickerDismissedBuildPrompt(false);
-    setWorkspacePickerState((picker) => ({
-      ...picker,
-      createRequest: workspaceNewProjectRequest,
-      creating: true,
-      open: true,
-      request: workspacePickerRequest,
-      search: '',
-    }));
-  }
-
-  function hideNewProjectPanel(): void {
-    setWorkspacePickerState((picker) => ({
-      ...picker,
-      createRequest: workspaceNewProjectRequest,
-      creating: false,
-      open: true,
-      request: workspacePickerRequest,
-    }));
-  }
-
-  function createProjectFromPicker(): void {
-    if (!canCreateProjectFromPicker) return;
-    const projectTitle = newProjectTitle.trim();
-    setWorkspacePickerDismissedBuildPrompt(false);
-    closeWorkspacePicker({ keepPendingBuild: true });
-    void onCreateProject?.(projectTitle);
-  }
-
-  function openProjectFromPicker(projectId: string): void {
-    setWorkspacePickerDismissedBuildPrompt(false);
-    closeWorkspacePicker();
-    void onOpenProject?.(projectId);
-  }
-
   function changeInstruction(value: string): void {
-    setWorkspacePickerDismissedBuildPrompt(false);
     onInstructionChange?.(value);
   }
 
@@ -519,12 +614,13 @@ export function BuilderComposer({
       || event.ctrlKey
       || event.metaKey
       || event.nativeEvent.isComposing
-      || !canSubmitComposer
+      || (!canSubmitComposer && !resumeAction)
     ) {
       return;
     }
     event.preventDefault();
-    onSubmitInstruction?.();
+    if (resumeAction) onResumeInterruptedRun?.();
+    else onSubmitInstruction?.();
     requestComposerFocusAfterSubmit();
   }
 
@@ -533,7 +629,7 @@ export function BuilderComposer({
       aria-label="Conversation command"
       className="cf-builder-composer-card"
       data-builder-composer="true"
-      data-builder-composer-state={hasUnsavedDraft ? 'draft-ready' : 'ready'}
+      data-builder-composer-state={paused ? 'paused' : hasUnsavedDraft ? 'draft-ready' : 'ready'}
       data-builder-route-confidence={composerRouteDecision?.confidence}
       data-builder-route-created-at={composerRouteEvidence?.createdAt}
       data-builder-route-decision-id={composerRouteEvidence?.decisionId}
@@ -548,61 +644,6 @@ export function BuilderComposer({
       data-builder-route={composerRouteDecision?.route}
     >
       <div className="cf-builder-composer-shell">
-        {showWorkspaceContext || workspacePickerOpen ? (
-        <div className="cf-builder-composer-context-bar" data-builder-composer-context-bar="true">
-          <button
-            aria-expanded={workspacePickerOpen}
-            aria-haspopup="dialog"
-            className="cf-builder-workspace-chip"
-            data-builder-workspace-chip="true"
-            disabled={busy && !canAddContext}
-            onClick={toggleWorkspacePicker}
-            title={workspaceLabel}
-            type="button"
-          >
-            <FolderOpen aria-hidden="true" className="size-3.5" />
-            <span className="cf-builder-workspace-chip-copy">
-              <span className="cf-builder-workspace-chip-label">{workspaceLabel}</span>
-              <span className="cf-builder-workspace-chip-detail">{workspaceDetail}</span>
-            </span>
-            {workspaceOriginLabel !== null ? (
-              <span className="cf-builder-workspace-chip-origin" data-builder-workspace-origin="true">
-                {workspaceOriginLabel}
-              </span>
-            ) : null}
-            <ChevronDown aria-hidden="true" className="size-3.5" />
-          </button>
-          {visibleContextStatusLabel !== null ? (
-            <span
-              className="cf-builder-composer-context-pill"
-              data-builder-composer-context-status={providerContextDisclosureStatus === null
-                ? composerContextStatus
-                : undefined}
-              data-builder-composer-provider-context-status={providerContextDisclosureStatus === null
-                ? undefined
-                : providerContextDisclosureStatusCode(providerContextDisclosureStatus)}
-              data-builder-composer-status="true"
-              role="status"
-              title={providerContextDisclosureStatus?.next_action_hint}
-            >
-              {visibleContextStatusLabel}
-            </span>
-          ) : null}
-          {canClearWorkspaceSelection ? (
-            <button
-              aria-label="Clear current project from composer"
-              className="cf-builder-composer-context-clear"
-              data-builder-clear-workspace-selection="true"
-              disabled={busy}
-              onClick={clearWorkspaceSelection}
-              title="Clear current project from composer"
-              type="button"
-            >
-              <X aria-hidden="true" className="size-3.5" />
-            </button>
-          ) : null}
-        </div>
-        ) : null}
         <textarea
           aria-label="Ask a question, or describe what to build or change"
           className="cf-builder-input cf-builder-composer-textarea w-full resize-none text-sm"
@@ -647,17 +688,6 @@ export function BuilderComposer({
                   data-builder-composer-add-menu="true"
                   role="menu"
                 >
-                  {surfaceKind === 'task' ? (
-                    <button
-                      data-builder-composer-add-files="true"
-                      onClick={openFilesAndFoldersFromAddMenu}
-                      role="menuitem"
-                      type="button"
-                    >
-                      <FolderOpen aria-hidden="true" className="size-3.5" />
-                      Files and folders
-                    </button>
-                  ) : null}
                   <button
                     data-builder-composer-add-ask-mode="true"
                     onClick={() => selectComposerMode('ask')}
@@ -772,37 +802,221 @@ export function BuilderComposer({
                 ) : null}
               </span>
             ) : null}
+            {visibleContextStatusLabel !== null ? (
+              <button
+                aria-expanded={contextPopoverOpen}
+                aria-haspopup="dialog"
+                className="cf-builder-composer-context-pill"
+                data-builder-composer-context-status={providerContextDisclosureStatus === null
+                  ? composerContextStatus
+                  : undefined}
+                data-builder-composer-provider-context-status={providerContextDisclosureStatus === null
+                  ? undefined
+                  : providerContextDisclosureStatusCode(providerContextDisclosureStatus)}
+                data-builder-composer-status="true"
+                onClick={toggleContextPopover}
+                title={visibleContextStatusLabel}
+                type="button"
+              >
+                <Sparkles aria-hidden="true" className="size-3.5" />
+                {visibleContextStatusLabel}
+              </button>
+            ) : null}
           </div>
           <div className="cf-builder-composer-actions">
+            <div className="cf-builder-composer-context-wrap">
+              <button
+                aria-expanded={contextPopoverOpen}
+                aria-haspopup="dialog"
+                aria-label={`Context: ${contextStateLabel}`}
+                className="cf-builder-composer-context-meter-button"
+                data-builder-composer-context-budget-state={contextUsageProjection === null
+                  ? 'not_measured'
+                  : 'available'}
+                data-builder-composer-context-button="true"
+                data-builder-composer-context-compaction={contextUsageProjection?.compaction_state ?? 'idle'}
+                data-builder-composer-context-limit={contextUsageProjection?.context_window_tokens ?? undefined}
+                data-builder-composer-context-measurement={contextUsageProjection?.measurement_state ?? 'unavailable'}
+                data-builder-composer-context-pressure={contextUsageProjection?.pressure_tokens ?? undefined}
+                data-builder-composer-context-projected={contextUsageProjection?.projected_tokens ?? undefined}
+                onClick={toggleContextPopover}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className="cf-builder-composer-context-meter"
+                  style={contextMeterStyle}
+                />
+              </button>
+              <div
+                aria-hidden="true"
+                className="cf-builder-composer-context-tooltip"
+                data-builder-composer-context-tooltip="true"
+                role="tooltip"
+              >
+                <strong>Context window</strong>
+                <span>{contextUsageStateLabel}</span>
+                <small>{contextTokenUsageLabel}</small>
+                {contextPressureLabel === null ? null : <small>{contextPressureLabel}</small>}
+                {contextTokenBreakdownLabel === null ? null : <small>{contextTokenBreakdownLabel}</small>}
+                {contextCacheUsageLabel === null ? null : <small>{contextCacheUsageLabel}</small>}
+                {contextLastCompactedLabel === null ? null : <small>{contextLastCompactedLabel}</small>}
+              </div>
+              {contextPopoverOpen ? (
+                <div
+                  className="cf-builder-composer-context-popover"
+                  data-builder-composer-context-popover="true"
+                  role="dialog"
+                >
+                  <div className="cf-builder-composer-add-menu-label">Context</div>
+                  {providerContextDisclosureStatus?.inspection?.summary ? (
+                    <p>{providerContextDisclosureStatus.inspection.summary}</p>
+                  ) : null}
+                  <dl className="cf-builder-composer-context-grid">
+                    {contextRows.map((row) => (
+                      <div key={row.key}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {surfaceKind === 'task' && typeof onManualCompactContext === 'function' ? (
+                    <button
+                      className="cf-builder-composer-context-action"
+                      data-builder-composer-manual-compact-context="true"
+                      data-builder-composer-manual-compact-state={manualContextCompactionFeedback}
+                      disabled={!canRequestManualContextCompaction}
+                      onClick={() => {
+                        setContextPopoverOpen(false);
+                        void onManualCompactContext();
+                      }}
+                      title="Compact context now"
+                      type="button"
+                    >
+                      <Archive aria-hidden="true" className="size-3.5" />
+                      {manualContextCompactionActionLabel}
+                    </button>
+                  ) : null}
+                  {manualContextCompactionFeedbackLabel === null ? null : (
+                    <p
+                      className="cf-builder-composer-context-action-note"
+                      data-builder-composer-manual-compact-feedback={manualContextCompactionFeedback}
+                    >
+                      {manualContextCompactionFeedbackLabel}
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div className="cf-builder-composer-model-wrap">
+              <button
+                aria-expanded={modelMenuOpen}
+                aria-haspopup="menu"
+                aria-label="AI model"
+                className="cf-builder-composer-model-button"
+                data-builder-composer-model-menu-button="true"
+                data-builder-composer-model-status={modelSelection.status}
+                onClick={toggleModelMenu}
+                title={`AI model: ${modelSelectionLabel(modelSelection)}`}
+                type="button"
+              >
+                <Bot aria-hidden="true" className="size-3.5" />
+                <span>{modelSelectionLabel(modelSelection)}</span>
+                <ChevronDown aria-hidden="true" className="size-3.5" />
+              </button>
+              {modelMenuOpen ? (
+                <div
+                  className="cf-builder-composer-model-menu"
+                  data-builder-composer-model-menu="true"
+                  role="menu"
+                >
+                  <div className="cf-builder-composer-add-menu-label">Model</div>
+                  {modelSelection.status === 'unconfigured' || modelSelection.status === 'unavailable' ? (
+                    <p className="cf-builder-composer-model-menu-note">
+                      Configure the AI provider in Settings before switching models here.
+                    </p>
+                  ) : null}
+                  {visibleModelOptions.map((option) => (
+                    <button
+                      aria-checked={modelSelection.model === option.model}
+                      data-builder-composer-model-option={option.model}
+                      disabled={!canSelectModel
+                        || modelSelection.model === option.model}
+                      key={option.model}
+                      onClick={() => selectModel(option.model)}
+                      role="menuitemradio"
+                      type="button"
+                    >
+                      <Bot aria-hidden="true" className="size-3.5" />
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.description}</small>
+                      </span>
+                    </button>
+                  ))}
+                  <div className="cf-builder-composer-model-custom">
+                    <input
+                      aria-label="Custom model"
+                      disabled={!canSelectModel}
+                      onChange={(event) => setCustomModel(event.currentTarget.value)}
+                      placeholder="Custom model"
+                      value={customModel}
+                    />
+                    <button
+                      disabled={!canSelectCustomModel}
+                      onClick={selectCustomModel}
+                      type="button"
+                    >
+                      Use
+                    </button>
+                  </div>
+                  <button
+                    className="cf-builder-composer-model-settings"
+                    onClick={() => {
+                      setModelMenuOpen(false);
+                      onOpenSettings?.();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Settings aria-hidden="true" className="size-3.5" />
+                    Provider settings
+                  </button>
+                </div>
+              ) : null}
+            </div>
             {showSubmitAction ? (
               <button
-                aria-label={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
+                aria-label={resumeAction ? '继续任务' : canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
                 data-builder-composer-primary-action="true"
                 data-builder-submit-turn="true"
-                disabled={!canSubmitComposer}
+                data-builder-resume-interrupted-run={resumeAction ? 'true' : undefined}
+                disabled={!canSubmitComposer && !resumeAction}
                 onClick={() => {
-                  onSubmitInstruction?.();
+                  if (resumeAction) onResumeInterruptedRun?.();
+                  else onSubmitInstruction?.();
                   requestComposerFocusAfterSubmit();
                 }}
                 onMouseDown={keepComposerFocusDuringPointerSubmit}
-                title={canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
+                title={resumeAction ? '继续任务' : canAddContext ? 'Add context' : busy ? busyLabel(status) : 'Send'}
                 type="button"
               >
-                <ArrowUp aria-hidden="true" className="size-4" />
+                {resumeAction ? <Play aria-hidden="true" className="size-4" /> : <ArrowUp aria-hidden="true" className="size-4" />}
               </button>
             ) : null}
             {showCancelAction ? (
               <button
-                aria-label="Stop"
+                aria-label={onPauseTask ? 'Pause task' : 'Stop'}
                 className="cf-builder-primary-button cf-builder-send-button inline-flex min-h-10 min-w-10 items-center justify-center disabled:cursor-not-allowed disabled:opacity-50"
                 data-builder-cancel-work="true"
+                data-builder-pause-task={onPauseTask ? 'true' : undefined}
                 data-builder-composer-primary-action="true"
-                onClick={onCancel}
-                title="Stop"
+                onClick={onPauseTask ?? onCancel}
+                title={onPauseTask ? 'Pause task' : 'Stop'}
                 type="button"
               >
-                <StopCircle aria-hidden="true" className="size-4" />
+                {onPauseTask ? <Pause aria-hidden="true" className="size-4" /> : <StopCircle aria-hidden="true" className="size-4" />}
               </button>
             ) : null}
             {showBusyAction ? (
@@ -820,47 +1034,6 @@ export function BuilderComposer({
             ) : null}
           </div>
         </footer>
-        {workspacePickerOpen ? (
-          <BuilderWorkspacePicker
-            buildPrompt={workspacePickerBuildPrompt}
-            canCreateProject={canCreateProjectFromPicker}
-            canOpenProject={typeof onOpenProject === 'function'}
-            canStartNewProject={typeof onCreateProject === 'function' && !catalogBusy}
-            catalogBusy={catalogBusy}
-            catalogProjects={catalogProjects}
-            catalogWorkspaceProjects={catalogWorkspaceProjects}
-            creating={workspacePickerCreating}
-            hasSavedProject={savedProject !== null}
-            newProjectTitle={newProjectTitle}
-            onCreateProject={createProjectFromPicker}
-            onHideNewProjectPanel={hideNewProjectPanel}
-            onNewProjectTitleChange={(nextTitle) => {
-              setWorkspacePickerState((picker) => ({
-                ...picker,
-                title: nextTitle,
-              }));
-            }}
-            onOpenProject={openProjectFromPicker}
-            onSearchChange={(nextSearch) => {
-              setWorkspacePickerState((picker) => ({
-                ...picker,
-                search: nextSearch,
-              }));
-            }}
-            onShowNewProjectPanel={showNewProjectPanel}
-            search={workspaceSearch}
-            workingProject={workingProject}
-          />
-        ) : null}
-        {workspacePickerDismissedBuildPrompt ? (
-          <p
-            className="cf-builder-composer-note"
-            data-builder-workspace-dismissed-build-note="true"
-            role="status"
-          >
-            Choose a project folder when you're ready to build. Your text is still here.
-          </p>
-        ) : null}
       </div>
     </section>
   );

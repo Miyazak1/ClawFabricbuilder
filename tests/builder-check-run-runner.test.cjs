@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -376,6 +377,37 @@ test('classifies missing declared dependencies as an unavailable check environme
   assert.equal(result.failure_class, 'environment_unavailable');
   assert.equal(result.exit_code, null);
   assert.equal(h.cleaned, 1);
+});
+
+test('classifies missing Next package script binaries as dependency workspace readiness', async () => {
+  const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'cfb-next-missing-bin-'));
+  const h = harness(admittedCheck('npm', 'build', {}, {
+    dependencies: { next: '^15.0.0', react: '^19.0.0', 'react-dom': '^19.0.0' },
+  }), { workspacePath });
+  try {
+    fs.writeFileSync(
+      path.join(workspacePath, 'package.json'),
+      `${JSON.stringify({
+        scripts: { build: 'next build' },
+        dependencies: { next: '^15.0.0', react: '^19.0.0', 'react-dom': '^19.0.0' },
+      })}\n`,
+    );
+    const pending = h.runner.run_check(runInput(h));
+    h.child.stderr.emit(
+      'data',
+      Buffer.from("'next' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n"),
+    );
+    h.child.emit('close', 1, null);
+
+    const result = await pending;
+    assert.equal(result.status, 'environment_unavailable');
+    assert.equal(result.failure_class, 'environment_unavailable');
+    assert.equal(result.environment_reason, 'dependency_workspace_missing');
+    assert.equal(result.exit_code, null);
+    assert.equal(h.cleaned, 1);
+  } finally {
+    fs.rmSync(workspacePath, { recursive: true, force: true });
+  }
 });
 
 test('keeps ordinary missing local modules as failed checks', async () => {

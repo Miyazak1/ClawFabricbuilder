@@ -137,6 +137,7 @@ test('summarizes Main performance without content or identifiers', () => {
   const summary = summarizeMainPerformance(trace([
     ['main.conversation.load.duration_ms', 3, 12, 6],
     ['main.conversation.load.event_bytes', 3, 9_000, 4_000],
+    ['main.harness_runtime.empty_token_limit_recovery.count', 2, 2, 1],
     ['main.harness_tool_broker.tool_search.duration_ms', 2, 18, 12],
     ['main.harness_tool_broker.tool_search.active_count', 2, 2, 1],
     ['main.task_stream.projection.duration_ms', 4, 20, 8],
@@ -150,6 +151,7 @@ test('summarizes Main performance without content or identifiers', () => {
   assert.equal(summary.application_event_loop_delay_max_ms, 24);
   assert.equal(summary.conversation.load.total, 12);
   assert.equal(summary.conversation.loaded_event_bytes_max, 4_000);
+  assert.equal(summary.harness_runtime.empty_token_limit_recovery_count, 2);
   assert.equal(summary.tool_broker.search.max, 12);
   assert.equal(summary.tool_broker.search_active_max, 1);
   assert.equal(summary.task_stream.projection.count, 4);
@@ -170,4 +172,34 @@ test('Agent history canary settles from durable task facts without requiring Pre
   assert.match(source, /counts\?\.run_completed_count >= 1/u);
   assert.match(source, /counts\?\.turn_completed_count >= 1/u);
   assert.match(source, /optionalVisible\(page, SELECTORS\.unsavedDraft\)/u);
+});
+
+test('Agent history canary creates its first task through the visible Agent Plan workflow', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'verify-deepseek-packaged-agent-history-e2e-canary.cjs'),
+    'utf8',
+  );
+
+  assert.match(source, /createAgentPlanTaskViaUi\(page,/u);
+  assert.match(source, /options\.onPlanReady\(currentPage, app\)/u);
+  assert.match(source, /SELECTORS\.composerAddPlanMode/u);
+  assert.match(source, /data-builder-agent-plan-decision/u);
+  assert.match(source, /getByRole\('button', \{ name: 'Approve plan' \}\)\.click/u);
+  assert.match(source, /dispatched\.actions\.length === 1/u);
+  assert.match(source, /SELECTORS\.agentTaskProposalNewProject/u);
+  assert.match(source, /agent_plan_dispatched_exactly_one_task: true/u);
+  assert.match(source, /if \(!liveMarkdownObserved\) fail\('deepseek_agent_plan_live_markdown_missing'\)/u);
+  assert.match(source, /SELECTORS\.cancelWork\)\.waitFor\(\{ state: 'hidden'/u);
+  assert.match(source, /review_ready_without_followup: true/u);
+  assert.match(source, /submission_attempts: submissionAttempts/u);
+  assert.match(source, /both_agent_tasks_saved_via_ui: true/u);
+  assert.match(source, /cancelled_revision_status_visible: cancelledNoticeId !== null/u);
+  assert.match(source, /restart_preserved_cancelled_status: cancelledNoticeId !== null && restartVerified/u);
+  assert.match(source, /deepseek_agent_cancel_notice_not_restored/u);
+  assert.match(source, /deepseek_agent_plan_revision_not_implemented/u);
+  assert.match(source, /currentPlan\.source_message_id/u);
+  assert.doesNotMatch(
+    source,
+    /const firstAgentTaskAddressId = await createAgentTaskProposalViaBridge/u,
+  );
 });

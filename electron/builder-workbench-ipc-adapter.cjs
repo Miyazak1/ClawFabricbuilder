@@ -14,9 +14,10 @@ const CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL =
 const DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL =
   'clawfabric-builder:agent-workbench:decide-task-proposal';
 const CONTROL_WORKBENCH_TASK_CHANNEL = 'clawfabric-builder:agent-workbench:control-task';
+const DECIDE_AGENT_PLAN_CHANNEL = 'clawfabric-builder:agent-workbench:decide-agent-plan';
 const WORKBENCH_CHANGED_CHANNEL = 'clawfabric-builder:agent-workbench:changed';
 const OPTION_KEYS = Object.freeze([
-  'readWorkbench', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'controlTask',
+  'readWorkbench', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'decideAgentPlan', 'controlTask',
   'mainWindowRef',
 ]);
 const AGENT_ID_PATTERN =
@@ -32,6 +33,9 @@ const PROJECT_ID_PATTERN =
   /^builder-project:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TASK_ADDRESS_ID_PATTERN =
   /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const AGENT_PLAN_ID_PATTERN =
+  /^builder-agent-plan:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const OUTCOMES = new Set(['discuss', 'plan', 'build', 'review', 'research', 'monitor']);
 const EXECUTION_MODES = new Set(['foreground', 'parallel']);
 const PROPOSAL_DECISIONS = new Set(['approve_existing_project', 'reject']);
@@ -104,6 +108,7 @@ function safeOptions(value) {
       updateMessageState: stableMethod(value, 'updateMessageState'),
       createTaskProposal: stableMethod(value, 'createTaskProposal'),
       decideTaskProposal: stableMethod(value, 'decideTaskProposal'),
+      decideAgentPlan: stableMethod(value, 'decideAgentPlan'),
       controlTask: stableMethod(value, 'controlTask'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
@@ -227,6 +232,21 @@ function safeControlTaskRequest(value) {
     || operation !== 'cancel_task'
   ) throw ipcError('builder_workbench_invalid');
   return Object.freeze({ agent_id: agentId, project_id: projectId, task_address_id: taskAddressId, operation });
+}
+
+function safeDecideAgentPlanRequest(value) {
+  exactKeys(value, ['agent_id', 'agent_plan_id', 'content_digest', 'decision']);
+  const agentId = dataDescriptor(value, 'agent_id');
+  const planId = dataDescriptor(value, 'agent_plan_id');
+  const contentDigest = dataDescriptor(value, 'content_digest');
+  const decision = dataDescriptor(value, 'decision');
+  if (
+    typeof agentId !== 'string' || !AGENT_ID_PATTERN.test(agentId)
+    || typeof planId !== 'string' || !AGENT_PLAN_ID_PATTERN.test(planId)
+    || typeof contentDigest !== 'string' || !DIGEST_PATTERN.test(contentDigest)
+    || (decision !== 'approved' && decision !== 'rejected')
+  ) throw ipcError('builder_workbench_invalid');
+  return Object.freeze({ agent_id: agentId, agent_plan_id: planId, content_digest: contentDigest, decision });
 }
 
 function accountUtf8(value, state) {
@@ -358,6 +378,13 @@ function createBuilderWorkbenchIpcAdapter(rawOptions) {
           return invoke(options.decideTaskProposal, event, rawArguments, safeDecideProposalRequest);
         },
       }),
+      decideAgentPlan: Object.freeze({
+        channel: DECIDE_AGENT_PLAN_CHANNEL,
+        method: 'decideAgentPlan',
+        invoke(event, ...rawArguments) {
+          return invoke(options.decideAgentPlan, event, rawArguments, safeDecideAgentPlanRequest);
+        },
+      }),
       controlTask: Object.freeze({
         channel: CONTROL_WORKBENCH_TASK_CHANNEL,
         method: 'controlTask',
@@ -367,7 +394,7 @@ function createBuilderWorkbenchIpcAdapter(rawOptions) {
       }),
     }),
     exposed_methods: Object.freeze([
-      'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'controlTask',
+      'read', 'updateMessageState', 'createTaskProposal', 'decideTaskProposal', 'decideAgentPlan', 'controlTask',
       'subscribeChanged',
     ]),
     authority: workbenchAuthority,
@@ -379,6 +406,7 @@ module.exports = Object.freeze({
   UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
   CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
   DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+  DECIDE_AGENT_PLAN_CHANNEL,
   CONTROL_WORKBENCH_TASK_CHANNEL,
   WORKBENCH_CHANGED_CHANNEL,
   BuilderWorkbenchIpcError,

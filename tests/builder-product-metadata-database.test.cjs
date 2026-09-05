@@ -11,7 +11,9 @@ const {
   BUILDER_GIT_CANDIDATE_RECEIPT_VERSION,
   BUILDER_GIT_CANDIDATE_VERIFICATION_RECEIPT_VERSION,
   BUILDER_GIT_PROJECT_REPOSITORY_VERSION,
+  BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
   BUILDER_PRODUCT_METADATA_USER_VERSION,
+  CREATE_SCHEMA_SQL,
   METADATA_TABLES,
   createRevisionReceipt,
   sanitizeRecordProjectRevisionRequest,
@@ -429,6 +431,50 @@ function inspectDatabase(filePath) {
   }
 }
 
+function rewriteDatabaseAsLegacyV6(filePath) {
+  const db = new DatabaseSync(filePath);
+  const quote = (value) => `"${String(value).replaceAll('"', '""')}"`;
+  try {
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec('BEGIN IMMEDIATE');
+    const snapshots = METADATA_TABLES.map((tableName) => {
+      const table = quote(tableName);
+      const columns = db.prepare(`PRAGMA table_xinfo(${table})`).all()
+        .filter((column) => column.hidden === 0)
+        .map((column) => column.name);
+      return { tableName, columns, rows: db.prepare(`SELECT * FROM ${table}`).all() };
+    });
+    for (const tableName of [...METADATA_TABLES].reverse()) {
+      db.exec(`DROP TABLE ${quote(tableName)}`);
+    }
+    for (const sql of CREATE_SCHEMA_SQL) {
+      db.exec(sql
+        .replaceAll(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, 'builder-product-metadata-schema.v6')
+        .replaceAll('BETWEEN 1 AND 4096', 'BETWEEN 1 AND 1024'));
+    }
+    for (const snapshot of snapshots) {
+      if (snapshot.rows.length === 0) continue;
+      const statement = db.prepare(`INSERT INTO ${quote(snapshot.tableName)} (
+        ${snapshot.columns.map(quote).join(', ')}
+      ) VALUES (${snapshot.columns.map(() => '?').join(', ')})`);
+      for (const row of snapshot.rows) {
+        statement.run(...snapshot.columns.map((column) => (
+          snapshot.tableName === 'projects' && column === 'metadata_schema_version'
+            ? 'builder-product-metadata-schema.v6'
+            : row[column]
+        )));
+      }
+    }
+    db.exec('PRAGMA user_version = 6');
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* test cleanup */ }
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
 function seedRevisionChainFixture(filePath, length) {
   const raw = new DatabaseSync(filePath);
   let previousReceiptDigest = null;
@@ -440,7 +486,7 @@ function seedRevisionChainFixture(filePath, length) {
     const insertProject = raw.prepare(`INSERT OR IGNORE INTO projects (
       project_id, project_created_at_ms, current_revision_receipt_digest,
       current_revision_number, metadata_schema_version
-    ) VALUES (?, ?, NULL, 0, 'builder-product-metadata-schema.v6')`);
+    ) VALUES (?, ?, NULL, 0, ?)`);
     const insertConversation = raw.prepare(`INSERT OR IGNORE INTO conversations (
       project_id, conversation_id, created_at_ms
     ) VALUES (?, ?, ?)`);
@@ -487,7 +533,11 @@ function seedRevisionChainFixture(filePath, length) {
         revision_number: index,
         previous_revision_receipt_digest: previousReceiptDigest,
       });
-      insertProject.run(sanitized.project.project_id, sanitized.project.created_at_ms);
+      insertProject.run(
+        sanitized.project.project_id,
+        sanitized.project.created_at_ms,
+        BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+      );
       insertConversation.run(
         sanitized.conversation.project_id,
         sanitized.conversation.conversation_id,
@@ -595,6 +645,40 @@ test('creates a strict node:sqlite C0 metadata database with exact schema and PR
   assert.match(source, /PRAGMA index_xinfo/u);
   assert.match(source, /PRAGMA foreign_key_check/u);
   assert.doesNotMatch(source, /receipt_json/u);
+});
+
+test('migrates the exact v6 schema to v7 without losing conversation events', (t) => {
+  const filePath = temporaryDatabase(t);
+  const initial = initialConversationEvents();
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  metadata.append_conversation_events(appendConversationRequest(initial));
+  metadata.close();
+
+  rewriteDatabaseAsLegacyV6(filePath);
+  assert.equal(inspectDatabase(filePath).userVersion, 6);
+
+  const migrated = createBuilderProductMetadataDatabase(filePath);
+  const loaded = migrated.load_conversation({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  migrated.close();
+
+  assert.equal(inspectDatabase(filePath).userVersion, BUILDER_PRODUCT_METADATA_USER_VERSION);
+  assert.equal(loaded.current_head.sequence, initial.length);
+  assert.deepEqual(loaded.events, initial);
+});
+
+test('migrates an empty exact v6 schema to v7', (t) => {
+  const filePath = temporaryDatabase(t);
+  const metadata = createBuilderProductMetadataDatabase(filePath);
+  metadata.close();
+  rewriteDatabaseAsLegacyV6(filePath);
+
+  const migrated = createBuilderProductMetadataDatabase(filePath);
+  migrated.close();
+
+  assert.equal(inspectDatabase(filePath).userVersion, BUILDER_PRODUCT_METADATA_USER_VERSION);
 });
 
 test('records monotonic Project Revision receipts and restores current after restart', (t) => {

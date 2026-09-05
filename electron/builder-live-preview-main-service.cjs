@@ -358,6 +358,9 @@ function statusProjection(
     window_open_block_count: counts.window_open_block_count,
     message: MESSAGES[status],
     dev_server_approval: devServerApproval,
+    runtime_launch_projection: runtimeLaunchProjection(
+      request, status, previewKind, devServerApproval,
+    ),
     unavailable_reason: unavailableReason,
     updated_at_ms: updatedAtMs,
     authority: {
@@ -373,6 +376,52 @@ function failureReasonForPhase(phase) {
     : 'live_preview_runtime_unavailable';
 }
 
+function commandExecutionState(status, previewKind) {
+  if (previewKind !== 'live_dev_server_web') return 'not_applicable';
+  if (status === 'approval_required') return 'approval_required';
+  if (status === 'ready' || status === 'reloading' || status === 'starting') return 'started';
+  if (status === 'failed') return 'failed';
+  return 'stopped';
+}
+
+function userApprovalState(status, previewKind, devServerApproval) {
+  if (previewKind !== 'live_dev_server_web') return 'not_required';
+  if (devServerApproval !== null) return 'required';
+  if (status === 'ready' || status === 'reloading' || status === 'starting' || status === 'failed') {
+    return 'approved_once';
+  }
+  return 'denied_or_expired';
+}
+
+function runtimeLaunchProjection(request, status, previewKind, devServerApproval) {
+  return freezeDeep({
+    projection_version: 'builder-project-runtime-launch-projection.v1',
+    project_id: request.project_id,
+    conversation_id: request.conversation_id,
+    preview_kind: previewKind,
+    source_status: status === 'idle'
+      ? 'not_requested'
+      : 'main_owned_verified',
+    command_profile: previewKind === 'live_dev_server_web'
+      ? 'main_owned_dev_server_profile'
+      : 'none',
+    user_approval: userApprovalState(status, previewKind, devServerApproval),
+    command_execution: commandExecutionState(status, previewKind),
+    dependency_preparation: 'not_allowed',
+    package_install: 'not_allowed',
+    sandbox_policy: previewKind === 'live_dev_server_web'
+      ? 'dev_server_only_no_dependency_install'
+      : 'static_preview_no_command_execution',
+    provider_dispatch: false,
+    tool_dispatch: false,
+    project_workspace_write: 'not_granted_by_preview',
+    authority: {
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+      renderer_authority: 'status_projection_only',
+      path_disclosure: 'not_serialized',
+    },
+  });
+}
 function livePreviewPhaseError(phase) {
   const error = new Error('Builder live preview failed.');
   error.livePreviewFailurePhase = phase;
@@ -520,6 +569,20 @@ function createBuilderLivePreviewMainService(rawOptions) {
   let active = null;
   let pendingLayout = null;
   let pendingDevApproval = null;
+  let latestResult = null;
+  let pendingOperation = Promise.resolve();
+
+  function serializeOperation(operation) {
+    return (request) => {
+      const result = pendingOperation.then(async () => {
+        latestResult = null;
+        latestResult = await operation(request);
+        return latestResult;
+      });
+      pendingOperation = result.catch(() => {});
+      return result;
+    };
+  }
 
   async function stopActive() {
     if (active === null) return;
@@ -540,9 +603,8 @@ function createBuilderLivePreviewMainService(rawOptions) {
     try {
       const view = handle.readMainOnlyWebContentsViewForAttachment();
       const windowRef = mainWindowRef();
-      const requestedLayout = pendingLayout !== null && sameRequest(pendingLayout, request)
-        ? pendingLayout.view_bounds
-        : undefined;
+      const requestedLayout = pendingLayout === null ? undefined
+        : sameRequest(pendingLayout, request) ? pendingLayout.view_bounds : null;
       const requestedBounds = requestedLayout === null || requestedLayout === undefined
         ? undefined
         : constrainViewBounds(windowRef, requestedLayout);
@@ -715,8 +777,15 @@ function createBuilderLivePreviewMainService(rawOptions) {
 
   async function reload(rawRequest) {
     const request = safeRequest(rawRequest);
-      if (active === null || !sameRequest(active.request, request)) return start(request);
+    if (active === null || !sameRequest(active.request, request)) return start(request);
+    let phase = 'source';
     try {
+      const sourceAdmission = sanitizeSourceResult(await resolveCurrentDraft(request), request);
+      if (sourceAdmission.source_tree_digest !== active.sourceAdmission.source_tree_digest
+        || sourceAdmission.selected_entry_path !== active.sourceAdmission.selected_entry_path) {
+        return start(request);
+      }
+      phase = 'view_runtime';
       await active.handle.reload();
       return statusProjection(
         request,
@@ -726,10 +795,11 @@ function createBuilderLivePreviewMainService(rawOptions) {
         active.handle.readStatus(),
         active.previewKind,
       );
-    } catch {
+    } catch (error) {
       const previewKind = active?.previewKind ?? 'live_static_web';
       try { await stopActive(); } catch { /* fixed failed projection below. */ }
-      return statusProjection(request, 'failed', safeTimestamp(nowMs()), null, null, previewKind);
+      return statusProjection(request, 'failed', safeTimestamp(nowMs()),
+        failureReasonForPhase(phaseFromError(error, phase)), null, previewKind);
     }
   }
 
@@ -767,6 +837,7 @@ function createBuilderLivePreviewMainService(rawOptions) {
       );
     }
     if (active === null || !sameRequest(active.request, request)) {
+      if (latestResult !== null && sameRequest(latestResult, request)) return latestResult;
       return statusProjection(request, 'idle', safeTimestamp(nowMs()));
     }
     const runtimeStatus = active.handle.readStatus();
@@ -791,6 +862,8 @@ function createBuilderLivePreviewMainService(rawOptions) {
     if (active !== null && sameRequest(active.request, request)) {
       if (viewBounds === null) active.attachment.hide();
       else active.attachment.update(viewBounds);
+    } else if (active !== null) {
+      active.attachment.hide();
     }
     return readStatus({
       project_id: request.project_id,
@@ -800,13 +873,14 @@ function createBuilderLivePreviewMainService(rawOptions) {
 
   return freezeDeep({
     service_version: BUILDER_LIVE_PREVIEW_MAIN_SERVICE_VERSION,
-    request_current_draft_live_preview: start,
-    decide_current_live_preview_dev_server: decideDevServerApproval,
-    reload_current_live_preview: reload,
-    stop_current_live_preview: stop,
+    request_current_draft_live_preview: serializeOperation(start),
+    decide_current_live_preview_dev_server: serializeOperation(decideDevServerApproval),
+    reload_current_live_preview: serializeOperation(reload),
+    stop_current_live_preview: serializeOperation(stop),
     read_current_live_preview_status: readStatus,
     update_current_live_preview_layout: updateLayout,
     async shutdown() {
+      await pendingOperation;
       let cleanupRequired = false;
       pendingDevApproval = null;
       try {

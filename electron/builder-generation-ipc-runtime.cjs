@@ -23,6 +23,7 @@ const {
   GENERATE_CHANNEL,
   GENERATION_OUTPUT_CHANNEL,
   GENERATION_STARTED_CHANNEL,
+  MANUAL_COMPACT_CONTEXT_CHANNEL,
   PREPARE_CURRENT_PROJECT_WRITE_APPROVAL_CHANNEL,
   PREPARE_PLAN_SOURCE_READ_APPROVAL_CHANNEL,
   PROPOSE_PLAN_CHANNEL,
@@ -32,6 +33,7 @@ const {
   RESTORE_PREVIOUS_CHECKPOINT_AS_DRAFT_CHANNEL,
   RESTORE_REVISION_AS_DRAFT_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  RESUME_INTERRUPTED_RUN_CHANNEL,
   STEER_CHANNEL,
   SUBMIT_CHANNEL,
   createBuilderGenerationIpcAdapter,
@@ -51,6 +53,8 @@ const {
 const {
   createBuilderAgentConversationService,
 } = require('./builder-agent-conversation-service.cjs');
+const { createBuilderAgentPlanStore } = require('./builder-agent-plan-store.cjs');
+const { createBuilderAgentPlanService, createBuilderAgentPlanTaskObjective } = require('./builder-agent-plan-service.cjs');
 const {
   createBuilderAgentConversationWorkbenchRecordingService,
 } = require('./builder-agent-conversation-workbench-recording-service.cjs');
@@ -77,6 +81,7 @@ const {
   UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
   CREATE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
   DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
+  DECIDE_AGENT_PLAN_CHANNEL,
   CONTROL_WORKBENCH_TASK_CHANNEL,
   WORKBENCH_CHANGED_CHANNEL,
   createBuilderWorkbenchIpcAdapter,
@@ -187,16 +192,24 @@ const {
   createBuilderDefaultAgentBootstrap,
 } = require('./builder-default-agent-bootstrap.cjs');
 const {
+  BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
+  BUILDER_PRODUCT_METADATA_USER_VERSION,
+} = require('./builder-product-metadata-schema.cjs');
+const {
   createBuilderAgentProjectTreeProjection,
 } = require('./builder-agent-project-tree-projection.cjs');
 const {
   ARCHIVE_AGENT_PROJECT_CHANNEL,
   ARCHIVE_AGENT_TASK_CHANNEL,
+  EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
   READ_AGENT_PROJECT_TREE_CHANNEL,
   RENAME_AGENT_PROJECT_CHANNEL,
   RENAME_AGENT_TASK_CHANNEL,
   createBuilderAgentProjectTreeIpcAdapter,
 } = require('./builder-agent-project-tree-ipc-adapter.cjs');
+const {
+  createBuilderTaskTranscriptExport,
+} = require('./builder-task-transcript-export.cjs');
 const {
   createBuilderContextCompactionSummaryStore,
 } = require('./builder-context-compaction-summary-store.cjs');
@@ -249,6 +262,9 @@ const {
   createBuilderProjectEnvironmentDiagnosisService,
 } = require('./builder-project-environment-diagnosis.cjs');
 const {
+  createBuilderProjectDependencyPreparer,
+} = require('./builder-project-dependency-preparer.cjs');
+const {
   createBuilderLivePreviewCurrentDraftSourceService,
 } = require('./builder-live-preview-current-draft-source-service.cjs');
 const { builderPerformanceTrace } = require('./builder-performance-trace.cjs');
@@ -266,6 +282,8 @@ const AGENT_DEFINITION_DIRECTORY = 'builder-agent-definitions-v1';
 const AGENT_DEFINITION_DATABASE = 'agent-definitions.sqlite';
 const AGENT_CONVERSATION_DIRECTORY = 'builder-agent-conversations-v1';
 const AGENT_CONVERSATION_DATABASE = 'agent-conversations.sqlite';
+const AGENT_PLAN_DIRECTORY = 'builder-agent-plans-v1';
+const AGENT_PLAN_DATABASE = 'agent-plans.sqlite';
 const WORKBENCH_MESSAGE_DIRECTORY = 'builder-agent-workbench-messages-v1';
 const WORKBENCH_MESSAGE_DATABASE = 'workbench-messages.sqlite';
 const WORKBENCH_TASK_PROPOSAL_DATABASE = 'workbench-task-proposals.sqlite';
@@ -479,8 +497,6 @@ const PLAN_WORKSPACE_DIRECTORY_SKIP_NAMES = new Set([
   'node_modules',
 ]);
 const PRODUCT_METADATA_DATABASE_ID = 'builder-product-metadata-database.v3';
-const PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
-const PRODUCT_METADATA_USER_VERSION = 6;
 
 class BuilderGenerationIpcRuntimeError extends Error {
   constructor() {
@@ -1045,8 +1061,8 @@ function assertWorkspaceCatalogMetadataEvidence(value) {
   ]);
   if (
     descriptors.database_id.value !== PRODUCT_METADATA_DATABASE_ID
-    || descriptors.schema_version.value !== PRODUCT_METADATA_SCHEMA_VERSION
-    || descriptors.user_version.value !== PRODUCT_METADATA_USER_VERSION
+    || descriptors.schema_version.value !== BUILDER_PRODUCT_METADATA_SCHEMA_VERSION
+    || descriptors.user_version.value !== BUILDER_PRODUCT_METADATA_USER_VERSION
     || typeof descriptors.schema_fingerprint_digest.value !== 'string'
     || !REQUEST_DIGEST_PATTERN.test(descriptors.schema_fingerprint_digest.value)
     || descriptors.transaction.value !== 'project_workspace_list_readback'
@@ -1429,6 +1445,25 @@ function safeActivityText(value) {
   return value;
 }
 
+function safeActivityKind(value) {
+  if (![
+    'reasoning',
+    'session_running',
+    'session_idle',
+    'turn_preparing',
+    'step_analyzing',
+    'model_retry_waiting',
+    'model_retrying',
+    'context_compacting',
+    'context_compacted',
+    'todo_updated',
+    'subagent_started',
+    'subagent_finished',
+    'generation_finishing',
+  ].includes(value)) fail();
+  return value;
+}
+
 function generationOutputEvent(rawEvent) {
   if (!isPlainObject(rawEvent)) fail();
   const keys = Reflect.ownKeys(rawEvent);
@@ -1442,7 +1477,11 @@ function generationOutputEvent(rawEvent) {
     'turn_id',
     'task_id',
     'run_id',
-    reset ? 'retain_text_bytes' : activity ? 'activity_text' : 'display_delta_text',
+    ...(reset
+      ? ['retain_text_bytes']
+      : activity
+        ? ['activity_kind', 'activity_text']
+        : ['display_delta_text']),
   ];
   if (
     keys.length !== expectedKeys.length
@@ -1458,7 +1497,7 @@ function generationOutputEvent(rawEvent) {
     descriptors.event_version.value !== (reset
       ? 'builder-generation-output-reset.v1'
       : activity
-        ? 'builder-generation-activity.v1'
+        ? 'builder-generation-activity.v2'
         : 'builder-generation-output.v1')
     || typeof descriptors.request_id.value !== 'string'
     || !REQUEST_DIGEST_PATTERN.test(descriptors.request_id.value)
@@ -1497,8 +1536,9 @@ function generationOutputEvent(rawEvent) {
   }
   if (activity) {
     return Object.freeze({
-      event_version: 'builder-generation-activity.v1',
+      event_version: 'builder-generation-activity.v2',
       ...common,
+      activity_kind: safeActivityKind(descriptors.activity_kind.value),
       activity_text: safeActivityText(descriptors.activity_text.value),
     });
   }
@@ -1609,6 +1649,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let structuredRuntimeWorkspaceSnapshotStore = null;
   let structuredRuntimeWorkspaceSnapshotService = null;
   let agentConversationService = null;
+  let agentPlanStore = null;
+  let agentPlanService = null;
   let workbenchMessageStore = null;
   let workbenchTaskProposalStore = null;
   let taskAttentionStore = null;
@@ -1629,6 +1671,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
   let checkRunCurrentDraftService = null;
   let checkRunSkipCurrentDraftService = null;
   let projectEnvironmentDiagnosisService = null;
+  let projectDependencyPreparer = null;
   let livePreviewCurrentDraftSourceService = null;
   let livePreviewCurrentDraftSourceDependencies = null;
   let runtimeWorkspaceSourceService = null;
@@ -1704,18 +1747,18 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         return providerConfigRepository.bind_current_authority();
       },
     });
-    function publishTaskStreamChanged(rawEvent) {
+    function publishTaskStreamChanged(rawEvent, { taskCatalogChanged = false, conversationId = null, taskAddressId = null } = {}) {
       const event = taskStreamChangedEvent(rawEvent);
       if (event.event_version === 'builder-task-stream-changed.v1') {
         builderPerformanceTrace.increment('main.task_stream.changed.legacy');
       }
-      const requiresWorkbenchSync = event.event_version === 'builder-task-stream-changed.v1'
-        || event.change_kind === 'durable_append';
+      const requiresWorkbenchSync = taskCatalogChanged || (Object.hasOwn(event, 'project_id')
+        && (event.event_version === 'builder-task-stream-changed.v1' || event.change_kind === 'durable_append'));
       if (requiresWorkbenchSync) {
         try {
           const projectId = Object.hasOwn(event, 'project_id') ? event.project_id : null;
-          invalidateTaskWorkbench(projectId);
-          synchronizeTaskWorkbench(projectId);
+          invalidateTaskWorkbench(projectId, taskAddressId, conversationId);
+          synchronizeTaskWorkbench(projectId, taskAddressId);
           publishWorkbenchChanged();
         } catch {
           // Task reads remain authoritative if Workbench result synchronization is unavailable.
@@ -1728,6 +1771,21 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       } catch {
         // Activity notifications are opportunistic; the read IPC remains authoritative.
       }
+    }
+    const taskStreamProjectionCursors = new Map();
+    function nextTaskStreamProjectionCursor(projectId) {
+      const nextCursor = (taskStreamProjectionCursors.get(projectId) ?? 0) + 1;
+      taskStreamProjectionCursors.set(projectId, nextCursor);
+      return nextCursor;
+    }
+    function publishTaskStreamProjectionChanged(projectId) {
+      builderPerformanceTrace.increment('main.task_stream.changed.runtime_append');
+      publishTaskStreamChanged({
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: projectId,
+        change_kind: 'runtime_append',
+        cursor: nextTaskStreamProjectionCursor(projectId),
+      });
     }
     function publishWorkbenchChanged() {
       const webContents = activeWebContents(options.mainWindowRef);
@@ -1752,18 +1810,19 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return builderPerformanceTrace.measureSync(
         'main.workbench.task_sync.duration_ms',
         () => {
-          const monitor = workbenchTaskMonitorProjection.read_monitor({
+          const monitor = builderPerformanceTrace.measureSync('main.workbench.task_sync.project.duration_ms', () => workbenchTaskMonitorProjection.read_monitor({
             agent_id: LOCAL_BUILDER_AGENT_ID,
             ...(projectId === null ? {} : { project_id: projectId }),
             ...(taskAddressId === null ? {} : { task_address_id: taskAddressId }),
-          });
+          }));
           builderPerformanceTrace.observe('main.workbench.task_sync.task_count', monitor.tasks.length);
-          workbenchTaskResultRecordingService.sync_task_monitor(monitor);
+          builderPerformanceTrace.measureSync('main.workbench.task_sync.record.duration_ms',
+            () => workbenchTaskResultRecordingService.sync_task_monitor(monitor));
           return monitor;
         },
       );
     }
-    function invalidateTaskWorkbench(projectId = null) {
+    function invalidateTaskWorkbench(projectId = null, taskAddressId = null, conversationId = null) {
       if (
         workbenchTaskMonitorProjection === null
         || typeof workbenchTaskMonitorProjection.invalidate_monitor !== 'function'
@@ -1771,6 +1830,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return workbenchTaskMonitorProjection.invalidate_monitor({
         agent_id: LOCAL_BUILDER_AGENT_ID,
         ...(projectId === null ? {} : { project_id: projectId }),
+        ...(taskAddressId === null ? {} : { task_address_id: taskAddressId }),
+        ...(conversationId === null ? {} : { conversation_id: conversationId }),
       });
     }
     function hydrateNextTaskWorkbenchProject() {
@@ -1831,7 +1892,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       publishTaskStreamChanged(Object.freeze({
         event_version: 'builder-task-stream-changed.v1',
         agent_id: request.agent_id,
-      }));
+      }), { taskCatalogChanged: true });
       return result;
     }
     function archiveAgentProject(request) {
@@ -1842,7 +1903,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       publishTaskStreamChanged(Object.freeze({
         event_version: 'builder-task-stream-changed.v1',
         agent_id: request.agent_id,
-      }));
+      }), { taskCatalogChanged: true });
       return result;
     }
     function renameAgentTask(request) {
@@ -1855,7 +1916,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       publishTaskStreamChanged(Object.freeze({
         event_version: 'builder-task-stream-changed.v1',
         project_id: request.project_id,
-      }));
+      }), { taskAddressId: request.task_address_id });
       return result;
     }
     function archiveAgentTask(request) {
@@ -1867,8 +1928,30 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       publishTaskStreamChanged(Object.freeze({
         event_version: 'builder-task-stream-changed.v1',
         project_id: request.project_id,
-      }));
+      }), { taskAddressId: request.task_address_id });
       return result;
+    }
+    function exportAgentTaskTranscript(request) {
+      const addressed = sessionTaskAddressStore.read_task_address({
+        project_id: request.project_id,
+        task_address_id: request.task_address_id,
+      });
+      const taskAddress = addressed?.task_address?.task_address;
+      if (
+        addressed?.status !== 'ready'
+        || taskAddress?.agent_id !== request.agent_id
+        || taskAddress?.project_id !== request.project_id
+        || taskAddress?.task_address_id !== request.task_address_id
+      ) fail();
+      const loadedConversation = projectMainAuthority.metadata_authority.load_conversation({
+        project_id: taskAddress.project_id,
+        conversation_id: taskAddress.conversation_id,
+      });
+      return createBuilderTaskTranscriptExport({
+        task_address: taskAddress,
+        loaded_conversation: loadedConversation,
+        exported_at_ms: Date.now(),
+      });
     }
     const workbenchMessageRoot = path.join(
       options.userDataPath,
@@ -1896,6 +1979,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         synchronizeAgentWorkbench();
         publishWorkbenchChanged();
       },
+    });
+    const agentPlanRoot = path.join(options.userDataPath, AGENT_PLAN_DIRECTORY);
+    fs.mkdirSync(agentPlanRoot, { recursive: true, mode: 0o700 });
+    agentPlanStore = createBuilderAgentPlanStore(path.join(agentPlanRoot, AGENT_PLAN_DATABASE));
+    agentPlanService = createBuilderAgentPlanService({
+      store: agentPlanStore,
+      agent_id: LOCAL_BUILDER_AGENT_ID,
+      owner_id: LOCAL_BUILDER_USER_ACTOR_ID,
+      now: () => Date.now(),
     });
     workbenchRecordingService = createBuilderAgentConversationWorkbenchRecordingService({
       message_store: workbenchMessageStore,
@@ -1973,10 +2065,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     });
     const checkRunActivityRegistry = createBuilderCheckRunActivityRegistry({
       on_activity_changed(event) {
-        publishTaskStreamChanged({
-          event_version: 'builder-task-stream-changed.v1',
-          project_id: event.project_id,
-        });
+        publishTaskStreamProjectionChanged(event.project_id);
       },
     });
     const checkRunSaveGate = createBuilderCheckRunSaveGate({
@@ -2178,6 +2267,27 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         ? (process.env.SystemRoot ?? path.join(path.parse(process.execPath).root, 'Windows'))
         : null,
     });
+    projectDependencyPreparer = createBuilderProjectDependencyPreparer({
+      project_environment_diagnosis_service: projectEnvironmentDiagnosisService,
+      project_workspace_path_service: projectWorkspacePathService,
+      spawn_process: spawn,
+      terminate_process_tree(rawRequest) {
+        const child = rawRequest?.child;
+        if (child === null || typeof child !== 'object' || typeof child.kill !== 'function') {
+          return false;
+        }
+        try {
+          return child.kill() === true;
+        } catch {
+          return false;
+        }
+      },
+      clock: checkRunClock,
+      platform: process.platform,
+      windows_root: process.platform === 'win32'
+        ? (process.env.SystemRoot ?? path.join(path.parse(process.execPath).root, 'Windows'))
+        : null,
+    });
     const saveWorkspaceReadAuthority = Object.freeze({
       async load_fresh_workspace(rawRequest) {
         const projectId = requiredProjectId(rawRequest);
@@ -2211,6 +2321,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       projectIdentityAuthority: projectMainAuthority.metadata_authority,
       conversationService,
       agentConversationService,
+      agentPlanService,
       gitAuthority: projectMainAuthority.git_authority,
       currentProjection: projectMainAuthority.git_current_projection,
       sourceContextCollector,
@@ -2333,7 +2444,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           'resolved',
         );
       } catch {
-        try { invalidateTaskWorkbench(projectId); } catch { /* active authority is already released */ }
+        // Attention is derived; releasing the active request must remain final.
+      } finally {
+        try { invalidateTaskWorkbench(projectId, taskAddressId); } catch { /* active authority is already released */ }
         publishWorkbenchChanged();
       }
     }
@@ -2570,8 +2683,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           updated_at_ms: Math.max(Date.now(), prior?.updated_at_ms ?? 0),
         },
       }).attention;
-      invalidateTaskWorkbench(target.project_id);
-      synchronizeTaskWorkbench(target.project_id);
+      invalidateTaskWorkbench(target.project_id, target.task_address_id);
+      synchronizeTaskWorkbench(target.project_id, target.task_address_id);
       publishWorkbenchChanged();
       return recorded;
     }
@@ -2732,12 +2845,37 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       return trackedGenerationOperation(rawRequest, service.retry_generate);
     }
 
-    function trackedAnswer(rawRequest, answerMethod = service.answer) {
+    async function trackedResumeInterruptedRun(rawRequest) {
+      const values = exactDataDescriptors(rawRequest, ['task_address_id', 'run_id']);
+      if (selectionPending || selectedProjectId === null) failGenerationProjectWorkspaceRequired();
+      const projectId = selectedProjectId;
+      await assertSelectedProjectWriteAllowed(projectId);
+      if (selectionPending || selectedProjectId !== projectId) failGenerationProjectWorkspaceRequired();
+      const prepared = service.prepare_resume_interrupted_run({ project_id: projectId,
+        task_address_id: values.task_address_id.value, run_id: values.run_id.value });
+      const request = prepared.request;
+      const requestId = request.request_digest;
+      const lease = acquireProjectTaskLease(projectId, request.task_address_id, requestId);
+      try { retainActiveTaskRequest(projectId, request.task_address_id, requestId); }
+      catch (error) { releaseProjectTaskLease(lease); throw error; }
+      activeRequests.set(requestId, (activeRequests.get(requestId) ?? 0) + 1);
+      try { return await service.resume_interrupted_run(prepared); }
+      finally {
+        const remaining = (activeRequests.get(requestId) ?? 1) - 1;
+        if (remaining === 0) activeRequests.delete(requestId);
+        else activeRequests.set(requestId, remaining);
+        try { releaseActiveTaskRequest(projectId, request.task_address_id, requestId); }
+        finally { releaseProjectTaskLease(lease); publishWorkbenchChanged(); }
+      }
+    }
+
+    function trackedAnswer(rawRequest, answerMethod = service.answer, forceProjectless = false) {
       if (selectionPending) fail();
       const instructionRequest = publicInstructionRequest(rawRequest);
+      if (forceProjectless && instructionRequest.task_address_id !== null) fail();
       const request = createBuilderGenerationRequest({
         instruction: instructionRequest.instruction,
-        existing_project_id: selectedProjectId,
+        existing_project_id: forceProjectless ? null : selectedProjectId,
         task_address_id: instructionRequest.task_address_id,
       });
       const requestId = request.request_digest;
@@ -2768,7 +2906,9 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     }
 
     function trackedAnswerPlan(rawRequest) {
-      return trackedAnswer(rawRequest, service.answer_plan);
+      return trackedAnswer(rawRequest, service.answer_plan, true).finally(() => {
+        publishWorkbenchChanged();
+      });
     }
 
     function trackedClassifyIntent(rawRequest) {
@@ -2832,6 +2972,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       submit: trackedSubmit,
       classifyIntent: trackedClassifyIntent,
       retry: trackedRetryGenerate,
+      resumeInterruptedRun: trackedResumeInterruptedRun,
+      manualCompactContext: service.manual_compact_context,
       answer: trackedAnswer,
       answerPlan: trackedAnswerPlan,
       answerDraft: trackedAnswerDraft,
@@ -3052,11 +3194,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       archiveProject: archiveAgentProject,
       renameTask: renameAgentTask,
       archiveTask: archiveAgentTask,
+      exportTaskTranscript: exportAgentTaskTranscript,
       mainWindowRef: options.mainWindowRef,
     });
     workbenchTaskMonitorProjection = createBuilderWorkbenchTaskMonitorProjection({
       address_store: sessionTaskAddressStore,
-      read_task_stream: conversationService.read_stream,
+      read_task_stream: conversationService.read_monitor_stream,
       read_task_attention({ project_id: projectId, task_address_id: taskAddressId }) {
         return taskAttentionStore.read_task_attention({
           project_id: projectId,
@@ -3103,7 +3246,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           synchronizeAgentWorkbench();
           const projected = workbenchProjection.read_workbench(request);
           scheduleTaskWorkbenchHydration(projected.task_monitor);
-          return projected;
+          let latestPlan = Object.freeze({ status: 'absent', artifact: null, decision: null });
+          const conversation = agentConversationService.read_stream({ agent_id: request.agent_id });
+          if (conversation.conversation !== null) {
+            latestPlan = agentPlanService.read_latest({
+              agent_id: request.agent_id,
+              source_conversation_id: conversation.conversation.conversation_id,
+            });
+          }
+          return Object.freeze({ ...projected, agent_plan: latestPlan.status === 'ready' ? latestPlan : null });
         });
       },
       updateMessageState(request) {
@@ -3121,6 +3272,12 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       },
       async decideTaskProposal(request) {
         const result = await workbenchTaskIncubationService.decide_proposal(request);
+        if (result.materialization !== null) {
+          agentPlanService.bind_dispatch_task({
+            proposal_id: result.proposal.proposal_id,
+            task_address_id: result.materialization.task_address_id,
+          });
+        }
         publishWorkbenchChanged();
         if (result.materialization !== null) {
           publishTaskStreamChanged({
@@ -3128,6 +3285,33 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
             project_id: result.materialization.project_id,
           });
         }
+        return result;
+      },
+      decideAgentPlan(request) {
+        if (request.agent_id !== LOCAL_BUILDER_AGENT_ID) fail();
+        const result = agentPlanService.decide(request);
+        if (request.decision === 'approved') {
+          const selected = agentPlanService.read({ agent_plan_id: request.agent_plan_id });
+          if (selected.status !== 'ready') fail();
+          const planUuid = request.agent_plan_id.slice('builder-agent-plan:'.length);
+          const objective = createBuilderAgentPlanTaskObjective({
+            artifact: selected.artifact,
+            conversation: agentConversationService.read_stream({ agent_id: request.agent_id }).conversation,
+          });
+          const proposal = workbenchTaskIncubationService.create_proposal({
+            request_id: `builder-workbench-request:${planUuid}`,
+            agent_id: request.agent_id,
+            objective,
+            requested_outcome: 'build',
+            execution_mode: 'foreground',
+            reason: `Execute approved Agent Plan v${selected.artifact.version}. The task must read the bound approved plan before acting.`,
+          });
+          agentPlanService.record_dispatch({
+            agent_plan_id: request.agent_plan_id,
+            proposal_id: proposal.proposal.proposal_id,
+          });
+        }
+        publishWorkbenchChanged();
         return result;
       },
       controlTask(request) {
@@ -3155,11 +3339,16 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const cancelled = service.cancel({ request_id: binding.request_id });
         if (cancelled?.cancelled === true) {
           activeTaskRequests.delete(request.task_address_id);
-          recordTaskAttention(
-            { project_id: request.project_id, task_address_id: request.task_address_id },
-            'ready',
-            'resolved',
-          );
+          try {
+            recordTaskAttention(
+              { project_id: request.project_id, task_address_id: request.task_address_id },
+              'ready',
+              'resolved',
+            );
+          } finally {
+            invalidateTaskWorkbench(request.project_id, request.task_address_id);
+            publishWorkbenchChanged();
+          }
         } else {
           publishWorkbenchChanged();
         }
@@ -3178,6 +3367,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
           return agentConversationService.read_stream(rawRequest);
         }
         const target = sessionTaskTargetService.resolve_target(rawRequest);
+        // Reconcile a former process's open run before displaying its history.
+        // Navigation never redispatches work or grants execution permission.
+        if (!activeTaskRequests.has(target.task_address_id)) {
+          conversationService.recover_inactive_run({
+            project_id: target.project_id,
+            conversation_id: target.conversation_id,
+          });
+        }
         return conversationService.read_stream({
           project_id: target.project_id,
           conversation_id: target.conversation_id,
@@ -3194,6 +3391,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     livePreviewCurrentDraftSourceService = null;
     livePreviewCurrentDraftSourceDependencies = null;
     try { agentConversationService?.close(); } catch { /* fixed failure below */ }
+    try { agentPlanStore?.close(); } catch { /* fixed failure below */ }
     try { workbenchTaskProposalStore?.close(); } catch { /* fixed failure below */ }
     try { taskAttentionStore?.close(); } catch { /* fixed failure below */ }
     try { workbenchMessageStore?.close(); } catch { /* fixed failure below */ }
@@ -3236,6 +3434,14 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({ channel: SUBMIT_CHANNEL, invoke: adapter.channels.submit.invoke }),
     Object.freeze({ channel: CLASSIFY_INTENT_CHANNEL, invoke: adapter.channels.classifyIntent.invoke }),
     Object.freeze({ channel: RETRY_GENERATE_CHANNEL, invoke: adapter.channels.retry.invoke }),
+    Object.freeze({
+      channel: RESUME_INTERRUPTED_RUN_CHANNEL,
+      invoke: adapter.channels.resumeInterruptedRun.invoke,
+    }),
+    Object.freeze({
+      channel: MANUAL_COMPACT_CONTEXT_CHANNEL,
+      invoke: adapter.channels.manualCompactContext.invoke,
+    }),
     Object.freeze({ channel: ANSWER_CHANNEL, invoke: adapter.channels.answer.invoke }),
     Object.freeze({ channel: ANSWER_PLAN_CHANNEL, invoke: adapter.channels.answerPlan.invoke }),
     Object.freeze({ channel: ANSWER_DRAFT_CHANNEL, invoke: adapter.channels.answerDraft.invoke }),
@@ -3285,6 +3491,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       invoke: agentProjectTreeAdapter.channels.archiveTask.invoke,
     }),
     Object.freeze({
+      channel: EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
+      invoke: agentProjectTreeAdapter.channels.exportTaskTranscript.invoke,
+    }),
+    Object.freeze({
       channel: READ_AGENT_WORKBENCH_CHANNEL,
       invoke: workbenchAdapter.channels.read.invoke,
     }),
@@ -3299,6 +3509,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     Object.freeze({
       channel: DECIDE_WORKBENCH_TASK_PROPOSAL_CHANNEL,
       invoke: workbenchAdapter.channels.decideTaskProposal.invoke,
+    }),
+    Object.freeze({
+      channel: DECIDE_AGENT_PLAN_CHANNEL,
+      invoke: workbenchAdapter.channels.decideAgentPlan.invoke,
     }),
     Object.freeze({
       channel: CONTROL_WORKBENCH_TASK_CHANNEL,
@@ -3322,11 +3536,11 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     return failed === false;
   }
 
-  function cancelActiveRequests() {
+  function pauseActiveRequestsForShutdown() {
     let failed = false;
     for (const requestId of activeRequestIds()) {
       try {
-        const result = Reflect.apply(service.cancel, undefined, [{ request_id: requestId }]);
+        const result = Reflect.apply(service.pause_for_shutdown, undefined, [{ request_id: requestId }]);
         if (result?.cancelled !== true) failed = true;
       } catch {
         failed = true;
@@ -3347,6 +3561,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       livePreviewCurrentDraftSourceDependencies = null;
       runtimeWorkspaceSourceService = null;
       projectEnvironmentDiagnosisService = null;
+      projectDependencyPreparer = null;
       if (harnessRuntimeComposition !== null) {
         const pendingDisposal = harnessRuntimeComposition.dispose();
         if (pendingDisposal && typeof pendingDisposal.catch === 'function') {
@@ -3430,6 +3645,18 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
     try {
       agentConversationService.close();
       agentConversationService = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function closeAgentPlanStore() {
+    if (agentPlanStore === null) return true;
+    try {
+      agentPlanStore.close();
+      agentPlanStore = null;
+      agentPlanService = null;
       return true;
     } catch {
       return false;
@@ -3543,6 +3770,10 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       if (projectEnvironmentDiagnosisService === null || state === 'disposed') fail();
       return projectEnvironmentDiagnosisService;
     },
+    readProjectDependencyPreparerForMainOnlyApprovalRuntime() {
+      if (projectDependencyPreparer === null || state === 'disposed') fail();
+      return projectDependencyPreparer;
+    },
     readLivePreviewCurrentDraftSourceServiceForMainOnlyRuntime() {
       if (state === 'disposed') fail();
       if (livePreviewCurrentDraftSourceService === null) {
@@ -3609,14 +3840,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
         const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
         const agentConversationsClosed = addressesClosed ? closeAgentConversationService() : false;
-        const workbenchClosed = agentConversationsClosed ? closeWorkbenchMessageStore() : false;
+        const agentPlansClosed = agentConversationsClosed ? closeAgentPlanStore() : false;
+        const workbenchClosed = agentPlansClosed ? closeWorkbenchMessageStore() : false;
         const agentsClosed = workbenchClosed ? closeAgentDefinitionStore() : false;
         const understandingsClosed = agentsClosed ? closeProjectUnderstandingStore() : false;
         const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
         state = removed && handoffsClosed && compactionsClosed && checkSkipsClosed && checksClosed
-          && checkpointsClosed && addressesClosed && agentConversationsClosed && workbenchClosed
+          && checkpointsClosed && addressesClosed && agentConversationsClosed && agentPlansClosed && workbenchClosed
           && agentsClosed
           && understandingsClosed && taskCapsulesClosed && permissionsClosed && closed
           ? 'disposed'
@@ -3634,14 +3866,15 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
         const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
         const agentConversationsClosed = addressesClosed ? closeAgentConversationService() : false;
-        const workbenchClosed = agentConversationsClosed ? closeWorkbenchMessageStore() : false;
+        const agentPlansClosed = agentConversationsClosed ? closeAgentPlanStore() : false;
+        const workbenchClosed = agentPlansClosed ? closeWorkbenchMessageStore() : false;
         const agentsClosed = workbenchClosed ? closeAgentDefinitionStore() : false;
         const understandingsClosed = agentsClosed ? closeProjectUnderstandingStore() : false;
         const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
         const permissionsClosed = taskCapsulesClosed ? closePermissionFactStore() : false;
         const closed = permissionsClosed ? closeProjectMainAuthority() : false;
         if (!handoffsClosed || !compactionsClosed || !checkSkipsClosed || !checksClosed
-          || !checkpointsClosed || !addressesClosed || !agentConversationsClosed
+          || !checkpointsClosed || !addressesClosed || !agentConversationsClosed || !agentPlansClosed
           || !workbenchClosed || !agentsClosed
           || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
           state = 'cleanup_required';
@@ -3650,7 +3883,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
         state = 'disposed';
         return false;
       }
-      const cancelled = cancelActiveRequests();
+      const cancelled = pauseActiveRequestsForShutdown();
       const removed = removeInstalledHandlers();
       const handoffsClosed = cancelled ? closeHandoffPacketStore() : false;
       const compactionsClosed = handoffsClosed ? closeContextCompactionSummaryStore() : false;
@@ -3659,7 +3892,8 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const checkpointsClosed = checksClosed ? closeDraftCheckpointStore() : false;
       const addressesClosed = checkpointsClosed ? closeSessionTaskAddressStore() : false;
       const agentConversationsClosed = addressesClosed ? closeAgentConversationService() : false;
-      const workbenchClosed = agentConversationsClosed ? closeWorkbenchMessageStore() : false;
+      const agentPlansClosed = agentConversationsClosed ? closeAgentPlanStore() : false;
+      const workbenchClosed = agentPlansClosed ? closeWorkbenchMessageStore() : false;
       const agentsClosed = workbenchClosed ? closeAgentDefinitionStore() : false;
       const understandingsClosed = agentsClosed ? closeProjectUnderstandingStore() : false;
       const taskCapsulesClosed = understandingsClosed ? closeTaskCapsuleStore() : false;
@@ -3667,7 +3901,7 @@ function createBuilderGenerationIpcRuntime(rawOptions) {
       const closed = permissionsClosed ? closeProjectMainAuthority() : false;
       if (!cancelled || !removed || !handoffsClosed || !compactionsClosed || !checkSkipsClosed
         || !checksClosed || !checkpointsClosed || !addressesClosed
-        || !agentConversationsClosed || !workbenchClosed || !agentsClosed
+        || !agentConversationsClosed || !agentPlansClosed || !workbenchClosed || !agentsClosed
         || !understandingsClosed || !taskCapsulesClosed || !permissionsClosed || !closed) {
         state = 'cleanup_required';
         fail();

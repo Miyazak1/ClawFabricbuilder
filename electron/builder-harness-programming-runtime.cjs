@@ -30,6 +30,7 @@ const OPTION_KEYS = Object.freeze([
 const SUPERVISION_POLICY_KEYS = Object.freeze(['runtime_idle_timeout_ms']);
 const START_KEYS = Object.freeze(['run_contract', 'event_sink']);
 const REPAIR_KEYS = Object.freeze(['failure_summary']);
+const MANUAL_COMPACT_KEYS = Object.freeze(['session_id', 'source_command_id', 'abort_signal']);
 const HANDLE_KEYS = Object.freeze([
   'runtime_version',
   'runtime_kind',
@@ -37,6 +38,9 @@ const HANDLE_KEYS = Object.freeze([
   'completion',
 ]);
 const CANCEL_REASONS = Object.freeze(['user_requested', 'superseded', 'shutdown']);
+const SESSION_ID_PATTERN =
+  /^builder-harness-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const SOURCE_COMMAND_ID_PATTERN = /^builder-context-compaction-admission:[0-9a-f]{64}$/u;
 
 class BuilderHarnessProgrammingRuntimeError extends Error {
   constructor(code = 'builder_harness_programming_runtime_invalid', causeCode = 'unknown') {
@@ -133,6 +137,18 @@ function safePositiveInteger(value, minimum, maximum) {
   return value;
 }
 
+function safePattern(value, pattern) {
+  if (typeof value !== 'string' || !pattern.test(value)) fail();
+  return value;
+}
+
+function safeAbortSignal(value) {
+  if (value === null) return null;
+  if (typeof value !== 'object' || utilTypes.isProxy(value)) fail();
+  if (typeof value.aborted !== 'boolean') fail();
+  return value;
+}
+
 function safeWorkspace(rawValue, runContract) {
   const value = exactObject(rawValue, ['root', 'source_tree_digest']);
   const root = valueAt(value, 'root');
@@ -179,10 +195,16 @@ async function measureTraceWindow(windowName, metricName, callback) {
 
 function checkedHost(value) {
   if (!isPlainObject(value) || value.host_version !== BUILDER_HARNESS_PROCESS_HOST_VERSION) fail();
+  const manualCompact = Reflect.ownKeys(value).includes('manual_compact')
+    ? requiredMethod(value, 'manual_compact')
+    : null;
   return Object.freeze({
     value,
     start: requiredMethod(value, 'start'),
     prompt: requiredMethod(value, 'prompt'),
+    recover_empty_output: request => requiredMethod(value, 'recover_empty_output')(request),
+    resume: request => requiredMethod(value, 'resume')(request),
+    ...(manualCompact === null ? {} : { manual_compact: request => manualCompact(request) }),
     when_terminated: requiredMethod(value, 'when_terminated'),
     shutdown: requiredMethod(value, 'shutdown'),
     cancel: requiredMethod(value, 'cancel'),
@@ -215,7 +237,7 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
       native_tool_calls: true,
       steering: 'none',
       cancellation: 'process',
-      session_resume: 'none',
+      session_resume: 'runtime_local',
       context_compaction: true,
       parallel_read_tools: true,
     },
@@ -357,7 +379,8 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
       ])),
       runContract,
     );
-    const sessionId = `builder-harness-${runId.slice('builder-run:'.length)}`;
+    const sessionRunId = runContract.input.resume_session_run_id ?? runId;
+    const sessionId = `builder-harness-${sessionRunId.slice('builder-run:'.length)}`;
     let host;
     let runtimeEntry = null;
     let notificationFailure = null;
@@ -410,6 +433,9 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
     active.set(runId, entry);
     try {
       await host.start();
+      if (runContract.input.resume_session_run_id !== undefined) {
+        await requiredMethod(host, 'resume')({ session_id: sessionId });
+      }
       await normalizer.start();
       entry.status = 'running';
       entry.run_started_at_ms = Number(Reflect.apply(clock, undefined, []));
@@ -425,22 +451,82 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
 
     entry.completion = (async () => {
       try {
-        const settlement = await supervisedSettlement(entry, async () => {
-          const work = (async () => {
-            await measureTraceWindow(
-              'harness_runtime_host_prompt',
-              'main.harness_runtime.host_prompt.duration_ms',
-              () => host.prompt({ session_id: sessionId, text: runContract.input.text }),
-            );
-            return await normalizer.when_settled();
-          })();
-          const terminated = host.when_terminated().then(() => {
-            const error = new Error('The Harness runtime process terminated.');
-            error.code = 'builder_harness_process_host_runtime_failed';
-            throw error;
+        let promptText = runContract.input.resume_kind === 'interrupted_recovery'
+          ? 'Continue the unfinished work from the retained session. Follow the recovery markers in history and verify uncertain side effects before retrying.'
+          : runContract.input.text;
+        let settlement;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          settlement = await supervisedSettlement(entry, async () => {
+            const work = (async () => {
+              await measureTraceWindow(
+                'harness_runtime_host_prompt',
+                'main.harness_runtime.host_prompt.duration_ms',
+                () => (attempt === 0 ? host.prompt.bind(host) : requiredMethod(host, 'recover_empty_output'))({
+                  session_id: sessionId, text: promptText,
+                }),
+              );
+              return await normalizer.when_settled();
+            })();
+            const terminated = host.when_terminated().then(() => {
+              const error = new Error('The Harness runtime process terminated.');
+              error.code = 'builder_harness_process_host_runtime_failed';
+              throw error;
+            });
+            return await Promise.race([work, terminated]);
           });
-          return await Promise.race([work, terminated]);
-        });
+          const snapshot = normalizer.snapshot();
+          const requiredSourceChangeMissing = settlement.status === 'settled'
+            && runContract.input.completion_requirement === 'source_change_required'
+            && runContract.input.resume_kind !== 'interrupted_recovery'
+            && snapshot.successful_mutation_tool_call_count === 0;
+          const emptyTokenLimit = settlement.status === 'settled'
+            && settlement.reason === 'max-tokens'
+            && snapshot.last_assistant_text.trim() === ''
+            && snapshot.tool_call_count === 0;
+          const incompleteBuild = runContract.admission.mode === 'build'
+            && (requiredSourceChangeMissing || emptyTokenLimit);
+          if (!incompleteBuild || entry.stop_promise !== null) break;
+          if (attempt > 0) {
+            return await stopWithFailure(
+              entry,
+              'provider_failure',
+              requiredSourceChangeMissing
+                ? 'The approved implementation ended without a successful source change.'
+                : 'The model exhausted its output limit without producing text or tool calls.',
+              requiredSourceChangeMissing
+                ? 'builder_harness_source_change_required'
+                : 'builder_harness_empty_output_token_limit',
+            );
+          }
+          // The one recovery turn uses the SDK's non-thinking effort, not another
+          // identical reasoning-only request. Model, token cap and tools stay bound.
+          await normalizer.prepare_repair({
+            failure_summary: requiredSourceChangeMissing
+              ? 'The admitted implementation produced no successful source change.'
+              : 'Output limit reached before any implementation.',
+          });
+          if (requiredSourceChangeMissing) {
+            builderPerformanceTrace.increment('main.harness_runtime.required_source_change_recovery.count');
+            promptText = [
+              'The preceding implementation turn ended without a successful Builder write or edit.',
+              'This admitted task requires a source change. Search, read, reasoning, and progress narration are not completion evidence.',
+              'Continue the same approved implementation now in this existing session. Preserve completed observations and use Builder write or edit to implement the plan.',
+              'Do not repeat the request, restate the plan, ask for approval again, or stop after another preparation message.',
+              'Builder will run the authoritative checks after your implementation turn.',
+              'The complete original requirements remain authoritative:',
+              '<original_end_user_request>', runContract.input.text, '</original_end_user_request>',
+            ].join('\n');
+          } else {
+            builderPerformanceTrace.increment('main.harness_runtime.empty_token_limit_recovery.count');
+            promptText = [
+              'The preceding model turn reached its output token limit without any visible answer or tool call.',
+              'No project check has run and no file has changed. Continue the already approved implementation now.',
+              'Keep planning concise and begin with a concrete Builder file tool operation. Do not repeat the plan or ask for approval again.',
+              'Preserve the complete original requirements below and all admitted tool and permission boundaries.',
+              '<original_end_user_request>', runContract.input.text, '</original_end_user_request>',
+            ].join('\n');
+          }
+        }
         if (entry.stop_promise !== null) return await entry.stop_promise;
         if (settlement.status === 'runtime_idle_timeout') {
           return await stopWithFailure(
@@ -652,6 +738,23 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
     });
   }
 
+  async function manualCompact(rawRequest) {
+    if (disposed) fail('builder_harness_programming_runtime_closed');
+    const request = exactObject(rawRequest, MANUAL_COMPACT_KEYS);
+    const sessionId = safePattern(valueAt(request, 'session_id'), SESSION_ID_PATTERN);
+    const sourceCommandId = safePattern(valueAt(request, 'source_command_id'), SOURCE_COMMAND_ID_PATTERN);
+    const abortSignal = safeAbortSignal(valueAt(request, 'abort_signal'));
+    if (abortSignal !== null && abortSignal.aborted) fail('builder_harness_programming_runtime_closed');
+    const entry = [...active.values()].find((candidate) => candidate.session_id === sessionId);
+    if (entry === undefined || entry.host.manual_compact === undefined) {
+      fail('builder_harness_programming_runtime_closed');
+    }
+    return entry.host.manual_compact({
+      session_id: sessionId,
+      source_command_id: sourceCommandId,
+    });
+  }
+
   async function dispose() {
     if (disposed) return;
     disposed = true;
@@ -668,13 +771,27 @@ function createBuilderHarnessProgrammingRuntime(rawOptions) {
     active.clear();
   }
 
+  function diagnostics() {
+    return Object.freeze({
+      runtime_version: BUILDER_HARNESS_PROGRAMMING_RUNTIME_VERSION,
+      active_runs: Object.freeze([...active.values()].map((entry) => Object.freeze({
+        run_id: entry.run_contract.admission.run_id,
+        session_id: entry.session_id,
+        status: entry.status,
+        host: typeof entry.host?.diagnostics === 'function' ? entry.host.diagnostics() : null,
+      }))),
+    });
+  }
+
   return Object.freeze({
     runtime_version: BUILDER_HARNESS_PROGRAMMING_RUNTIME_VERSION,
     descriptor,
     startRun,
     repairRun,
     reconcileRun,
+    manual_compact: manualCompact,
     cancelRun,
+    diagnostics,
     dispose,
   });
 }

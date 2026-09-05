@@ -216,7 +216,7 @@ test('preserves fixed runtime diagnostics when a Harness run cannot produce a ca
   await runner.dispose();
 });
 
-test('returns a successful response without projecting a candidate when Harness leaves files unchanged', async () => {
+test('fails closed when a Build settles without changing the Harness source tree', async () => {
   const sourceTree = createBuilderProjectSourceTree({ files: [
     { path: 'index.html', content: '<h1>Before</h1>\n' },
   ] });
@@ -268,6 +268,82 @@ test('returns a successful response without projecting a candidate when Harness 
     input: {
       message_id: `builder-message:${UUID}`,
       text: 'Inspect the project and make the requested change.',
+      completion_requirement: 'source_change_required',
+    },
+  });
+
+  await assert.rejects(runner.run({
+    run_contract: runContract,
+    source_tree: sourceTree,
+    candidate_base_source_tree: sourceTree,
+    base_revision_evidence: null,
+    provider_config: providerConfig,
+    credential: 'configured-test-credential',
+    event_sink: { emit() {} },
+  }), {
+    code: 'builder_harness_generation_runner_failed',
+    runtime_code: 'builder_harness_source_change_required',
+    runtime_cause_code: 'builder_harness_source_change_required',
+  });
+
+  assert.deepEqual(reconciliationStatuses, []);
+  assert.equal(getCancelCount(), 1);
+  await runner.dispose();
+});
+
+test('allows explicit response-only Build runs to finish without changing the Harness source tree', async () => {
+  const sourceTree = createBuilderProjectSourceTree({ files: [
+    { path: 'index.html', content: '<h1>Before</h1>\n' },
+  ] });
+  const { descriptor, runner, getCancelCount, reconciliationStatuses } = fixture({
+    completion: () => ({
+      status: 'awaiting_reconciliation',
+      resulting_source_tree: sourceTree,
+      assistant_text: 'I inspected the project without changing files.',
+      verification_step_id: `builder-run-step:${UUID}`,
+    }),
+  });
+  const providerConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: null,
+    max_tokens: 4_096,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const runContract = createBuilderProgrammingRuntimeRunContract({
+    runtime_descriptor: descriptor,
+    admission: {
+      project_id: `builder-project:${UUID}`,
+      conversation_id: `builder-conversation:${UUID}`,
+      turn_id: `builder-turn:${UUID}`,
+      task_id: `builder-task:${UUID}`,
+      run_id: `builder-run:${UUID}`,
+      mode: 'build',
+      workspace_ref: {
+        ref_version: 'builder-programming-workspace-ref.v1',
+        workspace_id: `builder-programming-workspace:${'b'.repeat(64)}`,
+        source_tree_digest: sourceTree.source_tree_digest,
+        writable: true,
+      },
+      provider_config_digest: providerConfig.config_digest,
+      allowed_tools: ['read', 'search', 'edit', 'write'],
+      limits: {
+        max_steps: 16,
+        max_duration_ms: 30_000,
+        max_model_tokens: 4_096,
+        max_tool_output_bytes: 64 * 1_024,
+      },
+      admitted_at_ms: 10,
+    },
+    input: {
+      message_id: `builder-message:${UUID}`,
+      text: 'Inspect the project. Do not change files.',
+      completion_requirement: 'response_allowed',
     },
   });
 
@@ -282,17 +358,8 @@ test('returns a successful response without projecting a candidate when Harness 
   });
 
   assert.equal(result.status, 'response_ready');
-  assert.equal(result.candidate, null);
-  assert.equal(
-    result.assistant_text,
-    'I inspected the project, but I need the target text before changing files.',
-  );
-  assert.match(result.summary, /inspected the project/u);
-  await runner.reconcile({
-    run_handle: result.run_handle,
-    checkpoint_status: 'not_applicable',
-  });
-  assert.deepEqual(reconciliationStatuses, ['not_applicable']);
+  assert.equal(result.assistant_text, 'I inspected the project without changing files.');
+  assert.deepEqual(reconciliationStatuses, []);
   assert.equal(getCancelCount(), 0);
   await runner.dispose();
 });

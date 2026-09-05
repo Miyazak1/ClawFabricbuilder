@@ -24,11 +24,24 @@ const {
   createBuilderConversationMainService,
 } = require('../electron/builder-conversation-main-service.cjs');
 const {
+  createBuilderConversationCompactionProjection,
+} = require('../electron/builder-conversation-export.cjs');
+const {
+  replayBuilderConversation,
+} = require('../electron/builder-conversation-replay.cjs');
+const {
+  BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
   MAX_APPEND_EVENTS,
 } = require('../electron/builder-conversation-authority-contract.cjs');
 const {
   createBuilderAgentConversationService,
 } = require('../electron/builder-agent-conversation-service.cjs');
+const {
+  createBuilderAgentPlanService,
+} = require('../electron/builder-agent-plan-service.cjs');
+const {
+  createBuilderAgentPlanStore,
+} = require('../electron/builder-agent-plan-store.cjs');
 const {
   projectBuilderTaskStream,
 } = require('../electron/builder-task-stream-projection.cjs');
@@ -114,6 +127,8 @@ const UUIDS = Object.freeze([
 ]);
 const PROJECT_ID = `builder-project:${UUIDS[0]}`;
 const CONVERSATION_ID = `builder-conversation:${UUIDS[0]}`;
+const TEST_TASK_CONVERSATION_ID = `builder-conversation:${UUIDS[0]}:${UUIDS[8]}`;
+const TEST_TASK_ADDRESS_ID = `builder-task-address:${UUIDS[9]}`;
 const TEST_AGENT_ID = `builder-agent:${UUIDS[1]}`;
 const APPROVED_PLAN_TURN_ID = `builder-turn:${UUIDS[2]}`;
 const APPROVED_PLAN_TASK_ID = `builder-task:${UUIDS[3]}`;
@@ -145,7 +160,7 @@ function createBuilderGenerationMainService(options) {
             : 'existing_task_target_resolved',
           project_id: requestValue.project_id,
           task_address_id: requestValue.task_address_id,
-          conversation_id: `builder-conversation:${requestValue.project_id.slice('builder-project:'.length)}`,
+          conversation_id: `builder-conversation:${requestValue.project_id.slice('builder-project:'.length)}:${UUIDS[8]}`,
           agent_id: TEST_AGENT_ID,
           should_record_task_address: requestValue.task_address_id === null,
           authority: 'main_owned_task_target_resolution',
@@ -224,7 +239,7 @@ function routeDecisionForTurn({
 
 function request({ instruction = 'Make a focus timer.', existingProjectId = PROJECT_ID, taskAddressId } = {}) {
   const resolvedTaskAddressId = taskAddressId === undefined && existingProjectId !== null
-    ? `builder-task-address:${UUIDS[9]}`
+    ? TEST_TASK_ADDRESS_ID
     : (taskAddressId ?? null);
   const unsigned = {
     version: 'builder-generation-request.v3',
@@ -420,6 +435,106 @@ function sourceContextAuthority() {
     git_authority: 'not_present',
     revision_admission: 'not_created',
   };
+}
+
+function taskScopedCompactionProjection({
+  conversationId = `builder-conversation:${UUIDS[0]}:${UUIDS[8]}`,
+  runId = `builder-run:${UUIDS[6]}`,
+} = {}) {
+  const turnId = `builder-turn:${UUIDS[5]}`;
+  const taskId = `builder-task:${UUIDS[7]}`;
+  const messageId = `builder-message:${UUIDS[4]}`;
+  const first = createBuilderConversationEvent({
+    record_version: CONVERSATION_EVENT_VERSION,
+    record_kind: CONVERSATION_EVENT_KIND,
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 1,
+    command_id: `builder-command:${UUIDS[2]}`,
+    event_type: 'turn_submitted',
+    previous_event: null,
+    payload: {
+      message: {
+        message_id: messageId,
+        text: 'Compact this task context before I continue.',
+      },
+      turn_id: turnId,
+      mode: 'work',
+      task: {
+        task_id: taskId,
+        title: 'Task scoped work',
+      },
+      base_revision: null,
+      route_decision: routeDecisionForTurn({
+        input: {},
+        projectId: PROJECT_ID,
+        messageId,
+        taskId,
+        mode: 'work',
+      }),
+    },
+    authority: { ...CONVERSATION_AUTHORITY },
+  });
+  const second = createBuilderConversationEvent({
+    record_version: CONVERSATION_EVENT_VERSION,
+    record_kind: CONVERSATION_EVENT_KIND,
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 2,
+    command_id: `builder-command:${UUIDS[3]}`,
+    event_type: 'run_started',
+    previous_event: eventHead(first),
+    payload: {
+      turn_id: turnId,
+      run_id: runId,
+      task_id: taskId,
+      attempt_number: 1,
+      retry_of_run_id: null,
+      input_digest: digest({ instruction: 'Compact this task context before I continue.' }),
+    },
+    authority: { ...CONVERSATION_AUTHORITY },
+  });
+  const third = createBuilderConversationEvent({
+    record_version: CONVERSATION_EVENT_VERSION,
+    record_kind: CONVERSATION_EVENT_KIND,
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    sequence: 3,
+    command_id: `builder-command:${UUIDS[4]}`,
+    event_type: 'run_completed',
+    previous_event: eventHead(second),
+    payload: {
+      turn_id: turnId,
+      run_id: runId,
+      terminal_status: 'succeeded',
+      result_kind: 'explanation',
+      result_digest: digest({ result: 'ready to compact' }),
+      assistant_message: {
+        message_id: `builder-message:${UUIDS[9]}`,
+        text: 'Ready to compact the current context.',
+      },
+      candidate_result: null,
+      plan_admission: null,
+    },
+    authority: { ...CONVERSATION_AUTHORITY },
+  });
+  const events = [first, second, third];
+  return createBuilderConversationCompactionProjection({
+    loaded_conversation: {
+      result_version: BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
+      operation: 'conversation_loaded',
+      conversation: {
+        project_id: PROJECT_ID,
+        conversation_id: conversationId,
+        created_at_ms: 1,
+      },
+      action_events: [],
+      current_head: eventHead(third),
+      events,
+      snapshot: replayBuilderConversation(events),
+      metadata_evidence: {},
+    },
+  });
 }
 
 function sourceContextResult(context, rawFiles = [
@@ -790,6 +905,9 @@ function conversationService(options = {}) {
     draftContinuationWork: [],
     queuedFollowupWork: [],
     queuedFollowupQuestion: [],
+    readSessionContinuation: [],
+    readCompactionProjection: [],
+    recordContextCompaction: [],
   };
   let progressCommand = 10_000;
   function nextProgressCommandId() {
@@ -1008,6 +1126,9 @@ function conversationService(options = {}) {
           attempt_number: 1,
           retry_of_run_id: null,
           input_digest: input.request_digest,
+          ...(input.resume_session_run_id === undefined ? {} : {
+            resume_session_run_id: input.resume_session_run_id,
+          }),
         },
         authority: { ...CONVERSATION_AUTHORITY },
       });
@@ -1028,12 +1149,44 @@ function conversationService(options = {}) {
         mode: 'work',
         events: [first, second],
         run_terminal_failure_code: null,
+        ...(input.resume_session_run_id === undefined ? {} : {
+          resume_session_run_id: input.resume_session_run_id,
+        }),
         ids: {
           turn_id: turnId,
           task_id: taskId,
           run_id: runId,
           message_id: messageId,
         },
+      };
+    },
+    read_session_continuation(input) {
+      calls.readSessionContinuation.push(input);
+      return options.sessionContinuation ?? { status: 'none' };
+    },
+    read_compaction_projection(input) {
+      calls.readCompactionProjection.push(input);
+      if (typeof options.compactionProjection === 'function') return options.compactionProjection(input);
+      if (options.compactionProjection !== undefined) return options.compactionProjection;
+      throw new Error('missing compaction projection');
+    },
+    record_context_compaction(input) {
+      calls.recordContextCompaction.push(input);
+      return {
+        result_version: 'builder-context-compaction-conversation-record-result.v1',
+        project_id: input.project_id,
+        conversation_id: input.conversation_id,
+        task_address_id: input.task_address_id,
+        turn_id: `builder-turn:${UUIDS[4]}`,
+        run_id: input.run_id,
+        event_id: `builder-conversation-event:${'9'.repeat(64)}`,
+        event_digest: `sha256:${'8'.repeat(64)}`,
+        head: {
+          sequence: 7,
+          event_id: `builder-conversation-event:${'9'.repeat(64)}`,
+          event_digest: `sha256:${'8'.repeat(64)}`,
+        },
+        conversation_event_admission: 'sqlite_recorded',
       };
     },
     begin_queued_followup_work(input) {
@@ -1916,6 +2069,7 @@ test('binds provider snapshot and returns only a redacted unsaved draft packet',
     run_steering: 'request_id_only_main_conversation_fact',
     run_followup_queue: 'request_id_only_main_conversation_fact',
     run_followup_consumption: 'main_conversation_replay_verified',
+    manual_context_compaction: 'main_only_current_conversation_projection_admission_then_harness_compact',
     credential_exposed_to_renderer: false,
     electron_registration: false,
     preload_exposure: false,
@@ -3163,6 +3317,7 @@ test('passes the verified approved plan text into the Harness runtime input', as
     path: 'index.html',
   }]);
   assert.equal(observedRunContract.input.message_id.startsWith('builder-message:'), true);
+  assert.equal(observedRunContract.input.completion_requirement, 'source_change_required');
   assert.equal(observedRunContract.input.text, [
     'Implement the approved plan below.',
     '',
@@ -3177,6 +3332,102 @@ test('passes the verified approved plan text into the Harness runtime input', as
   assert.match(observedRunContract.input.text, /Use write to create the required project files/u);
   assert.match(observedRunContract.input.text, /Do not use shell or list commands/u);
   assert.notEqual(observedRunContract.input.text, 'Implement the approved plan.');
+});
+
+test('manually compacts only the current task-scoped committed conversation after Main admission', async () => {
+  const taskAddressId = `builder-task-address:${UUIDS[9]}`;
+  const conversationId = `builder-conversation:${UUIDS[0]}:${UUIDS[8]}`;
+  const sessionRunId = `builder-run:${UUIDS[6]}`;
+  const runId = `builder-run:${UUIDS[5]}`;
+  const projection = taskScopedCompactionProjection({ conversationId, runId });
+  const lifecycle = conversationService({
+    compactionProjection: projection,
+    sessionContinuation: {
+      status: 'ready',
+      run_id: runId,
+      session_run_id: sessionRunId,
+    },
+  });
+  const compactCalls = [];
+  const harnessRuntimeComposition = Object.freeze({
+    async manual_compact(input) {
+      compactCalls.push(input);
+      return {
+        compactionId: 'deepseek-compaction:manual-1',
+        sourceCommandId: input.source_command_id,
+        startSeq: 8,
+        summarySeq: 9,
+        endSeq: 10,
+        shadowedTokenCount: 48000,
+      };
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      harnessRuntimeComposition,
+      sessionTaskTargetService: {
+        resolve_target(requestValue) {
+          return {
+            result_version: 'builder-session-task-target-result.v1',
+            operation: 'existing_task_target_resolved',
+            project_id: requestValue.project_id,
+            task_address_id: requestValue.task_address_id,
+            conversation_id: conversationId,
+            agent_id: TEST_AGENT_ID,
+            should_record_task_address: false,
+            authority: 'main_owned_task_target_resolution',
+          };
+        },
+      },
+    }),
+    transport: async () => { throw new Error('provider transport must not run'); },
+  });
+
+  const result = await service.manual_compact_context({
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+    task_address_id: taskAddressId,
+  });
+
+  assert.equal(result.status, 'compaction_completed');
+  assert.equal(result.operation, 'manual_compaction_completed');
+  assert.equal(result.admission_id, compactCalls[0].source_command_id);
+  assert.match(result.conversation_compaction_projection_digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(lifecycle.calls.readCompactionProjection, [{
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+  }]);
+  assert.deepEqual(lifecycle.calls.readSessionContinuation, [{
+    project_id: PROJECT_ID,
+    conversation_id: conversationId,
+  }]);
+  assert.equal(lifecycle.calls.recordContextCompaction.length, 1);
+  assert.equal(lifecycle.calls.recordContextCompaction[0].project_id, PROJECT_ID);
+  assert.equal(lifecycle.calls.recordContextCompaction[0].conversation_id, conversationId);
+  assert.equal(lifecycle.calls.recordContextCompaction[0].task_address_id, taskAddressId);
+  assert.equal(lifecycle.calls.recordContextCompaction[0].run_id, runId);
+  assert.deepEqual(lifecycle.calls.recordContextCompaction[0].context_compaction_result, result);
+  assert.equal(compactCalls.length, 1);
+  assert.deepEqual(Reflect.ownKeys(compactCalls[0]).sort(), [
+    'abort_signal',
+    'session_id',
+    'source_command_id',
+  ]);
+  assert.equal(compactCalls[0].session_id, `builder-harness-${sessionRunId.slice('builder-run:'.length)}`);
+  assert.equal(compactCalls[0].abort_signal, null);
+  assert.match(compactCalls[0].source_command_id, /^builder-context-compaction-admission:[0-9a-f]{64}$/u);
+  assert.doesNotMatch(
+    JSON.stringify(compactCalls[0]),
+    /conversation_id|task_address_id|message|source_tree|credential|provider/u,
+  );
+
+  await assert.rejects(service.manual_compact_context({
+    project_id: PROJECT_ID,
+    conversation_id: `builder-conversation:${UUIDS[0]}`,
+    task_address_id: taskAddressId,
+  }), { code: 'builder_generation_request_invalid' });
+  assert.equal(compactCalls.length, 1);
 });
 
 test('fails approved-plan edit context closed on malformed request, stale continuation, or source drift', async () => {
@@ -4410,8 +4661,8 @@ test('submits one composer turn through main-owned work or explanation routing',
     ['missing_prior_build_context', null],
   );
   assert.deepEqual(lifecycle.calls.readStream, [
-    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
-    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID },
   ]);
   assert.equal(git.receipts.length, 3);
   assert.deepEqual(startedEvents.map((event) => event.event_version), Array(16).fill('builder-generation-started.v1'));
@@ -4493,6 +4744,17 @@ test('routes local Markdown artifact submit through main-owned build admission',
     }),
     transport: async (input) => {
       transportInput = input;
+      if (input.max_tokens === 256) {
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify({
+            kind: 'builder_semantic_route_classification',
+            route: 'build',
+            confidence: 'high',
+            reason_code: 'requests_source_change',
+          }),
+        };
+      }
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
@@ -4724,8 +4986,8 @@ test('allows contextual composer submit only with main-owned build context', asy
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.deepEqual(lifecycle.calls.begin[1].route_decision_hint.matched_signals, ['contextual_build']);
   assert.deepEqual(lifecycle.calls.readStream, [
-    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
-    { project_id: PROJECT_ID, conversation_id: CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID },
+    { project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID },
   ]);
   assert.equal(git.receipts.length, 2);
 });
@@ -4775,7 +5037,7 @@ test('downgrades contextual submit after a newer task brief correction removes r
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -4816,7 +5078,7 @@ test('keeps Chinese rewrite shortcuts read-only without main-owned build context
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
 });
 
 test('allows current artifact defect feedback only with main-owned build context', async () => {
@@ -4859,7 +5121,7 @@ test('allows current artifact defect feedback only with main-owned build context
   assert.equal(lifecycle.calls.explanation.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_defect']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -4901,7 +5163,7 @@ test('allows concise current artifact changes only with main-owned build context
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -4981,7 +5243,7 @@ test('keeps concise current artifact changes read-only without main-owned build 
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['current_artifact_direct_change']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -5023,7 +5285,7 @@ test('admits short confirmations only after an assistant execution proposal is p
   assert.equal(lifecycle.calls.question.length, 0);
   assert.equal(lifecycle.calls.begin[0].route_decision_hint.route, 'build');
   assert.deepEqual(lifecycle.calls.begin[0].route_decision_hint.matched_signals, ['pending_build_confirmation']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 1);
 });
 
@@ -5064,7 +5326,7 @@ test('keeps isolated short confirmations read-only even after prior candidate co
   assert.equal(lifecycle.calls.question.length, 1);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -5107,7 +5369,7 @@ test('keeps contextual submit in answer route after transcript-only proposals', 
   assert.equal(lifecycle.calls.explanation.length, 1);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -5151,7 +5413,7 @@ test('keeps contextual submit in answer route after read-only exploratory diagno
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'answer');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['chat_default']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, null);
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -5174,7 +5436,7 @@ test('does not admit contextual submit from transcript-only conversation proposa
   });
   const prior = conversation.begin_question({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
     question: priorRequest.instruction,
     request_digest: priorRequest.request_digest,
     base_revision: null,
@@ -5232,6 +5494,14 @@ test('does not admit contextual submit from transcript-only conversation proposa
 test('records update-brief answers into the main-owned task capsule store', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-capsule-recording-main-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Task capsule recording project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 8_400,
+    bound_at_ms: 8_450,
+  });
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   t.after(() => {
     try { taskCapsuleStore.close(); } catch { /* already closed */ }
@@ -5251,7 +5521,9 @@ test('records update-brief answers into the main-owned task capsule store', asyn
       gitAuthority: gitAuthority(),
       projectReadAuthority: {
         load_current() {
-          throw new Error('no saved revision yet');
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const draft = true;\n' }],
+          }));
         },
       },
       projectIdentityAuthority: {
@@ -5290,6 +5562,7 @@ test('records update-brief answers into the main-owned task capsule store', asyn
   const answer = await service.answer(request({
     instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
     existingProjectId: PROJECT_ID,
+    taskAddressId: null,
   }));
   const latest = taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID });
   const update = latest.task_capsule_update.task_capsule_update;
@@ -5300,7 +5573,7 @@ test('records update-brief answers into the main-owned task capsule store', asyn
   assert.equal(answer.title, 'Direction saved');
   assert.equal(latest.status, 'ready');
   assert.equal(update.project_id, PROJECT_ID);
-  assert.equal(update.conversation_id, CONVERSATION_ID);
+  assert.equal(update.conversation_id, TEST_TASK_CONVERSATION_ID);
   assert.equal(update.task_capsule.status, 'ready');
   assert.equal(update.task_capsule.current_brief.latest_user_goal, '我打算做一个作品集首页，目标是星空背景和项目卡片。');
   assert.equal(update.task_capsule.current_brief.assistant_proposal, answer.explanation);
@@ -5372,7 +5645,7 @@ test('records brief corrections as not-ready conversation context without ready 
     instruction: '等等，先不要按这个做，我要重新整理方向。',
     existingProjectId: PROJECT_ID,
   }));
-  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID });
 
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.admissions.draft, 'not_created');
@@ -5434,6 +5707,130 @@ test('does not record ordinary read-only answers into the task capsule store', a
   assert.equal(answer.result_kind, 'explanation');
   assert.equal(answer.existing_project_id, null);
   assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'absent');
+});
+
+test('records only completed Agent Plan answers as durable plan artifacts', async (t) => {
+  const planMarkdown = ['Goals', 'User flows', 'Interaction', 'Architecture', 'Data', 'Implementation', 'Verification', 'Review']
+    .map((section) => `## ${section}\n\n- Specify ${section.toLowerCase()} for the focus timer with explicit file ownership, dependencies, and observable acceptance criteria.\n- Verify the chosen behavior against the user requirements; document recommended defaults and unresolved review questions before execution.`)
+    .join('\n\n').repeat(3);
+  const output = [];
+  let planTransportAttempts = 0;
+  let transportMode = 'success';
+  let cancellationReady = false;
+  const planInputs = [];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-agent-plan-main-'));
+  const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  let now = 8_900;
+  const conversation = createBuilderConversationMainService({
+    metadataAuthority: database,
+    createUuid: createUniqueUuidFactory(890),
+    nowMs: () => now++,
+  });
+  const agentConversation = createBuilderAgentConversationService({
+    databasePath: path.join(root, 'agent-conversations.sqlite'),
+    agentId: TEST_AGENT_ID,
+    createUuid: createUniqueUuidFactory(895),
+    nowMs: () => now++,
+  });
+  const agentPlanStore = createBuilderAgentPlanStore(path.join(root, 'agent-plans.sqlite'));
+  t.after(() => {
+    try { agentPlanStore.close(); } catch { /* already closed */ }
+    try { agentConversation.close(); } catch { /* already closed */ }
+    try { database.close(); } catch { /* already closed */ }
+    removeRoot(root);
+  });
+  const agentPlanService = createBuilderAgentPlanService({
+    store: agentPlanStore,
+    agent_id: TEST_AGENT_ID,
+    owner_id: 'local-owner',
+    now: () => now++,
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: conversation, agentConversationService: agentConversation }),
+    agentPlanService,
+    onProviderOutputDelta: (event) => output.push(event),
+    transport: async (input, runtime) => {
+      if (transportMode === 'fail') throw new Error('test provider unavailable');
+      if (transportMode === 'cancel') {
+        cancellationReady = true;
+        return new Promise((_resolve, reject) => runtime.signal.addEventListener('abort', () => {
+          const error = new Error('test cancellation');
+          error.code = 'builder_provider_cancelled';
+          reject(error);
+        }, { once: true }));
+      }
+      const isPlan = JSON.parse(input.messages[1].content).response_mode === 'plan';
+      if (isPlan) planInputs.push(JSON.parse(input.messages[1].content));
+      if (isPlan) planTransportAttempts += 1;
+      const explanation = !isPlan ? 'Discuss the plan before approval.'
+        : planTransportAttempts === 1 ? '# Short outline' : `\n${planMarkdown}\n`;
+      const generated_text = JSON.stringify(providerExplanation({
+        title: 'Implementation plan', summary: 'A complete plan.', explanation,
+      }));
+      await runtime.on_output_delta?.({ delta_text: generated_text });
+      return { transport_version: 'builder-openai-compatible-transport.v1', generated_text };
+    },
+  });
+
+  await service.answer(request({ instruction: '先讨论一下', existingProjectId: null }));
+  assert.equal(agentPlanService.read_latest({
+    agent_id: TEST_AGENT_ID,
+    source_conversation_id: agentConversation.conversation_id,
+  }).status, 'absent');
+
+  output.length = 0;
+  await assert.rejects(service.answer_plan(request({ instruction: 'First incomplete plan', existingProjectId: null })), {
+    code: 'builder_generation_structured_response_invalid',
+  });
+  const failedStream = agentConversation.read_stream({ agent_id: TEST_AGENT_ID }).conversation;
+  assert.equal(failedStream.recorded_active_turn_id, null);
+  assert.match(failedStream.items.filter((item) => item.role === 'assistant').at(-1).message.text,
+    /Incomplete plan[\s\S]*# Short outline/u);
+  assert.equal(agentPlanService.read_latest({
+    agent_id: TEST_AGENT_ID, source_conversation_id: agentConversation.conversation_id,
+  }).status, 'absent');
+  assert.equal(planTransportAttempts, 1);
+  await service.answer_plan(request({ instruction: '请制定计划', existingProjectId: null }));
+  const recorded = agentPlanService.read_latest({
+    agent_id: TEST_AGENT_ID,
+    source_conversation_id: agentConversation.conversation_id,
+  });
+  assert.equal(recorded.status, 'ready');
+  assert.equal(recorded.artifact.markdown, planMarkdown);
+  assert.equal(recorded.decision, null);
+  assert.equal(planTransportAttempts, 2);
+  assert.deepEqual(output.map((event) => event.event_version), [
+    'builder-generation-output.v1',
+    'builder-generation-output.v1',
+  ]);
+  assert.equal(output[1].display_delta_text.trim(), planMarkdown);
+  await service.answer_plan(request({ instruction: '保留上一版要求，增加暂停恢复的验收步骤', existingProjectId: null }));
+  assert.deepEqual(planInputs.at(-1).prior_agent_plan, {
+    version: 1, review_state: 'proposed', text: planMarkdown,
+  });
+  assert.equal(agentPlanService.read_latest({
+    agent_id: TEST_AGENT_ID, source_conversation_id: agentConversation.conversation_id,
+  }).artifact.version, 2);
+  const scope = { agent_id: TEST_AGENT_ID, source_conversation_id: agentConversation.conversation_id };
+  const beforeFailure = agentPlanService.read_latest(scope);
+  planTransportAttempts = 0;
+  await assert.rejects(service.answer_plan(request({ instruction: 'Incomplete revision', existingProjectId: null })));
+  assert.equal(planTransportAttempts, 1);
+  assert.deepEqual(agentPlanService.read_latest(scope), beforeFailure);
+  assert.match(agentConversation.read_stream({ agent_id: TEST_AGENT_ID }).conversation.items
+    .filter((item) => item.role === 'assistant').at(-1).message.text, /Incomplete plan/u);
+  transportMode = 'fail';
+  await assert.rejects(service.answer_plan(request({ instruction: 'Retry revision', existingProjectId: null })));
+  assert.deepEqual(agentPlanService.read_latest(scope), beforeFailure);
+  assert.equal(agentConversation.read_stream({ agent_id: TEST_AGENT_ID }).conversation.recorded_active_turn_id, null);
+  transportMode = 'cancel';
+  const cancelRequest = request({ instruction: 'Cancel revision', existingProjectId: null });
+  const pending = service.answer_plan(cancelRequest);
+  while (!cancellationReady) await new Promise((resolve) => setImmediate(resolve));
+  service.cancel({ request_id: cancelRequest.request_digest });
+  await assert.rejects(pending, { code: 'builder_generation_cancelled' });
+  assert.deepEqual(agentPlanService.read_latest(scope), beforeFailure);
+  assert.equal(agentConversation.read_stream({ agent_id: TEST_AGENT_ID }).conversation.recorded_active_turn_id, null);
 });
 
 test('records fresh work turns into the main-owned Session/Task Address store before provider dispatch', async (t) => {
@@ -5666,7 +6063,7 @@ test('uses a durable task capsule brief as contextual submit build context', asy
   });
   const prior = conversation.begin_question({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
     question: priorRequest.instruction,
     request_digest: priorRequest.request_digest,
     base_revision: null,
@@ -5701,6 +6098,17 @@ test('uses a durable task capsule brief as contextual submit build context', asy
     }),
     transport: async (input) => {
       transportInput = input;
+      if (input.max_tokens === 256) {
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify({
+            kind: 'builder_semantic_route_classification',
+            route: 'build',
+            confidence: 'high',
+            reason_code: 'requests_source_change',
+          }),
+        };
+      }
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
@@ -5711,10 +6119,16 @@ test('uses a durable task capsule brief as contextual submit build context', asy
     },
   });
 
-  const draft = await service.submit(request({
+  const contextualBuildRequest = request({
     instruction: '按刚才方案做',
     existingProjectId: PROJECT_ID,
-  }));
+  });
+  await service.classify_intent({
+    instruction: contextualBuildRequest.instruction,
+    existing_project_id: contextualBuildRequest.existing_project_id,
+    task_address_id: contextualBuildRequest.task_address_id,
+  });
+  const draft = await service.submit(contextualBuildRequest);
   const providerPrompt = JSON.parse(transportInput.messages[1].content);
 
   assert.equal(draft.title, 'Portfolio from brief');
@@ -5747,6 +6161,14 @@ test('uses a durable task capsule brief as contextual submit build context', asy
 test('uses the main-owned task capsule store as contextual submit route evidence', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-brief-store-route-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Task capsule route project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 8_800,
+    bound_at_ms: 8_850,
+  });
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   t.after(() => {
     try { taskCapsuleStore.close(); } catch { /* already closed */ }
@@ -5768,7 +6190,9 @@ test('uses the main-owned task capsule store as contextual submit route evidence
       gitAuthority: gitAuthority(),
       projectReadAuthority: {
         load_current() {
-          throw new Error('no saved revision yet');
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const draft = true;\n' }],
+          }));
         },
       },
       projectIdentityAuthority: {
@@ -5802,6 +6226,7 @@ test('uses the main-owned task capsule store as contextual submit route evidence
   await answerService.answer(request({
     instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
     existingProjectId: PROJECT_ID,
+    taskAddressId: null,
   }));
   assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'ready');
 
@@ -5843,6 +6268,17 @@ test('uses the main-owned task capsule store as contextual submit route evidence
     }),
     transport: async (input) => {
       transportInput = input;
+      if (input.max_tokens === 256) {
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify({
+            kind: 'builder_semantic_route_classification',
+            route: 'build',
+            confidence: 'high',
+            reason_code: 'requests_source_change',
+          }),
+        };
+      }
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
@@ -5862,7 +6298,7 @@ test('uses the main-owned task capsule store as contextual submit route evidence
   assert.equal(draft.title, 'Portfolio from stored brief');
   assert.deepEqual(readStreamCalls, [{
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
   }]);
   assert.deepEqual(providerPrompt.conversation_brief.working_brief, {
     brief_version: 'builder-working-brief.v1',
@@ -5888,6 +6324,14 @@ test('uses the main-owned task capsule store as contextual submit route evidence
 test('uses the Working Context State service as contextual submit route evidence', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-working-context-route-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Working context route project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 8_900,
+    bound_at_ms: 8_950,
+  });
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   const addressStore = createBuilderSessionTaskAddressStore(path.join(root, 'session-task-addresses.sqlite'));
   const compactionStore = createBuilderContextCompactionSummaryStore(path.join(root, 'context-compactions.sqlite'));
@@ -5913,7 +6357,9 @@ test('uses the Working Context State service as contextual submit route evidence
       gitAuthority: gitAuthority(),
       projectReadAuthority: {
         load_current() {
-          throw new Error('no saved revision yet');
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const draft = true;\n' }],
+          }));
         },
       },
       projectIdentityAuthority: {
@@ -5946,6 +6392,7 @@ test('uses the Working Context State service as contextual submit route evidence
   await answerService.answer(request({
     instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
     existingProjectId: PROJECT_ID,
+    taskAddressId: null,
   }));
   addressStore.record_session_address({
     session_address: createBuilderSessionAddress({
@@ -5955,7 +6402,7 @@ test('uses the Working Context State service as contextual submit route evidence
       title: 'Portfolio work line',
       status: 'active',
       root_conversation_id: CONVERSATION_ID,
-      current_task_id: `builder-task-address:${UUIDS[2]}`,
+      current_task_id: TEST_TASK_ADDRESS_ID,
       parent_session_id: null,
       forked_from_session_id: null,
       forked_from_revision_receipt_digest: null,
@@ -5967,12 +6414,12 @@ test('uses the Working Context State service as contextual submit route evidence
   });
   addressStore.record_task_address({
     task_address: createBuilderTaskAddress({
-      task_address_id: `builder-task-address:${UUIDS[2]}`,
+      task_address_id: TEST_TASK_ADDRESS_ID,
       session_id: `builder-session:${UUIDS[1]}`,
       project_id: PROJECT_ID,
       agent_id: `builder-agent:${UUIDS[3]}`,
       parent_task_address_id: null,
-      conversation_id: CONVERSATION_ID,
+      conversation_id: TEST_TASK_CONVERSATION_ID,
       title: 'Build portfolio homepage',
       goal: 'Create the portfolio homepage from the current discussion.',
       status: 'planned',
@@ -5987,8 +6434,8 @@ test('uses the Working Context State service as contextual submit route evidence
     }),
   });
   const compactedSummary = createBuilderContextCompactionSummary({
-    conversation_id: CONVERSATION_ID,
-    task_address_id: `builder-task-address:${UUIDS[2]}`,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
+    task_address_id: TEST_TASK_ADDRESS_ID,
     source_event_start_id: `builder-conversation-event:${'1'.repeat(64)}`,
     source_event_end_id: `builder-conversation-event:${'2'.repeat(64)}`,
     source_event_count: 24,
@@ -6023,7 +6470,7 @@ test('uses the Working Context State service as contextual submit route evidence
     stream_version: 'builder-task-stream-read-result.v1',
     project_id: body.project_id,
     conversation: {
-      conversation_id: CONVERSATION_ID,
+      conversation_id: body.conversation_id,
       created_at_ms: 1_000,
       head_sequence: 1,
       recorded_active_turn_id: null,
@@ -6124,11 +6571,25 @@ test('uses the Working Context State service as contextual submit route evidence
     }),
     transport: async (input) => {
       transportInput = input;
+      if (input.max_tokens === 256) {
+        return {
+          transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify({
+            kind: 'builder_semantic_route_classification',
+            route: 'build',
+            confidence: 'high',
+            reason_code: 'requests_source_change',
+          }),
+        };
+      }
       return {
         transport_version: 'builder-openai-compatible-transport.v1',
         generated_text: JSON.stringify(providerOutput({
           title: 'Portfolio from working context',
           summary: 'Builds from the projected Working Context State.',
+          operations: [
+            { operation: 'upsert', path: 'src/app.js', content: 'export const portfolio = true;\n' },
+          ],
         })),
       };
     },
@@ -6143,10 +6604,10 @@ test('uses the Working Context State service as contextual submit route evidence
   assert.equal(draft.title, 'Portfolio from working context');
   assert.equal(workingContextReads.length, 2);
   assert.equal(workingContextReads[0].project_id, PROJECT_ID);
-  assert.equal(workingContextReads[0].conversation_id, CONVERSATION_ID);
+  assert.equal(workingContextReads[0].conversation_id, TEST_TASK_CONVERSATION_ID);
   assert.equal(workingContextReads[0].latest_user_intent, '按刚才方案做');
   assert.equal(workingContextReads[1].project_id, PROJECT_ID);
-  assert.equal(workingContextReads[1].conversation_id, CONVERSATION_ID);
+  assert.equal(workingContextReads[1].conversation_id, TEST_TASK_CONVERSATION_ID);
   assert.equal(workingContextReads[1].latest_user_intent, '按刚才方案做');
   assert.equal(contextSnapshotInputs.length, 1);
   assert.match(contextSnapshotInputs[0].context_assembly.assembly_id, /^builder-context-assembly:[0-9a-f]{64}$/u);
@@ -6204,13 +6665,13 @@ test('uses the Working Context State service as contextual submit route evidence
     },
     {
       project_id: PROJECT_ID,
-      conversation_id: CONVERSATION_ID,
+      conversation_id: TEST_TASK_CONVERSATION_ID,
     },
   );
   assert.equal(providerDisclosureStatusRecords[0].recorded_at_ms >= 10_000, true);
   assert.deepEqual(providerDisclosureStatusClears, [{
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
   }]);
   assert.equal(providerDisclosureInputs.length, 1);
   assert.deepEqual(providerDisclosureInputs[0], {
@@ -6247,6 +6708,14 @@ test('uses the Working Context State service as contextual submit route evidence
 test('does not let stale task capsule store readiness override a newer task stream correction', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clawfabric-builder-task-brief-store-stale-'));
   const database = createBuilderProductMetadataDatabase(path.join(root, 'builder.sqlite'));
+  database.bind_project_workspace({
+    project_id: PROJECT_ID,
+    project_title: 'Stale task capsule project',
+    project_root_path: root,
+    source_folder_name: path.basename(root),
+    created_at_ms: 9_100,
+    bound_at_ms: 9_150,
+  });
   const taskCapsuleStore = createBuilderTaskCapsuleStore(path.join(root, 'task-capsules.sqlite'));
   t.after(() => {
     try { taskCapsuleStore.close(); } catch { /* already closed */ }
@@ -6268,7 +6737,9 @@ test('does not let stale task capsule store readiness override a newer task stre
       gitAuthority: gitAuthority(),
       projectReadAuthority: {
         load_current() {
-          throw new Error('no saved revision yet');
+          return readResult(createBuilderProjectSourceTree({
+            files: [{ path: 'src/app.js', content: 'export const draft = true;\n' }],
+          }));
         },
       },
       projectIdentityAuthority: {
@@ -6302,6 +6773,7 @@ test('does not let stale task capsule store readiness override a newer task stre
   await answerService.answer(request({
     instruction: '我打算做一个作品集首页，目标是星空背景和项目卡片。',
     existingProjectId: PROJECT_ID,
+    taskAddressId: null,
   }));
   assert.equal(taskCapsuleStore.read_latest_task_capsule({ project_id: PROJECT_ID }).status, 'ready');
 
@@ -6350,7 +6822,7 @@ test('does not let stale task capsule store readiness override a newer task stre
   assert.equal(lifecycle.calls.question[0].route_decision_hint.route, 'clarify');
   assert.deepEqual(lifecycle.calls.question[0].route_decision_hint.matched_signals, ['contextual_build']);
   assert.equal(lifecycle.calls.question[0].route_decision_hint.downgrade_reason, 'missing_prior_build_context');
-  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID }]);
+  assert.deepEqual(lifecycle.calls.readStream, [{ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID }]);
   assert.equal(git.receipts.length, 0);
 });
 
@@ -6424,13 +6896,13 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
     },
   });
 
-  const rawRequest = request({ taskAddressId: null });
+  const rawRequest = request();
   await assert.rejects(
     service.generate(rawRequest),
     (error) => error.code === 'builder_generation_failed'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
-  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID });
   assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   await assert.rejects(
@@ -6442,7 +6914,7 @@ test('retries a provider failure as a second run on the same turn', async (t) =>
   const result = await service.retry_generate(rawRequest);
   assert.equal(result.project_id, PROJECT_ID);
   assert.equal(result.request_id, rawRequest.request_digest);
-  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID });
   assert.equal(stream.conversation.head_sequence, 28);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
   const retriedRun = stream.conversation.items.find((item) => (
@@ -6520,11 +6992,11 @@ test('records real provider failures as retryable activity and closes them befor
   });
 
   await assert.rejects(
-    service.generate(request({ taskAddressId: null })),
+    service.generate(request()),
     (error) => error.code === 'builder_generation_failed'
       && !`${error.message}:${error.stack}`.includes(PRIVATE_MARKER),
   );
-  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  const failedStream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID });
   assert.equal(failedStream.conversation.head_sequence, 6);
   assert.equal(failedStream.conversation.recorded_active_turn_id, failedStream.conversation.items[0].turn_id);
   assert.equal(failedStream.conversation.items[2].item_kind, 'run_context_snapshot_recorded');
@@ -6533,12 +7005,9 @@ test('records real provider failures as retryable activity and closes them befor
   assert.equal(failedStream.conversation.items[5].result_kind, 'failure');
   assert.equal(failedStream.conversation.items[5].candidate, null);
 
-  const result = await service.generate(request({
-    instruction: 'Try a different timer layout.',
-    taskAddressId: null,
-  }));
+  const result = await service.generate(request({ instruction: 'Try a different timer layout.' }));
   assert.equal(result.project_id, PROJECT_ID);
-  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: CONVERSATION_ID });
+  const stream = conversation.read_stream({ project_id: PROJECT_ID, conversation_id: TEST_TASK_CONVERSATION_ID });
   assert.equal(stream.conversation.head_sequence, 30);
   assert.equal(stream.conversation.recorded_active_turn_id, null);
   const secondUser = stream.conversation.items.find((item) => (
@@ -6561,6 +7030,69 @@ test('records real provider failures as retryable activity and closes them befor
   assert.equal(secondCompletion.result_kind, 'candidate');
   assert.equal(stream.conversation.items.at(-1).outcome, 'candidate_ready');
   assert.doesNotMatch(JSON.stringify(stream), /credential|git_candidate_receipt|commit_oid|tree_oid/iu);
+});
+
+test('desktop shutdown records recoverable interruption before abort, without a user Stop', async () => {
+  for (const operation of ['generate', 'answer']) {
+    const order = [];
+    const lifecycle = conversationService();
+    const originalCompleteFailure = lifecycle.complete_failure;
+    lifecycle.complete_failure = (input) => {
+      order.push('interruption_recorded');
+      return originalCompleteFailure(input);
+    };
+    let signal;
+    const service = createBuilderGenerationMainService({
+      ...repositories({ conversationService: lifecycle }),
+      transport: async (_input, options) => {
+        signal = options.signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            order.push('provider_aborted');
+            const error = new Error('transport stopped');
+            error.code = 'builder_provider_cancelled';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    const attempted = request();
+    const pending = service[operation](attempted);
+    while (!signal) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(service.pause_for_shutdown({ request_id: attempted.request_digest }).cancelled, true);
+    await assert.rejects(pending, { code: 'builder_generation_cancelled' });
+    assert.deepEqual(order, ['interruption_recorded', 'provider_aborted']);
+    assert.equal(lifecycle.calls.cancel.length, 0);
+    assert.equal(lifecycle.calls.completeFailure.length, 1);
+    assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_desktop_closed');
+    assert.equal(lifecycle.calls.failure.length, 0, 'Abort must not overwrite the interruption with a retry failure');
+  }
+});
+
+test('desktop shutdown keeps authority open if durable interruption cannot be recorded', async () => {
+  const lifecycle = conversationService();
+  lifecycle.complete_failure = () => { throw new Error(PRIVATE_MARKER); };
+  let signal;
+  let release;
+  const service = createBuilderGenerationMainService({
+    ...repositories({ conversationService: lifecycle }),
+    transport: async (_input, options) => {
+      signal = options.signal;
+      return new Promise((resolve) => {
+        release = () => resolve({ transport_version: 'builder-openai-compatible-transport.v1',
+          generated_text: JSON.stringify(providerOutput()) });
+      });
+    },
+  });
+  const attempted = request();
+  const pending = service.generate(attempted);
+  while (!signal) await new Promise((resolve) => setImmediate(resolve));
+  assert.throws(() => service.pause_for_shutdown({ request_id: attempted.request_digest }),
+    { code: 'builder_generation_service_unavailable' });
+  assert.equal(signal.aborted, false);
+  assert.equal(lifecycle.calls.cancel.length, 0);
+  release();
+  await pending;
 });
 
 test('records cancellation intent before aborting provider work and fails closed if recording fails', async () => {
@@ -6668,8 +7200,465 @@ test('records cancellation intent before aborting provider work and fails closed
   assert.equal(answerGit.receipts.length, 0);
 });
 
-test('returns a successful Harness response without Git, checks, or checkpoint when files are unchanged', async () => {
-  const attemptedRequest = request({ existingProjectId: PROJECT_ID });
+test('continues an existing Harness task with the new request and native session identity', async () => {
+  const attemptedRequest = request({
+    existingProjectId: PROJECT_ID,
+    instruction: '继续优化3D场景的视觉效果',
+  });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Existing project</h1>\n' }],
+  });
+  const sessionRunId = `builder-run:${UUIDS[0]}`;
+  const lifecycle = conversationService({
+    sessionContinuation: {
+      status: 'ready',
+      run_id: sessionRunId,
+      session_run_id: sessionRunId,
+    },
+  });
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'runtime_local',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  let preparedContinuation = null;
+  let admittedContract = null;
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async prepareContinuation(input) {
+      preparedContinuation = input;
+      return {
+        projection_version: 'builder-session-continuation-projection.v1',
+        continuity_status: 'native_resumed',
+        reason: 'previous_harness_session_available',
+        session_run_id: input.session_run_id,
+        source_tree_digest: input.current_source_tree.source_tree_digest,
+        source_freshness: 'unchanged',
+        observed_working_set: [],
+      };
+    },
+    async startRun({ run_contract: runContract }) {
+      admittedContract = runContract;
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: sourceTree,
+          assistant_text: 'No source change.',
+          verification_step_id: `builder-run-step:${UUIDS[1]}`,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run without a candidate'); },
+    async reconcileRun() { throw new Error('reconcile must not run without a candidate'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  await assert.rejects(service.generate(attemptedRequest), {
+    code: 'builder_harness_generation_runner_failed',
+    runtime_code: 'builder_harness_source_change_required',
+  });
+
+  assert.deepEqual(lifecycle.calls.readSessionContinuation, [{
+    project_id: PROJECT_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
+  }]);
+  assert.deepEqual(preparedContinuation, {
+    project_id: PROJECT_ID,
+    conversation_id: TEST_TASK_CONVERSATION_ID,
+    run_id: sessionRunId,
+    session_run_id: sessionRunId,
+    current_source_tree: sourceTree,
+  });
+  assert.equal(lifecycle.calls.begin[0].resume_session_run_id, sessionRunId);
+  assert.equal(admittedContract.input.text, attemptedRequest.instruction);
+  assert.equal(admittedContract.input.resume_session_run_id, sessionRunId);
+  assert.equal(admittedContract.input.resume_kind, 'task_continuation');
+});
+
+test('starts an ordinary existing-project Harness build fresh even when an old session is resumable', async () => {
+  const attemptedRequest = request({
+    existingProjectId: PROJECT_ID,
+    instruction: '做一个计划管理页面',
+  });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Existing project</h1>\n' }],
+  });
+  const sessionRunId = `builder-run:${UUIDS[0]}`;
+  const lifecycle = conversationService({
+    sessionContinuation: {
+      status: 'ready',
+      run_id: sessionRunId,
+      session_run_id: sessionRunId,
+    },
+  });
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'runtime_local',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  let prepareContinuationCalls = 0;
+  let admittedContract = null;
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async prepareContinuation() {
+      prepareContinuationCalls += 1;
+      throw new Error('ordinary build must not prepare old session continuation');
+    },
+    async startRun({ run_contract: runContract }) {
+      admittedContract = runContract;
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: sourceTree,
+          assistant_text: 'No source change.',
+          verification_step_id: `builder-run-step:${UUIDS[1]}`,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run without a candidate'); },
+    async reconcileRun() { throw new Error('reconcile must not run without a candidate'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  await assert.rejects(service.generate(attemptedRequest), {
+    code: 'builder_harness_generation_runner_failed',
+    runtime_code: 'builder_harness_source_change_required',
+  });
+
+  assert.deepEqual(lifecycle.calls.readSessionContinuation, []);
+  assert.equal(prepareContinuationCalls, 0);
+  assert.equal(lifecycle.calls.begin[0].resume_session_run_id, undefined);
+  assert.equal(admittedContract.input.resume_session_run_id, undefined);
+  assert.equal(admittedContract.input.resume_kind, undefined);
+});
+
+test('does not silently start a fresh Harness task when native continuation preparation fails', async (t) => {
+  for (const [runtimeCode, publicCode] of [
+    ['builder_harness_runtime_composition_conflict', 'builder_generation_workspace_changed'],
+    ['builder_harness_runtime_composition_unavailable', 'builder_generation_source_context_unavailable'],
+    ['projection_source_mismatch', 'builder_generation_source_context_unavailable'],
+  ]) {
+    await t.test(runtimeCode, async () => {
+      const attemptedRequest = request({
+        existingProjectId: PROJECT_ID,
+        instruction: '继续优化这个项目',
+      });
+      const sourceTree = createBuilderProjectSourceTree({
+        files: [{ path: 'index.html', content: '<h1>Existing project</h1>\n' }],
+      });
+      const sessionRunId = `builder-run:${UUIDS[0]}`;
+      const lifecycle = conversationService({
+        sessionContinuation: {
+          status: 'ready',
+          run_id: sessionRunId,
+          session_run_id: sessionRunId,
+        },
+      });
+      const deepSeekConfig = createBuilderProviderConfig({
+        base_url: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+        timeout_ms: 30_000,
+        temperature: 0,
+        max_tokens: 8_192,
+        secret_ref: {
+          ref_version: 'builder-provider-secret-ref.v1',
+          provider_id: 'builder-default',
+          secret_id: 'builder-provider-secret:default',
+        },
+      });
+      let startRunCalls = 0;
+      const harnessRuntimeComposition = Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        descriptor: createBuilderProgrammingRuntimeDescriptor({
+          runtime_kind: 'deepseek_harness.v1',
+          implementation_version: '1.0.0',
+          capabilities: {
+            streaming_text: true,
+            reasoning_status: 'none',
+            native_tool_calls: true,
+            steering: 'none',
+            cancellation: 'process',
+            session_resume: 'runtime_local',
+            context_compaction: true,
+            parallel_read_tools: false,
+          },
+        }),
+        async prepareContinuation(input) {
+          if (runtimeCode === 'projection_source_mismatch') {
+            return {
+              projection_version: 'builder-session-continuation-projection.v1',
+              continuity_status: 'native_resumed',
+              reason: 'previous_harness_session_available',
+              session_run_id: input.session_run_id,
+              source_tree_digest: `sha256:${'0'.repeat(64)}`,
+              source_freshness: 'unchanged',
+              observed_working_set: [],
+            };
+          }
+          const error = new Error(runtimeCode);
+          error.code = runtimeCode;
+          throw error;
+        },
+        async startRun() {
+          startRunCalls += 1;
+          throw new Error('fresh Harness run must not start');
+        },
+        async repairRun() { throw new Error('repair must not run'); },
+        async reconcileRun() { throw new Error('reconcile must not run'); },
+        async cancelRun(handle) {
+          return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+        },
+        pendingUserQuestion() { return null; },
+        answerUserQuestion() { return false; },
+        async dispose() {},
+      });
+      const service = createBuilderGenerationMainService({
+        ...repositories({
+          conversationService: lifecycle,
+          projectReadAuthority: { load_current: () => readResult(sourceTree) },
+          providerConfigRepository: {
+            bind_current_authority() {
+              return {
+                readProviderConfig: () => deepSeekConfig,
+                resolveSecret: () => ({
+                  resolution_version: 'builder-provider-secret-resolution.v1',
+                  secret_ref: deepSeekConfig.secret_ref,
+                  credential: 'configured-test-credential',
+                }),
+              };
+            },
+          },
+          harnessRuntimeComposition,
+          programmingRuntimeFeatureFlag: 'enabled',
+        }),
+        transport: async () => { throw new Error('structured transport must not run'); },
+      });
+
+      await assert.rejects(service.generate(attemptedRequest), { code: publicCode });
+
+      assert.deepEqual(lifecycle.calls.readSessionContinuation, [{
+        project_id: PROJECT_ID,
+        conversation_id: TEST_TASK_CONVERSATION_ID,
+      }]);
+      assert.equal(lifecycle.calls.begin.length, 0);
+      assert.equal(startRunCalls, 0);
+    });
+  }
+});
+
+test('requires source changes for manual Build turns even when the prompt asks not to edit files', async () => {
+  const attemptedRequest = request({
+    existingProjectId: PROJECT_ID,
+    instruction: 'Inspect the current project and explain what detail is still needed. Do not change files.',
+  });
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [{ path: 'index.html', content: '<h1>Focus timer</h1>\n' }],
+  });
+  const lifecycle = conversationService();
+  const descriptor = createBuilderProgrammingRuntimeDescriptor({
+    runtime_kind: 'deepseek_harness.v1',
+    implementation_version: '1.0.0',
+    capabilities: {
+      streaming_text: true,
+      reasoning_status: 'none',
+      native_tool_calls: true,
+      steering: 'none',
+      cancellation: 'process',
+      session_resume: 'none',
+      context_compaction: true,
+      parallel_read_tools: false,
+    },
+  });
+  let observedCompletionRequirement = null;
+  const harnessRuntimeComposition = Object.freeze({
+    composition_version: 'builder-harness-runtime-composition.v1',
+    descriptor,
+    async startRun({ run_contract: runContract }) {
+      observedCompletionRequirement = runContract.input.completion_requirement;
+      return Object.freeze({
+        composition_version: 'builder-harness-runtime-composition.v1',
+        runtime_version: 'builder-harness-programming-runtime.v1',
+        runtime_kind: 'deepseek_harness.v1',
+        run_id: runContract.admission.run_id,
+        completion: Promise.resolve(Object.freeze({
+          composition_version: 'builder-harness-runtime-composition.v1',
+          runtime_version: 'builder-harness-programming-runtime.v1',
+          run_id: runContract.admission.run_id,
+          status: 'awaiting_reconciliation',
+          resulting_source_tree: sourceTree,
+          assistant_text: 'I inspected index.html, but I need exact replacement text before changing files.',
+          verification_step_id: `builder-run-step:${UUIDS[0]}`,
+        })),
+      });
+    },
+    async repairRun() { throw new Error('repair must not run without a candidate'); },
+    async reconcileRun() { throw new Error('reconcile must not run without a candidate'); },
+    async cancelRun(handle) {
+      return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
+    },
+    pendingUserQuestion() { return null; },
+    answerUserQuestion() { return false; },
+    async dispose() {},
+  });
+  const deepSeekConfig = createBuilderProviderConfig({
+    base_url: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    timeout_ms: 30_000,
+    temperature: 0,
+    max_tokens: 8_192,
+    secret_ref: {
+      ref_version: 'builder-provider-secret-ref.v1',
+      provider_id: 'builder-default',
+      secret_id: 'builder-provider-secret:default',
+    },
+  });
+  const service = createBuilderGenerationMainService({
+    ...repositories({
+      conversationService: lifecycle,
+      projectReadAuthority: { load_current: () => readResult(sourceTree) },
+      providerConfigRepository: {
+        bind_current_authority() {
+          return {
+            readProviderConfig: () => deepSeekConfig,
+            resolveSecret: () => ({
+              resolution_version: 'builder-provider-secret-resolution.v1',
+              secret_ref: deepSeekConfig.secret_ref,
+              credential: 'configured-test-credential',
+            }),
+          };
+        },
+      },
+      harnessRuntimeComposition,
+      programmingRuntimeFeatureFlag: 'enabled',
+    }),
+    transport: async () => { throw new Error('structured transport must not run'); },
+  });
+
+  await assert.rejects(service.generate(attemptedRequest), {
+    code: 'builder_harness_generation_runner_failed',
+    runtime_code: 'builder_harness_source_change_required',
+  });
+
+  assert.equal(observedCompletionRequirement, 'source_change_required');
+  assert.equal(lifecycle.calls.workResponse.length, 0);
+  assert.equal(lifecycle.calls.candidate.length, 0);
+});
+
+test('ends a response-only Harness Build turn without Git, checks, checkpoint, or a retry trap', async () => {
+  const attemptedRequest = request({
+    existingProjectId: PROJECT_ID,
+    instruction: 'PB-06 controlled 10 MB output burst. Run the declared project build command.',
+  });
   const sourceTree = createBuilderProjectSourceTree({
     files: [{ path: 'index.html', content: '<h1>Focus timer</h1>\n' }],
   });
@@ -6690,11 +7679,13 @@ test('returns a successful Harness response without Git, checks, or checkpoint w
     },
   });
   const reconciliationStatuses = [];
+  let cancelCalls = 0;
   let admittedRunDurationMs = null;
   const harnessRuntimeComposition = Object.freeze({
     composition_version: 'builder-harness-runtime-composition.v1',
     descriptor,
     async startRun({ run_contract: runContract }) {
+      assert.equal(runContract.input.completion_requirement, 'response_allowed');
       admittedRunDurationMs = runContract.admission.limits.max_duration_ms;
       return Object.freeze({
         composition_version: 'builder-harness-runtime-composition.v1',
@@ -6718,6 +7709,7 @@ test('returns a successful Harness response without Git, checks, or checkpoint w
       return Object.freeze({ status: 'completed' });
     },
     async cancelRun(handle) {
+      cancelCalls += 1;
       return Object.freeze({ run_id: handle.run_id, cancellation_requested: true });
     },
     pendingUserQuestion() { return null; },
@@ -6762,24 +7754,17 @@ test('returns a successful Harness response without Git, checks, or checkpoint w
   const result = await service.generate(attemptedRequest);
 
   assert.equal(result.result_kind, 'explanation');
-  assert.equal(
-    result.explanation,
-    'I inspected the project, but I need the target file before changing anything.',
-  );
-  assert.equal(result.project_id, PROJECT_ID);
-  assert.equal(result.existing_project_id, PROJECT_ID);
-  assert.equal(result.admissions.draft, 'not_created');
-  assert.equal(result.admissions.save, 'not_performed');
+  assert.equal(result.summary, 'I inspected the project, but I need the target file before changing anything.');
   assert.equal(admittedRunDurationMs, 60 * 60 * 1_000);
   assert.notEqual(admittedRunDurationMs, deepSeekConfig.timeout_ms);
   assert.deepEqual(reconciliationStatuses, ['not_applicable']);
+  assert.equal(cancelCalls, 0);
   assert.equal(lifecycle.calls.workResponse.length, 1);
   assert.equal(lifecycle.calls.candidate.length, 0);
+  assert.equal(lifecycle.calls.checkpoint.length, 0);
+  assert.equal(lifecycle.calls.failure.length, 0);
+  assert.equal(lifecycle.calls.completeFailure.length, 0);
   assert.equal(git.receipts.length, 0);
-  assert.doesNotMatch(
-    JSON.stringify(result),
-    /source_tree|candidate|checkpoint|git_candidate_receipt|credential/iu,
-  );
 });
 
 test('streams every Harness text delta while batching durable runtime event records', async () => {
@@ -6850,6 +7835,21 @@ test('streams every Harness text delta while batching durable runtime event reco
         event_type: 'step_started',
         payload: { step_index: 1 },
       });
+      for (let index = 0; index < 130; index += 1) {
+        await emitRuntimeEvent({
+          ...common,
+          runtime_event_ref: `harness:test:activity:${index}`,
+          occurred_at_ms: emittedAtMs + 4 + index,
+          turn_id: runContract.admission.turn_id,
+          step_id: stepId,
+          tool_call_id: null,
+          event_type: 'runtime_activity_status',
+          payload: {
+            activity_kind: 'step_analyzing',
+            status: `Analyzing ${index + 1}`,
+          },
+        });
+      }
       let fullText = '';
       for (let index = 0; index < 600; index += 1) {
         const deltaText = `stream ${String(index + 1).padStart(3, '0')}. `;
@@ -6857,7 +7857,7 @@ test('streams every Harness text delta while batching durable runtime event reco
         await emitRuntimeEvent({
           ...common,
           runtime_event_ref: `harness:test:assistant-delta:${index}`,
-          occurred_at_ms: emittedAtMs + 4 + index,
+          occurred_at_ms: emittedAtMs + 134 + index,
           turn_id: runContract.admission.turn_id,
           step_id: stepId,
           tool_call_id: null,
@@ -6868,7 +7868,7 @@ test('streams every Harness text delta while batching durable runtime event reco
       await emitRuntimeEvent({
         ...common,
         runtime_event_ref: 'harness:test:assistant-completed',
-        occurred_at_ms: emittedAtMs + 604,
+        occurred_at_ms: emittedAtMs + 734,
         turn_id: runContract.admission.turn_id,
         step_id: stepId,
         tool_call_id: null,
@@ -6882,7 +7882,7 @@ test('streams every Harness text delta while batching durable runtime event reco
       await emitRuntimeEvent({
         ...common,
         runtime_event_ref: 'harness:test:step-completed',
-        occurred_at_ms: emittedAtMs + 605,
+        occurred_at_ms: emittedAtMs + 735,
         turn_id: runContract.admission.turn_id,
         step_id: stepId,
         tool_call_id: null,
@@ -6892,7 +7892,7 @@ test('streams every Harness text delta while batching durable runtime event reco
       await emitRuntimeEvent({
         ...common,
         runtime_event_ref: 'harness:test:turn-completed',
-        occurred_at_ms: emittedAtMs + 606,
+        occurred_at_ms: emittedAtMs + 736,
         turn_id: runContract.admission.turn_id,
         step_id: null,
         tool_call_id: null,
@@ -6902,7 +7902,7 @@ test('streams every Harness text delta while batching durable runtime event reco
       await emitRuntimeEvent({
         ...common,
         runtime_event_ref: 'harness:test:run-completed',
-        occurred_at_ms: emittedAtMs + 607,
+        occurred_at_ms: emittedAtMs + 737,
         turn_id: null,
         step_id: null,
         tool_call_id: null,
@@ -6973,16 +7973,17 @@ test('streams every Harness text delta while batching durable runtime event reco
 
   const result = await service.generate(attemptedRequest);
 
+  const outputEvents = observed.filter((event) => event.event_version === 'builder-generation-output.v1');
   assert.equal(Object.hasOwn(result, 'draft_id'), true);
-  assert.equal(observed.length, 600);
-  assert.equal(observed.every((event) => event.event_version === 'builder-generation-output.v1'), true);
-  assert.equal(observed.at(0).display_delta_text, 'stream 001. ');
-  assert.equal(observed.at(-1).display_delta_text, 'stream 600. ');
-  assert.equal(lifecycle.calls.programmingRuntime.length, 607);
-  assert.equal(lifecycle.calls.programmingRuntimeBatches.length, 11);
+  assert.equal(observed.length, 730);
+  assert.equal(outputEvents.length, 600);
+  assert.equal(outputEvents.at(0).display_delta_text, 'stream 001. ');
+  assert.equal(outputEvents.at(-1).display_delta_text, 'stream 600. ');
+  assert.equal(lifecycle.calls.programmingRuntime.length, 737);
+  assert.equal(lifecycle.calls.programmingRuntimeBatches.length, 6);
   assert.deepEqual(
     lifecycle.calls.programmingRuntimeBatches.map((batch) => batch.runtime_events.length),
-    [1, 1, 1, 128, 128, 128, 128, 89, 1, 1, 1],
+    [128, 128, 128, 128, 128, 97],
   );
   assert.equal(
     Math.max(
@@ -7008,6 +8009,7 @@ test('closes Harness candidate checks when the admitted environment is unavailab
   const lifecycle = conversationService();
   const git = gitAuthority();
   const reconciliationStatuses = [];
+  let materializationCount = 0;
   let repairCount = 0;
   const descriptor = createBuilderProgrammingRuntimeDescriptor({
     runtime_kind: 'deepseek_harness.v1',
@@ -7108,6 +8110,24 @@ test('closes Harness candidate checks when the admitted environment is unavailab
     ...repositories({
       conversationService: lifecycle,
       gitAuthority: git,
+      currentProjection: {
+        project_current(input) {
+          materializationCount += 1;
+          return {
+            result_version: 'builder-git-current-projection-result.v1',
+            project_id: input.candidate_receipt.project_id,
+            commit_oid: input.candidate_receipt.commit_oid,
+            tree_oid: input.candidate_receipt.tree_oid,
+            expected_base_oid: input.candidate_receipt.expected_base_oid,
+            previous_main_oid: input.candidate_receipt.expected_base_oid,
+            main_ref: 'updated',
+            worktree: 'materialized',
+            worktree_file_count: 1,
+            projection_authority: 'git_main_ref_and_materialized_worktree',
+            source_admission: 'git_verified_candidate',
+          };
+        },
+      },
       projectReadAuthority: { load_current: () => readResult(sourceTree) },
       providerConfigRepository: {
         bind_current_authority() {
@@ -7152,7 +8172,12 @@ test('closes Harness candidate checks when the admitted environment is unavailab
   assert.equal(result.title, 'Project update needs check environment');
   assert.match(result.summary, /does not prove your machine lacks dependencies/u);
   assert.equal(repairCount, 0);
+  assert.equal(materializationCount, 0);
   assert.deepEqual(reconciliationStatuses, ['created']);
+  assert.deepEqual(lifecycle.calls.candidate[0].candidate_result.current_materialization, {
+    status: 'not_attempted',
+    reason: 'automatic_check_not_passed',
+  });
   const completedContext = lifecycle.calls.candidate[0].context;
   const stream = projectBuilderTaskStream({
     project_id: PROJECT_ID,
@@ -7184,6 +8209,7 @@ test('preserves interrupted Harness edits as a verified checkpoint without claim
   const lifecycle = conversationService();
   const git = gitAuthority();
   const checkpoints = [];
+  let materializationCount = 0;
   let automaticCheckCount = 0;
   const descriptor = createBuilderProgrammingRuntimeDescriptor({
     runtime_kind: 'deepseek_harness.v1',
@@ -7255,6 +8281,24 @@ test('preserves interrupted Harness edits as a verified checkpoint without claim
     ...repositories({
       conversationService: lifecycle,
       gitAuthority: git,
+      currentProjection: {
+        project_current(input) {
+          materializationCount += 1;
+          return {
+            result_version: 'builder-git-current-projection-result.v1',
+            project_id: input.candidate_receipt.project_id,
+            commit_oid: input.candidate_receipt.commit_oid,
+            tree_oid: input.candidate_receipt.tree_oid,
+            expected_base_oid: input.candidate_receipt.expected_base_oid,
+            previous_main_oid: input.candidate_receipt.expected_base_oid,
+            main_ref: 'updated',
+            worktree: 'materialized',
+            worktree_file_count: 1,
+            projection_authority: 'git_main_ref_and_materialized_worktree',
+            source_admission: 'git_verified_candidate',
+          };
+        },
+      },
       projectReadAuthority: { load_current: () => readResult(sourceTree) },
       providerConfigRepository: {
         bind_current_authority() {
@@ -7298,9 +8342,16 @@ test('preserves interrupted Harness edits as a verified checkpoint without claim
   assert.equal(checkpoints.length, 1);
   assert.equal(checkpoints[0].candidate_receipt.candidate_id, result.candidate.candidate_id);
   assert.equal(lifecycle.calls.checkpoint.length, 1);
-  assert.equal(lifecycle.calls.checkpoint[0].context.events.at(-1).event_type, 'programming_runtime_event_recorded');
+  const checkpointContext = lifecycle.calls.checkpoint[0].context;
+  assert.equal(checkpointContext.events.at(-1).event_type, 'run_context_snapshot_recorded');
+  assert.equal(checkpointContext.events.at(-1).payload.run_id, checkpointContext.ids.run_id);
   assert.equal(automaticCheckCount, 0);
+  assert.equal(materializationCount, 0);
   assert.equal(lifecycle.calls.candidate.length, 1);
+  assert.deepEqual(lifecycle.calls.candidate[0].candidate_result.current_materialization, {
+    status: 'not_attempted',
+    reason: 'automatic_check_not_passed',
+  });
   assert.match(lifecycle.calls.candidate[0].assistant_text, /本轮编码已结束/u);
   assert.match(lifecycle.calls.candidate[0].assistant_text, /自动检查/u);
   assert.match(lifecycle.calls.candidate[0].assistant_text, /下一步/u);
@@ -7308,7 +8359,10 @@ test('preserves interrupted Harness edits as a verified checkpoint without claim
   assert.equal(lifecycle.calls.failure.length, 0);
 });
 
-test('Harness cancellation cannot publish a late candidate, checkpoint, or retry failure', async () => {
+test('Harness cancellation and desktop pause cannot publish a late candidate, checkpoint, or retry failure', async (t) => {
+  for (const method of ['cancel', 'pause_for_shutdown', 'pause']) await t.test(method, async () => {
+  const failureCode = method === 'cancel' ? 'builder_generation_cancelled'
+    : method === 'pause' ? 'builder_generation_paused' : 'builder_generation_desktop_closed';
   const attemptedRequest = request({ existingProjectId: PROJECT_ID });
   const lifecycle = conversationService();
   const git = gitAuthority();
@@ -7321,7 +8375,7 @@ test('Harness cancellation cannot publish a late candidate, checkpoint, or retry
       native_tool_calls: true,
       steering: 'none',
       cancellation: 'process',
-      session_resume: 'none',
+      session_resume: 'runtime_local',
       context_compaction: true,
       parallel_read_tools: false,
     },
@@ -7401,22 +8455,24 @@ test('Harness cancellation cannot publish a late candidate, checkpoint, or retry
 
   const generation = service.generate(attemptedRequest);
   await started;
-  assert.deepEqual(service.cancel({ request_id: attemptedRequest.request_digest }), {
+  assert.deepEqual(service[method === 'pause' ? 'cancel' : method]({ request_id: attemptedRequest.request_digest,
+    ...(method === 'pause' ? { pause: true } : {}) }), {
     request_id: attemptedRequest.request_digest,
     cancelled: true,
   });
   assert.equal(lifecycle.calls.completeFailure.length, 1);
-  assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
+  assert.equal(lifecycle.calls.completeFailure[0].failure_code, failureCode);
 
   await assert.rejects(generation, { code: 'builder_generation_cancelled' });
   assert.equal(cancelCalls, 1);
-  assert.equal(cancelReason, 'user_requested');
+  assert.equal(cancelReason, method === 'pause_for_shutdown' ? 'shutdown' : 'user_requested');
   assert.equal(git.receipts.length, 0);
   assert.equal(lifecycle.calls.candidate.length, 0);
   assert.equal(lifecycle.calls.failure.length, 0);
   assert.equal(lifecycle.calls.completeFailure.length, 1);
-  assert.equal(lifecycle.calls.completeFailure[0].failure_code, 'builder_generation_cancelled');
-  assert.equal(lifecycle.calls.cancel.length, 1);
+  assert.equal(lifecycle.calls.completeFailure[0].failure_code, failureCode);
+  assert.equal(lifecycle.calls.cancel.length, method === 'cancel' ? 1 : 0);
+  });
 });
 
 test('maps Harness supervision boundaries to distinct public retryable diagnostics', async (t) => {

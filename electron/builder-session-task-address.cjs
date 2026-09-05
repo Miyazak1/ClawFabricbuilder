@@ -4,6 +4,8 @@ const nodeCrypto = require('node:crypto');
 const { types: utilTypes } = require('node:util');
 const {
   CONVERSATION_ID_PATTERN,
+  sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 } = require('./builder-conversation-address.cjs');
 
 const BUILDER_SESSION_ADDRESS_VERSION = 'builder-session-address.v1';
@@ -155,6 +157,24 @@ function safeConversationId(value) {
   return safePattern(value, CONVERSATION_ID_PATTERN, 96);
 }
 
+function safeProjectConversationId(projectId, value) {
+  const conversationId = safeConversationId(value);
+  try {
+    return sanitizeBuilderConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
+}
+
+function safeTaskConversationId(projectId, value) {
+  const conversationId = safeConversationId(value);
+  try {
+    return sanitizeBuilderTaskConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
+}
+
 function safeAgentId(value) {
   return safePattern(value, AGENT_ID_PATTERN, 64);
 }
@@ -237,6 +257,7 @@ function assertTimeOrder(createdAtMs, updatedAtMs, finalAtMs) {
 function createBuilderSessionAddress(rawInput) {
   exactObject(rawInput, SESSION_INPUT_KEYS);
   const sessionId = safeSessionId(valueAt(rawInput, 'session_id'));
+  const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
   const status = safeStatus(valueAt(rawInput, 'status'), SESSION_STATUS);
   const currentTaskId = safeNullablePattern(valueAt(rawInput, 'current_task_id'), TASK_ADDRESS_ID_PATTERN, 96);
   const archivedAtMs = safeNullableTimestamp(valueAt(rawInput, 'archived_at_ms'));
@@ -251,11 +272,11 @@ function createBuilderSessionAddress(rawInput) {
   if (parentSessionId === sessionId || forkedFromSessionId === sessionId) fail();
   const body = freezeDeep({
     session_id: sessionId,
-    project_id: safeProjectId(valueAt(rawInput, 'project_id')),
+    project_id: projectId,
     display_id: safeDisplayId(valueAt(rawInput, 'display_id')),
     title: safeText(valueAt(rawInput, 'title'), MAX_TITLE_LENGTH),
     status,
-    root_conversation_id: safeConversationId(valueAt(rawInput, 'root_conversation_id')),
+    root_conversation_id: safeProjectConversationId(projectId, valueAt(rawInput, 'root_conversation_id')),
     current_task_id: currentTaskId,
     parent_session_id: parentSessionId,
     forked_from_session_id: forkedFromSessionId,
@@ -277,6 +298,7 @@ function createBuilderSessionAddress(rawInput) {
 function createBuilderTaskAddress(rawInput) {
   exactObject(rawInput, TASK_INPUT_KEYS);
   const taskAddressId = safeTaskAddressId(valueAt(rawInput, 'task_address_id'));
+  const projectId = safeProjectId(valueAt(rawInput, 'project_id'));
   const status = safeStatus(valueAt(rawInput, 'status'), TASK_STATUS);
   const parentTaskAddressId = safeNullablePattern(
     valueAt(rawInput, 'parent_task_address_id'),
@@ -295,10 +317,10 @@ function createBuilderTaskAddress(rawInput) {
   const body = freezeDeep({
     task_address_id: taskAddressId,
     session_id: safeSessionId(valueAt(rawInput, 'session_id')),
-    project_id: safeProjectId(valueAt(rawInput, 'project_id')),
+    project_id: projectId,
     agent_id: safeAgentId(valueAt(rawInput, 'agent_id')),
     parent_task_address_id: parentTaskAddressId,
-    conversation_id: safeConversationId(valueAt(rawInput, 'conversation_id')),
+    conversation_id: safeTaskConversationId(projectId, valueAt(rawInput, 'conversation_id')),
     title: safeText(valueAt(rawInput, 'title'), MAX_TITLE_LENGTH),
     goal: safeText(valueAt(rawInput, 'goal'), MAX_GOAL_LENGTH),
     status,

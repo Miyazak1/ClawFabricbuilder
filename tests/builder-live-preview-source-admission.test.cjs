@@ -179,6 +179,25 @@ test('admits a saved revision HTML entry without draft or run authority', () => 
   assert.equal(admitted.authority.save_admission, 'not_performed');
 });
 
+test('admits a dev-server package manifest entry for app-router projects without root HTML', () => {
+  const sourceTree = createBuilderProjectSourceTree({
+    files: [
+      { path: 'package.json', content: '{"private":true,"scripts":{"dev":"next dev"}}\n' },
+      { path: 'app/page.tsx', content: 'export default function Page(){return <main>Blog</main>}\n' },
+    ],
+  });
+  const admitted = createBuilderLivePreviewSourceAdmission(request({
+    resolver: { source_tree: sourceTree },
+    selected_entry_path: 'package.json',
+    preview_kind: 'live_dev_server_web',
+  }));
+
+  assert.equal(admitted.preview_kind, 'live_dev_server_web');
+  assert.equal(admitted.selected_entry_path, 'package.json');
+  assert.equal(admitted.lifecycle.entry_admission, 'package_manifest_verified_in_snapshot');
+  assert.deepEqual(sanitizeBuilderLivePreviewSourceAdmission(structuredClone(admitted)), admitted);
+});
+
 test('rejects unavailable resolver results and renderer supplied source hints', () => {
   assert.throws(
     () => createBuilderLivePreviewSourceAdmission(request({
@@ -213,6 +232,20 @@ test('rejects non-HTML, missing, and traversal entry paths', () => {
       { code: 'builder_live_preview_source_admission_invalid' },
     );
   }
+  assert.throws(
+    () => createBuilderLivePreviewSourceAdmission(request({
+      selected_entry_path: 'package.json',
+      preview_kind: 'live_static_web',
+    })),
+    { code: 'builder_live_preview_source_admission_invalid' },
+  );
+  assert.throws(
+    () => createBuilderLivePreviewSourceAdmission(request({
+      selected_entry_path: 'index.html',
+      preview_kind: 'live_dev_server_web',
+    })),
+    { code: 'builder_live_preview_source_admission_invalid' },
+  );
 });
 
 test('rejects snapshot digest, source ref, and authority drift', () => {

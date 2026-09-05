@@ -725,9 +725,10 @@ async function verifyLivePreviewControls(page, app, projectId) {
         first().textContent().catch(() => null),
     });
   });
-  const blockedSummaryText = await blockedSummary.textContent();
+  const blockedSummaryText = await blockedSummary.getAttribute('aria-label');
   const blockedMatch = /Blocked\s+([1-9]\d*)\s+unsafe preview request/u.exec(blockedSummaryText ?? '');
-  if (blockedMatch === null) {
+  if (blockedMatch === null || await blockedSummary.getAttribute('title') !== blockedSummaryText
+    || await blockedSummary.locator('svg').count() !== 1) {
     fail('live_preview_blocked_count_invalid', { blockedSummaryText });
   }
   const rendererBlockedCount = Number.parseInt(blockedMatch[1], 10);

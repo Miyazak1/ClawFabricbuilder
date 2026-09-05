@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { interruptedTaskContinuation } from '../features/builder/domain/builderInterruptedTask';
 import {
   Bell,
   Bot,
@@ -62,7 +63,7 @@ import type {
   BuilderSideWorkspaceRuntimeToolFileRequest,
   BuilderSideWorkspaceFileTreeProjection,
 } from '../features/builder/application/builderPorts';
-import type { BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
+import { createBuilderGenerationRequest, type BuilderQueuedFollowupReference } from '../features/builder/application/builderGeneration';
 import { BuilderDesktopCodeGeneratorPortError, createBuilderDesktopCodeGeneratorPort } from '../features/builder/infrastructure/builderDesktopCodeGeneratorPort';
 import { BuilderDesktopAgentProjectTreePortError, createBuilderDesktopAgentProjectTreePort } from '../features/builder/infrastructure/builderDesktopAgentProjectTreePort';
 import {
@@ -101,6 +102,12 @@ import {
   BuilderDesktopSideWorkspaceFilesPortError,
   createBuilderDesktopSideWorkspaceFilesPort,
 } from '../features/builder/infrastructure/builderDesktopSideWorkspaceFilesPort';
+import {
+  BuilderDesktopProviderSettingsPortError,
+  createBuilderDesktopProviderSettingsPort,
+  type BuilderProviderSettingsCurrent,
+  type BuilderProviderSettingsPort,
+} from '../features/builder/infrastructure/builderDesktopProviderSettingsPort';
 import {
   type BuilderConversationControllerSnapshot,
 } from '../features/builder/application/builderConversationController';
@@ -144,7 +151,9 @@ import {
 } from '../features/builder/presentation/builderUserMessageReconciliation';
 import type {
   BuilderComposerContextStatus,
+  BuilderManualContextCompactionFeedback,
   BuilderComposerMode,
+  BuilderComposerModelSelection,
   BuilderComposerWorkingBrief,
 } from '../features/builder/presentation/BuilderComposer';
 import { composerStatusFromContextProjection } from '../features/builder/domain/builderContextStatusProjection';
@@ -155,7 +164,10 @@ import type {
 import type { BuilderAgentTaskMonitorItem } from '../features/builder/domain/builderAgentTaskMonitorProjection';
 import type { BuilderAgentWorkbenchTaskProposalAction } from '../features/builder/domain/builderAgentWorkbenchProjection';
 import type { BuilderProviderContextDisclosureStatusProjectionWire } from '../features/builder/domain/builderProviderContextDisclosureStatusProjection';
-import { BuilderAgentSidebar } from '../features/builder/presentation/BuilderAgentSidebar';
+import {
+  BuilderAgentSidebar,
+  type BuilderTaskTranscriptExportFeedback,
+} from '../features/builder/presentation/BuilderAgentSidebar';
 import { BuilderAgentRoster } from '../features/builder/presentation/BuilderAgentRoster';
 import { BuilderProviderSettingsRouteAdapter } from '../features/builder/presentation/BuilderProviderSettingsRouteAdapter';
 
@@ -508,7 +520,7 @@ function BuilderEnvironmentDiagnosisSettingsCard({
             className="text-xs text-muted-foreground"
             data-builder-settings-project-dependency-setup-read-only="true"
           >
-            Project dependency setup is diagnostic-only in this phase. Builder will not install into the project folder from Settings.
+            Project dependency setup is available from the project surface. Settings only diagnoses and never installs into the project folder.
           </p>
         ) : null}
         {canPrepareFromCurrentDraftDiagnosis ? (
@@ -528,8 +540,8 @@ function BuilderEnvironmentDiagnosisSettingsCard({
         ) : null}
         <p className="text-xs text-muted-foreground">
           {canPrepareFromCurrentDraftDiagnosis
-            ? 'Prepare once installs only in the isolated check workspace, then reruns the selected check.'
-            : 'Diagnosis is read-only. Dependency installation still requires the one-shot Prepare once approval.'}
+            ? 'Prepare once installs only in the isolated check workspace for this draft, then reruns the selected check.'
+            : 'Diagnosis is read-only. Any dependency preparation still requires the scoped Prepare once approval.'}
         </p>
       </div>
     </section>
@@ -689,6 +701,10 @@ const UNAVAILABLE_AGENT_PROJECT_TREE: BuilderAgentProjectTreePort = Object.freez
     void request;
     return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
   },
+  exportTaskTranscript(request: Parameters<BuilderAgentProjectTreePort['exportTaskTranscript']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentProjectTreePortError());
+  },
 });
 
 const UNAVAILABLE_AGENT_WORKBENCH: BuilderAgentWorkbenchPort = Object.freeze({
@@ -705,6 +721,10 @@ const UNAVAILABLE_AGENT_WORKBENCH: BuilderAgentWorkbenchPort = Object.freeze({
     return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
   },
   decideTaskProposal(request: Parameters<BuilderAgentWorkbenchPort['decideTaskProposal']>[0]) {
+    void request;
+    return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
+  },
+  decideAgentPlan(request: Parameters<BuilderAgentWorkbenchPort['decideAgentPlan']>[0]) {
     void request;
     return Promise.reject(new BuilderDesktopAgentWorkbenchPortError());
   },
@@ -903,6 +923,10 @@ const UNAVAILABLE_CHECK_RUN: BuilderCheckRunPort = Object.freeze({
     void request;
     return Promise.reject(new BuilderDesktopCheckRunPortError());
   },
+  prepareProjectDependencies(request: Readonly<{ project_id: string }>) {
+    void request;
+    return Promise.reject(new BuilderDesktopCheckRunPortError());
+  },
   decideCurrentDraftDependencyPreparation(request: BuilderCheckRunDependencyPreparationRequest) {
     void request;
     return Promise.reject(new BuilderDesktopCheckRunPortError());
@@ -938,6 +962,23 @@ const UNAVAILABLE_SIDE_WORKSPACE_FILES: BuilderSideWorkspaceFilesPort = Object.f
   },
 });
 
+const UNAVAILABLE_PROVIDER_SETTINGS: BuilderProviderSettingsPort = Object.freeze({
+  readCurrent() {
+    return Promise.reject(new BuilderDesktopProviderSettingsPortError());
+  },
+  replaceCurrent(request) {
+    void request;
+    return Promise.reject(new BuilderDesktopProviderSettingsPortError());
+  },
+  selectModel(request) {
+    void request;
+    return Promise.reject(new BuilderDesktopProviderSettingsPortError());
+  },
+  status() {
+    return Promise.reject(new BuilderDesktopProviderSettingsPortError());
+  },
+});
+
 function safeRoot(value: unknown): BuilderDesktopBridgeRoot {
   try {
     return value === undefined
@@ -960,6 +1001,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   let userWeb = UNAVAILABLE_USER_WEB;
   let checkRun = UNAVAILABLE_CHECK_RUN;
   let sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
+  let providerSettings = UNAVAILABLE_PROVIDER_SETTINGS;
   try {
     agentProjectTree = createBuilderDesktopAgentProjectTreePort(root.agentProjectTree);
   } catch {
@@ -1015,6 +1057,11 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
   } catch {
     sideWorkspaceFiles = UNAVAILABLE_SIDE_WORKSPACE_FILES;
   }
+  try {
+    providerSettings = createBuilderDesktopProviderSettingsPort(root.providerSettings);
+  } catch {
+    providerSettings = UNAVAILABLE_PROVIDER_SETTINGS;
+  }
   return Object.freeze({
     agentProjectTree,
     agentWorkbench,
@@ -1024,6 +1071,7 @@ function safePorts(root: BuilderDesktopBridgeRoot) {
     livePreview,
     userWeb,
     planReview,
+    providerSettings,
     sideWorkspaceFiles,
     taskStream,
     workspace,
@@ -1088,7 +1136,9 @@ function taskConversationSeed(
 function composerModeForAgentTaskProposal(
   action: Pick<BuilderAgentWorkbenchTaskProposalAction, 'requested_outcome'>,
 ): BuilderComposerMode | null {
-  return action.requested_outcome === 'plan' ? 'plan' : null;
+  if (action.requested_outcome === 'plan') return 'plan';
+  if (action.requested_outcome === 'build') return 'build';
+  return null;
 }
 
 function hasBuildWorkspace(snapshot: ReturnType<typeof useBuilderProjectController>['snapshot']): boolean {
@@ -1103,14 +1153,6 @@ function visibleHistoryProjectId(
 
 type BuilderVisibleProjectSnapshot = ReturnType<typeof useBuilderProjectController>['snapshot'];
 type BuilderVisibleConversationSnapshot = ReturnType<typeof useBuilderConversationController>['snapshot'];
-type PendingBuildAfterWorkspace = Readonly<{
-  composerMode: BuilderComposerMode | null;
-  epoch: number;
-  instruction: string;
-  messageId: string;
-  queuedFollowup: BuilderQueuedFollowupReference | null;
-}>;
-
 type PendingAgentTaskHandoffStart = Readonly<{
   autoApproveCurrentProjectWrite: boolean;
   composerMode: BuilderComposerMode | null;
@@ -1179,6 +1221,7 @@ type BuilderApprovedPlanContinuation = Readonly<{
 }>;
 
 type BuilderCurrentProjectWriteApprovalPrompt = Readonly<{
+  interruptedRunId?: string;
   composerMode: BuilderComposerMode | null;
   project_id: string;
   instruction: string;
@@ -1741,8 +1784,11 @@ function effectiveApprovalMode(
   return 'ask_before_write';
 }
 
-function shouldClearSubmittedIdea(snapshot: BuilderVisibleProjectSnapshot): boolean {
-  return snapshot.draft !== null || (
+function shouldClearSubmittedIdea(
+  snapshot: BuilderVisibleProjectSnapshot,
+  activity: BuilderConversationControllerSnapshot | null = null,
+): boolean {
+  return interruptedTaskContinuation(activity?.conversation ?? null) !== null || snapshot.draft !== null || (
     snapshot.answer !== null
     && snapshot.error === null
   );
@@ -1846,16 +1892,45 @@ function sideWorkspaceFileRefKey(fileRef: BuilderSideWorkspaceFileRef | null): s
 }
 
 function sideWorkspaceFilesRequestKey(
-  draftId: string | null,
-  sourceTreeDigest: string | null,
+  sourceIdentity: string,
   request: BuilderSideWorkspaceFileRequest,
 ): string {
   return [
-    draftId ?? 'none',
-    sourceTreeDigest ?? 'none',
+    sourceIdentity,
     request.project_id,
     request.conversation_id,
   ].join(':');
+}
+
+function sideWorkspaceSourceIdentity(
+  snapshot: BuilderVisibleProjectSnapshot,
+): string | null {
+  const draft = snapshot.draft;
+  if (draft !== null) {
+    return `draft:${draft.draft_id}:${draft.source_tree.source_tree_digest}`;
+  }
+  const savedProject = snapshot.savedProject;
+  if (savedProject !== null) {
+    return `saved:${savedProject.target.revision_receipt_digest}`;
+  }
+  return null;
+}
+
+function sideWorkspaceFilesRequestKeyFromSnapshots(
+  projectSnapshot: BuilderVisibleProjectSnapshot,
+  conversationSnapshot: BuilderVisibleConversationSnapshot,
+): string | null {
+  const sourceIdentity = sideWorkspaceSourceIdentity(projectSnapshot);
+  if (
+    sourceIdentity === null
+    || conversationSnapshot.project_id === null
+    || conversationSnapshot.conversation === null
+    || conversationSnapshot.conversation.state !== 'ready'
+  ) return null;
+  return sideWorkspaceFilesRequestKey(sourceIdentity, {
+    project_id: conversationSnapshot.project_id,
+    conversation_id: conversationSnapshot.conversation.conversation.conversation_id,
+  });
 }
 
 function firstSideWorkspaceTextFileRef(
@@ -1875,6 +1950,82 @@ function sideWorkspaceTextFileRefForPath(
     candidate.entry_kind === 'text_file' && candidate.path === path
   ));
   return entry?.entry_kind === 'text_file' ? entry.file_ref : null;
+}
+
+type BuilderTaskTranscriptDownload = Readonly<{
+  filename: string;
+  mediaType: string;
+  taskAddressId: string;
+  text: string;
+}>;
+
+const BUILDER_TASK_TRANSCRIPT_EXPORT_VERSION = 'builder-task-transcript-export.v1';
+const TASK_TRANSCRIPT_EXPORT_FEEDBACK_CLEAR_MS = 4000;
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function safeDownloadSegment(value: string, fallback: string): string {
+  const segment = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .slice(0, 60);
+  return segment.length === 0 ? fallback : segment;
+}
+
+function taskTranscriptDownloadFromExport(value: unknown): BuilderTaskTranscriptDownload | null {
+  const exportRecord = objectRecord(value);
+  if (exportRecord === null || exportRecord.export_version !== BUILDER_TASK_TRANSCRIPT_EXPORT_VERSION) {
+    return null;
+  }
+  const formats = objectRecord(exportRecord.formats);
+  const markdown = objectRecord(formats?.markdown);
+  const task = objectRecord(exportRecord.task);
+  const text = markdown?.text;
+  const mediaType = markdown?.media_type;
+  const taskAddressId = exportRecord.task_address_id;
+  const exportedAtMs = exportRecord.exported_at_ms;
+  const title = task?.title;
+  const exportedAtNumber = typeof exportedAtMs === 'number' && Number.isSafeInteger(exportedAtMs)
+    ? exportedAtMs
+    : null;
+  if (
+    typeof text !== 'string'
+    || text.length === 0
+    || typeof mediaType !== 'string'
+    || !mediaType.startsWith('text/markdown')
+    || typeof taskAddressId !== 'string'
+    || exportedAtNumber === null
+  ) return null;
+  const titleSegment = safeDownloadSegment(typeof title === 'string' ? title : '', 'task');
+  const timeSegment = new Date(exportedAtNumber).toISOString().replace(/[:.]/gu, '-');
+  return {
+    filename: `clawfabric-${titleSegment}-transcript-${timeSegment}.md`,
+    mediaType,
+    taskAddressId,
+    text,
+  };
+}
+
+function downloadTaskTranscript(download: BuilderTaskTranscriptDownload): void {
+  const url = URL.createObjectURL(new Blob([download.text], { type: download.mediaType }));
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = download.filename;
+    anchor.rel = 'noopener';
+    anchor.style.display = 'none';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
@@ -1904,6 +2055,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [composerMode, setComposerMode] = useState<BuilderComposerMode | null>(null);
   const [approvalMode, setApprovalMode] = useState<BuilderComposerApprovalMode>('ask_before_write');
   const [submitInFlight, setSubmitInFlight] = useState(false);
+  const [agentSubmitInFlight, setAgentSubmitInFlight] = useState(false);
   const [composerRouteDecision, setComposerRouteDecision] =
     useState<BuilderComposerRouteDecisionEvidence | null>(null);
   const [lockedComposerSubmit, setLockedComposerSubmit] =
@@ -1913,17 +2065,21 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const [pendingUserMessages, setPendingUserMessages] =
     useState<readonly PendingUserMessage[]>([]);
   const liveOutputStore = useMemo(() => createBuilderLiveOutputStore(), []);
+  const agentLiveOutputStore = useMemo(() => createBuilderLiveOutputStore(), []);
   const commandOutputStore = useMemo(() => createBuilderCommandOutputStore(), []);
   const [liveOutput, setLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
+  const [agentLiveOutput, setAgentLiveOutput] = useState<BuilderLiveOutputSnapshot | null>(null);
   const [answerFailureRecordedSuccess, setAnswerFailureRecordedSuccess] = useState(false);
+  const [taskTranscriptExportFeedback, setTaskTranscriptExportFeedback] =
+    useState<BuilderTaskTranscriptExportFeedback | null>(null);
+  const [manualContextCompactionFeedback, setManualContextCompactionFeedback] =
+    useState<BuilderManualContextCompactionFeedback>('idle');
   const [planReviewFailure, setPlanReviewFailure] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewInFlight, setPlanReviewInFlight] = useState<BuilderPlanReviewInFlight | null>(null);
   const [planReviewRecorded, setPlanReviewRecorded] = useState<BuilderPlanReviewInFlight | null>(null);
   const [approvedPlanContinuationFailure, setApprovedPlanContinuationFailure] =
     useState<BuilderPlanReviewInFlight | null>(null);
   const [catalogNewProjectPending, setCatalogNewProjectPending] = useState(false);
-  const [workspacePickerRequest, setWorkspacePickerRequest] = useState(0);
-  const [workspaceNewProjectRequest, setWorkspaceNewProjectRequest] = useState(0);
   const [planSourceReadApproval, setPlanSourceReadApproval] =
     useState<BuilderPlanSourceReadApprovalPrompt | null>(null);
   const [currentProjectWriteApproval, setCurrentProjectWriteApproval] =
@@ -1933,10 +2089,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<Readonly<{ project_id: string; state: BuilderCurrentProjectWriteApprovalStatus['state'] }> | null>(null);
   const [providerContextDisclosureApprovalState, setProviderContextDisclosureApprovalState] =
     useState<'idle' | 'approving' | 'failed'>('idle');
+  const [providerSettingsCurrent, setProviderSettingsCurrent] =
+    useState<BuilderProviderSettingsCurrent | null>(null);
+  const [providerSettingsState, setProviderSettingsState] =
+    useState<BuilderComposerModelSelection['status']>('loading');
+  const providerSettingsRefreshSerialRef = useRef(0);
   const [livePreviewStatus, setLivePreviewStatus] =
     useState<BuilderLivePreviewStatusProjection | null>(null);
   const [livePreviewOperation, setLivePreviewOperation] =
     useState<'starting' | 'reloading' | 'stopping' | null>(null);
+  const livePreviewResponseVersion = useRef(0);
   const [userWebStatus, setUserWebStatus] =
     useState<BuilderUserWebStatusProjection | null>(null);
   const [userWebOperation, setUserWebOperation] =
@@ -1959,6 +2121,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     useState<BuilderCheckEnvironmentDiagnosisView | null>(null);
   const [projectEnvironmentDiagnosis, setProjectEnvironmentDiagnosis] =
     useState<BuilderProjectEnvironmentDiagnosisView | null>(null);
+  const [projectDependencyPreparation, setProjectDependencyPreparation] =
+    useState<Readonly<{
+      project_id: string;
+      status: 'preparing' | 'failed';
+      failure_message?: string;
+    }> | null>(null);
   const [checkRunOperation, setCheckRunOperation] =
     useState<'loading' | 'running' | 'preparing_dependencies' | 'skipping' | 'failed' | null>(null);
   const [checkRunOperationFailureCode, setCheckRunOperationFailureCode] =
@@ -1973,6 +2141,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const previousProjectCountRef = useRef(projectCount);
   const workspaceEpochRef = useRef(0);
   const activeFileRef = useRef<BuilderFileName | null>(null);
+  const taskTranscriptExportSerialRef = useRef(0);
+  const taskTranscriptExportFeedbackTimerRef = useRef<number | null>(null);
   const initialWorkspaceAutoOpenRef = useRef(false);
   const windowMaximizedRef = useRef(false);
   const liveOutputRef = useRef<BuilderLiveOutputSnapshot | null>(null);
@@ -1994,7 +2164,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     previousProjectCountRef.current = projectCount;
     if (previousProjectCount === 0 && projectCount > 0) setProjectsCollapsed(false);
   }, [projectCount]);
-  const pendingBuildAfterWorkspaceRef = useRef<PendingBuildAfterWorkspace | null>(null);
+  useEffect(() => () => {
+    if (taskTranscriptExportFeedbackTimerRef.current !== null) {
+      window.clearTimeout(taskTranscriptExportFeedbackTimerRef.current);
+    }
+  }, []);
   const queuedActiveRunFollowupRef = useRef<QueuedActiveRunFollowup | null>(null);
   const submitInstructionTextRef = useRef<SubmitInstructionText | null>(null);
   const restoreAttemptCountsRef = useRef(new Map<string, number>());
@@ -2012,6 +2186,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const workbenchDraftReturnRef = useRef<WorkbenchDraftReturnTarget | null>(null);
   const submitInFlightRef = useRef(false);
   const submitInFlightInstructionRef = useRef<string | null>(null);
+  const agentRequestIdRef = useRef<string | null>(null);
+  const agentSubmitInFlightRef = useRef(false);
+  const agentComposerModeRef = useRef<BuilderComposerMode | null>(null);
+  const agentWorkbenchSelectedRef = useRef(agentWorkbenchSelected);
   const lockedComposerSubmitRef = useRef<LockedComposerSubmit | null>(null);
   const checkRunRequestSequenceRef = useRef(0);
   const pendingUserMessageSequenceRef = useRef(0);
@@ -2020,6 +2198,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const sideWorkspaceFileContentMountedRef = useRef(false);
   const sideWorkspaceFileTreeKeyRef = useRef<string | null>(null);
   const sideWorkspaceFileContentKeyRef = useRef<string | null>(null);
+  const projectEnvironmentAutoDiagnosisKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const refreshSerial = providerSettingsRefreshSerialRef.current + 1;
+    providerSettingsRefreshSerialRef.current = refreshSerial;
+    ports.providerSettings.readCurrent()
+      .then((current) => {
+        if (!active || providerSettingsRefreshSerialRef.current !== refreshSerial) return;
+        setProviderSettingsCurrent(current);
+        setProviderSettingsState(current.configured ? 'ready' : 'unconfigured');
+      })
+      .catch(() => {
+        if (!active || providerSettingsRefreshSerialRef.current !== refreshSerial) return;
+        setProviderSettingsCurrent(null);
+        setProviderSettingsState('unavailable');
+      });
+    return () => {
+      active = false;
+    };
+  }, [ports.providerSettings, view]);
   const publishSubmitInFlight = useCallback((inFlight: boolean) => {
     submitInFlightRef.current = inFlight;
     setSubmitInFlight(inFlight);
@@ -2141,6 +2340,19 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       retry(request: Parameters<BuilderCodeGeneratorPort['retry']>[0]) {
         return ports.generator.retry(request);
       },
+      resumeInterruptedRun(
+        request: Parameters<NonNullable<BuilderCodeGeneratorPort['resumeInterruptedRun']>>[0],
+      ) {
+        return ports.generator.resumeInterruptedRun?.(request)
+          ?? Promise.reject(new BuilderDesktopCodeGeneratorPortError());
+      },
+      ...(ports.generator.manualCompactContext === undefined ? {} : {
+        manualCompactContext(
+          request: Parameters<NonNullable<BuilderCodeGeneratorPort['manualCompactContext']>>[0],
+        ) {
+          return ports.generator.manualCompactContext!(request);
+        },
+      }),
       answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
         return ports.generator.answer(request);
       },
@@ -2234,6 +2446,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     projectId,
     taskAddressId,
   });
+  // Agent runs outlive project selection; this controller never opens a project workspace.
+  const agentConversation = useBuilderProjectController({
+    generator: ports.generator,
+    workspace: ports.workspace,
+    conversationScope: 'agent',
+    preserveSelectionWhenProjectIdUndefined: true,
+  });
+  const activeConversation = agentWorkbenchSelected ? agentConversation : project;
   const conversation = useBuilderConversationController(
     ports.taskStream,
     agentWorkbenchSelected ? null : visibleConversationProjectId(project.snapshot),
@@ -2265,16 +2485,24 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     visibleHistoryProjectId(project.snapshot),
   );
   const composerContextStatus = composerWorkingContextStatus(conversation.snapshot, project.snapshot);
-  const projectSnapshotRef = useRef(project.snapshot);
+  const projectSnapshotRef = useRef(activeConversation.snapshot);
   const conversationSnapshotRef = useRef(conversation.snapshot);
 
   useLayoutEffect(() => {
-    projectSnapshotRef.current = project.snapshot;
-  }, [project.snapshot]);
+    // eslint-disable-next-line react-hooks/immutability -- The callback ref must observe the latest active snapshot.
+    projectSnapshotRef.current = activeConversation.snapshot;
+    agentWorkbenchSelectedRef.current = agentWorkbenchSelected;
+  }, [activeConversation.snapshot, agentWorkbenchSelected]);
 
   useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability -- Async controller callbacks read the latest durable snapshot.
     conversationSnapshotRef.current = conversation.snapshot;
   }, [conversation.snapshot]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Selection changes clear only contextual feedback.
+    setManualContextCompactionFeedback('idle');
+  }, [agentWorkbenchSelected, projectId, taskAddressId]);
 
   useEffect(() => {
     if (pendingUserMessages.length === 0) return;
@@ -2298,6 +2526,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   useEffect(() => {
     if (pendingUserMessages.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Workspace identity changes synchronously evict stale optimistic messages.
     setPendingUserMessages((current) => (
       current.length === 0
         ? current
@@ -2314,24 +2543,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [activeFile]);
 
   const currentDraftId = project.snapshot.draft?.draft_id ?? null;
-  const currentDraftSourceTreeDigest = project.snapshot.draft?.source_tree.source_tree_digest ?? null;
+  const currentSideWorkspaceSourceIdentity = sideWorkspaceSourceIdentity(project.snapshot);
   const currentSideWorkspaceFilesRequestKey = useMemo(() => {
-    if (
-      currentDraftId === null
-      || conversation.snapshot.project_id === null
-      || conversation.snapshot.conversation === null
-      || conversation.snapshot.conversation.state !== 'ready'
-    ) return null;
-    return sideWorkspaceFilesRequestKey(currentDraftId, currentDraftSourceTreeDigest, {
-      project_id: conversation.snapshot.project_id,
-      conversation_id: conversation.snapshot.conversation.conversation.conversation_id,
-    });
-  }, [conversation.snapshot, currentDraftId, currentDraftSourceTreeDigest]);
+    return sideWorkspaceFilesRequestKeyFromSnapshots(project.snapshot, conversation.snapshot);
+  }, [conversation.snapshot, project.snapshot]);
 
   const sideWorkspaceFilesRequest = useCallback((): BuilderSideWorkspaceFileRequest | null => {
     const conversationSnapshot = conversationSnapshotRef.current;
     if (
-      projectSnapshotRef.current.draft?.draft_id === undefined
+      sideWorkspaceSourceIdentity(projectSnapshotRef.current) === null
       || conversationSnapshot.project_id === null
       || conversationSnapshot.conversation === null
       || conversationSnapshot.conversation.state !== 'ready'
@@ -2357,11 +2577,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const requestSideWorkspaceFiles = useCallback(async () => {
     const request = sideWorkspaceFilesRequest();
-    if (request === null || currentDraftId === null) return;
+    if (request === null || currentSideWorkspaceSourceIdentity === null) return;
     const requestKey = sideWorkspaceFilesRequestKey(
-      currentDraftId,
-      currentDraftSourceTreeDigest,
+      currentSideWorkspaceSourceIdentity,
       request,
+    );
+    const currentRequestStillMatches = () => (
+      requestKey === sideWorkspaceFilesRequestKeyFromSnapshots(
+        projectSnapshotRef.current,
+        conversationSnapshotRef.current,
+      )
     );
     if (
       sideWorkspaceFileTreeKeyRef.current === requestKey
@@ -2395,7 +2620,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       try {
         const projection = await ports.sideWorkspaceFiles.readCurrentDraftFileTree(request);
         if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
-        if (projectSnapshotRef.current.draft?.draft_id !== currentDraftId) {
+        if (!currentRequestStillMatches()) {
           releaseStaleRequest();
           return;
         }
@@ -2408,7 +2633,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       } catch {
         if (sideWorkspaceFileTreeSequenceRef.current !== sequence) return;
-        if (projectSnapshotRef.current.draft?.draft_id !== currentDraftId) {
+        if (!currentRequestStillMatches()) {
           releaseStaleRequest();
           return;
         }
@@ -2429,8 +2654,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [
-    currentDraftId,
-    currentDraftSourceTreeDigest,
+    currentSideWorkspaceSourceIdentity,
     ports.sideWorkspaceFiles,
     sideWorkspaceFileTreeStatus,
     sideWorkspaceFilesRequest,
@@ -2625,7 +2849,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [currentDraftId, ports.checkRun]);
 
   useEffect(() => {
+    projectEnvironmentAutoDiagnosisKeyRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Project selection changes evict selected-project-scoped readiness state.
     setProjectEnvironmentDiagnosis(null);
+    setProjectDependencyPreparation(null);
   }, [projectId]);
 
   const decideCheckDependencyPreparation = useCallback(async (
@@ -2731,6 +2958,72 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [ports.checkRun, projectId]);
 
+  const prepareProjectDependencies = useCallback(async (targetProjectId: string) => {
+    setProjectDependencyPreparation(Object.freeze({
+      project_id: targetProjectId,
+      status: 'preparing',
+    }));
+    try {
+      const result = await ports.checkRun.prepareProjectDependencies({
+        project_id: targetProjectId,
+      });
+      if (projectId !== targetProjectId || result.project_id !== targetProjectId) return;
+      setProjectEnvironmentDiagnosis(Object.freeze({
+        project_id: targetProjectId,
+        status: 'ready',
+        diagnosis: result.environment_diagnosis,
+      }));
+      if ([
+        'failed',
+        'timed_out',
+        'unsupported',
+      ].includes(result.preparation_receipt.status)) {
+        const failureMessage = result.preparation_receipt.status === 'timed_out'
+          ? 'Project dependency preparation reached the time limit. You can retry once the package manager is responsive.'
+          : result.preparation_receipt.status === 'unsupported'
+            ? 'Builder could not safely prepare this project folder from the current diagnosis.'
+            : 'Project dependency preparation failed. Check diagnostics and try again.';
+        setProjectDependencyPreparation(Object.freeze({
+          project_id: targetProjectId,
+          status: 'failed',
+          failure_message: failureMessage,
+        }));
+        return;
+      }
+      setProjectDependencyPreparation(null);
+    } catch {
+      if (projectId !== targetProjectId) return;
+      setProjectDependencyPreparation(Object.freeze({
+        project_id: targetProjectId,
+        status: 'failed',
+        failure_message: 'I could not prepare this project folder. Check diagnostics and try again.',
+      }));
+      void diagnoseProjectEnvironment(targetProjectId);
+    }
+  }, [diagnoseProjectEnvironment, ports.checkRun, projectId]);
+
+  useEffect(() => {
+    if (agentWorkbenchSelected) return;
+    const visibleProjectId = visibleConversationProjectId(project.snapshot);
+    if (
+      visibleProjectId === null
+      || currentDraftId !== null
+      || project.snapshot.busy
+    ) return;
+    const revisionKey = project.snapshot.savedProject?.target.revision_receipt_digest
+      ?? project.snapshot.workingProjectId
+      ?? 'workspace';
+    const diagnosisKey = `${visibleProjectId}:${revisionKey}`;
+    if (projectEnvironmentAutoDiagnosisKeyRef.current === diagnosisKey) return;
+    projectEnvironmentAutoDiagnosisKeyRef.current = diagnosisKey;
+    void diagnoseProjectEnvironment(visibleProjectId);
+  }, [
+    agentWorkbenchSelected,
+    currentDraftId,
+    diagnoseProjectEnvironment,
+    project.snapshot,
+  ]);
+
   useEffect(() => {
     if (queuedActiveRunFollowup === null) return undefined;
     const dispatchQueuedFollowup = () => {
@@ -2741,6 +3034,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         return;
       }
       if (projectSnapshotRef.current.busy || submitInFlightRef.current) return;
+      if (agentWorkbenchSelectedRef.current && agentSubmitInFlightRef.current) return;
       publishQueuedActiveRunFollowup(null);
       void submitInstructionTextRef.current?.(queued.instruction, {
         existingMessageId: queued.messageId,
@@ -2767,16 +3061,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     void submitInstructionTextRef.current?.(pending.instruction, pending.options);
   }, [lockedComposerSubmit, publishLockedComposerSubmit, submitInFlight]);
 
-  useEffect(() => {
-    if (!catalogNewProjectPending) return;
-    if (project.snapshot.busy || project.snapshot.status !== 'new') return;
-    const handle = window.setTimeout(() => {
-      setCatalogNewProjectPending(false);
-      setWorkspaceNewProjectRequest((request) => request + 1);
-    });
-    return () => window.clearTimeout(handle);
-  }, [catalogNewProjectPending, project.snapshot]);
-
   useLayoutEffect(() => {
     liveOutputRef.current = liveOutput;
     if (liveOutput === null) liveOutputStore.clear();
@@ -2785,6 +3069,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   // StrictMode replays effect cleanup during development, so component cleanup
   // must leave this memoized store reusable for the second setup pass.
   useEffect(() => () => liveOutputStore.clear(), [liveOutputStore]);
+  useEffect(() => () => agentLiveOutputStore.clear(), [agentLiveOutputStore]);
 
   useEffect(() => () => commandOutputStore.dispose(), [commandOutputStore]);
 
@@ -2821,6 +3106,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   useEffect(() => (
     ports.generator.subscribeStarted?.((event) => {
+      if (event.request_id === agentRequestIdRef.current) {
+        const nextLiveOutput: BuilderLiveOutputSnapshot = Object.freeze({
+          state: 'streaming', request_id: event.request_id, project_id: event.project_id,
+          text: '', chunk_count: 0,
+        });
+        agentLiveOutputStore.start(nextLiveOutput);
+        setAgentLiveOutput(nextLiveOutput);
+        return;
+      }
+      if (agentWorkbenchSelectedRef.current) return;
       commandApprovalRef.current = null;
       setCommandApproval(null);
       commandOutputStore.clear();
@@ -2840,13 +3135,14 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       liveOutputStore.start(nextLiveOutput);
       setLiveOutput(nextLiveOutput);
     }) ?? (() => undefined)
-  ), [commandOutputStore, liveOutputStore, ports.generator, retainConversationProject]);
+  ), [agentLiveOutputStore, commandOutputStore, liveOutputStore, ports.generator, retainConversationProject]);
 
   useEffect(() => (
     ports.generator.subscribeOutput?.((event) => {
-      liveOutputStore.append(event);
+      if (event.request_id === agentRequestIdRef.current) agentLiveOutputStore.append(event);
+      else liveOutputStore.append(event);
     }) ?? (() => undefined)
-  ), [liveOutputStore, ports.generator]);
+  ), [agentLiveOutputStore, liveOutputStore, ports.generator]);
 
   useEffect(() => (
     ports.generator.subscribeCommandApproval?.((request) => {
@@ -2909,7 +3205,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       ? workspaceEpochRef.current
       : workspaceEpochRef.current + 1;
     if (!preserveWorkspaceController) workspaceEpochRef.current = nextEpoch;
-    pendingBuildAfterWorkspaceRef.current = null;
     workbenchDraftReturnRef.current = null;
     planSourceReadApprovalRef.current = null;
     currentProjectWriteApprovalRef.current = null;
@@ -2940,10 +3235,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     publishSubmitInFlight(false);
     if (!preserveWorkspaceController) setWorkspaceEpoch(workspaceEpochRef.current);
     setAgentWorkbenchSelected(options.agentWorkbench === true);
+    agentWorkbenchSelectedRef.current = options.agentWorkbench === true;
     setProjectId(nextProjectId);
     setTaskAddressId(nextProjectId === undefined ? null : (options.taskAddressId ?? null));
-    composerModeRef.current = null;
-    setComposerMode(null);
+    composerModeRef.current = options.agentWorkbench === true ? agentComposerModeRef.current : null;
+    setComposerMode(composerModeRef.current);
     if (nextProjectId !== undefined) {
       globalThis.setTimeout(() => {
         if (workspaceEpochRef.current !== nextEpoch) return;
@@ -3076,6 +3372,16 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     operation,
   }), [agentWorkbench]);
 
+  const decideAgentPlan = useCallback((
+    agentPlanId: string,
+    contentDigest: string,
+    decision: 'approved' | 'rejected',
+  ) => agentWorkbench.decideAgentPlan({
+    agent_plan_id: agentPlanId,
+    content_digest: contentDigest,
+    decision,
+  }), [agentWorkbench]);
+
   const createProjectForAgentTaskProposal = useCallback(async (
     proposalId: string,
     objective: string,
@@ -3104,14 +3410,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     resetWorkspace(nextProjectId, { taskAddressId: null });
   }, [resetWorkspace]);
 
-  const openProjectFromComposer = useCallback((nextProjectId: string) => {
-    const selectedTaskAddressId = firstTaskAddressForProject(
-      agentProjectTree.snapshot.tree,
-      nextProjectId,
-    );
-    resetWorkspace(nextProjectId, { preserveIdea: true, taskAddressId: selectedTaskAddressId });
-  }, [agentProjectTree.snapshot.tree, resetWorkspace]);
-
   const clearPendingProjectActivityRestore = useCallback(() => {
     pendingProjectActivityRestoreRef.current = null;
     activityRestoreLoadAttemptsRef.current.clear();
@@ -3119,14 +3417,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     activityRestoreProbeKeysRef.current.clear();
   }, []);
 
-  const clearComposerWorkspaceSelection = useCallback(() => {
-    clearPendingProjectActivityRestore();
-    project.clearWorkspaceSelection();
-    resetWorkspace(undefined, { preserveIdea: true });
-  }, [clearPendingProjectActivityRestore, project, resetWorkspace]);
-
   const startNewProjectFromCatalog = useCallback(() => {
-    resetWorkspace(undefined);
+    resetWorkspace(undefined, { agentWorkbench: true });
     setCatalogNewProjectPending(true);
   }, [resetWorkspace]);
 
@@ -3147,10 +3439,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       openProject(workspaceProjectId);
     });
   }, [catalog.snapshot, openProject, projectId]);
-
-  const dismissWorkspacePicker = useCallback(() => {
-    pendingBuildAfterWorkspaceRef.current = null;
-  }, []);
 
   const lifecycleAgentId = agentProjectTree.snapshot.tree?.agent_id ?? DEFAULT_BUILDER_AGENT_ID;
   const refreshLifecycleViews = useCallback((
@@ -3233,6 +3521,49 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     await refreshLifecycleViews();
   }, [lifecycleAgentId, ports.agentProjectTree, refreshLifecycleViews, resetWorkspace, taskAddressId]);
 
+  const exportAgentTaskTranscript = useCallback(async (
+    targetProjectId: string,
+    nextTaskAddressId: string,
+  ) => {
+    const serial = taskTranscriptExportSerialRef.current + 1;
+    taskTranscriptExportSerialRef.current = serial;
+    if (taskTranscriptExportFeedbackTimerRef.current !== null) {
+      window.clearTimeout(taskTranscriptExportFeedbackTimerRef.current);
+      taskTranscriptExportFeedbackTimerRef.current = null;
+    }
+    setTaskTranscriptExportFeedback({
+      message: 'Exporting transcript...',
+      state: 'exporting',
+      taskAddressId: nextTaskAddressId,
+    });
+    try {
+      const result = await ports.agentProjectTree.exportTaskTranscript({
+        agent_id: lifecycleAgentId,
+        project_id: targetProjectId,
+        task_address_id: nextTaskAddressId,
+      });
+      const download = taskTranscriptDownloadFromExport(result);
+      if (download === null || download.taskAddressId !== nextTaskAddressId) throw new Error('invalid transcript export');
+      downloadTaskTranscript(download);
+      if (taskTranscriptExportSerialRef.current !== serial) return;
+      setTaskTranscriptExportFeedback({
+        message: `Downloaded ${download.filename}.`,
+        state: 'ready',
+        taskAddressId: nextTaskAddressId,
+      });
+      taskTranscriptExportFeedbackTimerRef.current = window.setTimeout(() => {
+        if (taskTranscriptExportSerialRef.current === serial) setTaskTranscriptExportFeedback(null);
+      }, TASK_TRANSCRIPT_EXPORT_FEEDBACK_CLEAR_MS);
+    } catch {
+      if (taskTranscriptExportSerialRef.current !== serial) return;
+      setTaskTranscriptExportFeedback({
+        message: 'Transcript export failed.',
+        state: 'failed',
+        taskAddressId: nextTaskAddressId,
+      });
+    }
+  }, [lifecycleAgentId, ports.agentProjectTree]);
+
   const openProjectLocation = useCallback(async (targetProjectId: string) => {
     await ports.workspace.openLocation({ project_id: targetProjectId }).catch(() => undefined);
   }, [ports.workspace]);
@@ -3241,9 +3572,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     result: BuilderVisibleProjectSnapshot,
     commandEpoch: number,
     fallbackProjectId: string | null = null,
+    scope: 'project' | 'agent' = 'project',
   ): Promise<BuilderConversationControllerSnapshot | null> => {
     if (workspaceEpochRef.current !== commandEpoch) return null;
-    const conversationProjectId = visibleConversationProjectId(result) ?? fallbackProjectId;
+    const conversationProjectId = scope === 'agent'
+      ? null : visibleConversationProjectId(result) ?? fallbackProjectId;
     if (conversationProjectId === null) {
       if (conversation.snapshot.agent_id === null) return null;
       const [activity] = await Promise.all([
@@ -3304,6 +3637,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (workspaceEpochRef.current !== commandEpoch) return;
       const workspaceReady = result.workingProjectId !== null || result.savedProject !== null;
       if (workspaceReady) {
+        agentWorkbenchSelectedRef.current = false;
+        setAgentWorkbenchSelected(false);
+        projectSnapshotRef.current = result;
+        setProjectId(result.workingProjectId ?? result.savedProject?.target.project_id);
         setActiveFile(null);
         setLiveOutput(null);
         await Promise.all([
@@ -3311,139 +3648,33 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           agentProjectTree.refresh().catch(() => undefined),
         ]);
       }
-      const pendingBuild = pendingBuildAfterWorkspaceRef.current;
-      if (pendingBuild === null || pendingBuild.epoch !== commandEpoch) return;
-      if (!workspaceReady) {
-        pendingBuildAfterWorkspaceRef.current = null;
-        return;
-      }
-      if (idea !== pendingBuild.instruction) {
-        pendingBuildAfterWorkspaceRef.current = null;
-        return;
-      }
-      const submittedIdea = pendingBuild.instruction;
-      let decision = decideBuilderComposerIntent(
-        submittedIdea,
-        composerIntentContext(
-          conversationSnapshotRef.current,
-          result,
-          pendingBuild.composerMode,
-          currentProjectWriteApprovalStatusRef.current,
-          effectiveApprovalMode(
-            approvalModeRef.current,
-            result,
-            currentProjectWriteApprovalStatusRef.current,
-          ),
-        ),
-      );
-      if (
-        decision.route !== 'build'
-        || decision.dispatch !== 'build'
-        || !hasBuildWorkspace(result)
-        || result.busy
-        || result.draft !== null
-        || result.inspectedRevision !== null
-      ) {
-        const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
-        setComposerRouteDecision(routeEvidence);
-        pendingBuildAfterWorkspaceRef.current = null;
-        return;
-      }
-      pendingBuildAfterWorkspaceRef.current = null;
-      const visibleProjectId = visibleConversationProjectId(result);
-      if (visibleProjectId === null) return;
-      let approval: BuilderCurrentProjectWriteApprovalStatus;
-      try {
-        approval = await ports.generator.prepareCurrentProjectWriteApproval({
-          project_id: visibleProjectId,
-          task_address_id: taskAddressId,
-        });
-      } catch {
-        approval = Object.freeze({
-          result_version: 'builder-current-project-write-approval-status.v1',
-          project_id: visibleProjectId,
-          state: 'approval_required' as const,
-          approval_scope: 'current_project_write' as const,
-          authority: 'main_selected_project_project_edit_v1' as const,
-        });
-      }
-      if (workspaceEpochRef.current !== commandEpoch) return;
-      const nextPermissionStatus = Object.freeze({
-        project_id: visibleProjectId,
-        state: approval.state,
-      });
-      currentProjectWriteApprovalStatusRef.current = nextPermissionStatus;
-      setCurrentProjectWriteApprovalStatus(nextPermissionStatus);
-      if (approval.state === 'approval_required') {
-        decision = decideBuilderComposerIntent(
-          submittedIdea,
-          composerIntentContext(
-            conversationSnapshotRef.current,
-            result,
-            pendingBuild.composerMode,
-            nextPermissionStatus,
-            effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
-          ),
-        );
-        const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
-        setComposerRouteDecision(routeEvidence);
-        const prompt = Object.freeze({
-          composerMode: pendingBuild.composerMode,
-          project_id: visibleProjectId,
-          instruction: submittedIdea,
-          message_id: routeEvidence.messageId,
-          queuedFollowup: pendingBuild.queuedFollowup,
-          approvedPlanContinuation: null,
-          state: 'pending' as const,
-        });
-        currentProjectWriteApprovalRef.current = prompt;
-        setCurrentProjectWriteApproval(prompt);
-        setIdea('');
-        return;
-      }
-      currentProjectWriteApprovalRef.current = null;
-      setCurrentProjectWriteApproval(null);
-      decision = decideBuilderComposerIntent(
-        submittedIdea,
-        composerIntentContext(
-          conversationSnapshotRef.current,
-          result,
-          pendingBuild.composerMode,
-          nextPermissionStatus,
-          effectiveApprovalMode(approvalModeRef.current, result, nextPermissionStatus),
-        ),
-      );
-      const routeEvidence = createComposerRouteEvidence(decision, result, pendingBuild.messageId);
-      setComposerRouteDecision(routeEvidence);
-      setIdea('');
-      setLiveOutput(null);
-      const buildResult = await runBuildInstruction(
-        submittedIdea,
-        pendingBuild.composerMode,
-        pendingBuild.queuedFollowup,
-      );
-      if (workspaceEpochRef.current !== commandEpoch) return;
-      if (!shouldClearSubmittedIdea(buildResult)) setIdea(submittedIdea);
-      await readActivityAfterTerminal(buildResult, commandEpoch);
-      setLiveOutput(null);
     } finally {
       publishSubmitInFlight(false);
     }
   }, [
     agentProjectTree,
     catalog,
-    createComposerRouteEvidence,
-    idea,
-    ports.generator,
     project,
     publishSubmitInFlight,
-    readActivityAfterTerminal,
-    runBuildInstruction,
-    taskAddressId,
   ]);
+
+  useEffect(() => {
+    if (!catalogNewProjectPending) return;
+    const snapshot = projectSnapshotRef.current;
+    if (snapshot.busy || snapshot.status !== 'new') return;
+    const handle = window.setTimeout(() => {
+      setCatalogNewProjectPending(false);
+      void createWorkspaceProject('New project');
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [catalogNewProjectPending, createWorkspaceProject]);
 
   const refreshActiveConversation = useCallback(async (commandEpoch: number) => {
     if (workspaceEpochRef.current !== commandEpoch) return;
+    if (agentWorkbenchSelectedRef.current) {
+      await conversation.refresh().catch(() => undefined);
+      return;
+    }
     const live = liveOutputRef.current;
     const projectId = visibleConversationProjectId(projectSnapshotRef.current) ?? live?.project_id ?? null;
     if (projectId === null) return;
@@ -3716,12 +3947,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const steerInstruction = useCallback(async () => {
     if (idea.trim().length === 0) return;
-    const live = liveOutputRef.current;
+    const live = agentWorkbenchSelectedRef.current ? agentLiveOutputStore.getSnapshot() : liveOutputRef.current;
     if (live === null || !projectSnapshotRef.current.busy) return;
     const commandEpoch = workspaceEpochRef.current;
     const submittedIdea = idea;
     setIdea('');
-    const steered = await project.steer(submittedIdea);
+    const steered = await activeConversation.steer(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
     if (!steered) {
       setIdea(submittedIdea);
@@ -3729,7 +3960,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
     publishPendingUserMessage(submittedIdea, 'steering');
     await refreshActiveConversation(commandEpoch);
-  }, [idea, project, publishPendingUserMessage, refreshActiveConversation]);
+  }, [activeConversation, agentLiveOutputStore, idea, publishPendingUserMessage, refreshActiveConversation]);
 
   const queueActiveRunFollowupInstruction = useCallback(async (
     submittedIdea: string,
@@ -3737,7 +3968,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ) => {
     const commandEpoch = workspaceEpochRef.current;
     const pendingMessage = publishPendingUserMessage(submittedIdea, 'queued_followup');
-    const queued = await project.queueFollowup(submittedIdea);
+    const queued = await activeConversation.queueFollowup(submittedIdea);
     if (workspaceEpochRef.current !== commandEpoch) return;
     if (queued === null) {
       dismissPendingUserMessage(pendingMessage?.client_id ?? null);
@@ -3763,7 +3994,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [
     bindPendingUserMessage,
     dismissPendingUserMessage,
-    project,
+    activeConversation,
     publishPendingUserMessage,
     publishQueuedActiveRunFollowup,
     refreshActiveConversation,
@@ -3978,6 +4209,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ) => {
     const trimmedSubmittedIdea = submittedIdea.trim();
     if (trimmedSubmittedIdea.length === 0) return;
+    if (agentWorkbenchSelectedRef.current && agentSubmitInFlightRef.current) return;
     if (submitInFlightRef.current) {
       if (submitInFlightInstructionRef.current?.trim() !== trimmedSubmittedIdea) {
         publishLockedComposerSubmit(Object.freeze({
@@ -3995,8 +4227,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       publishPendingUserMessage(submittedIdea, 'submitted');
     }
     const activeComposerMode = options.composerModeOverride ?? composerModeRef.current;
-    const submittingAgentWorkbench = conversationSnapshotRef.current.agent_id !== null
-      && conversationSnapshotRef.current.project_id === null;
+    const submittingAgentWorkbench = agentWorkbenchSelectedRef.current;
     const boundedComposerMode = submittingAgentWorkbench && activeComposerMode === 'build'
       ? null
       : activeComposerMode;
@@ -4036,7 +4267,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         pendingPlanWorkingBrief?.taskId ?? null,
       ));
       setApprovedPlanContinuationFailure(null);
-      pendingBuildAfterWorkspaceRef.current = null;
       submitInFlightInstructionRef.current = submittedIdea;
       publishSubmitInFlight(true);
       setIdea('');
@@ -4106,7 +4336,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return evidence;
     };
     setApprovedPlanContinuationFailure(null);
-    pendingBuildAfterWorkspaceRef.current = null;
     if (
       submittingAgentWorkbench
       && decision.dispatch === 'build'
@@ -4128,7 +4357,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       return;
     }
     if (decision.dispatch === 'ask_workspace') {
-      const routeEvidence = publishRouteDecision(decision);
+      publishRouteDecision(decision);
       if (
         conversationSnapshotRef.current.agent_id !== null
         && conversationSnapshotRef.current.project_id === null
@@ -4154,14 +4383,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         }
         if (proposalCreated) return;
       }
-      pendingBuildAfterWorkspaceRef.current = Object.freeze({
-        composerMode: boundedComposerMode,
-        epoch: workspaceEpochRef.current,
-        instruction: submittedIdea,
-        messageId: routeEvidence.messageId,
-        queuedFollowup: options.queuedFollowup ?? null,
-      });
-      setWorkspacePickerRequest((request) => request + 1);
       return;
     }
     if (decision.dispatch === 'ask_permission') {
@@ -4183,19 +4404,43 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
       return;
     }
+    if (submittingAgentWorkbench) {
+      publishRouteDecision(decision);
+      agentSubmitInFlightRef.current = true;
+      setAgentSubmitInFlight(true);
+      setIdea('');
+      try {
+        const request = await createBuilderGenerationRequest(submittedIdea, null);
+        agentRequestIdRef.current = request.request_digest;
+        const result = await agentConversation.answer(submittedIdea, options.queuedFollowup ?? null,
+          boundedComposerMode === 'plan' || decision.dispatch === 'plan' ? 'plan' : 'answer');
+        await boundedPostTerminalRefresh(agentWorkbench.refresh(), null);
+        if (!agentWorkbenchSelectedRef.current) return;
+        const terminalConversation = await boundedPostTerminalRefresh(conversation.refresh(), null);
+        if (!agentWorkbenchSelectedRef.current) return;
+        const recordedAnswerSuccess = result.status === 'answer_failed'
+          && hasRecordedSuccessfulAnswerAfterHead(
+            terminalConversation,
+            submittedIdea,
+            answerStartHeadSequence,
+          );
+        setAnswerFailureRecordedSuccess(recordedAnswerSuccess);
+        if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result)) {
+          setIdea((current) => (current.trim().length === 0 ? submittedIdea : current));
+        }
+      } finally {
+        agentRequestIdRef.current = null;
+        agentSubmitInFlightRef.current = false;
+        setAgentSubmitInFlight(false);
+        agentLiveOutputStore.clear();
+        setAgentLiveOutput(null);
+      }
+      return;
+    }
     const commandEpoch = workspaceEpochRef.current;
     submitInFlightInstructionRef.current = submittedIdea;
     publishSubmitInFlight(true);
     try {
-      if (submittingAgentWorkbench && (boundedComposerMode === 'plan' || decision.dispatch === 'plan')) {
-        publishRouteDecision(decision);
-        setIdea('');
-        const result = await project.answer(submittedIdea, null, 'plan');
-        if (workspaceEpochRef.current !== commandEpoch) return;
-        await readActivityAfterTerminal(result, commandEpoch, null);
-        setLiveOutput(null);
-        return;
-      }
       if (boundedComposerMode === 'plan' || decision.dispatch === 'plan') {
         publishRouteDecision(decision);
         const planned = await submitPlanInstruction(
@@ -4305,7 +4550,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           answerStartHeadSequence,
         );
       setAnswerFailureRecordedSuccess(recordedAnswerSuccess);
-      if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result)) {
+      if (!recordedAnswerSuccess && !shouldClearSubmittedIdea(result, terminalConversation)) {
         setIdea((current) => (current.trim().length === 0 ? submittedIdea : current));
       }
       setLiveOutput(null);
@@ -4316,7 +4561,10 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       }
     }
   }, [
+    agentConversation,
+    agentLiveOutputStore,
     agentWorkbench,
+    conversation,
     clearPendingProjectActivityRestore,
     project,
     ports.generator,
@@ -4325,7 +4573,6 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     publishQueuedActiveRunFollowup,
     publishLockedComposerSubmit,
     publishSubmitInFlight,
-    projectId,
     readActivityAfterTerminal,
     runBuildInstruction,
     reviewPlan,
@@ -4442,7 +4689,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       if (decision.dispatch === 'cancel') {
         const commandEpoch = workspaceEpochRef.current;
         setIdea('');
-        const result = await project.cancel();
+        const result = await activeConversation.cancel();
         if (workspaceEpochRef.current !== commandEpoch) return;
         await readActivityAfterTerminal(result, commandEpoch);
         setLiveOutput(null);
@@ -4465,8 +4712,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     await submitInstructionText(idea);
   }, [
     idea,
+    activeConversation,
     createComposerRouteEvidence,
-    project,
     queueActiveRunFollowupInstruction,
     readActivityAfterTerminal,
     steerInstruction,
@@ -4479,6 +4726,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
 
   const selectComposerMode = useCallback((mode: BuilderComposerMode) => {
     composerModeRef.current = mode;
+    if (agentWorkbenchSelectedRef.current) agentComposerModeRef.current = mode;
     setComposerMode(mode);
   }, []);
 
@@ -4549,7 +4797,34 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     taskAddressId,
   ]);
 
+  const composerModelSelection = useMemo<BuilderComposerModelSelection>(() => Object.freeze({
+    configDigest: providerSettingsCurrent?.config?.config_digest ?? null,
+    model: providerSettingsCurrent?.config?.model ?? null,
+    status: providerSettingsState,
+  }), [providerSettingsCurrent, providerSettingsState]);
+
+  const selectComposerModel = useCallback(async (model: string, expectedConfigDigest: string) => {
+    setProviderSettingsState('selecting');
+    try {
+      const current = await ports.providerSettings.selectModel({
+        model,
+        expected_config_digest: expectedConfigDigest,
+      });
+      setProviderSettingsCurrent(current);
+      setProviderSettingsState(current.configured ? 'ready' : 'unconfigured');
+    } catch {
+      try {
+        const current = await ports.providerSettings.readCurrent();
+        setProviderSettingsCurrent(current);
+        setProviderSettingsState(current.configured ? 'ready' : 'unconfigured');
+      } catch {
+        setProviderSettingsState('failed');
+      }
+    }
+  }, [ports.providerSettings]);
+
   const clearComposerMode = useCallback(() => {
+    if (agentWorkbenchSelectedRef.current) agentComposerModeRef.current = null;
     composerModeRef.current = null;
     setComposerMode(null);
   }, []);
@@ -4613,6 +4888,12 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         await continueApprovedPlanAfterWriteApproval(prompt.approvedPlanContinuation, commandEpoch);
         return;
       }
+      if (prompt.interruptedRunId !== undefined) {
+        const result = await project.resumeInterruptedRun(prompt.instruction, prompt.interruptedRunId);
+        await readActivityAfterTerminal(result, commandEpoch);
+        setLiveOutput(null);
+        return;
+      }
       const decision = decideBuilderComposerIntent(
         prompt.instruction,
         composerIntentContext(
@@ -4644,8 +4925,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
         prompt.queuedFollowup,
       );
       if (workspaceEpochRef.current !== commandEpoch) return;
-      if (!shouldClearSubmittedIdea(result)) setIdea(prompt.instruction);
-      await readActivityAfterTerminal(result, commandEpoch);
+      const terminalActivity = await readActivityAfterTerminal(result, commandEpoch);
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (!shouldClearSubmittedIdea(result, terminalActivity)) setIdea(prompt.instruction);
       setLiveOutput(null);
     } catch {
       if (workspaceEpochRef.current === commandEpoch) {
@@ -4661,6 +4943,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [
     createComposerRouteEvidence,
     continueApprovedPlanAfterWriteApproval,
+    project,
     ports.generator,
     publishSubmitInFlight,
     readActivityAfterTerminal,
@@ -4681,7 +4964,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (prompt === null || prompt.state === 'approving') return;
     currentProjectWriteApprovalRef.current = null;
     setCurrentProjectWriteApproval(null);
-    setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
+    if (prompt.interruptedRunId === undefined) {
+      setIdea((current) => (current.trim().length === 0 ? prompt.instruction : current));
+    }
   }, []);
 
   const decideCommandApproval = useCallback(async (decision: 'allow_once' | 'deny') => {
@@ -4717,6 +5002,79 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     }
   }, [commandOutputStore, ports.generator]);
 
+  const resumeInterruptedRun = useCallback(async () => {
+    const snapshot = conversationSnapshotRef.current;
+    if (snapshot.status !== 'ready' || snapshot.agent_id !== null
+      || projectSnapshotRef.current.busy || projectSnapshotRef.current.draft !== null
+      || snapshot.project_id !== visibleConversationProjectId(projectSnapshotRef.current)) return;
+    const continuation = interruptedTaskContinuation(snapshot.conversation);
+    if (continuation === null || taskAddressId === null || submitInFlightRef.current) return;
+    const projectId = visibleConversationProjectId(projectSnapshotRef.current);
+    if (projectId === null) return;
+    const commandEpoch = workspaceEpochRef.current;
+    publishSubmitInFlight(true);
+    setLiveOutput(null);
+    try {
+      const approval = await ports.generator.prepareCurrentProjectWriteApproval({ project_id: projectId, task_address_id: taskAddressId });
+      if (workspaceEpochRef.current !== commandEpoch) return;
+      if (approval.state !== 'ready') {
+        const prompt: BuilderCurrentProjectWriteApprovalPrompt = Object.freeze({
+          composerMode: 'build', project_id: projectId, instruction: continuation.instruction,
+          message_id: `resume:${continuation.runId}`, queuedFollowup: null, approvedPlanContinuation: null,
+          interruptedRunId: continuation.runId, state: 'pending',
+        });
+        currentProjectWriteApprovalRef.current = prompt;
+        setCurrentProjectWriteApproval(prompt);
+        return;
+      }
+      const result = await project.resumeInterruptedRun(continuation.instruction, continuation.runId);
+      await readActivityAfterTerminal(result, commandEpoch);
+    } catch {
+      if (workspaceEpochRef.current === commandEpoch) {
+        const prompt: BuilderCurrentProjectWriteApprovalPrompt = Object.freeze({
+          composerMode: 'build', project_id: projectId, instruction: continuation.instruction,
+          message_id: `resume:${continuation.runId}`, queuedFollowup: null, approvedPlanContinuation: null,
+          interruptedRunId: continuation.runId, state: 'failed',
+        });
+        currentProjectWriteApprovalRef.current = prompt;
+        setCurrentProjectWriteApproval(prompt);
+      }
+    } finally {
+      if (workspaceEpochRef.current === commandEpoch) { publishSubmitInFlight(false); setLiveOutput(null); }
+    }
+  }, [ports.generator, project, publishSubmitInFlight, readActivityAfterTerminal, taskAddressId]);
+
+  const manualCompactContext = useCallback(async () => {
+    const snapshot = conversationSnapshotRef.current;
+    const projectId = visibleConversationProjectId(projectSnapshotRef.current);
+    if (
+      agentWorkbenchSelected
+      || projectId === null
+      || taskAddressId === null
+      || snapshot.status !== 'ready'
+      || snapshot.agent_id !== null
+      || snapshot.project_id !== projectId
+      || snapshot.task_address_id !== taskAddressId
+      || snapshot.conversation === null
+      || snapshot.conversation.state !== 'ready'
+      || ports.generator.manualCompactContext === undefined
+    ) return;
+    setManualContextCompactionFeedback('compacting');
+    try {
+      const result = await ports.generator.manualCompactContext({
+        project_id: projectId,
+        conversation_id: snapshot.conversation.conversation.conversation_id,
+        task_address_id: taskAddressId,
+      });
+      setManualContextCompactionFeedback(result.status === 'compaction_completed'
+        ? 'compacted'
+        : 'not_needed');
+      await conversation.load(projectId, taskAddressId).catch(() => undefined);
+    } catch {
+      setManualContextCompactionFeedback('failed');
+    }
+  }, [agentWorkbenchSelected, conversation, ports.generator, taskAddressId]);
+
   const retryGenerate = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
     setLiveOutput(null);
@@ -4736,11 +5094,28 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     if (activeAgentTestBrowserRunId !== null) {
       await ports.agentTestBrowser.stop({ owner_run_id: activeAgentTestBrowserRunId }).catch(() => undefined);
     }
-    const result = await project.cancel();
+    const result = await activeConversation.cancel();
+    if (agentWorkbenchSelected) {
+      agentLiveOutputStore.clear();
+      setAgentLiveOutput(null);
+    }
     if (workspaceEpochRef.current !== commandEpoch) return;
     await readActivityAfterTerminal(result, commandEpoch);
     setLiveOutput(null);
-  }, [activeAgentTestBrowserRunId, ports.agentTestBrowser, project, readActivityAfterTerminal]);
+  }, [activeAgentTestBrowserRunId, activeConversation, agentLiveOutputStore, agentWorkbenchSelected,
+    ports.agentTestBrowser, readActivityAfterTerminal]);
+
+  const pauseTask = useCallback(async () => {
+    if (agentWorkbenchSelected) return;
+    const commandEpoch = workspaceEpochRef.current;
+    if (activeAgentTestBrowserRunId !== null) {
+      await ports.agentTestBrowser.stop({ owner_run_id: activeAgentTestBrowserRunId }).catch(() => undefined);
+    }
+    const result = await project.cancel({ pause: true });
+    if (workspaceEpochRef.current !== commandEpoch) return;
+    await readActivityAfterTerminal(result, commandEpoch);
+    setLiveOutput(null);
+  }, [activeAgentTestBrowserRunId, agentWorkbenchSelected, ports.agentTestBrowser, project, readActivityAfterTerminal]);
 
   const rejectDraft = useCallback(async () => {
     const commandEpoch = workspaceEpochRef.current;
@@ -4883,6 +5258,8 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
     conversation.snapshot,
     project.snapshot,
   );
+  const composerContextUsageProjection =
+    conversation.snapshot.conversation?.context_usage_projection ?? null;
   const visibleProviderContextDisclosureApprovalState =
     composerProviderContextStatus?.needs_user_approval === true
       ? providerContextDisclosureApprovalState
@@ -4938,13 +5315,15 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   ) => {
     const request = livePreviewRequest();
     if (request === null) return;
+    const version = ++livePreviewResponseVersion.current;
     setLivePreviewOperation(operation);
     try {
-      setLivePreviewStatus(await action(request));
+      const status = await action(request);
+      if (version === livePreviewResponseVersion.current) setLivePreviewStatus(status);
     } catch {
-      setLivePreviewStatus(null);
+      if (version === livePreviewResponseVersion.current) setLivePreviewStatus(null);
     } finally {
-      setLivePreviewOperation(null);
+      if (version === livePreviewResponseVersion.current) setLivePreviewOperation(null);
     }
   }, [livePreviewRequest]);
 
@@ -4976,19 +5355,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
       || approval.project_id !== request.project_id
       || approval.conversation_id !== request.conversation_id
     ) return;
-    setLivePreviewOperation(decision === 'allow_once' ? 'starting' : 'stopping');
-    try {
-      setLivePreviewStatus(await ports.livePreview.decideDevServerApproval({
-        ...request,
+    await runLivePreviewOperation(decision === 'allow_once' ? 'starting' : 'stopping',
+      (currentRequest) => ports.livePreview.decideDevServerApproval({
+        ...currentRequest,
         approval_request_id: approval.approval_request_id,
         decision,
       }));
-    } catch {
-      setLivePreviewStatus(null);
-    } finally {
-      setLivePreviewOperation(null);
-    }
-  }, [livePreviewRequest, livePreviewStatus, ports.livePreview]);
+  }, [livePreviewRequest, livePreviewStatus, ports.livePreview, runLivePreviewOperation]);
 
   const updateLivePreviewLayout = useCallback((viewBounds: BuilderLivePreviewViewBounds | null) => {
     const request = livePreviewRequest();
@@ -5002,15 +5375,18 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   }, [livePreviewRequest, ports.livePreview]);
 
   useEffect(() => {
+    const version = ++livePreviewResponseVersion.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Preview selection changes invalidate the prior operation immediately.
+    setLivePreviewOperation(null);
     const request = livePreviewRequest();
     if (request === null) return;
     let active = true;
     ports.livePreview.readCurrentPreviewStatus(request)
       .then((status) => {
-        if (active) setLivePreviewStatus(status);
+        if (active && version === livePreviewResponseVersion.current) setLivePreviewStatus(status);
       })
       .catch(() => {
-        if (active) setLivePreviewStatus(null);
+        if (active && version === livePreviewResponseVersion.current) setLivePreviewStatus(null);
       });
     return () => {
       active = false;
@@ -5019,7 +5395,9 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
   const hasVisibleLivePreviewRequest = conversation.snapshot.project_id !== null
     && conversation.snapshot.conversation !== null
     && conversation.snapshot.conversation.state === 'ready';
-  const visibleLivePreviewStatus = hasVisibleLivePreviewRequest ? livePreviewStatus : null;
+  const visibleLivePreviewStatus = hasVisibleLivePreviewRequest
+    && livePreviewStatus?.project_id === livePreviewProjectId
+    && livePreviewStatus?.conversation_id === livePreviewConversationId ? livePreviewStatus : null;
 
   const runUserWebOperation = useCallback(async (
     operation: 'navigating' | 'reloading' | 'stopping',
@@ -5228,11 +5606,13 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           <aside className="cf-builder-context cf-builder-context-sidebar" aria-label="Builder navigation" data-builder-workbench-context="true">
             <div className="cf-builder-context-body">
               <BuilderAgentSidebar
+                exportTranscriptFeedback={taskTranscriptExportFeedback}
                 onArchiveProject={archiveAgentProject}
                 onArchiveTask={archiveAgentTask}
                 onCollapse={() => setProjectsCollapsed(true)}
                 onCreateProject={startNewProjectFromCatalog}
                 onCreateTask={startNewTask}
+                onExportTaskTranscript={exportAgentTaskTranscript}
                 onOpenProject={openProject}
                 onOpenTask={openTask}
                 onRefresh={refreshCatalog}
@@ -5282,7 +5662,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
           ) : (
             <BuilderPage
               activeRunFollowupQueued={queuedActiveRunFollowup !== null
-                && project.snapshot.busy}
+                && activeConversation.snapshot.busy}
               activeFile={activeFile}
               answerFailureRecordedSuccess={answerFailureRecordedSuccess}
               approvalMode={visibleApprovalMode}
@@ -5292,18 +5672,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               checkRunOperationFailureCode={currentDraftId === null ? null : checkRunOperationFailureCode}
               checkRunProfiles={currentDraftCheckProfiles}
               checkRunStatus={null}
+              projectDependencyPreparation={projectDependencyPreparation}
+              projectEnvironmentDiagnosis={projectEnvironmentDiagnosis}
               composerContextStatus={composerContextStatus}
               providerContextDisclosureStatus={composerProviderContextStatus}
+              contextUsageProjection={composerContextUsageProjection}
+              manualContextCompactionFeedback={manualContextCompactionFeedback}
+              onManualCompactContext={ports.generator.manualCompactContext === undefined
+                ? undefined
+                : manualCompactContext}
+              onPrepareProjectDependencies={prepareProjectDependencies}
               providerContextDisclosureApprovalState={visibleProviderContextDisclosureApprovalState}
               composerMode={composerMode}
+              composerModelSelection={composerModelSelection}
               composerRouteDecision={composerRouteDecision}
-              composerSubmitLocked={submitInFlight}
+              composerSubmitLocked={submitInFlight || (agentWorkbenchSelected && agentSubmitInFlight)}
               commandApproval={commandApproval}
               commandOutputStore={commandOutputStore}
               currentProjectWriteApproval={currentProjectWriteApproval}
               instruction={idea}
-              liveOutput={liveOutput}
-              liveOutputStore={liveOutputStore}
+              liveOutput={agentWorkbenchSelected ? agentLiveOutput : liveOutput}
+              liveOutputStore={agentWorkbenchSelected ? agentLiveOutputStore : liveOutputStore}
               pendingUserMessages={pendingUserMessages}
               livePreviewOperation={livePreviewOperation}
               livePreviewStatus={visibleLivePreviewStatus}
@@ -5313,31 +5702,27 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               sideWorkspaceFileContentStatus={visibleSideWorkspaceFileContentStatus}
               sideWorkspaceFileTree={visibleSideWorkspaceFileTree}
               sideWorkspaceFileTreeStatus={visibleSideWorkspaceFileTreeStatus}
+              surfaceKind={agentWorkbenchSelected ? 'workbench' : 'task'}
               planReviewFailure={planReviewFailure}
               planReviewInFlight={planReviewInFlight}
               planReviewRecorded={planReviewRecorded}
               planSourceReadApproval={planSourceReadApproval}
-              workspaceNewProjectRequest={workspaceNewProjectRequest}
-              workspacePickerRequest={workspacePickerRequest}
               onApproveCurrentProjectWrite={approveCurrentProjectWrite}
               onDecideCommandApproval={decideCommandApproval}
               onDecideCheckDependencyPreparation={decideCheckDependencyPreparation}
               onDiagnoseCheckEnvironment={diagnoseCheckEnvironment}
               onApproveProviderContextDisclosure={approveProviderContextDisclosure}
               onApprovePlanSourceRead={approvePlanSourceRead}
-              onCreateProject={createWorkspaceProject}
               onClearComposerMode={clearComposerMode}
-              onClearWorkspaceSelection={clearComposerWorkspaceSelection}
-              onDismissWorkspacePicker={dismissWorkspacePicker}
               onDismissCurrentProjectWriteApproval={dismissCurrentProjectWriteApproval}
               onDismissPlanSourceReadApproval={dismissPlanSourceReadApproval}
               onSelectApprovalMode={selectApprovalMode}
               onSelectComposerMode={selectComposerMode}
+              onSelectComposerModel={selectComposerModel}
               onSelectPlanMode={selectPlanMode}
               onSubmitInstruction={submitInstruction}
               onInstructionChange={changeComposerInstruction}
               onInspectRevision={inspectRevision}
-              onOpenProject={openProjectFromComposer}
               onOpenProjectLocation={openProjectLocation}
               onOpenSettings={() => setView('settings')}
               onReloadLivePreview={reloadLivePreview}
@@ -5353,9 +5738,11 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onUserWebLayoutChange={updateUserWebLayout}
               onRestoreRevisionAsDraft={restoreRevisionAsDraft}
               onRetryGenerate={retryGenerate}
+              onResumeInterruptedRun={resumeInterruptedRun}
               onRequestLivePreview={requestLivePreview}
               onRequestSideWorkspaceFiles={requestSideWorkspaceFiles}
               onCancel={cancel}
+              onPauseTask={pauseTask}
               onRejectDraft={rejectDraft}
               onSave={save}
               onUndoDraft={undoDraft}
@@ -5373,6 +5760,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRefreshAgentWorkbench={agentWorkbench.refresh}
               onUpdateAgentWorkbenchMessageState={agentWorkbench.updateMessageState}
               onDecideAgentTaskProposal={decideAgentTaskProposal}
+              onDecideAgentPlan={decideAgentPlan}
               onCreateProjectForAgentTaskProposal={createProjectForAgentTaskProposal}
               onArchiveAgentTask={archiveAgentTask}
               onControlAgentTask={controlAgentTask}
@@ -5380,7 +5768,7 @@ export function BuilderApp({ bridgeRoot }: BuilderAppProps) {
               onRenameAgentTask={renameAgentTask}
               projectCatalogSnapshot={catalog.snapshot}
               historySnapshot={history.snapshot}
-              snapshot={project.snapshot}
+              snapshot={activeConversation.snapshot}
             />
           )}
         </section>

@@ -49,7 +49,9 @@ const PROJECT_ID = `builder-project:${PROJECT_UUID}`;
 const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174202';
 const OTHER_TASK_ADDRESS_ID = 'builder-task-address:223e4567-e89b-42d3-a456-426614174202';
-const CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const ROOT_CONVERSATION_ID = `builder-conversation:${PROJECT_UUID}`;
+const CONVERSATION_ID =
+  `builder-conversation:${PROJECT_UUID}:123e4567-e89b-42d3-a456-426614174209`;
 const TASK_ID = 'builder-task:123e4567-e89b-42d3-a456-426614174203';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174208';
 const TURN_ID = 'builder-turn:123e4567-e89b-42d3-a456-426614174204';
@@ -197,7 +199,7 @@ function sessionAddress(overrides = {}) {
     display_id: 'S-A1B2C3',
     title: 'Portfolio work line',
     status: 'active',
-    root_conversation_id: CONVERSATION_ID,
+    root_conversation_id: ROOT_CONVERSATION_ID,
     current_task_id: TASK_ADDRESS_ID,
     parent_session_id: null,
     forked_from_session_id: null,

@@ -22,6 +22,7 @@ const {
 } = require('../electron/builder-harness-programming-runtime.cjs');
 
 const UUID = '12345678-1234-4234-8234-123456789abc';
+const RESUME_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 
 function createRuntime(script, overrides = {}) {
@@ -45,6 +46,23 @@ function createRuntime(script, overrides = {}) {
           assert.equal(promptSession, sessionId);
           await script({ notify: onNotification, sessionId, text });
           return { session_id: sessionId, message_id: 'harness-user-message' };
+        },
+        async resume({ session_id: resumeSession }) {
+          assert.equal(resumeSession, sessionId);
+          host.resume_count = (host.resume_count ?? 0) + 1;
+          return { session_id: sessionId, restored: true };
+        },
+        async recover_empty_output(request) {
+          host.recovery_count = (host.recovery_count ?? 0) + 1;
+          return host.prompt(request);
+        },
+        async manual_compact(request) {
+          host.manual_compact_calls ??= [];
+          host.manual_compact_calls.push(request);
+          if (typeof overrides.on_manual_compact === 'function') {
+            return overrides.on_manual_compact(request);
+          }
+          return null;
         },
         async shutdown() {
           host.shutdown_count += 1;
@@ -85,7 +103,14 @@ function createRuntime(script, overrides = {}) {
   return { hosts, runtime, workspaceRoot };
 }
 
-function createContract(runtime, mode = 'build', maxDurationMs = 5_000, allowedTools = null) {
+function createContract(
+  runtime,
+  mode = 'build',
+  maxDurationMs = 5_000,
+  allowedTools = null,
+  completionRequirement = null,
+  inputOverrides = {},
+) {
   return createBuilderProgrammingRuntimeRunContract({
     runtime_descriptor: runtime.descriptor,
     admission: {
@@ -116,6 +141,10 @@ function createContract(runtime, mode = 'build', maxDurationMs = 5_000, allowedT
     input: {
       message_id: `builder-message:${UUID}`,
       text: mode === 'plan' ? 'Make a plan.' : 'Update the timer.',
+      ...(completionRequirement === null
+        ? {}
+        : { completion_requirement: completionRequirement }),
+      ...inputOverrides,
     },
   });
 }
@@ -139,7 +168,7 @@ function notifyEvent(notify, sessionId, type, seq, data) {
   });
 }
 
-async function successfulTurn({ notify, sessionId, text = 'Done.', turn = 1, seqStart = 1 }) {
+async function successfulTurn({ notify, sessionId, text = 'Done.', turn = 1, seqStart = 1, reason = 'completed' }) {
   await notifyEvent(notify, sessionId, 'turn/start', seqStart, { turn });
   await notifyEvent(notify, sessionId, 'step/start', seqStart + 1, { turn, step: 1 });
   await notifyEvent(notify, sessionId, 'assistant/chunk', seqStart + 2, {
@@ -160,7 +189,7 @@ async function successfulTurn({ notify, sessionId, text = 'Done.', turn = 1, seq
   await notifyEvent(notify, sessionId, 'step/end', seqStart + 4, { turn, step: 1 });
   await notifyEvent(notify, sessionId, 'turn/end', seqStart + 5, {
     turn,
-    reason: { kind: 'completed' },
+    reason: { kind: reason },
   });
 }
 
@@ -186,6 +215,116 @@ test('keeps a successful Build open until Builder reconciles and checkpoints the
   await runtime.dispose();
 });
 
+test('keeps the native session compactable only while a Build awaits reconciliation', async () => {
+  const manualResults = [{
+    compactionId: 'compaction:manual-runtime-1',
+    sourceCommandId: `builder-context-compaction-admission:${'c'.repeat(64)}`,
+    startSeq: 8,
+    summarySeq: 9,
+    endSeq: 10,
+    shadowedTokenCount: 4096,
+  }];
+  const { hosts, runtime } = createRuntime(
+    (input) => successfulTurn({ ...input, text: 'Done.' }),
+    {
+      on_manual_compact(request) {
+        void request;
+        return manualResults.shift() ?? null;
+      },
+    },
+  );
+  const runContract = createContract(runtime);
+  const { sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const settled = await handle.completion;
+
+  assert.equal(settled.status, 'awaiting_reconciliation');
+  assert.deepEqual(await runtime.manual_compact({
+    session_id: `builder-harness-${UUID}`,
+    source_command_id: `builder-context-compaction-admission:${'c'.repeat(64)}`,
+    abort_signal: null,
+  }), {
+    compactionId: 'compaction:manual-runtime-1',
+    sourceCommandId: `builder-context-compaction-admission:${'c'.repeat(64)}`,
+    startSeq: 8,
+    summarySeq: 9,
+    endSeq: 10,
+    shadowedTokenCount: 4096,
+  });
+  assert.equal(await runtime.manual_compact({
+    session_id: `builder-harness-${UUID}`,
+    source_command_id: `builder-context-compaction-admission:${'d'.repeat(64)}`,
+    abort_signal: null,
+  }), null);
+  assert.equal(hosts[0].manual_compact_calls.length, 2);
+  assert.deepEqual(
+    hosts[0].manual_compact_calls.map((call) => Reflect.ownKeys(call).sort()),
+    [
+      ['session_id', 'source_command_id'],
+      ['session_id', 'source_command_id'],
+    ],
+  );
+
+  await runtime.reconcileRun(handle, { checkpoint_status: 'created' });
+  await assert.rejects(runtime.manual_compact({
+    session_id: `builder-harness-${UUID}`,
+    source_command_id: `builder-context-compaction-admission:${'e'.repeat(64)}`,
+    abort_signal: null,
+  }), { code: 'builder_harness_programming_runtime_closed' });
+  assert.equal(hosts[0].manual_compact_calls.length, 2);
+  await runtime.dispose();
+});
+
+test('native task continuation sends only the new user message into retained Harness history', async () => {
+  const prompts = [];
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts.push(input.text);
+    await successfulTurn({ ...input, text: 'Follow-up completed.' });
+  });
+  const instruction = 'Optimize the existing 3D scene lighting.';
+  const runContract = createContract(runtime, 'build', 5_000, null, null, {
+    text: instruction,
+    resume_session_run_id: `builder-run:${RESUME_UUID}`,
+    resume_kind: 'task_continuation',
+  });
+  const { sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const result = await handle.completion;
+
+  assert.equal(result.status, 'awaiting_reconciliation');
+  assert.equal(hosts[0].resume_count, 1);
+  assert.deepEqual(prompts, [instruction]);
+  await runtime.reconcileRun(handle, { checkpoint_status: 'updated' });
+  await runtime.dispose();
+});
+
+test('interrupted recovery wakes retained history without replaying the original request', async () => {
+  const prompts = [];
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts.push(input.text);
+    await successfulTurn({ ...input, text: 'Recovered.' });
+  });
+  const originalRequest = 'Build the complete football blog from the approved plan.';
+  const runContract = createContract(runtime, 'build', 5_000, null, 'source_change_required', {
+    text: originalRequest,
+    resume_session_run_id: `builder-run:${RESUME_UUID}`,
+    resume_kind: 'interrupted_recovery',
+  });
+  const { sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const result = await handle.completion;
+
+  assert.equal(result.status, 'awaiting_reconciliation');
+  assert.equal(hosts[0].resume_count, 1);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /retained session/u);
+  assert.match(prompts[0], /verify uncertain side effects/u);
+  assert.equal(prompts[0].includes(originalRequest), false);
+  assert.equal(hosts[0].recovery_count ?? 0, 0);
+  await runtime.reconcileRun(handle, { checkpoint_status: 'updated' });
+  await runtime.dispose();
+});
+
 test('allows Builder to close a successful unchanged Build without a checkpoint', async () => {
   const { hosts, runtime } = createRuntime(
     (input) => successfulTurn({
@@ -205,6 +344,255 @@ test('allows Builder to close a successful unchanged Build without a checkpoint'
   assert.equal(hosts[0].shutdown_count, 1);
   assert.equal(journal.snapshot().status, 'run_completed');
   assert.equal(journal.snapshot().events.at(-1).payload.checkpoint_status, 'not_applicable');
+  await runtime.dispose();
+});
+
+async function emptyTokenLimitedTurn({ notify, sessionId, turn = 1, seqStart = 1 }) {
+  await notifyEvent(notify, sessionId, 'turn/start', seqStart, { turn });
+  await notifyEvent(notify, sessionId, 'step/start', seqStart + 1, { turn, step: 1 });
+  await notifyEvent(notify, sessionId, 'step/end', seqStart + 2, { turn, step: 1 });
+  await notifyEvent(notify, sessionId, 'turn/end', seqStart + 3, { turn, reason: { kind: 'max-tokens' } });
+}
+
+function harnessToolResult(callId) {
+  return {
+    id: `result-${callId}`,
+    role: 'user',
+    content: [{
+      type: 'tool-result',
+      toolCallId: callId,
+      content: [{ type: 'text', text: 'ok' }],
+    }],
+    source: { kind: 'tool', callId },
+  };
+}
+
+async function readThenTokenLimitedTurn({ notify, sessionId }) {
+  await notifyEvent(notify, sessionId, 'turn/start', 1, { turn: 1 });
+  await notifyEvent(notify, sessionId, 'step/start', 2, { turn: 1, step: 1 });
+  await notifyEvent(notify, sessionId, 'assistant/message', 3, {
+    turn: 1,
+    step: 1,
+    message: {
+      id: 'assistant-read-first',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'I will inspect the project before implementation.' }],
+      source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-v4' },
+    },
+  });
+  await notifyEvent(notify, sessionId, 'tool/call', 4, {
+    turn: 1,
+    step: 1,
+    callId: 'call-read-first',
+    name: 'read',
+    arguments: JSON.stringify({ file_path: 'README.md' }),
+  });
+  await notifyEvent(notify, sessionId, 'tool/result', 5, {
+    turn: 1,
+    step: 1,
+    message: harnessToolResult('call-read-first'),
+  });
+  await notifyEvent(notify, sessionId, 'step/end', 6, { turn: 1, step: 1 });
+  await notifyEvent(notify, sessionId, 'step/start', 7, { turn: 1, step: 2 });
+  await notifyEvent(notify, sessionId, 'step/end', 8, { turn: 1, step: 2 });
+  await notifyEvent(notify, sessionId, 'turn/end', 9, {
+    turn: 1,
+    reason: { kind: 'max-tokens' },
+  });
+}
+
+async function writeThenCompleteTurn({ notify, sessionId }) {
+  await notifyEvent(notify, sessionId, 'turn/start', 10, { turn: 2 });
+  await notifyEvent(notify, sessionId, 'step/start', 11, { turn: 2, step: 1 });
+  await notifyEvent(notify, sessionId, 'tool/call', 12, {
+    turn: 2,
+    step: 1,
+    callId: 'call-write-recovery',
+    name: 'write',
+    arguments: JSON.stringify({ file_path: 'index.html', content: '<h1>Done</h1>\n' }),
+  });
+  await notifyEvent(notify, sessionId, 'tool/result', 13, {
+    turn: 2,
+    step: 1,
+    message: harnessToolResult('call-write-recovery'),
+  });
+  await notifyEvent(notify, sessionId, 'step/end', 14, { turn: 2, step: 1 });
+  await notifyEvent(notify, sessionId, 'step/start', 15, { turn: 2, step: 2 });
+  await notifyEvent(notify, sessionId, 'assistant/chunk', 16, {
+    turn: 2,
+    step: 2,
+    chunk: { type: 'text-delta', index: 0, text: 'Implemented the approved plan.' },
+  });
+  await notifyEvent(notify, sessionId, 'assistant/message', 17, {
+    turn: 2,
+    step: 2,
+    message: {
+      id: 'assistant-write-complete',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Implemented the approved plan.' }],
+      source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-v4' },
+    },
+  });
+  await notifyEvent(notify, sessionId, 'step/end', 18, { turn: 2, step: 2 });
+  await notifyEvent(notify, sessionId, 'turn/end', 19, {
+    turn: 2,
+    reason: { kind: 'completed' },
+  });
+}
+
+test('continues a token-limited empty Build once within the original admitted run', async () => {
+  const prompts = [];
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts.push(input.text);
+    if (prompts.length === 1) await emptyTokenLimitedTurn(input);
+    else await successfulTurn({ ...input, text: 'Implementation completed.', turn: 2, seqStart: 5 });
+  });
+  const runContract = createContract(runtime);
+  const { journal, sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const completed = await handle.completion;
+  assert.equal(completed.status, 'awaiting_reconciliation');
+  assert.equal(completed.assistant_text, 'Implementation completed.');
+  assert.equal(prompts.length, 2);
+  assert.equal(hosts[0].recovery_count, 1);
+  assert.match(prompts[1], /No project check has run/);
+  assert.ok(prompts[1].includes(runContract.input.text));
+  assert.equal(hosts.length, 1);
+  assert.equal(journal.snapshot().events.filter((event) => event.event_type === 'turn_started').length, 1);
+  assert.equal(journal.snapshot().events.filter((event) => event.event_type === 'project_check_recorded').length, 0);
+  await runtime.reconcileRun(handle, { checkpoint_status: 'not_applicable' });
+  await runtime.dispose();
+});
+
+test('continues an approved implementation that only reads before exhausting its tokens', async () => {
+  const prompts = [];
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts.push(input.text);
+    if (prompts.length === 1) await readThenTokenLimitedTurn(input);
+    else await writeThenCompleteTurn(input);
+  });
+  const runContract = createContract(
+    runtime,
+    'build',
+    5_000,
+    null,
+    'source_change_required',
+  );
+  const { journal, sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const completed = await handle.completion;
+
+  assert.equal(completed.status, 'awaiting_reconciliation');
+  assert.equal(completed.assistant_text, 'Implemented the approved plan.');
+  assert.equal(prompts.length, 2);
+  assert.equal(hosts[0].recovery_count, 1);
+  assert.match(prompts[1], /requires a source change/u);
+  assert.match(prompts[1], /same approved implementation/u);
+  assert.ok(prompts[1].includes(runContract.input.text));
+  assert.equal(hosts.length, 1);
+  assert.equal(
+    journal.snapshot().events.filter((event) => event.event_type === 'turn_started').length,
+    1,
+  );
+  assert.deepEqual(
+    journal.snapshot().events
+      .filter((event) => event.event_type === 'tool_call_completed')
+      .map((event) => event.payload.result_kind),
+    ['read', 'write'],
+  );
+  await runtime.reconcileRun(handle, { checkpoint_status: 'created' });
+  await runtime.dispose();
+});
+
+test('fails closed when approved implementation recovery still makes no source change', async () => {
+  let prompts = 0;
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts += 1;
+    await successfulTurn({
+      ...input,
+      text: prompts === 1 ? 'I will start implementing.' : 'I am still preparing.',
+      turn: prompts,
+      seqStart: prompts === 1 ? 1 : 7,
+    });
+  });
+  const runContract = createContract(
+    runtime,
+    'build',
+    5_000,
+    null,
+    'source_change_required',
+  );
+  const { journal, sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const completed = await handle.completion;
+
+  assert.equal(completed.status, 'failed');
+  assert.equal(completed.runtime_cause_code, 'builder_harness_source_change_required');
+  assert.equal(prompts, 2);
+  assert.equal(hosts[0].recovery_count, 1);
+  assert.equal(hosts[0].cancel_count, 1);
+  assert.equal(journal.snapshot().events.at(-1).event_type, 'run_failed');
+  await runtime.dispose();
+});
+
+test('stops after a second empty token-limit response instead of retrying indefinitely', async () => {
+  let prompts = 0;
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts += 1;
+    await emptyTokenLimitedTurn({ ...input, turn: prompts, seqStart: (prompts - 1) * 4 + 1 });
+  });
+  const runContract = createContract(runtime);
+  const { journal, sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  const completed = await handle.completion;
+  assert.equal(completed.status, 'failed');
+  assert.equal(completed.runtime_cause_code, 'builder_harness_empty_output_token_limit');
+  assert.equal(prompts, 2);
+  assert.equal(hosts[0].recovery_count, 1);
+  assert.equal(hosts[0].cancel_count, 1);
+  assert.equal(journal.snapshot().events.at(-1).event_type, 'run_failed');
+  await runtime.dispose();
+});
+
+test('does not automatically replay a token-limited Build that already produced text', async () => {
+  let prompts = 0;
+  const { runtime } = createRuntime(async (input) => {
+    prompts += 1;
+    await successfulTurn({ ...input, text: 'Partial implementation details.', reason: 'max-tokens' });
+  });
+  const runContract = createContract(runtime);
+  const { sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  assert.equal((await handle.completion).status, 'awaiting_reconciliation');
+  assert.equal(prompts, 1);
+  await runtime.reconcileRun(handle, { checkpoint_status: 'not_applicable' });
+  await runtime.dispose();
+});
+
+test('keeps the empty-output continuation cancellable without opening another run', async () => {
+  let prompts = 0;
+  let recoveryStarted;
+  let releaseRecovery;
+  const started = new Promise((resolve) => { recoveryStarted = resolve; });
+  const held = new Promise((resolve) => { releaseRecovery = resolve; });
+  const { hosts, runtime } = createRuntime(async (input) => {
+    prompts += 1;
+    if (prompts === 1) await emptyTokenLimitedTurn(input);
+    else {
+      recoveryStarted();
+      await held;
+    }
+  }, { on_cancel: () => releaseRecovery() });
+  const runContract = createContract(runtime);
+  const { journal, sink } = sinkFor(runContract);
+  const handle = await runtime.startRun({ run_contract: runContract, event_sink: sink });
+  await started;
+  assert.equal((await runtime.cancelRun(handle, 'user_requested')).cancellation_requested, true);
+  assert.equal((await handle.completion).status, 'cancelled');
+  assert.equal(prompts, 2);
+  assert.equal(hosts.length, 1);
+  assert.equal(hosts[0].cancel_count, 1);
+  assert.equal(journal.snapshot().status, 'run_cancelled');
   await runtime.dispose();
 });
 

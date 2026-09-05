@@ -132,7 +132,7 @@ function savedProjectReadResult(tree, receipt, verification, operation) {
   };
 }
 
-function fixture({ tree = sourceTree(), hasDraft = true, mutateDraft, mutateCheckpoint } = {}) {
+function fixture({ tree = sourceTree(), hasDraft = true, mutateDraft, mutateCheckpoint, mutateStream } = {}) {
   const receipt = candidate(tree);
   const verification = createBuilderGitCandidateVerificationReceipt(receipt);
   const calls = {
@@ -150,7 +150,7 @@ function fixture({ tree = sourceTree(), hasDraft = true, mutateDraft, mutateChec
       service_version: 'builder-conversation-main-service.v1',
       read_stream(request) {
         calls.stream.push(request);
-        return {
+        const stream = {
           project_id: PROJECT_ID,
           conversation: {
             conversation_id: CONVERSATION_ID,
@@ -161,6 +161,7 @@ function fixture({ tree = sourceTree(), hasDraft = true, mutateDraft, mutateChec
             draft_id: hasDraft ? DRAFT_ID : null,
           },
         };
+        return mutateStream ? mutateStream(stream) : stream;
       },
       read_candidate_draft(request) {
         calls.conversation.push(request);
@@ -255,6 +256,49 @@ test('falls back to the current saved revision when the conversation has no draf
   assert.equal(selected.calls.checkpoint.length, 0);
 });
 
+for (const review of ['omitted', 'null']) {
+  test(`reads saved source after Save removes the draft review projection (${review})`, async () => {
+    const selected = fixture({ mutateStream(stream) {
+      if (review === 'omitted') delete stream.review_state_projection;
+      else stream.review_state_projection = null;
+      stream.conversation.items = [
+        { item_kind: 'run_completed', candidate: { draft_id: DRAFT_ID, candidate_state: 'proposed' } },
+        { item_kind: 'candidate_reviewed', draft_id: DRAFT_ID, candidate_state: 'saved', decision: 'accepted' },
+      ];
+      return stream;
+    } });
+    const result = await selected.service.resolve_current_draft_preview_source({
+      project_id: PROJECT_ID, conversation_id: CONVERSATION_ID,
+    });
+    assert.equal(result.operation, 'saved_revision_live_preview_source_admitted');
+    assert.equal(result.source_admission.source_tree_digest, selected.tree.source_tree_digest);
+    assert.equal(selected.calls.projectRevision.length, 1);
+    assert.equal(selected.calls.checkpoint.length, 0);
+  });
+}
+
+test('does not mask a missing current-draft review or drift with an older saved revision', async () => {
+  for (const mutateStream of [
+    (stream) => {
+      delete stream.review_state_projection;
+      stream.conversation.items = [
+        { item_kind: 'run_completed', candidate: { draft_id: DRAFT_ID, candidate_state: 'proposed' } },
+      ];
+      return stream;
+    },
+    (stream) => ({ ...stream, project_id: PROJECT_ID.replace('123e', '223e') }),
+    (stream) => ({ ...stream, review_state_projection: { draft_id: 'invalid' } }),
+    (stream) => ({ ...stream, review_state_projection: 'invalid' }),
+  ]) {
+    const selected = fixture({ mutateStream });
+    await assert.rejects(selected.service.resolve_current_draft_preview_source({
+      project_id: PROJECT_ID, conversation_id: CONVERSATION_ID,
+    }), { code: 'builder_live_preview_current_draft_source_unavailable' });
+    assert.equal(selected.calls.projectCurrent.length, 0);
+    assert.equal(selected.calls.projectRevision.length, 0);
+  }
+});
+
 test('selects the first HTML entry when index.html is absent', async () => {
   const selected = fixture({
     tree: sourceTree([
@@ -269,6 +313,26 @@ test('selects the first HTML entry when index.html is absent', async () => {
   });
 
   assert.equal(result.source_admission.selected_entry_path, 'nested/page.htm');
+});
+
+test('admits dev-server preview source when a package dev script exists without HTML', async () => {
+  const selected = fixture({
+    tree: sourceTree([
+      { path: 'package.json', content: '{"private":true,"scripts":{"dev":"next dev"}}\n' },
+      { path: 'app/page.tsx', content: 'export default function Page(){return <main>Blog</main>}\n' },
+      { path: 'app/layout.tsx', content: 'export default function Layout({children}){return <html><body>{children}</body></html>}\n' },
+    ]),
+  });
+
+  const result = await selected.service.resolve_current_draft_preview_source({
+    project_id: PROJECT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+
+  assert.equal(result.operation, 'current_draft_live_preview_source_admitted');
+  assert.equal(result.source_admission.preview_kind, 'live_dev_server_web');
+  assert.equal(result.source_admission.selected_entry_path, 'package.json');
+  assert.equal(result.source_admission.lifecycle.entry_admission, 'package_manifest_verified_in_snapshot');
 });
 
 test('rejects renderer source hints and drift before admitting preview source', async () => {

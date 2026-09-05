@@ -5,11 +5,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { performance: nodePerformance } = require('node:perf_hooks');
+const { DatabaseSync } = require('node:sqlite');
 const { _electron: electron } = require('playwright-core');
 
 const {
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
+  assertNativeWindowMaximizeRestore,
   approveCurrentProjectWriteIfRequested,
   captureGuardedUserDataRoot,
   clickSaveVersionViaUi,
@@ -41,6 +43,43 @@ const BUILDER_PROFILE_CLONE_EXCLUSIONS = new Set([
   'builder-provider-secrets-v1',
   'builder-structured-runtime-workspace-snapshots-v1',
 ]);
+
+function readAgentConversationTerminalDiagnostics(userDataPath) {
+  const databasePath = path.join(
+    userDataPath,
+    'builder-agent-conversations-v1',
+    'agent-conversations.sqlite',
+  );
+  if (!fs.existsSync(databasePath)) return [];
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    return database.prepare(`
+      SELECT payload_json
+      FROM agent_conversation_events
+      WHERE event_type = 'run_completed'
+      ORDER BY sequence DESC
+      LIMIT 4
+    `).all().flatMap((row) => {
+      try {
+        const payload = JSON.parse(row.payload_json);
+        const text = payload.assistant_message?.text;
+        return [{
+          terminal_status: payload.terminal_status ?? null,
+          result_kind: payload.result_kind ?? null,
+          failure_code: typeof payload.failure_code === 'string' ? payload.failure_code : null,
+          assistant_text_length: typeof text === 'string' ? text.length : null,
+          assistant_text_trimmed: typeof text === 'string' ? text.trim() === text : null,
+          run_id: payload.run_id ?? null,
+          message_id: payload.assistant_message?.message_id ?? null,
+        }];
+      } catch {
+        return [];
+      }
+    });
+  } finally {
+    database.close();
+  }
+}
 const AGENT_BUILD_IDEA = [
   '从空项目创建一个可验证的专注计时器。',
   '请写入 index.html、package.json 和 check.js。',
@@ -48,7 +87,15 @@ const AGENT_BUILD_IDEA = [
   'package.json 必须提供 npm test，check.js 必须验证 h1。',
   '只使用 Builder 文件工具；让 Builder 在生成后运行检查。',
 ].join(' ');
-const CONTINUE_QUESTION = '继续说明这个项目现在怎么运行，基于当前文件用中文简短回答。';
+const AGENT_PLAN_INSTRUCTION = [
+  '请先为一个空项目制定完整实施计划，不要直接修改文件。',
+  '目标是创建一个可验证的专注计时器，计划必须明确写入 index.html、package.json 和 check.js。',
+  'index.html 必须包含 h1 文本 "Agent History Flow" 和一句简短副标题。',
+  'package.json 必须提供 npm test，check.js 必须验证 h1。',
+  'check.js 只校验固定 h1，不得把可变副标题写成固定断言；后续任务需要独立修改副标题。',
+  '计划最后应要求 Builder 运行检查。',
+].join(' ');
+const CONTINUE_QUESTION = '继续说明这个项目现在怎么运行，基于当前文件用中文简短回答，明确列出入口文件名和检查命令。';
 const EXISTING_HISTORY_QUESTION = '请基于这个旧任务已有的会话和项目内容，用中文简短说明上次做到哪里、下一步适合做什么。';
 const EXISTING_PROJECT_UPDATE = [
   '继续这个已有项目，只修改 index.html。',
@@ -162,6 +209,9 @@ function summarizeMainPerformance(trace) {
       ).max,
     }),
     harness_runtime: Object.freeze({
+      empty_token_limit_recovery_count: performanceMetric(
+        trace, 'main.harness_runtime.empty_token_limit_recovery.count',
+      ).count,
       pending_batch_size_max: performanceMetric(
         trace,
         'main.harness_runtime.pending_batch_size',
@@ -187,6 +237,10 @@ function summarizeMainPerformance(trace) {
     workbench: Object.freeze({
       read: performanceMetric(trace, 'main.workbench.read.duration_ms'),
       task_sync: performanceMetric(trace, 'main.workbench.task_sync.duration_ms'),
+      task_sync_project: performanceMetric(trace, 'main.workbench.task_sync.project.duration_ms'),
+      task_sync_record: performanceMetric(trace, 'main.workbench.task_sync.record.duration_ms'),
+      monitor_stream_read: performanceMetric(trace, 'main.workbench.monitor.stream_read.duration_ms'),
+      monitor_list: performanceMetric(trace, 'main.workbench.monitor.list.duration_ms'),
       task_sync_task_count_max: performanceMetric(
         trace,
         'main.workbench.task_sync.task_count',
@@ -441,73 +495,312 @@ async function waitForCurrentProjectId(page) {
   fail('deepseek_agent_history_project_identity_failed', Object.freeze({ last }));
 }
 
-async function createAgentTaskProposalViaBridge(page, objective) {
+async function submitAgentPlanViaUi(page, instruction) {
   await installWriteApprovalObserver(page);
-  const requestId = `builder-workbench-request:${nodeCrypto.randomUUID()}`;
-  const proposalIdentity = await page.evaluate(async (request) => {
-    const root = globalThis.window?.clawfabricBuilder;
-    const response = await root?.agentWorkbench?.createTaskProposal?.(request);
-    const result = response?.ok === true ? response.result : response;
+  const baseline = await page.evaluate(async (agentId) => {
+    const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+      agent_id: agentId,
+      after_cursor: null,
+      limit: 80,
+    });
     return {
-      message_id: result?.proposal?.message_id ?? null,
-      proposal_id: result?.proposal?.proposal_id ?? null,
+      agent_plan_id: workbench?.agent_plan?.artifact?.agent_plan_id ?? null,
+      proposal_ids: (workbench?.stream?.items ?? [])
+        .flatMap((item) => item?.actions ?? [])
+        .map((action) => action?.proposal_id)
+        .filter((proposalId) => typeof proposalId === 'string'),
     };
-  }, {
-    agent_id: DEFAULT_BUILDER_AGENT_ID,
-    execution_mode: 'foreground',
-    objective,
-    reason: 'I4 canary starts from Agent Workbench and materializes a foreground project task.',
-    request_id: requestId,
-    requested_outcome: 'build',
-  });
+  }, DEFAULT_BUILDER_AGENT_ID);
+  await page.locator(SELECTORS.idea).fill(instruction);
+  if (!await optionalVisible(page, '[data-builder-composer-mode-chip="plan"]')) {
+    await page.locator(SELECTORS.composerAddMenuButton).click();
+    await page.locator(SELECTORS.composerAddPlanMode).click();
+  }
+  let liveMarkdownObserved = false;
+  let planReady = false;
+  let submissionAttempts = 0;
+  for (let attempt = 0; attempt < 2 && !planReady; attempt += 1) {
+    await page.locator(SELECTORS.submitTurn).click();
+    submissionAttempts += 1;
+    const attemptDeadline = Date.now() + 180_000;
+    while (Date.now() < attemptDeadline) {
+      liveMarkdownObserved = liveMarkdownObserved || await optionalVisible(
+        page,
+        '[data-builder-live-output="true"] [data-builder-conversation-markdown="true"]',
+      );
+      const currentPlan = await page.evaluate(async (agentId) => {
+        const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+          agent_id: agentId,
+          after_cursor: null,
+          limit: 80,
+        });
+        const artifact = workbench?.agent_plan?.artifact;
+        return artifact ? {
+          agent_plan_id: artifact.agent_plan_id,
+          source_message_id: artifact.source_message_id,
+        } : null;
+      }, DEFAULT_BUILDER_AGENT_ID);
+      if (
+        currentPlan !== null
+        && currentPlan.agent_plan_id !== baseline.agent_plan_id
+        && await page.locator(`[data-builder-workbench-message="${currentPlan.source_message_id}"]`)
+          .locator('[data-builder-agent-plan-decision="true"]').isVisible().catch(() => false)
+      ) {
+        planReady = true;
+        break;
+      }
+      if (await optionalVisible(page, '[data-builder-conversation-notice="answer_failed"]')) break;
+      await page.waitForTimeout(250);
+    }
+    if (!planReady && attempt === 0) {
+      await page.locator(SELECTORS.idea).waitFor({ state: 'visible', timeout: 10_000 });
+      if ((await page.locator(SELECTORS.idea).inputValue()).trim() !== instruction) {
+        fail('deepseek_agent_plan_retry_text_missing');
+      }
+      if (!await optionalVisible(page, '[data-builder-composer-mode-chip="plan"]')) {
+        await page.locator(SELECTORS.composerAddMenuButton).click();
+        await page.locator(SELECTORS.composerAddPlanMode).click();
+      }
+    }
+  }
+  if (!planReady) {
+    fail(
+      'deepseek_agent_plan_answer_failed',
+      await diagnostic(page, 'agent_plan_answer_failed'),
+    );
+  }
+  if (!liveMarkdownObserved) fail('deepseek_agent_plan_live_markdown_missing');
+  await page.locator('[data-builder-submit-in-flight="true"]').waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.locator(SELECTORS.cancelWork).waitFor({ state: 'hidden', timeout: 10_000 });
+  const plan = await page.evaluate(async (agentId) => {
+    const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+      agent_id: agentId,
+      after_cursor: null,
+      limit: 80,
+    });
+    return workbench?.agent_plan ?? null;
+  }, DEFAULT_BUILDER_AGENT_ID);
+  const planMarkdown = plan?.artifact?.markdown ?? '';
+  const planHeadings = planMarkdown.match(/^#{1,6}\s+\S.*$/gmu) ?? [];
+  const planListItems = planMarkdown.match(/^\s*(?:[-*+]\s+|\d+[.)]\s+)\S.*$/gmu) ?? [];
   if (
-    !/^builder-message:[0-9a-f-]{36}$/u.test(proposalIdentity?.message_id ?? '')
-    || !/^builder-task-proposal:[0-9a-f-]{36}$/u.test(proposalIdentity?.proposal_id ?? '')
-  ) fail('deepseek_agent_history_task_proposal_identity_failed');
-  const proposal = page.locator(
-    `[data-builder-workbench-message="${proposalIdentity.message_id}"]`,
+    plan?.artifact?.state !== 'proposed'
+    || plan?.decision !== null
+    || typeof plan?.artifact?.markdown !== 'string'
+    || [...planMarkdown].length < 1_200
+    || planHeadings.length < 8
+    || planListItems.length < 12
+    || !planMarkdown.includes('index.html')
+    || !planMarkdown.includes('package.json')
+    || !planMarkdown.includes('check.js')
+    || !/^sha256:[0-9a-f]{64}$/u.test(plan?.artifact?.content_digest ?? '')
+  ) fail('deepseek_agent_plan_artifact_invalid', Object.freeze({
+    state: plan?.artifact?.state ?? null,
+    decision: plan?.decision?.decision ?? null,
+    markdown_length: [...planMarkdown].length,
+    headings: planHeadings.length,
+    list_items: planListItems.length,
+    missing_files: ['index.html', 'package.json', 'check.js'].filter((file) => !planMarkdown.includes(file)),
+    digest_valid: /^sha256:[0-9a-f]{64}$/u.test(plan?.artifact?.content_digest ?? ''),
+  }));
+  const durableMarkdown = page.locator(
+    `[data-builder-workbench-message="${plan.artifact.source_message_id}"] [data-builder-conversation-markdown="true"]`,
   );
+  await durableMarkdown.waitFor({ state: 'visible', timeout: 30_000 });
+  if ([...((await durableMarkdown.textContent()) ?? '').trim()].length < 1_200) {
+    fail('deepseek_agent_plan_markdown_not_visible');
+  }
+  return { plan, baseline, liveMarkdownObserved, submissionAttempts };
+}
+
+async function createAgentPlanTaskViaUi(page, onPlanReady = null, options = {}) {
+  let submitted = await submitAgentPlanViaUi(page, options.planInstruction ?? AGENT_PLAN_INSTRUCTION);
+  const proposalIdsBefore = submitted.baseline.proposal_ids;
+  let cancellationVerified = false;
+  let cancelledNoticeId = null;
+  let restartVerified = false;
+  let revisionVerified = false;
+  let activeInteractions = null;
+  if (options.stability === true) {
+    const original = submitted.plan.artifact;
+    const cancelledInstruction = '保留上一版的所有要求，补充完整的暂停和恢复验收细节。';
+    await page.locator(SELECTORS.idea).fill(cancelledInstruction);
+    await page.locator(SELECTORS.submitTurn).click();
+    await page.locator(SELECTORS.cancelWork).waitFor({ state: 'visible', timeout: 15_000 });
+    if (typeof options.probeActiveInteractions === 'function') {
+      activeInteractions = await options.probeActiveInteractions(page);
+    }
+    const cancelStartedAt = nodePerformance.now();
+    await page.locator(SELECTORS.cancelWork).click();
+    await page.locator(SELECTORS.cancelWork).waitFor({ state: 'hidden', timeout: 15_000 });
+    await page.locator('[data-builder-submit-in-flight="true"]').waitFor({ state: 'hidden', timeout: 15_000 });
+    if (activeInteractions !== null) activeInteractions.cancel_to_idle_ms = nodePerformance.now() - cancelStartedAt;
+    const afterCancel = await readLatestAgentPlanViaBridge(page);
+    if (afterCancel?.artifact?.content_digest !== original.content_digest
+      || afterCancel?.decision !== null) fail('deepseek_agent_plan_cancel_changed_artifact');
+    const cancelledNotice = page.locator('[data-builder-workbench-content-type="builder.chat.user_message.v1"]')
+      .filter({ hasText: cancelledInstruction }).last().locator('xpath=following-sibling::*[1]');
+    await cancelledNotice.locator('[role="note"]').waitFor({ state: 'visible', timeout: 15_000 });
+    if (await cancelledNotice.getAttribute('data-builder-workbench-content-type') !== 'builder.chat.turn_status.v1'
+      || !(await cancelledNotice.innerText()).includes('已停止')) fail('deepseek_agent_cancel_notice_missing');
+    cancelledNoticeId = await cancelledNotice.getAttribute('data-builder-workbench-message');
+    if (typeof options.onCancelled === 'function') {
+      await cancelledNotice.scrollIntoViewIfNeeded();
+      await options.onCancelled(page);
+    }
+    cancellationVerified = true;
+    await page.locator('[data-builder-agent-plan-decision="true"]')
+      .getByRole('button', { name: 'Revise', exact: true }).click();
+    submitted = await submitAgentPlanViaUi(page,
+      '保留上一版完整需求、指定标题、文件和检查要求。只增加一项：副标题固定为 "Plan revision marker"，并补充它的可见性验收。请返回完整修订计划，不要只返回修改摘要。');
+    if (submitted.plan.artifact.version !== original.version + 1
+      || !submitted.plan.artifact.markdown.includes('Plan revision marker')
+      || !submitted.plan.artifact.markdown.includes('Agent History Flow')) {
+      fail('deepseek_agent_plan_revision_lost_requirements');
+    }
+    revisionVerified = true;
+    if (typeof options.restart === 'function') {
+      page = await options.restart();
+      const restored = await readLatestAgentPlanViaBridge(page);
+      if (JSON.stringify(restored) !== JSON.stringify(submitted.plan)) {
+        fail('deepseek_agent_plan_restart_changed_artifact');
+      }
+      await page.locator(SELECTORS.cancelWork).waitFor({ state: 'hidden', timeout: 10_000 });
+      const restoredNotice = page.locator(`[data-builder-workbench-message="${cancelledNoticeId}"]`);
+      await restoredNotice.waitFor({ state: 'attached', timeout: 10_000 });
+      if (await restoredNotice.count() !== 1 || !(await restoredNotice.innerText()).includes('已停止')) {
+        fail('deepseek_agent_cancel_notice_not_restored');
+      }
+      restartVerified = true;
+    }
+  }
+  if (onPlanReady !== null) await onPlanReady(page);
+  const { plan, liveMarkdownObserved, submissionAttempts } = submitted;
+  const decision = page.locator(`[data-builder-workbench-message="${plan.artifact.source_message_id}"]`)
+    .locator('[data-builder-agent-plan-decision="true"]');
+  await decision.getByRole('button', { name: 'Approve plan' }).click();
+  const deadline = Date.now() + 30_000;
+  let dispatched = null;
+  while (Date.now() < deadline) {
+    dispatched = await page.evaluate(async (request) => {
+      const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+        agent_id: request.agentId,
+        after_cursor: null,
+        limit: 80,
+      });
+      const prior = new Set(request.proposalIdsBefore);
+      const actions = (workbench?.stream?.items ?? [])
+        .flatMap((item) => (item?.actions ?? []).map((action) => ({
+          action,
+          message_id: item?.message_id ?? null,
+        })))
+        .filter((entry) => typeof entry.action?.proposal_id === 'string'
+          && !prior.has(entry.action.proposal_id));
+      return {
+        actions,
+        decision: workbench?.agent_plan?.decision ?? null,
+      };
+    }, { agentId: DEFAULT_BUILDER_AGENT_ID, proposalIdsBefore });
+    if (dispatched?.decision?.decision === 'approved' && dispatched.actions.length === 1) break;
+    await page.waitForTimeout(250);
+  }
+  if (dispatched?.decision?.decision !== 'approved' || dispatched?.actions?.length !== 1) {
+    fail('deepseek_agent_plan_dispatch_not_unique', Object.freeze({
+      dispatch_count: dispatched?.actions?.length ?? null,
+    }));
+  }
+  const proposalIdentity = dispatched.actions[0];
+  const proposal = page.locator(`[data-builder-workbench-message="${proposalIdentity.message_id}"]`);
   await proposal.locator(SELECTORS.agentTaskProposalActions)
     .waitFor({ state: 'visible', timeout: 30_000 });
   await proposal.locator(SELECTORS.agentTaskProposalNewProject).click();
-  const deadline = Date.now() + 30_000;
-  let lastStatus = null;
-  while (Date.now() < deadline) {
-    lastStatus = await page.locator(SELECTORS.projectPage)
-      .getAttribute('data-builder-project-status')
-      .catch(() => null);
-    if (['ready', 'submitting', 'answering', 'generating', 'draft_ready', 'checking', 'saving'].includes(lastStatus)) return;
+  const materializationDeadline = Date.now() + 30_000;
+  while (Date.now() < materializationDeadline) {
+    const action = await page.evaluate(async (request) => {
+      const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+        agent_id: request.agentId,
+        after_cursor: null,
+        limit: 80,
+      });
+      return (workbench?.stream?.items ?? [])
+        .flatMap((item) => item?.actions ?? [])
+        .find((candidate) => candidate?.proposal_id === request.proposalId) ?? null;
+    }, {
+      agentId: DEFAULT_BUILDER_AGENT_ID,
+      proposalId: proposalIdentity.action.proposal_id,
+    });
+    if (/^builder-task-address:[0-9a-f-]{36}$/u.test(action?.task_address_id ?? '')) {
+      return Object.freeze({
+        agent_plan_id: plan.artifact.agent_plan_id,
+        content_digest: plan.artifact.content_digest,
+        live_markdown_observed: liveMarkdownObserved,
+        review_ready_without_followup: true,
+        submission_attempts: submissionAttempts,
+        cancelled_revision_preserved_plan: cancellationVerified,
+        cancelled_revision_status_visible: cancelledNoticeId !== null,
+        restart_preserved_cancelled_status: cancelledNoticeId !== null && restartVerified,
+        complete_revision_preserved_requirements: revisionVerified,
+        restart_preserved_pending_review: restartVerified,
+        active_interactions: activeInteractions,
+        markdown_length: plan.artifact.markdown.length,
+        objective: action.objective,
+        proposal_id: proposalIdentity.action.proposal_id,
+        task_address_id: action.task_address_id,
+      });
+    }
     await page.waitForTimeout(250);
   }
-  const projectionDiagnostic = await page.evaluate(async (request) => {
-    const root = globalThis.window?.clawfabricBuilder;
-    const [workbench, tree, catalog] = await Promise.all([
-      root?.agentWorkbench?.read?.({ agent_id: request.agentId, after_cursor: null, limit: 80 }),
-      root?.agentProjectTree?.read?.({ agent_id: request.agentId }),
-      root?.projectWorkspace?.listWorkspaces?.(),
-    ]);
-    const items = Array.isArray(workbench?.stream?.items) ? workbench.stream.items : [];
-    const action = items
-      .flatMap((item) => Array.isArray(item?.actions) ? item.actions : [])
-      .find((candidate) => candidate?.proposal_id === request.proposalId) ?? null;
-    return {
-      action,
-      project_count: Array.isArray(tree?.projects) ? tree.projects.length : null,
-      workspace_count: Array.isArray(catalog?.workspaces) ? catalog.workspaces.length : null,
-    };
-  }, {
-    agentId: DEFAULT_BUILDER_AGENT_ID,
-    proposalId: proposalIdentity.proposal_id,
-  }).catch(() => null);
-  fail('deepseek_agent_history_task_open_failed', Object.freeze({
-    project_status: lastStatus,
-    proposal_action: projectionDiagnostic?.action ?? null,
-    projected_project_count: projectionDiagnostic?.project_count ?? null,
-    workspace_count: projectionDiagnostic?.workspace_count ?? null,
-    proposal_actions_visible: await proposal.locator(SELECTORS.agentTaskProposalActions)
-      .isVisible().catch(() => null),
-  }));
+  fail('deepseek_agent_plan_materialization_missing');
 }
+
+async function probeActiveAgentInteractions(page, history) {
+  let phase = 'typing';
+  try {
+  const marker = 'RC input responsiveness marker';
+  const startedAt = nodePerformance.now();
+  await page.locator(SELECTORS.idea).fill(marker);
+  await page.waitForFunction((text) => {
+    const input = globalThis.document.querySelector('#builder-idea');
+    return input?.value === text;
+  }, marker, { timeout: 5_000 });
+  await page.evaluate(() => new Promise((resolve) => globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))));
+  const inputToFrameMs = nodePerformance.now() - startedAt;
+  await page.locator(SELECTORS.idea).fill('');
+  phase = 'scrolling';
+  const scrollStartedAt = nodePerformance.now();
+  const scroll = page.locator('[data-builder-chat-scroll="true"]');
+  const before = await scroll.evaluate((element) => element.scrollTop);
+  if (before <= 0) fail('deepseek_agent_history_scroll_probe_not_ready');
+  await scroll.hover();
+  await page.mouse.wheel(0, -450);
+  await page.waitForFunction((position) => globalThis.document.querySelector('[data-builder-chat-scroll="true"]').scrollTop < position,
+    before, { timeout: 5_000 });
+  const scrollToFrameMs = nodePerformance.now() - scrollStartedAt;
+  phase = 'task_agent_switch';
+  const switchedAt = nodePerformance.now();
+  await openExistingTask(page, history);
+  await openAgentWorkbench(page);
+  await page.locator(SELECTORS.cancelWork).waitFor({ state: 'visible', timeout: 5_000 });
+  return { typed_while_active: true, scroll_while_active: true, switched_task_and_returned: true,
+    input_to_frame_ms: inputToFrameMs, scroll_to_frame_ms: scrollToFrameMs,
+    task_agent_roundtrip_ms: nodePerformance.now() - switchedAt };
+  } catch (error) {
+    fail('deepseek_agent_history_interaction_failed', Object.freeze({
+      interaction_phase: phase,
+      timed_out: /Timeout/u.test(String(error?.message)),
+    }));
+  }
+}
+
+async function readLatestAgentPlanViaBridge(page) {
+  return page.evaluate(async (agentId) => {
+    const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+      agent_id: agentId, after_cursor: null, limit: 80,
+    });
+    return workbench?.agent_plan ?? null;
+  }, DEFAULT_BUILDER_AGENT_ID);
+}
+
 
 async function createExistingProjectTaskProposalViaBridge(page, projectId, objective) {
   const requestId = `builder-workbench-request:${nodeCrypto.randomUUID()}`;
@@ -544,7 +837,23 @@ async function createExistingProjectTaskProposalViaBridge(page, projectId, objec
     lastStatus = await page.locator(SELECTORS.projectPage)
       .getAttribute('data-builder-project-status')
       .catch(() => null);
-    if (['ready', 'submitting', 'answering', 'generating', 'draft_ready', 'checking', 'saving'].includes(lastStatus)) return;
+    if (['ready', 'submitting', 'answering', 'generating', 'draft_ready', 'checking', 'saving'].includes(lastStatus)) {
+      const taskAddressId = await page.evaluate(async (request) => {
+        const workbench = await globalThis.window?.clawfabricBuilder?.agentWorkbench?.read?.({
+          agent_id: request.agentId,
+          after_cursor: null,
+          limit: 80,
+        });
+        return workbench?.stream?.items
+          ?.flatMap((item) => item?.actions ?? [])
+          ?.find((action) => action?.proposal_id === request.proposalId)
+          ?.task_address_id ?? null;
+      }, { agentId: DEFAULT_BUILDER_AGENT_ID, proposalId: proposalIdentity.proposal_id });
+      if (!/^builder-task-address:[0-9a-f-]{36}$/u.test(taskAddressId ?? '')) {
+        fail('deepseek_agent_history_materialized_task_missing');
+      }
+      return taskAddressId;
+    }
     await page.waitForTimeout(250);
   }
   fail('deepseek_agent_history_existing_task_open_failed', Object.freeze({ project_status: lastStatus }));
@@ -559,11 +868,17 @@ async function waitForAutoStartedMaterializedAgentTask(
   const startedAt = nodePerformance.now();
   const minimumCandidateCount = options.minimumCandidateCount ?? 1;
   const minimumCheckPassedCount = options.minimumCheckPassedCount ?? 1;
+  const expectedTaskAddressId = options.taskAddressId ?? null;
   const autoStartDeadline = Date.now() + 60_000;
   let autoStartObserved = false;
   let submittedMessageMs = null;
   while (Date.now() < autoStartDeadline) {
-    const stream = await readSanitizedTaskStreamEvidence(page, projectId).catch(() => null);
+    const stream = await readSanitizedTaskStreamEvidence(
+      page,
+      projectId,
+      'canary_read_evidence_failed',
+      expectedTaskAddressId,
+    ).catch(() => null);
     const hasSubmittedIdea = stream?.conversation?.items?.some((item) => (
       item?.item_kind === 'user_message'
       && item?.message_kind === 'submitted'
@@ -585,33 +900,64 @@ async function waitForAutoStartedMaterializedAgentTask(
       .waitFor({ state: 'visible', timeout: 30_000 });
     await approveCurrentProjectWriteIfRequested(page);
   }
-  const liveMarkdownObserved = await page.locator('[data-builder-live-output="true"] [data-builder-conversation-markdown="true"]')
-    .first()
-    .waitFor({ state: 'visible', timeout: 60_000 })
-    .then(() => true)
-    .catch(() => false);
-  const firstLiveMarkdownMs = liveMarkdownObserved
-    ? Math.round(nodePerformance.now() - startedAt)
-    : null;
-  const deadline = Date.now() + 180_000;
+  let liveMarkdownObserved = false;
+  let firstLiveMarkdownMs = null;
+  const deadline = Date.now() + 240_000;
   let terminalMs = null;
+  let latestCounts = null;
   while (Date.now() < deadline) {
-    const stream = await readSanitizedTaskStreamEvidence(page, projectId).catch(() => null);
+    if (!liveMarkdownObserved && await optionalVisible(page,
+      '[data-builder-live-output="true"] [data-builder-conversation-markdown="true"]')) {
+      liveMarkdownObserved = true;
+      firstLiveMarkdownMs = Math.round(nodePerformance.now() - startedAt);
+    }
+    const stream = await readSanitizedTaskStreamEvidence(
+      page,
+      projectId,
+      'canary_read_evidence_failed',
+      expectedTaskAddressId,
+    ).catch(() => null);
     const counts = stream?.conversation?.item_facts?.counts ?? null;
+    if (counts !== null) latestCounts = counts;
     const terminal = stream?.conversation?.recorded_active_turn_id === null
       && counts?.run_completed_count >= 1
       && counts?.turn_completed_count >= 1;
     if (terminal && terminalMs === null) {
       terminalMs = Math.round(nodePerformance.now() - startedAt);
     }
+    const unsavedDraftVisible = await optionalVisible(page, SELECTORS.unsavedDraft);
+    const saveVersionVisible = await optionalVisible(page, SELECTORS.saveVersion);
+    const projectStatus = await page.locator(SELECTORS.projectPage)
+      .getAttribute('data-builder-project-status')
+      .catch(() => null);
+    const uiSaveCheckpoint = projectStatus === 'draft_ready'
+      && unsavedDraftVisible
+      && saveVersionVisible
+      && counts?.programming_runtime_tool_activity_count >= 1
+      && counts?.programming_runtime_check_passed_count >= minimumCheckPassedCount;
+    if (projectStatus === 'generation_failed' || projectStatus === 'submit_failed') {
+      fail('deepseek_agent_history_coding_failed', await diagnostic(page, 'coding_failed', projectId));
+    }
     if (
       terminal
       && counts?.candidate_ready_count >= minimumCandidateCount
       && counts?.programming_runtime_tool_activity_count >= 1
       && counts?.programming_runtime_check_passed_count >= minimumCheckPassedCount
-      && await optionalVisible(page, SELECTORS.unsavedDraft)
+      && unsavedDraftVisible
     ) return Object.freeze({
       counts,
+      completion_evidence: 'task_stream',
+      live_markdown_observed: liveMarkdownObserved,
+      timing: Object.freeze({
+        check_ready_ms: Math.round(nodePerformance.now() - startedAt),
+        first_live_markdown_ms: firstLiveMarkdownMs,
+        submitted_message_ms: submittedMessageMs,
+        terminal_ms: terminalMs,
+      }),
+    });
+    if (uiSaveCheckpoint) return Object.freeze({
+      counts: latestCounts,
+      completion_evidence: 'ui_save_checkpoint',
       live_markdown_observed: liveMarkdownObserved,
       timing: Object.freeze({
         check_ready_ms: Math.round(nodePerformance.now() - startedAt),
@@ -638,11 +984,11 @@ async function askContinueQuestion(page, projectId) {
       contains_chinese: /[\u3400-\u9fff]/u.test(text),
     }));
   }
-  const evidence = await readSanitizedTaskStreamEvidence(page, projectId);
+  const evidence = await readSanitizedTaskStreamEvidence(page, projectId).catch(() => null);
   return Object.freeze({
     answer_contains_chinese: /[\u3400-\u9fff]/u.test(text),
     answer_grounded: true,
-    item_count_after_continue: evidence.conversation?.item_count ?? null,
+    item_count_after_continue: evidence?.conversation?.item_count ?? null,
   });
 }
 
@@ -657,9 +1003,66 @@ function removeGuardedRoot(root) {
 
 async function diagnostic(page, stage, projectId = null) {
   let counts = null;
+  let taskStreamSanitizerFailure = null;
+  let taskStreamProbe = null;
   if (projectId !== null) {
-    counts = (await readSanitizedTaskStreamEvidence(page, projectId).catch(() => null))
-      ?.conversation?.item_facts?.counts ?? null;
+    try {
+      counts = (await readSanitizedTaskStreamEvidence(page, projectId))
+        ?.conversation?.item_facts?.counts ?? null;
+    } catch (error) {
+      taskStreamSanitizerFailure = Object.freeze({
+        code: typeof error?.code === 'string' ? error.code : null,
+        diagnostic: error?.diagnostic ?? null,
+      });
+    }
+    taskStreamProbe = await page.evaluate(async (request) => {
+      try {
+        const root = globalThis.window?.clawfabricBuilder;
+        const tree = await root?.agentProjectTree?.read?.({ agent_id: request.agentId });
+        const project = tree?.projects?.find((candidate) => candidate?.project_id === request.projectId);
+        const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
+        const ordered = [...tasks].sort((left, right) => (
+          (right?.latest_activity_at_ms ?? 0) - (left?.latest_activity_at_ms ?? 0)
+        ));
+        const selected = ordered[0] ?? null;
+        if (typeof selected?.task_address_id !== 'string') return { phase: 'task_address' };
+        const task_probes = await Promise.all(ordered.slice(0, 8).map(async (task) => {
+          try {
+            const candidateStream = await root?.taskStream?.read?.({
+              project_id: request.projectId,
+              task_address_id: task.task_address_id,
+            });
+            return {
+              task_address_id: task.task_address_id,
+              task_status: task.status ?? null,
+              latest_activity_at_ms: task.latest_activity_at_ms ?? null,
+              conversation_present: candidateStream?.conversation !== null,
+              counts: candidateStream?.conversation?.item_facts?.counts ?? null,
+            };
+          } catch (error) {
+            return {
+              task_address_id: task.task_address_id,
+              task_status: task.status ?? null,
+              latest_activity_at_ms: task.latest_activity_at_ms ?? null,
+              error_code: typeof error?.code === 'string' ? error.code : null,
+            };
+          }
+        }));
+        const stream = await root?.taskStream?.read?.({ project_id: request.projectId, task_address_id: selected.task_address_id });
+        return {
+          phase: 'ready',
+          task_address_id: selected.task_address_id,
+          task_status: selected.status ?? null,
+          stream_status: stream?.status ?? null,
+          stream_version: stream?.stream_version ?? null,
+          count_keys: Object.keys(stream?.conversation?.item_facts?.counts ?? {}).sort(),
+          counts: stream?.conversation?.item_facts?.counts ?? null,
+          task_probes,
+        };
+      } catch (error) {
+        return { phase: 'task_stream', code: typeof error?.code === 'string' ? error.code : null };
+      }
+    }, { agentId: DEFAULT_BUILDER_AGENT_ID, projectId }).catch(() => ({ phase: 'probe' }));
   }
   return Object.freeze({
     stage,
@@ -670,6 +1073,8 @@ async function diagnostic(page, stage, projectId = null) {
     project_status: await page.locator(SELECTORS.projectPage)
       .getAttribute('data-builder-project-status').catch(() => null),
     task_stream_counts: counts,
+    task_stream_sanitizer_failure: taskStreamSanitizerFailure,
+    task_stream_probe: taskStreamProbe,
   });
 }
 
@@ -686,6 +1091,7 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
   let projectId = null;
   let profileClone = null;
   let rendererPerformance = null;
+  let mainBeforeRestart = null;
   const startedAt = nodePerformance.now();
   try {
     root = captureGuardedUserDataRoot(rawUserDataPath, fs, os);
@@ -702,8 +1108,9 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
       executablePath: packagedInput.executable_path,
       env: launchEnvironment,
     });
-    const page = await app.firstWindow();
+    let page = await app.firstWindow();
     await page.locator(SELECTORS.agentRosterItem).waitFor({ state: 'visible', timeout: 30_000 });
+    const windowEvidence = await assertNativeWindowMaximizeRestore(page, app);
     const rendererBaseline = await readRendererPerformanceTrace(page);
     stage = 'existing_history_read';
     const existingHistory = await readExistingWorkspaceHistory(page);
@@ -718,10 +1125,35 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
       }),
     );
     const rendererAfterExistingTask = await readRendererPerformanceTrace(page);
+    let rendererFirstTaskBaseline = rendererAfterExistingTask;
+    let rendererPlanBeforeRestart = null;
     stage = 'agent_open';
     await openAgentWorkbench(page);
-    stage = 'agent_task_proposal';
-    await createAgentTaskProposalViaBridge(page, AGENT_BUILD_IDEA);
+    stage = 'agent_plan';
+    const agentPlan = await createAgentPlanTaskViaUi(page,
+      typeof options.onPlanReady === 'function' ? (currentPage) => options.onPlanReady(currentPage, app) : null, {
+      stability: options.stability === true,
+      planInstruction: options.planInstruction,
+      onCancelled: typeof options.onCancelled === 'function' ? options.onCancelled : null,
+      probeActiveInteractions: options.interactionChecks === true
+        ? (currentPage) => probeActiveAgentInteractions(currentPage, existingHistory) : null,
+      restart: async () => {
+        rendererPlanBeforeRestart = summarizeRendererPerformanceWindow(
+          rendererAfterExistingTask, await readRendererPerformanceTrace(page),
+        );
+        await app.close();
+        mainBeforeRestart = summarizeMainPerformance(readMainPerformanceTrace(root.path));
+        app = await (options.electron ?? electron).launch({
+          args: [], executablePath: packagedInput.executable_path, env: launchEnvironment,
+        });
+        page = await app.firstWindow();
+        await page.locator(SELECTORS.agentRosterItem).waitFor({ state: 'visible', timeout: 30_000 });
+        rendererFirstTaskBaseline = await readRendererPerformanceTrace(page);
+        await openAgentWorkbench(page);
+        return page;
+      },
+    });
+    const firstAgentTaskAddressId = agentPlan.task_address_id;
     stage = 'project_identity';
     const projectIdentity = await waitForCurrentProjectId(page);
     projectId = projectIdentity.project_id;
@@ -729,31 +1161,49 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
     const build = await waitForAutoStartedMaterializedAgentTask(
       page,
       projectId,
-      AGENT_BUILD_IDEA,
+      agentPlan.objective,
+      { taskAddressId: firstAgentTaskAddressId },
     );
     if (await writeApprovalWasObserved(page)) {
       fail('deepseek_agent_history_new_project_reprompted_for_write');
     }
     const counts = build.counts;
+    if (options.stability === true && !fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8').includes('Plan revision marker')) {
+      fail('deepseek_agent_plan_revision_not_implemented');
+    }
     stage = 'continue_existing_task';
     const continuation = await askContinueQuestion(page, projectId);
+    if (typeof options.onFirstDraft === 'function') {
+      stage = 'preview_first_draft';
+      await options.onFirstDraft(page, app);
+    }
     stage = 'save_first_agent_task';
     await clickSaveVersionViaUi(page);
     await page.locator(SELECTORS.versionSavedActivity)
       .waitFor({ state: 'visible', timeout: 30_000 });
     await page.locator(SELECTORS.unsavedDraft)
       .waitFor({ state: 'hidden', timeout: 30_000 });
+    if (typeof options.onFirstSaved === 'function') await options.onFirstSaved(page, projectRoot, app);
     const rendererAfterFirstAgentTask = await readRendererPerformanceTrace(page);
     stage = 'agent_existing_project_open';
     await openAgentWorkbench(page);
     stage = 'agent_existing_project_task_proposal';
     await installWriteApprovalObserver(page);
-    await createExistingProjectTaskProposalViaBridge(page, projectId, EXISTING_PROJECT_UPDATE);
+    const secondAgentTaskAddressId = await createExistingProjectTaskProposalViaBridge(
+      page,
+      projectId,
+      options.updateInstruction ?? EXISTING_PROJECT_UPDATE,
+    );
+    if (typeof options.onSecondTaskStarted === 'function') {
+      stage = 'preview_second_task_started';
+      await options.onSecondTaskStarted(page, app);
+    }
     stage = 'agent_existing_project_full_flow';
     const existingProjectBuild = await waitForAutoStartedMaterializedAgentTask(
       page,
       projectId,
-      EXISTING_PROJECT_UPDATE,
+      options.updateInstruction ?? EXISTING_PROJECT_UPDATE,
+      { taskAddressId: secondAgentTaskAddressId },
     );
     if (await writeApprovalWasObserved(page)) {
       fail('deepseek_agent_history_existing_project_reprompted_for_write');
@@ -762,14 +1212,24 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
     if (!updatedIndex.includes('Second Agent Task') || !updatedIndex.includes('Agent History Flow')) {
       fail('deepseek_agent_history_existing_project_update_failed');
     }
+    if (typeof options.onSecondDraft === 'function') {
+      stage = 'preview_second_draft';
+      await options.onSecondDraft(page, app);
+    }
+    stage = 'save_second_agent_task';
+    await clickSaveVersionViaUi(page);
+    await page.locator(SELECTORS.versionSavedActivity).waitFor({ state: 'visible', timeout: 30_000 });
+    await page.locator(SELECTORS.unsavedDraft).waitFor({ state: 'hidden', timeout: 30_000 });
+    if (typeof options.onSaved === 'function') await options.onSaved(page, app);
     const rendererAfterSecondAgentTask = await readRendererPerformanceTrace(page);
     rendererPerformance = Object.freeze({
+      agent_plan_before_restart: rendererPlanBeforeRestart,
       existing_task_continuation: summarizeRendererPerformanceWindow(
         rendererBaseline,
         rendererAfterExistingTask,
       ),
       first_agent_task: summarizeRendererPerformanceWindow(
-        rendererAfterExistingTask,
+        rendererFirstTaskBaseline,
         rendererAfterFirstAgentTask,
       ),
       second_agent_task: summarizeRendererPerformanceWindow(
@@ -791,12 +1251,16 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
       };
     }, DEFAULT_BUILDER_AGENT_ID);
     if (
-      finalTree.project_count < existingHistory.project_count + 1
-      || finalTree.task_count < existingHistory.task_count + 2
+      finalTree.project_count !== existingHistory.project_count + 1
+      || finalTree.task_count !== existingHistory.task_count + 2
     ) fail('deepseek_agent_history_final_tree_failed', finalTree);
     result = Object.freeze({
       result_version: RESULT_VERSION,
       agent_entry_used: true,
+      agent_plan: agentPlan,
+      agent_plan_approved_before_project_creation: true,
+      agent_plan_dispatched_exactly_one_task: true,
+      agent_plan_full_markdown_visible: true,
       agent_history_cloned_from_saved_profile: true,
       composer_reenabled_after_completion: true,
       continue_existing_task_answer_grounded: continuation.answer_grounded,
@@ -816,13 +1280,17 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
       project_id: projectId,
       performance: Object.freeze({
         renderer: rendererPerformance,
+        main_before_restart: mainBeforeRestart,
       }),
       live_markdown_observed: build.live_markdown_observed,
       new_project_write_reprompt_observed: false,
+      native_window: windowEvidence,
       real_coding_tool_activity_observed: true,
       second_agent_task_live_markdown_observed: existingProjectBuild.live_markdown_observed,
       second_agent_task_timing: existingProjectBuild.timing,
+      second_agent_task_stream_counts: existingProjectBuild.counts,
       second_agent_task_write_reprompt_observed: false,
+      both_agent_tasks_saved_via_ui: true,
       task_stream_counts: counts,
       total_duration_ms: Math.round(nodePerformance.now() - startedAt),
       workspace_gate: Object.freeze({
@@ -835,6 +1303,9 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
       }),
     });
   } catch (error) {
+    if (typeof options.onFailure === 'function' && app !== null) {
+      try { await options.onFailure((await app.windows())[0], stage, root === null ? null : path.join(root.path, 'project-root')); } catch { /* retain primary failure */ }
+    }
     primaryError = error instanceof DeepSeekPackagedAgentHistoryE2ECanaryError
       ? error
       : new DeepSeekPackagedAgentHistoryE2ECanaryError(
@@ -860,6 +1331,25 @@ async function runDeepSeekPackagedAgentHistoryE2ECanary(rawInput, options = {}) 
   }
   try { if (app !== null) await app.close(); } catch {
     if (primaryError === null) primaryError = new DeepSeekPackagedAgentHistoryE2ECanaryError('deepseek_agent_history_cleanup_failed');
+  }
+  if (primaryError !== null && root !== null) {
+    try {
+      primaryError.diagnostic = Object.freeze({
+        ...(primaryError.diagnostic ?? {}),
+        agent_terminals: readAgentConversationTerminalDiagnostics(root.path),
+        generation_debug: fs.existsSync(path.join(root.path, 'builder-canary-generation-debug.jsonl'))
+          ? fs.readFileSync(path.join(root.path, 'builder-canary-generation-debug.jsonl'), 'utf8').trim()
+            .split(/\r?\n/u).filter(Boolean).slice(-12).map((line) => {
+              const item = JSON.parse(line);
+              return { phase: item.phase, code: item.code, runtime_code: item.runtime_code,
+                runtime_cause_code: item.runtime_cause_code };
+            }) : [],
+        harness_start: readMainPerformanceTrace(root.path).metrics.filter((metric) => metric.name.startsWith('main.harness_start.')),
+        plan_validation: readMainPerformanceTrace(root.path).metrics.filter((metric) => metric.name.startsWith('main.agent_plan.validation.')),
+      });
+    } catch {
+      // The original failure remains authoritative when diagnostic storage cannot be read.
+    }
   }
   if (primaryError === null && result !== null && root !== null) {
     try {

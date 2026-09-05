@@ -53,3 +53,18 @@ test('fails closed for an absent or cross-Agent Task Address', () => {
     BuilderSessionTaskTargetServiceError,
   );
 });
+
+test('fails closed when an existing Task Address points at project-root conversation history', () => {
+  assert.throws(
+    () => service(() => ({
+      status: 'ready',
+      task_address: { task_address: {
+        project_id: PROJECT_ID,
+        task_address_id: TASK_ID,
+        agent_id: AGENT_ID,
+        conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174200',
+      } },
+    })).resolve_target({ project_id: PROJECT_ID, task_address_id: TASK_ID }),
+    BuilderSessionTaskTargetServiceError,
+  );
+});

@@ -783,6 +783,7 @@ export function sanitizeBuilderCheckpointRestoreGenerationDraft(
 export async function sanitizeBuilderGenerationAnswer(
   value: unknown,
   expectedRequest: BuilderGenerationRequest,
+  responseMode: 'answer' | 'plan' = 'answer',
 ): Promise<BuilderGenerationAnswer> {
   try {
     const request = await sanitizeBuilderGenerationRequest(expectedRequest);
@@ -815,7 +816,7 @@ export async function sanitizeBuilderGenerationAnswer(
       result_kind: 'explanation',
       title: safeDisplayText(source.title, 80, 'invalid_generated_answer'),
       summary: safeDisplayText(source.summary, 400, 'invalid_generated_answer'),
-      explanation: safeDisplayText(source.explanation, 4000, 'invalid_generated_answer'),
+      explanation: safeDisplayText(source.explanation, responseMode === 'plan' ? 12_000 : 4000, 'invalid_generated_answer'),
       project_id: projectId,
       existing_project_id: existingProjectId,
       admissions: {

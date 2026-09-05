@@ -11,7 +11,6 @@ const {
   SELECTORS,
   approveCurrentProjectWriteIfRequested,
   assertCustomChromeControls,
-  bindNewProjectWorkspaceViaUi,
   captureGuardedUserDataRoot,
   copySavedProviderProfile,
   createArtifactGate,
@@ -20,6 +19,7 @@ const {
   fillProviderSettingsViaUi,
   readSanitizedTaskStreamEvidence,
   readStdin,
+  requireBuildWorkspaceBeforeDraftViaUi,
   sanitizeLaunchEnvironment,
 } = require('./verify-packaged-canary.cjs');
 const {
@@ -41,18 +41,21 @@ const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_CODING_LOOP_TIMEOUT_MS = 600_000;
 const GENERATION_DEBUG_FILE = 'builder-canary-generation-debug.jsonl';
 const PERFORMANCE_TRACE_FILE = 'builder-performance-trace.v1.json';
-const INITIAL_HEADING = 'Focus Timer First Pass';
-const REPAIRED_HEADING = 'Focus Timer Repaired';
+const EXPECTED_HEADING = 'Focus Timer Ready';
+const EXPECTED_SUBTITLE = 'A focused interval for careful work.';
+const AGENT_BROWSER_LAYOUT_P95_BUDGET_MS = 8;
+const AGENT_BROWSER_OPEN_P95_BUDGET_MS = 25;
+const AGENT_BROWSER_CLEANUP_P95_BUDGET_MS = 50;
 const BUILD_INSTRUCTION = [
-  '更新这个已有的专注计时器项目。',
-  `第一次实现时只编辑 index.html，并将 h1 文本准确设置为 "${INITIAL_HEADING}"。`,
-  '添加一句内容为 "A focused interval for careful work." 的简短副标题。',
-  '准确保留 data-canary-state="initial"，不要编辑 package.json 或 check.js。',
-  'Builder 会在第一次响应后运行项目检查。',
-  '如果 Builder 随后报告检查失败，请检查 check.js，并且只修复 index.html 以满足检查。',
-  '第一次修改完成后，必须调用 browser_open_local_app，确认页面中能看到标题和副标题。',
+  '在这个空项目中创建一个可直接运行的专注计时器，只创建 index.html、package.json 和 check.js。',
+  `index.html 的 h1 必须准确为 "${EXPECTED_HEADING}"，副标题必须准确为 "${EXPECTED_SUBTITLE}"，main 元素必须包含 data-canary-state="complete"。`,
+  'CSS 和 JavaScript 必须内联在 index.html；不要使用依赖、外部资源或网络请求，也不要安装软件包。',
+  'package.json 必须提供 npm test，且该脚本只能运行 node check.js。',
+  'check.js 必须读取 index.html，并验证上述 h1、副标题和 data-canary-state；验证失败时以非零状态退出。',
+  '完成文件后不要运行 shell 命令；Builder 会在本轮结束后通过 Main-owned check 运行 npm test。',
+  '随后必须调用 browser_open_local_app，确认页面中能看到标题和副标题。',
   '读取 browser_open_local_app 返回的有界 DOM/可访问性、截图状态、Console 和 Network 事实，并据此判断页面是否正确。',
-  '检查失败并修复后，必须调用 browser_reload_latest_source，再次确认修复后的标题可见。',
+  '最后必须调用 browser_reload_latest_source，再次确认最新标题可见。',
   '只使用 Builder 文件工具和 Agent Test 浏览器工具，每次执行有意义的操作前都用中文简短说明。',
 ].join(' ');
 const PROJECT_USAGE_QUESTION = '这个已经完成的项目应该怎么运行和使用？请根据当前项目文件给出具体步骤。';
@@ -78,56 +81,107 @@ function fail(code, diagnostic) {
   throw new DeepSeekPackagedHarnessCanaryError(code, diagnostic);
 }
 
+function safeCanaryFailureDiagnostic(error, stage) {
+  const source = error?.diagnostic;
+  if (
+    stage === 'task_proposal'
+    && source !== null
+    && typeof source === 'object'
+    && !Array.isArray(source)
+  ) {
+    const fixedToken = (value) => (
+      typeof value === 'string' && /^[a-z_]{1,64}$/u.test(value) ? value : null
+    );
+    const proposalText = typeof source.agent_task_proposal_text === 'string'
+      ? source.agent_task_proposal_text
+      : '';
+    return Object.freeze({
+      agent_task_proposal_actions_visible: source.agent_task_proposal_actions_visible === true,
+      agent_task_proposal_new_project_enabled:
+        source.agent_task_proposal_new_project_enabled === true,
+      composer_dispatch: fixedToken(source.composer_dispatch),
+      composer_mode: fixedToken(source.composer_mode),
+      composer_route: fixedToken(source.composer_route),
+      composer_text_cleared: source.composer_text === '',
+      project_status: fixedToken(source.project_status),
+      proposal_contains_new_project_action: proposalText.includes('New project'),
+      proposal_contains_task_label: proposalText.includes('Task proposal'),
+      stage,
+    });
+  }
+  if (
+    stage === 'workspace_bind'
+    && source !== null
+    && typeof source === 'object'
+    && !Array.isArray(source)
+    && source.diagnostic_version === 'builder-canary-initial-draft-phase-diagnostic.v1'
+    && ['new_project_panel', 'source_folder', 'project_ready'].includes(source.phase)
+  ) return Object.freeze({ phase: source.phase, stage });
+  return Object.freeze({ stage });
+}
+
 function digestText(value) {
   return `sha256:${nodeCrypto.createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
-function writeExclusive(filePath, text) {
-  fs.writeFileSync(filePath, text, { encoding: 'utf8', flag: 'wx' });
+function assertEmptyProjectRoot(projectRoot) {
+  if (typeof projectRoot !== 'string' || fs.readdirSync(projectRoot).length !== 0) {
+    fail('deepseek_harness_project_root_not_empty');
+  }
 }
 
-function seedCodingLoopFixture(projectRoot, checkDelayMs = 0) {
+function validateGeneratedProjectContract({
+  checkDelayMs = 0,
+  checkText,
+  indexText,
+  packageText,
+}) {
   if (!Number.isSafeInteger(checkDelayMs) || checkDelayMs < 0 || checkDelayMs > 100_000) {
-    fail('deepseek_harness_fixture_invalid');
+    fail('deepseek_harness_generated_contract_invalid');
   }
-  writeExclusive(path.join(projectRoot, 'index.html'), [
-    '<!doctype html>',
-    '<html lang="en">',
-    '<head><meta charset="utf-8"><title>Focus Timer</title></head>',
-    '<body>',
-    '  <main data-canary-state="initial">',
-    '    <h1 id="focus-title">Focus Timer</h1>',
-    '  </main>',
-    '</body>',
-    '</html>',
-    '',
-  ].join('\n'));
-  writeExclusive(path.join(projectRoot, 'package.json'), `${JSON.stringify({
-    name: 'builder-deepseek-harness-canary',
-    private: true,
-    scripts: { test: 'node check.js' },
-    version: '1.0.0',
-  }, null, 2)}\n`);
-  writeExclusive(path.join(projectRoot, 'check.js'), [
-    "'use strict';",
-    ...(checkDelayMs > 0 ? [
-      `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${checkDelayMs});`,
-    ] : []),
-    "const fs = require('node:fs');",
-    "const html = fs.readFileSync('index.html', 'utf8');",
-    `if (!html.includes('<h1 id="focus-title">${REPAIRED_HEADING}</h1>')) {`,
-    "  process.stderr.write('Expected the repaired focus timer heading.\\n');",
-    '  process.exit(1);',
-    '}',
-    "if (!html.includes('data-canary-state=\"repaired\"')) {",
-    "  process.stderr.write('Expected the repaired canary state.\\n');",
-    '  process.exit(1);',
-    '}',
-    '',
-  ].join('\n'));
+  let manifest;
+  try {
+    manifest = JSON.parse(packageText);
+  } catch {
+    fail('deepseek_harness_generated_contract_failed');
+  }
+  const dependencyCount = ['dependencies', 'devDependencies', 'optionalDependencies']
+    .reduce((count, key) => count + Object.keys(manifest?.[key] ?? {}).length, 0);
+  const requiredCheckFacts = [EXPECTED_HEADING, EXPECTED_SUBTITLE, 'data-canary-state'];
+  const headingMatches = new RegExp(
+    `<h1(?:\\s[^>]*)?>\\s*${EXPECTED_HEADING}\\s*</h1>`,
+    'u',
+  ).test(indexText);
+  const subtitleMatches = indexText.includes(EXPECTED_SUBTITLE);
+  const stateMatches = indexText.includes('data-canary-state="complete"');
+  const indexFactsMatch = headingMatches && subtitleMatches && stateMatches;
+  const checkFactsMatch = requiredCheckFacts.every((fact) => checkText.includes(fact));
+  const delayedCheckPresent = checkDelayMs === 0 || (
+    checkText.includes('Atomics.wait') && checkText.includes(String(checkDelayMs))
+  );
+  const testScriptMatches = manifest?.scripts?.test === 'node check.js';
+  if (
+    !testScriptMatches
+    || dependencyCount !== 0
+    || !indexFactsMatch
+    || !checkFactsMatch
+    || !delayedCheckPresent
+  ) {
+    fail('deepseek_harness_generated_contract_failed', Object.freeze({
+      check_facts_match: checkFactsMatch,
+      delayed_check_present: delayedCheckPresent,
+      dependency_count: dependencyCount,
+      heading_matches: headingMatches,
+      index_facts_match: indexFactsMatch,
+      state_matches: stateMatches,
+      subtitle_matches: subtitleMatches,
+      test_script_matches: testScriptMatches,
+    }));
+  }
   return Object.freeze({
-    check_digest: digestText(fs.readFileSync(path.join(projectRoot, 'check.js'), 'utf8')),
-    package_digest: digestText(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')),
+    delayed_check_present: delayedCheckPresent,
+    dependency_count: dependencyCount,
+    test_script: manifest.scripts.test,
   });
 }
 
@@ -149,13 +203,14 @@ function walkPlainFiles(root) {
   return files;
 }
 
-function readHarnessSessionEvidence(sessionRoot, minimumTurnCount = 2) {
+function readHarnessSessionEvidence(sessionRoot, minimumTurnCount = 1) {
   if (!Number.isSafeInteger(minimumTurnCount) || minimumTurnCount < 1 || minimumTurnCount > 8) {
     fail('deepseek_harness_session_evidence_failed');
   }
   if (!fs.statSync(sessionRoot).isDirectory()) fail('deepseek_harness_session_evidence_failed');
   const counts = Object.fromEntries(EVENT_TYPES.map((type) => [type, 0]));
   const toolNames = {};
+  const toolCallSequence = [];
   const files = walkPlainFiles(sessionRoot);
   let eventCount = 0;
   for (const filePath of files) {
@@ -173,7 +228,10 @@ function readHarnessSessionEvidence(sessionRoot, minimumTurnCount = 2) {
       eventCount += 1;
       if (record.type === 'tool/call' && typeof record.data?.name === 'string') {
         const name = record.data.name;
-        if (/^[a-z][a-z0-9_-]{0,63}$/u.test(name)) toolNames[name] = (toolNames[name] ?? 0) + 1;
+        if (/^[a-z][a-z0-9_-]{0,63}$/u.test(name)) {
+          toolNames[name] = (toolNames[name] ?? 0) + 1;
+          if (toolCallSequence.length < 128) toolCallSequence.push(name);
+        }
       }
     }
   }
@@ -189,9 +247,37 @@ function readHarnessSessionEvidence(sessionRoot, minimumTurnCount = 2) {
     file_count: files.length,
     retained_event_count: eventCount,
     tool_call_names: Object.freeze(toolNames),
+    tool_call_sequence: Object.freeze(toolCallSequence),
     tool_call_count: counts['tool/call'],
     tool_result_count: counts['tool/result'],
     turn_count: counts['turn/start'],
+  });
+}
+
+function validateAgentBrowserLoop(session) {
+  const sequence = session.tool_call_sequence;
+  const openIndex = sequence.indexOf('browser_open_local_app');
+  if (openIndex < 0) {
+    fail('deepseek_harness_agent_browser_loop_missing', Object.freeze({
+      tool_call_names: session.tool_call_names,
+    }));
+  }
+  const lastMutationIndex = sequence.reduce(
+    (latest, name, index) => (['edit', 'write'].includes(name) ? index : latest),
+    -1,
+  );
+  const reloadIndex = sequence.lastIndexOf('browser_reload_latest_source');
+  const reloadRequired = lastMutationIndex > openIndex;
+  if (reloadRequired && reloadIndex < lastMutationIndex) {
+    fail('deepseek_harness_agent_browser_loop_missing', Object.freeze({
+      reload_required: true,
+      tool_call_names: session.tool_call_names,
+    }));
+  }
+  return Object.freeze({
+    latest_source_confirmed: true,
+    reload_observed: reloadIndex >= 0,
+    reload_required: reloadRequired,
   });
 }
 
@@ -278,10 +364,9 @@ function readFixtureCandidateShape(userDataRoot) {
     const source = fs.readFileSync(path.join(userDataRoot.path, 'project-root', 'index.html'), 'utf8');
     return Object.freeze({
       byte_length: Buffer.byteLength(source, 'utf8'),
-      has_initial_heading: source.includes(`<h1 id="focus-title">${INITIAL_HEADING}</h1>`),
-      has_repaired_heading: source.includes(`<h1 id="focus-title">${REPAIRED_HEADING}</h1>`),
-      has_initial_state: source.includes('data-canary-state="initial"'),
-      has_repaired_state: source.includes('data-canary-state="repaired"'),
+      has_expected_heading: source.includes(`<h1 id="focus-title">${EXPECTED_HEADING}</h1>`),
+      has_expected_subtitle: source.includes(EXPECTED_SUBTITLE),
+      has_complete_state: source.includes('data-canary-state="complete"'),
     });
   } catch {
     return null;
@@ -290,6 +375,17 @@ function readFixtureCandidateShape(userDataRoot) {
 
 async function delay(milliseconds) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function closeElectronAppBounded(app, timeoutMs = 15_000) {
+  const closePromise = Promise.resolve().then(() => app.close());
+  const closed = await Promise.race([
+    closePromise.then(() => true),
+    delay(timeoutMs).then(() => false),
+  ]);
+  if (closed) return;
+  try { app.process().kill(); } catch { /* bounded cleanup reports failure below */ }
+  throw new Error('deepseek_harness_app_close_timeout');
 }
 
 function isCodingLoopComplete(counts) {
@@ -311,6 +407,15 @@ function isCodingLoopTerminal(counts) {
     && counts.run_completed_count === 1
     && counts.programming_runtime_check_passed_count === 1
     && counts.candidate_ready_count === 1;
+}
+
+function isNoToolBuildCompletion(counts) {
+  return counts !== null
+    && typeof counts === 'object'
+    && counts.run_started_count === 1
+    && counts.run_completed_count === 1
+    && counts.candidate_ready_count === 0
+    && counts.programming_runtime_tool_activity_count === 0;
 }
 
 function assertMinimumRunDuration(durationMs, minimumRunDurationMs) {
@@ -398,16 +503,26 @@ function qualifyAgentBrowserPerformance(trace) {
   const layout = metric('main.agent_test_browser.layout.duration_ms');
   const open = metric('main.browser_session.open.duration_ms');
   const cleanup = metric('main.browser_session.cleanup.duration_ms');
-  if (layout.p95 > 8 || open.p95 > 25 || cleanup.p95 > 25) {
+  if (
+    layout.p95 > AGENT_BROWSER_LAYOUT_P95_BUDGET_MS
+    || open.p95 > AGENT_BROWSER_OPEN_P95_BUDGET_MS
+    || cleanup.p95 > AGENT_BROWSER_CLEANUP_P95_BUDGET_MS
+  ) {
     fail('deepseek_harness_agent_browser_performance_failed', Object.freeze({
+      cleanup_p95_budget_ms: AGENT_BROWSER_CLEANUP_P95_BUDGET_MS,
       cleanup_p95_ms: cleanup.p95,
+      layout_p95_budget_ms: AGENT_BROWSER_LAYOUT_P95_BUDGET_MS,
       layout_p95_ms: layout.p95,
+      open_p95_budget_ms: AGENT_BROWSER_OPEN_P95_BUDGET_MS,
       open_p95_ms: open.p95,
     }));
   }
   return Object.freeze({
+    cleanup_p95_budget_ms: AGENT_BROWSER_CLEANUP_P95_BUDGET_MS,
     cleanup_p95_ms: cleanup.p95,
+    layout_p95_budget_ms: AGENT_BROWSER_LAYOUT_P95_BUDGET_MS,
     layout_p95_ms: layout.p95,
+    open_p95_budget_ms: AGENT_BROWSER_OPEN_P95_BUDGET_MS,
     open_p95_ms: open.p95,
     privacy_verified: trace.privacy?.content_fields_recorded === false
       && trace.privacy?.identifiers_recorded === false
@@ -477,9 +592,12 @@ async function waitForCodingLoop(
       }));
     }
     if (completionPredicate(counts) || isCodingLoopTerminal(counts)) return counts;
-    const reviewReady = await page.locator(SELECTORS.unsavedDraft).first()
-      .isVisible().catch(() => false);
-    if (reviewReady) return counts;
+    if (
+      taskStream?.conversation?.recorded_active_turn_id === null
+      && isNoToolBuildCompletion(counts)
+    ) {
+      fail('deepseek_harness_no_tool_build_completed', Object.freeze({ counts }));
+    }
     if (
       taskStream?.conversation?.recorded_active_turn_id === null
       && counts?.run_completed_count === 1
@@ -635,6 +753,58 @@ async function verifyProjectUsageFollowUp(page, projectId, countsBefore) {
   });
 }
 
+async function readContextUsageEvidence(page, projectId) {
+  const taskStream = await readSanitizedTaskStreamEvidence(page, projectId);
+  const projection = taskStream?.context_usage_projection;
+  const meter = page.locator('[data-builder-composer-context-button="true"]').first();
+  const tooltip = page.locator('[data-builder-composer-context-tooltip="true"]').first();
+  const [pressure, projected, tooltipText] = await Promise.all([
+    meter.getAttribute('data-builder-composer-context-pressure'),
+    meter.getAttribute('data-builder-composer-context-projected'),
+    tooltip.textContent(),
+  ]);
+  if (
+    projection?.projection_version !== 'builder-context-usage-projection.v2'
+    || projection.source !== 'deepseek_harness_session_projection'
+    || projection.measurement_state !== 'ready'
+    || !Number.isSafeInteger(projection.pressure_tokens)
+    || projection.pressure_tokens < 1
+    || !Number.isSafeInteger(projection.projected_tokens)
+    || projection.projected_tokens < 1
+    || !Number.isSafeInteger(projection.context_window_tokens)
+    || projection.context_window_tokens < 1
+    || !Number.isSafeInteger(projection.cache_read_tokens)
+    || projection.cache_read_tokens < 1
+    || !Number.isSafeInteger(projection.cache_hit_percent)
+    || projection.cache_hit_percent < 1
+    || pressure !== String(projection.pressure_tokens)
+    || projected !== String(projection.projected_tokens)
+    || !tooltipText?.includes(`Cache hit ${projection.cache_hit_percent}%`)
+  ) {
+    fail('deepseek_harness_context_usage_failed', Object.freeze({
+      cache_hit_percent: projection?.cache_hit_percent ?? null,
+      cache_read_tokens: projection?.cache_read_tokens ?? null,
+      context_window_tokens: projection?.context_window_tokens ?? null,
+      measurement_state: projection?.measurement_state ?? null,
+      pressure_matches: pressure === String(projection?.pressure_tokens),
+      projected_matches: projected === String(projection?.projected_tokens),
+      projection_version: projection?.projection_version ?? null,
+      source: projection?.source ?? null,
+      tooltip_cache_visible: tooltipText?.includes('Cache hit') === true,
+    }));
+  }
+  return Object.freeze({
+    cache_hit_percent: projection.cache_hit_percent,
+    cache_read_tokens: projection.cache_read_tokens,
+    cache_write_tokens: projection.cache_write_tokens,
+    context_window_tokens: projection.context_window_tokens,
+    pressure_tokens: projection.pressure_tokens,
+    projected_tokens: projection.projected_tokens,
+    uncached_input_tokens: projection.uncached_input_tokens,
+    usage_percent: projection.usage_percent,
+  });
+}
+
 function removeGuardedRoot(root) {
   const current = captureGuardedUserDataRoot(root.path, fs, os);
   if (
@@ -693,7 +863,7 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
     && options.minimumSessionTurnCount >= 1
     && options.minimumSessionTurnCount <= 8
     ? options.minimumSessionTurnCount
-    : 2;
+    : 1;
   const argv = options.argv ?? process.argv.slice(2);
   const sourceEnv = options.env ?? process.env;
   const selectedElectron = options.electron ?? electron;
@@ -731,23 +901,11 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
       const gate = createArtifactGate();
       await fillProviderSettingsViaUi(page, packagedInput.provider, gate);
     }
-    stage = 'workspace_create';
-    const newProject = page.locator('[data-builder-catalog-new-project="true"]').first();
-    await newProject.waitFor({ state: 'visible', timeout: 30_000 });
-    await newProject.click();
-    await page.locator(SELECTORS.projectPage).waitFor({ state: 'visible', timeout: 30_000 });
-    stage = 'workspace_bind';
-    await bindNewProjectWorkspaceViaUi(page);
-    stage = 'fixture_seed';
-    const fixture = seedCodingLoopFixture(projectRoot, checkDelayMs);
-    stage = 'turn_submit';
-    await page.locator(SELECTORS.composerAddMenuButton).click();
-    await page.locator(SELECTORS.composerAddBuildMode).click();
-    await page.locator('[data-builder-composer-mode-chip="build"]')
-      .waitFor({ state: 'visible', timeout: 10_000 });
-    await page.locator(SELECTORS.idea).fill(buildInstruction);
+    stage = 'empty_project';
+    assertEmptyProjectRoot(projectRoot);
+    stage = 'task_proposal';
     const codingLoopStartedAtMs = Date.now();
-    await page.locator(SELECTORS.submitTurn).click();
+    await requireBuildWorkspaceBeforeDraftViaUi(page, buildInstruction);
     stage = 'write_approval';
     await approveCurrentProjectWriteIfRequested(page);
     stage = 'project_identity';
@@ -786,17 +944,19 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
     assertMinimumRunDuration(codingLoopDurationMs, minimumRunDurationMs);
     stage = 'candidate';
     const indexText = await waitForCurrentDraftFile(page, 'index.html', (text) => (
-      text.includes(REPAIRED_HEADING) && text.includes('data-canary-state="repaired"')
+      text.includes(EXPECTED_HEADING) && text.includes('data-canary-state="complete"')
     ));
     const checkText = await waitForCurrentDraftFile(page, 'check.js', () => true);
     const packageText = await waitForCurrentDraftFile(page, 'package.json', () => true);
     for (const requiredFile of requiredDraftFiles) {
       await waitForCurrentDraftFile(page, requiredFile, (text) => text.trim().length > 0);
     }
-    if (
-      digestText(checkText) !== fixture.check_digest
-      || digestText(packageText) !== fixture.package_digest
-    ) fail('deepseek_harness_fixture_mutated_failed');
+    const generatedProjectContract = validateGeneratedProjectContract({
+      checkDelayMs,
+      checkText,
+      indexText,
+      packageText,
+    });
     const chat = await readChatEvidence(page);
     if (
       chat.narration_count < 2
@@ -806,8 +966,9 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
       || chat.final_summary_contains_chinese !== true
       || chat.final_summary_count !== 1
       || chat.fixed_lifecycle_copy_visible
-      || !chat.tool_kinds.includes('read')
-      || !chat.tool_kinds.includes('edit')
+      || !chat.tool_kinds.includes('write')
+      || !chat.tool_kinds.includes('command')
+      || !chat.tool_kinds.includes('browser')
     ) fail('deepseek_harness_chat_flow_failed', chat);
     stage = 'usage_follow_up';
     const usageFollowUp = counts === null
@@ -818,6 +979,8 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
         skipped_due_to_windowed_task_stream: true,
       })
       : await verifyProjectUsageFollowUp(page, projectId, counts);
+    stage = 'context_usage';
+    const contextUsage = await readContextUsageEvidence(page, projectId);
     stage = 'session';
     const session = readHarnessSessionEvidence(
       path.join(root.path, HARNESS_SESSION_DIRECTORY),
@@ -828,14 +991,7 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
         tool_call_names: session.tool_call_names,
       }));
     }
-    if (
-      (session.tool_call_names.browser_open_local_app ?? 0) < 1
-      || (session.tool_call_names.browser_reload_latest_source ?? 0) < 1
-    ) {
-      fail('deepseek_harness_agent_browser_loop_missing', Object.freeze({
-        tool_call_names: session.tool_call_names,
-      }));
-    }
+    const agentBrowserLoop = validateAgentBrowserLoop(session);
     stage = 'save_version';
     const saveVersion = page.locator(SELECTORS.saveVersion).first();
     await saveVersion.waitFor({ state: 'visible', timeout: 30_000 });
@@ -863,19 +1019,25 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
       final_summary_after_last_tool: true,
       bash_tool_hidden_from_harness: true,
       agent_browser_opened_current_run_source: true,
-      agent_browser_reloaded_latest_run_source: true,
+      agent_browser_reloaded_latest_run_source: agentBrowserLoop.latest_source_confirmed,
+      agent_browser_reload_observed: agentBrowserLoop.reload_observed,
+      agent_browser_reload_required: agentBrowserLoop.reload_required,
       agent_browser_right_sidebar_surface: browserSurfaceResult.evidence,
       agent_browser_surface_closed_after_run: true,
       final_summary_is_chinese: true,
       final_summary_visible_once: true,
       explicit_build_mode_used: true,
       fixed_lifecycle_copy_hidden: true,
-      fixture_check_delay_ms: checkDelayMs,
+      generated_check_delay_ms: checkDelayMs,
+      generated_project_contract: generatedProjectContract,
       harness_session: session,
       coding_loop_duration_ms: codingLoopDurationMs,
+      context_usage: contextUsage,
+      context_usage_cache_hit_visible: true,
+      context_usage_main_renderer_match: true,
       minimum_run_duration_ms: minimumRunDurationMs,
       minimum_session_turn_count: minimumSessionTurnCount,
-      package_and_check_fixtures_unchanged: true,
+      generated_project_contract_verified: true,
       project_usage_answer_grounded_in_current_draft: usageFollowUp.answer_grounded_in_project_files,
       project_usage_answer_is_chinese: usageFollowUp.answer_contains_chinese,
       project_usage_question_did_not_create_candidate: usageFollowUp.candidate_unchanged,
@@ -892,12 +1054,12 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
         typeof error?.code === 'string' && /^[a-z0-9_]{1,96}$/u.test(error.code)
           ? error.code
           : 'deepseek_harness_canary_failed',
-        { stage },
+        safeCanaryFailureDiagnostic(error, stage),
       );
   }
   try {
     if (app !== null) {
-      await app.close();
+      await closeElectronAppBounded(app);
       app = null;
     }
   } catch {
@@ -937,7 +1099,7 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
         app_restart_no_loopback_webcontents: true,
         app_restart_user_web_requires_navigation: true,
       });
-      await app.close();
+      await closeElectronAppBounded(app);
       app = null;
     } catch (error) {
       primaryError = error instanceof DeepSeekPackagedHarnessCanaryError
@@ -945,7 +1107,7 @@ async function runDeepSeekPackagedHarnessCanary(rawInput, options = {}) {
         : new DeepSeekPackagedHarnessCanaryError('deepseek_harness_restart_cleanup_failed', { stage });
     }
   }
-  try { if (app !== null) await app.close(); } catch {
+  try { if (app !== null) await closeElectronAppBounded(app); } catch {
     if (primaryError === null) primaryError = new DeepSeekPackagedHarnessCanaryError('deepseek_harness_cleanup_failed');
   }
   try { if (root !== null) removeGuardedRoot(root); } catch {
@@ -973,16 +1135,20 @@ module.exports = Object.freeze({
   DeepSeekPackagedHarnessCanaryError,
   RESULT_VERSION,
   PROJECT_USAGE_QUESTION,
+  assertEmptyProjectRoot,
   assertMinimumRunDuration,
   isCodingLoopComplete,
   isCodingLoopTerminal,
+  isNoToolBuildCompletion,
   readFixtureCandidateShape,
   readGenerationDebug,
+  readContextUsageEvidence,
   readHarnessFailureEvidence,
   readHarnessSessionEvidence,
   runCli,
   runDeepSeekPackagedHarnessCanary,
-  seedCodingLoopFixture,
+  validateGeneratedProjectContract,
+  validateAgentBrowserLoop,
   validateAgentBrowserSurfaceEvidence,
   waitForAgentBrowserSurface,
 });

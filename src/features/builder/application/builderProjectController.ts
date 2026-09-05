@@ -98,6 +98,7 @@ const PLAN_PROPOSAL_READY_STATUSES = new Set<BuilderProjectControllerStatus>([
 ]);
 
 export type BuilderProjectControllerDependencies = Readonly<{
+  conversationScope?: 'project' | 'agent';
   generator: BuilderCodeGeneratorPort;
   workspace: BuilderProjectWorkspacePort;
   createPreview?: typeof createBuilderSourceTreePreview;
@@ -130,6 +131,7 @@ export type BuilderProjectController = Readonly<{
   generate(instruction: string): Promise<BuilderProjectControllerSnapshot>;
   generateApprovedPlan(request: BuilderApprovedPlanGenerationRequest): Promise<BuilderProjectControllerSnapshot>;
   retryGenerate(): Promise<BuilderProjectControllerSnapshot>;
+  resumeInterruptedRun(instruction: string, runId: string): Promise<BuilderProjectControllerSnapshot>;
   restoreDraft(draftId: string): Promise<BuilderProjectControllerSnapshot>;
   restoreRevisionAsDraft(
     projectId: string,
@@ -139,7 +141,7 @@ export type BuilderProjectController = Readonly<{
   inspectRevision(projectId: string, revisionReceiptDigest: string): Promise<BuilderProjectControllerSnapshot>;
   showCurrentRevision(): Promise<BuilderProjectControllerSnapshot>;
   rejectDraft(): Promise<BuilderProjectControllerSnapshot>;
-  cancel(): Promise<BuilderProjectControllerSnapshot>;
+  cancel(options?: Readonly<{ pause: true }>): Promise<BuilderProjectControllerSnapshot>;
   steer(message: string): Promise<boolean>;
   queueFollowup(message: string): Promise<BuilderQueuedFollowupResult | null>;
   save(): Promise<BuilderProjectControllerSnapshot>;
@@ -583,15 +585,17 @@ export function createBuilderProjectController(
   const listeners = new Set<() => void>();
   const unsubscribeStarted = dependencies.generator.subscribeStarted?.((event) => {
     const target = activeGeneration;
+    const projectlessRequest = target !== null && target.requestId === event.request_id
+      && target.projectId === null && event.project_id === null;
     if (
       disposed
       || target === null
       || (target.requestId !== null && target.requestId !== event.request_id)
       || (target.requestId === null && target.projectId !== event.project_id)
       || !current.busy
-      || current.inspectedRevision !== null
-      || (current.savedProject !== null && current.savedProject.target.project_id !== event.project_id)
-      || (current.savedProject === null && current.workingProjectId !== null && current.workingProjectId !== event.project_id)
+      || (!projectlessRequest && current.inspectedRevision !== null)
+      || (!projectlessRequest && current.savedProject !== null && current.savedProject.target.project_id !== event.project_id)
+      || (!projectlessRequest && current.savedProject === null && current.workingProjectId !== null && current.workingProjectId !== event.project_id)
     ) return;
     if (target.requestId === null) {
       activeGeneration = Object.freeze({
@@ -609,9 +613,9 @@ export function createBuilderProjectController(
       current.answer,
       current.inspectedRevision,
       current.retryableGeneration,
-      event.project_id,
+      projectlessRequest ? current.workingProjectId : event.project_id,
       current.workingProject,
-      event.project_id,
+      projectlessRequest ? current.conversationProjectId : event.project_id,
     ));
   });
 
@@ -946,10 +950,12 @@ export function createBuilderProjectController(
     queuedFollowup: BuilderQueuedFollowupReference | null = null,
     responseMode: 'answer' | 'plan' = 'answer',
   ): Promise<BuilderProjectControllerSnapshot> {
+    // Agent plans are projectless even when a project or draft is retained behind the Workbench.
+    const agentPlan = responseMode === 'plan';
     if (
       disposed
       || current.busy
-      || current.inspectedRevision !== null
+      || (!agentPlan && current.inspectedRevision !== null)
       || ![
         'new',
         'ready',
@@ -963,7 +969,10 @@ export function createBuilderProjectController(
     const retained = current.savedProject;
     const retainedDraft = current.draft;
     const retainedPreview = current.preview;
-    const targetProjectId = retainedDraft?.project_id
+    const retainedInspection = current.inspectedRevision;
+    const retainedConversationProjectId = current.conversationProjectId;
+    const projectless = agentPlan || dependencies.conversationScope === 'agent';
+    const targetProjectId = projectless ? null : retainedDraft?.project_id
       ?? retained?.target.project_id
       ?? current.workingProjectId
       ?? current.answer?.project_id
@@ -981,7 +990,7 @@ export function createBuilderProjectController(
         retainedPreview,
         null,
         retainedAnswer,
-        null,
+        retainedInspection,
         false,
         unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
         unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
@@ -992,7 +1001,7 @@ export function createBuilderProjectController(
         const request = await createBuilderGenerationRequest(
           instruction,
           targetProjectId,
-          retainedDraft === null ? selectedTaskAddressId : null,
+          !projectless && retainedDraft === null ? selectedTaskAddressId : null,
         );
         requestId = request.request_digest;
         activeGeneration = Object.freeze({
@@ -1001,8 +1010,8 @@ export function createBuilderProjectController(
           requestId,
         });
         const answered = await sanitizeBuilderGenerationAnswer(
-          retainedDraft === null
-            ? await (responseMode === 'plan'
+          agentPlan || retainedDraft === null
+            ? await (agentPlan
               ? dependencies.generator.answerPlan ?? dependencies.generator.answer
               : dependencies.generator.answer)(queuedFollowup === null
               ? request
@@ -1012,6 +1021,7 @@ export function createBuilderProjectController(
               instruction: request.instruction,
             }),
           request,
+          responseMode,
         );
         clearActiveGeneration(request.request_digest, operationEpoch);
         if (disposed || operationEpoch !== epoch) return current;
@@ -1024,11 +1034,11 @@ export function createBuilderProjectController(
           retainedPreview,
           null,
           answered,
-          null,
+          retainedInspection,
           false,
           unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
           unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
-          answered.project_id,
+          projectless ? retainedConversationProjectId : answered.project_id,
         ));
       } catch (error) {
         if (requestId !== null) clearActiveGeneration(requestId, operationEpoch);
@@ -1043,7 +1053,7 @@ export function createBuilderProjectController(
           retainedPreview,
           sanitizeTrustedBuilderGenerationDiagnostic(error),
           retainedAnswer,
-          null,
+          retainedInspection,
           false,
           unsavedWorkingProjectId(retained, retainedDraft, workspaceProjectId),
           unsavedWorkingProject(retained, retainedDraft, workspaceProjectId, current.workingProject),
@@ -1056,6 +1066,7 @@ export function createBuilderProjectController(
   async function submit(
     instruction: string,
     queuedFollowup: BuilderQueuedFollowupReference | null = null,
+    interruptedRunId: string | null = null,
   ): Promise<BuilderProjectControllerSnapshot> {
     if (
       disposed
@@ -1112,7 +1123,12 @@ export function createBuilderProjectController(
           projectId: targetProjectId,
           requestId,
         });
-        const result = retainedDraft === null
+        const result = interruptedRunId !== null && selectedTaskAddressId !== null
+          ? await dependencies.generator.resumeInterruptedRun!({
+            task_address_id: selectedTaskAddressId,
+            run_id: interruptedRunId,
+          })
+          : retainedDraft === null
           ? await dependencies.generator.submit(queuedFollowup === null
             ? request
             : { ...request, queued_followup: queuedFollowup })
@@ -1156,7 +1172,7 @@ export function createBuilderProjectController(
           retained,
           retainedDraft,
           retainedPreview,
-          submitFailureDiagnostic(error, retainedDraft === null ? request : null),
+          submitFailureDiagnostic(error, retainedDraft === null && interruptedRunId === null ? request : null),
           null,
           null,
           retryableGeneration !== null,
@@ -1889,7 +1905,7 @@ export function createBuilderProjectController(
     return run((operationEpoch) => withPreview('ready', retained, null, operationEpoch));
   }
 
-  async function cancel(): Promise<BuilderProjectControllerSnapshot> {
+  async function cancel(options?: Readonly<{ pause: true }>): Promise<BuilderProjectControllerSnapshot> {
     const target = activeGeneration;
     if (
       disposed
@@ -1898,7 +1914,8 @@ export function createBuilderProjectController(
     ) return current;
     try {
       const cancelled = sanitizeCancelResult(
-        await dependencies.generator.cancel({ request_id: target.requestId }),
+        await dependencies.generator.cancel({ request_id: target.requestId,
+          ...(options?.pause === true ? { pause: true as const } : {}) }),
         target.requestId,
       );
       if (!cancelled || disposed || activeGeneration !== target) return current;
@@ -2107,6 +2124,12 @@ export function createBuilderProjectController(
     generate,
     generateApprovedPlan,
     retryGenerate,
+    resumeInterruptedRun(instruction, runId) {
+      if (!dependencies.generator.resumeInterruptedRun || current.draft !== null || selectedTaskAddressId === null) {
+        return Promise.resolve(current);
+      }
+      return submit(instruction, null, runId);
+    },
     restoreDraft,
     restoreRevisionAsDraft,
     restorePreviousCheckpointAsDraft,

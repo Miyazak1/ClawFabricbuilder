@@ -24,6 +24,9 @@ const COMMAND_OUTPUT_CHANNEL = 'clawfabric-builder:code-generator:command-output
 const DECIDE_COMMAND_APPROVAL_CHANNEL =
   'clawfabric-builder:code-generator:decide-command-approval';
 const RETRY_GENERATE_CHANNEL = 'clawfabric-builder:code-generator:retry';
+const RESUME_INTERRUPTED_RUN_CHANNEL = 'clawfabric-builder:code-generator:resume-interrupted-run';
+const MANUAL_COMPACT_CONTEXT_CHANNEL =
+  'clawfabric-builder:code-generator:manual-compact-context';
 const ANSWER_CHANNEL = 'clawfabric-builder:code-generator:answer';
 const ANSWER_PLAN_CHANNEL = 'clawfabric-builder:code-generator:answer-plan';
 const ANSWER_DRAFT_CHANNEL = 'clawfabric-builder:code-generator:answer-draft';
@@ -67,7 +70,7 @@ const OPTION_KEYS = Object.freeze([
   'decideCommandApproval',
   'mainWindowRef',
 ]);
-const OPTIONAL_OPTION_KEYS = Object.freeze(['answerPlan']);
+const OPTIONAL_OPTION_KEYS = Object.freeze(['answerPlan', 'resumeInterruptedRun', 'manualCompactContext']);
 const ERROR_MESSAGES = Object.freeze({
   builder_generation_forbidden: 'AI project generation is unavailable.',
   builder_generation_request_invalid: 'This project request could not be verified.',
@@ -79,6 +82,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_project_write_permission_required: 'Allow current project changes before building.',
   builder_generation_project_busy: 'Another task is changing this project. Open that task or try again later.',
   builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
+  builder_generation_source_context_unavailable: 'The previous coding session could not be resumed. Start a recovered run explicitly.',
   builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
   builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
   builder_generation_checkpoint_undo_unavailable: 'The previous AI change could not be restored.',
@@ -99,6 +103,7 @@ const PUBLIC_FAILURE_RETRYABILITY = Object.freeze({
   builder_generation_project_write_permission_required: false,
   builder_generation_project_busy: true,
   builder_generation_workspace_changed: true,
+  builder_generation_source_context_unavailable: true,
   builder_generation_workspace_guard_denied: false,
   builder_generation_workspace_guard_approval_required: false,
   builder_generation_checkpoint_undo_unavailable: false,
@@ -127,6 +132,7 @@ const CONTROL_ERROR_CODES = new Set([
   'builder_generation_project_write_permission_required',
   'builder_generation_project_busy',
   'builder_generation_workspace_changed',
+  'builder_generation_source_context_unavailable',
   'builder_generation_workspace_guard_denied',
   'builder_generation_workspace_guard_approval_required',
   'builder_generation_checkpoint_undo_unavailable',
@@ -285,6 +291,20 @@ function safeOptions(value) {
     } else {
       methods.answerPlan = methods.answer;
     }
+    const resumeInterruptedRun = descriptors.resumeInterruptedRun;
+    if (resumeInterruptedRun !== undefined) {
+      if (!resumeInterruptedRun.enumerable
+        || !Object.hasOwn(resumeInterruptedRun, 'value')
+        || typeof resumeInterruptedRun.value !== 'function') throw ipcError();
+      methods.resumeInterruptedRun = resumeInterruptedRun.value;
+    } else methods.resumeInterruptedRun = () => { throw ipcError(); };
+    const manualCompactContext = descriptors.manualCompactContext;
+    if (manualCompactContext !== undefined) {
+      if (!manualCompactContext.enumerable
+        || !Object.hasOwn(manualCompactContext, 'value')
+        || typeof manualCompactContext.value !== 'function') throw ipcError();
+      methods.manualCompactContext = manualCompactContext.value;
+    } else methods.manualCompactContext = () => { throw ipcError('builder_generation_source_context_unavailable'); };
     return Object.freeze(methods);
   } catch {
     throw ipcError();
@@ -433,6 +453,18 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
           return invokeResult(event, rawArguments, options.retry);
         },
       }),
+      resumeInterruptedRun: Object.freeze({
+        channel: RESUME_INTERRUPTED_RUN_CHANNEL,
+        method: 'resumeInterruptedRun',
+        invoke(event, ...rawArguments) { return invokeResult(event, rawArguments, options.resumeInterruptedRun); },
+      }),
+      manualCompactContext: Object.freeze({
+        channel: MANUAL_COMPACT_CONTEXT_CHANNEL,
+        method: 'manualCompactContext',
+        invoke(event, ...rawArguments) {
+          return invokeResult(event, rawArguments, options.manualCompactContext);
+        },
+      }),
       answer: Object.freeze({
         channel: ANSWER_CHANNEL,
         method: 'answer',
@@ -530,6 +562,8 @@ function createBuilderGenerationIpcAdapter(rawOptions) {
       'submit',
       'classifyIntent',
       'retry',
+      'resumeInterruptedRun',
+      'manualCompactContext',
       'answer',
       'answerDraft',
       'restoreDraft',
@@ -571,6 +605,8 @@ module.exports = Object.freeze({
   COMMAND_OUTPUT_CHANNEL,
   DECIDE_COMMAND_APPROVAL_CHANNEL,
   RETRY_GENERATE_CHANNEL,
+  RESUME_INTERRUPTED_RUN_CHANNEL,
+  MANUAL_COMPACT_CONTEXT_CHANNEL,
   ANSWER_CHANNEL,
   ANSWER_PLAN_CHANNEL,
   ANSWER_DRAFT_CHANNEL,

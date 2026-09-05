@@ -140,7 +140,7 @@ test('sanitizes a bounded canonical event batch against one exact expected head'
   assert.equal(BUILDER_CONVERSATION_AUTHORITY_RESULT_VERSION,
     'builder-conversation-authority-result.v1');
   assert.equal(MAX_APPEND_EVENTS, 128);
-  assert.equal(MAX_CONVERSATION_EVENTS, 1024);
+  assert.equal(MAX_CONVERSATION_EVENTS, 4096);
   assert.equal(MAX_CONVERSATION_BYTES, 24 * 1024 * 1024);
   assert.equal(Object.isFrozen(safe), true);
   assert.equal(Object.isFrozen(safe.events), true);

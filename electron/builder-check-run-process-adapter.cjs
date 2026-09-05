@@ -4,6 +4,7 @@ const path = require('node:path');
 const { types: utilTypes } = require('node:util');
 
 const BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION = 'builder-check-run-process-adapter.v1';
+const MAX_ENVIRONMENT_VALUE_LENGTH = 32_767;
 const CREATE_KEYS = Object.freeze(['spawn_process', 'platform', 'windows_root']);
 const SPAWN_OPTION_KEYS = Object.freeze(['cwd', 'env', 'shell', 'stdio', 'windowsHide']);
 const TERMINATE_KEYS = Object.freeze(['child', 'reason']);
@@ -84,7 +85,7 @@ function safeEnvironment(value) {
     || entries.some(([key, entry]) => (
       !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(key)
       || typeof entry !== 'string'
-      || entry.length > 2_048
+      || entry.length > MAX_ENVIRONMENT_VALUE_LENGTH
       || entry.includes('\0')
     ))
   ) fail();

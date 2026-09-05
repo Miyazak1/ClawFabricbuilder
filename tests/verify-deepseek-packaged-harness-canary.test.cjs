@@ -12,13 +12,16 @@ const {
   DEFAULT_CODING_LOOP_TIMEOUT_MS,
   PROJECT_USAGE_QUESTION,
   RESULT_VERSION,
+  assertEmptyProjectRoot,
   assertMinimumRunDuration,
   isCodingLoopComplete,
   isCodingLoopTerminal,
+  isNoToolBuildCompletion,
   readGenerationDebug,
   readHarnessFailureEvidence,
   readHarnessSessionEvidence,
-  seedCodingLoopFixture,
+  validateAgentBrowserLoop,
+  validateGeneratedProjectContract,
   validateAgentBrowserSurfaceEvidence,
   waitForAgentBrowserSurface,
 } = require('../scripts/verify-deepseek-packaged-harness-canary.cjs');
@@ -31,6 +34,21 @@ test('recognizes a direct-pass terminal loop without waiting for a manufactured 
     programming_runtime_check_failed_count: 0,
     candidate_ready_count: 1,
   }), true);
+});
+
+test('recognizes an invalid zero-tool Build completion immediately', () => {
+  assert.equal(isNoToolBuildCompletion({
+    run_started_count: 1,
+    run_completed_count: 1,
+    candidate_ready_count: 0,
+    programming_runtime_tool_activity_count: 0,
+  }), true);
+  assert.equal(isNoToolBuildCompletion({
+    run_started_count: 1,
+    run_completed_count: 0,
+    candidate_ready_count: 0,
+    programming_runtime_tool_activity_count: 0,
+  }), false);
 });
 const {
   CHECK_DELAY_MS,
@@ -73,26 +91,45 @@ function passThroughWith(value) {
   return stream;
 }
 
-test('seeds a deterministic failed-check fixture whose repair target is discoverable', (t) => {
-  const projectRoot = temporaryDirectory(t, 'builder-deepseek-harness-fixture-');
-  const evidence = seedCodingLoopFixture(projectRoot);
-  const index = fs.readFileSync(path.join(projectRoot, 'index.html'), 'utf8');
-  const check = fs.readFileSync(path.join(projectRoot, 'check.js'), 'utf8');
-  const packageSource = fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8');
+test('requires an empty project root and validates the generated project contract', (t) => {
+  const projectRoot = temporaryDirectory(t, 'builder-deepseek-harness-empty-project-');
+  assert.doesNotThrow(() => assertEmptyProjectRoot(projectRoot));
+  fs.writeFileSync(path.join(projectRoot, 'unexpected.txt'), 'occupied', 'utf8');
+  assert.throws(
+    () => assertEmptyProjectRoot(projectRoot),
+    (error) => error.code === 'deepseek_harness_project_root_not_empty',
+  );
 
-  assert.match(index, /data-canary-state="initial"/u);
-  assert.doesNotMatch(index, /Focus Timer Repaired/u);
-  assert.match(check, /Focus Timer Repaired/u);
-  assert.match(check, /data-canary-state="repaired"/u);
-  assert.equal(JSON.parse(packageSource).scripts.test, 'node check.js');
-  assert.match(evidence.check_digest, /^sha256:[0-9a-f]{64}$/u);
-  assert.match(evidence.package_digest, /^sha256:[0-9a-f]{64}$/u);
-  assert.match(BUILD_INSTRUCTION, /检查 check\.js，并且只修复 index\.html/u);
+  const evidence = validateGeneratedProjectContract({
+    checkText: 'Focus Timer Ready A focused interval for careful work. data-canary-state',
+    indexText: '<main data-canary-state="complete"><h1 id="focus-title">Focus Timer Ready</h1><p>A focused interval for careful work.</p></main>',
+    packageText: JSON.stringify({ scripts: { test: 'node check.js' } }),
+  });
+  assert.deepEqual(evidence, {
+    delayed_check_present: true,
+    dependency_count: 0,
+    test_script: 'node check.js',
+  });
+  assert.match(BUILD_INSTRUCTION, /空项目/u);
+  assert.match(BUILD_INSTRUCTION, /只创建 index\.html、package\.json 和 check\.js/u);
+  assert.match(BUILD_INSTRUCTION, /不要运行 shell 命令/u);
   assert.match(BUILD_INSTRUCTION, /用中文简短说明/u);
   assert.match(BUILD_INSTRUCTION, /DOM\/可访问性、截图状态、Console 和 Network/u);
   assert.equal(RESULT_VERSION, 'builder-deepseek-packaged-harness-canary-result.v2');
   assert.match(PROJECT_USAGE_QUESTION, /怎么运行和使用/u);
   assert.match(PROJECT_USAGE_QUESTION, /当前项目文件/u);
+});
+
+test('uses a separate packaged Windows cleanup budget for Agent Test browser performance', () => {
+  const source = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts', 'verify-deepseek-packaged-harness-canary.cjs'),
+    'utf8',
+  );
+
+  assert.match(source, /AGENT_BROWSER_LAYOUT_P95_BUDGET_MS = 8/u);
+  assert.match(source, /AGENT_BROWSER_OPEN_P95_BUDGET_MS = 25/u);
+  assert.match(source, /AGENT_BROWSER_CLEANUP_P95_BUDGET_MS = 50/u);
+  assert.match(source, /cleanup_p95_budget_ms/u);
 });
 
 test('accepts only a visible Agent Test surface contained by the active Browser sidebar', () => {
@@ -163,16 +200,21 @@ test('waits for the live Agent Test surface and reads its active sidebar geometr
   ]);
 });
 
-test('seeds a bounded capability-owned long check only when the soak requests it', (t) => {
-  const projectRoot = temporaryDirectory(t, 'builder-deepseek-harness-long-check-');
-  seedCodingLoopFixture(projectRoot, CHECK_DELAY_MS);
-  const check = fs.readFileSync(path.join(projectRoot, 'check.js'), 'utf8');
-
-  assert.match(check, /Atomics\.wait/u);
-  assert.match(check, /90000/u);
+test('validates a bounded generated long check only when the soak requests it', () => {
+  assert.doesNotThrow(() => validateGeneratedProjectContract({
+    checkDelayMs: CHECK_DELAY_MS,
+    checkText: 'Atomics.wait(clock, 0, 0, 90000); Focus Timer Ready A focused interval for careful work. data-canary-state',
+    indexText: '<main data-canary-state="complete"><h1 id="focus-title">Focus Timer Ready</h1><p>A focused interval for careful work.</p></main>',
+    packageText: JSON.stringify({ scripts: { test: 'node check.js' } }),
+  }));
   assert.throws(
-    () => seedCodingLoopFixture(temporaryDirectory(t, 'builder-invalid-long-check-'), 120_001),
-    (error) => error.code === 'deepseek_harness_fixture_invalid',
+    () => validateGeneratedProjectContract({
+      checkDelayMs: 120_001,
+      checkText: '',
+      indexText: '',
+      packageText: '{}',
+    }),
+    (error) => error.code === 'deepseek_harness_generated_contract_invalid',
   );
 });
 
@@ -217,13 +259,14 @@ test('accepts balanced multi-turn Harness session evidence', (t) => {
     file_count: 1,
     retained_event_count: 10,
     tool_call_names: { edit: 1, read: 1 },
+    tool_call_sequence: ['read', 'edit'],
     tool_call_count: 2,
     tool_result_count: 2,
     turn_count: 2,
   });
 });
 
-test('accepts one balanced Harness turn only for a direct-pass soak', (t) => {
+test('accepts one balanced Harness programming turn without counting Main-owned Ask work', (t) => {
   const sessionRoot = temporaryDirectory(t, 'builder-deepseek-harness-one-turn-');
   appendJsonl(path.join(sessionRoot, 'events.jsonl'), [
     { type: 'turn/start' },
@@ -236,19 +279,42 @@ test('accepts one balanced Harness turn only for a direct-pass soak', (t) => {
     { type: 'turn/end' },
   ]);
 
-  assert.deepEqual(readHarnessSessionEvidence(sessionRoot, 1), {
+  assert.deepEqual(readHarnessSessionEvidence(sessionRoot), {
     assistant_message_count: 2,
     file_count: 1,
     retained_event_count: 8,
     tool_call_names: { edit: 1, read: 1 },
+    tool_call_sequence: ['read', 'edit'],
     tool_call_count: 2,
     tool_result_count: 2,
     turn_count: 1,
   });
+});
+
+test('requires browser reload only when source changes after the first local open', () => {
+  assert.deepEqual(validateAgentBrowserLoop({
+    tool_call_names: { write: 3, browser_open_local_app: 1 },
+    tool_call_sequence: ['write', 'write', 'write', 'browser_open_local_app'],
+  }), {
+    latest_source_confirmed: true,
+    reload_observed: false,
+    reload_required: false,
+  });
   assert.throws(
-    () => readHarnessSessionEvidence(sessionRoot),
-    (error) => error.code === 'deepseek_harness_session_evidence_failed',
+    () => validateAgentBrowserLoop({
+      tool_call_names: { browser_open_local_app: 1, write: 1 },
+      tool_call_sequence: ['browser_open_local_app', 'write'],
+    }),
+    (error) => error.code === 'deepseek_harness_agent_browser_loop_missing',
   );
+  assert.deepEqual(validateAgentBrowserLoop({
+    tool_call_names: { browser_open_local_app: 1, write: 1, browser_reload_latest_source: 1 },
+    tool_call_sequence: ['browser_open_local_app', 'write', 'browser_reload_latest_source'],
+  }), {
+    latest_source_confirmed: true,
+    reload_observed: true,
+    reload_required: true,
+  });
 });
 
 test('rejects Harness session evidence with a missing tool result', (t) => {
@@ -337,7 +403,14 @@ test('release DeepSeek gate uses the focused real-provider Harness canary', () =
     packageJson.scripts['verify:packaged-harness:deepseek'],
     'node scripts/verify-deepseek-packaged-harness-canary.cjs',
   );
-  assert.match(packageJson.scripts['verify:release:deepseek'], /verify:packaged-harness:deepseek/u);
+  assert.equal(
+    packageJson.scripts['verify:packaged-harness:deepseek:acceptance'],
+    'node scripts/verify-deepseek-packaged-harness-acceptance.cjs',
+  );
+  assert.equal(
+    packageJson.scripts['verify:release:deepseek'],
+    'node scripts/verify-deepseek-packaged-release-acceptance.cjs --execute',
+  );
   assert.doesNotMatch(packageJson.scripts['verify:release:deepseek'], /verify:packaged-canary:deepseek/u);
   assert.equal(DEFAULT_CODING_LOOP_TIMEOUT_MS, 600_000);
 });
@@ -354,11 +427,12 @@ test('real-provider soak is explicit, exceeds the old timeout, and requires a mu
   assert.equal(CODING_LOOP_TIMEOUT_MS, 600_000);
   assert.equal(SOAK_RESULT_VERSION, 'builder-deepseek-packaged-harness-soak-result.v1');
   assert.equal(REQUIRED_DRAFT_FILES.length, 11);
-  assert.match(LONG_RUN_BUILD_INSTRUCTION, /one Build run/u);
-  assert.match(LONG_RUN_BUILD_INSTRUCTION, /keep giving brief natural-language updates/u);
-  assert.match(LONG_RUN_BUILD_INSTRUCTION, /preserve package\.json and check\.js exactly/u);
-  assert.match(LONG_RUN_BUILD_INSTRUCTION, /no other files/u);
-  assert.match(LONG_RUN_BUILD_INSTRUCTION, /repair only index\.html/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /一次 Build 运行/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /中文给出简短自然语言进度说明/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /空项目/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /Atomics\.wait/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /90000 milliseconds/u);
+  assert.match(LONG_RUN_BUILD_INSTRUCTION, /不要创建任何其它文件/u);
 });
 
 test('real-provider soak rejects the old 120 second boundary and accepts only a longer run', () => {

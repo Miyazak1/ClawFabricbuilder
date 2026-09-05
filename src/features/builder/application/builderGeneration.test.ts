@@ -277,6 +277,15 @@ describe('Builder generation v2', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('accepts a bounded long Agent plan only through the explicit plan response path', async () => {
+    const request = await createBuilderGenerationRequest('Write a complete plan.', null);
+    const wire = { ...await createGenerationAnswer(request), explanation: 'A'.repeat(9000) };
+    expect((await sanitizeBuilderGenerationAnswer(wire, request, 'plan')).explanation).toBe(wire.explanation);
+    await expect(sanitizeBuilderGenerationAnswer(wire, request)).rejects.toMatchObject({ code: 'invalid_generated_answer' });
+    await expect(sanitizeBuilderGenerationAnswer({ ...wire, explanation: 'A'.repeat(12001) }, request, 'plan'))
+      .rejects.toMatchObject({ code: 'invalid_generated_answer' });
+  });
+
   it('accepts an approved-plan work response without creating a draft', async () => {
     const request = sanitizeBuilderApprovedPlanGenerationRequest({
       project_id: PROJECT_ID,

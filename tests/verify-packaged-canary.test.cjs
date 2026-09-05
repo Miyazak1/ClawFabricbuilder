@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { PassThrough } = require('node:stream');
 const test = require('node:test');
+const vm = require('node:vm');
 const { PNG } = require('pngjs');
 
 const {
@@ -20,6 +21,7 @@ const {
   PACKAGED_CANARY_USER_DATA_PREFIX,
   SELECTORS,
   assertCustomChromeControls,
+  assertNativeWindowMaximizeRestore,
   assertExactRevision,
   assertRevisionAdvance,
   assertReadEvidence,
@@ -201,7 +203,7 @@ function workspaceGateEvidence() {
     build_without_workspace_blocked: true,
     build_continued_after_task_materialized: true,
     source_folder_required: true,
-    task_started_only_after_user_submit: true,
+    task_auto_started_after_project_confirmation: true,
   };
 }
 
@@ -300,15 +302,6 @@ class FakeLocator {
       }
       this.page.checkRunStatus = 'skipped';
     }
-    if (this.selector === SELECTORS.workspaceChip) {
-      this.page.workspacePickerVisible = true;
-      this.page.newProjectPanelVisible = false;
-    }
-    if (this.selector === SELECTORS.workspaceNewProject) {
-      this.page.workspacePickerVisible = true;
-      this.page.newProjectPanelVisible = true;
-      this.page.resetNewProjectConversation();
-    }
     if (this.selector === SELECTORS.agentTaskProposalNewProject) {
       if (this.page.agentTaskProposalVisible !== true) {
         throw new Error('Agent task proposal unavailable');
@@ -319,6 +312,8 @@ class FakeLocator {
       this.page.workspaceBound = true;
       this.page.forceWorkspaceGateForNextBuild = false;
       this.page.projectStatus = 'ready';
+      this.page.values.set(SELECTORS.idea, this.page.lastTaskProposalObjective);
+      submitFakeCanaryInstruction(this.page);
     }
     if (this.selector === SELECTORS.composerAddMenuButton) {
       this.page.composerAddMenuVisible = !this.page.composerAddMenuVisible;
@@ -336,7 +331,6 @@ class FakeLocator {
     if (this.selector === SELECTORS.addSourceFolder) {
       this.page.workspaceBound = true;
       this.page.forceWorkspaceGateForNextBuild = false;
-      this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
       if (this.page.pendingWorkspaceGateInstruction !== null) {
         if (
@@ -556,7 +550,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.composerStatus) {
       return this.page.composerStatusText() !== null;
     }
-    if (this.selector === SELECTORS.workspacePicker) return this.page.workspacePickerVisible;
+    if (this.selector === SELECTORS.workspacePicker) return false;
     if (
       this.selector === SELECTORS.agentTaskProposal
       || this.selector === SELECTORS.agentTaskProposalActions
@@ -574,6 +568,7 @@ class FakeLocator {
     if (this.selector === SELECTORS.artifactSummary) return this.page.legacyArtifactSummaryVisible;
     if (this.selector === SELECTORS.completionSummary) return this.page.legacyCompletionSummaryVisible;
     if (this.selector === SELECTORS.artifactSidebar) return this.page.artifactSidebarVisible;
+    if (this.selector === SELECTORS.runHistory) return false;
     if (this.selector === SELECTORS.unsavedDraft || this.selector === SELECTORS.undoDraft) {
       return this.page.unsavedDraftVisible;
     }
@@ -654,9 +649,7 @@ class FakeLocator {
       if (this.page.changesTextOverride !== null) return this.page.changesTextOverride;
       return 'Changes 1 file change: 1 added. 1 line added + Focus timer preview';
     }
-    if (this.selector === SELECTORS.workspacePicker) {
-      return 'Choose or create a project before I build. Add a source folder so Builder knows where it can work. Search projects No saved projects yet. New project';
-    }
+    if (this.selector === SELECTORS.workspacePicker) return null;
     if (this.selector === SELECTORS.agentTaskProposal) {
       const objective = this.page.lastTaskProposalObjective ?? 'Make a focus timer.';
       return `Task proposal ${objective} Outcome: build Execution: foreground Project: choose before creating the task New project Dismiss`;
@@ -954,7 +947,7 @@ class FakeLocator {
       return;
     }
     if (this.selector === SELECTORS.workspacePicker) {
-      this.page.assertSelectorVisibility(this.selector, this.page.workspacePickerVisible, state);
+      this.page.assertSelectorVisibility(this.selector, false, state);
       return;
     }
     if (
@@ -1026,7 +1019,6 @@ class FakeRole {
     if (this.name === 'New project') {
       this.page.forceWorkspaceGateForNextBuild = true;
       this.page.workspaceBound = false;
-      this.page.workspacePickerVisible = false;
       this.page.newProjectPanelVisible = false;
       this.page.resetNewProjectConversation();
     }
@@ -1202,7 +1194,6 @@ class FakePage {
     this.values = new Map();
     this.workspaceBound = false;
     this.workspaceMenuVisible = false;
-    this.workspacePickerVisible = false;
     this.listeners = new Map();
     this.assertSelectorVisibility = (_selector, visible, state) => {
       const expectedVisible = state !== 'hidden';
@@ -2051,7 +2042,7 @@ function bridgeEvidence(
     };
   return {
     bridge_contract: {
-      bridge_version: 'builder-preload.v36',
+      bridge_version: 'builder-preload.v40',
       legacy_namespaces_absent: true,
       agent_project_tree_namespace: 'read_and_lifecycle_methods_only',
       check_run_namespace: 'current_draft_identity_methods_only',
@@ -2124,6 +2115,32 @@ function contextStatusProjection(overrides = {}) {
       ...authorityOverrides,
     },
     ...projectionOverrides,
+  };
+}
+
+function contextUsageProjection(overrides = {}) {
+  return {
+    projection_version: 'builder-context-usage-projection.v2',
+    authority: 'main_owned_context_usage_projection',
+    source: 'deepseek_harness_session_projection',
+    project_id: 'builder-project:11111111-1111-4111-8111-111111111111',
+    conversation_id: 'builder-conversation:11111111-1111-4111-8111-111111111111:99999999-9999-4999-8999-999999999999',
+    run_id: 'builder-run:eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    harness_projection_seq: 42,
+    measurement_state: 'ready',
+    uncached_input_tokens: 12_000,
+    output_tokens: 4_000,
+    cache_read_tokens: 58_000,
+    cache_write_tokens: 2_000,
+    pressure_tokens: 72_000,
+    projected_tokens: 76_000,
+    context_window_tokens: 100_000,
+    usage_percent: 76,
+    cache_hit_percent: 81,
+    compaction_state: 'idle',
+    last_compacted_at_ms: null,
+    updated_at_ms: 1_750_000_000_000,
+    ...overrides,
   };
 }
 
@@ -2621,7 +2638,7 @@ function addQueuedFollowupMessage(evidence) {
 
 function installBridge(page) {
   globalThis.clawfabricBuilder = {
-    bridgeVersion: 'builder-preload.v36',
+    bridgeVersion: 'builder-preload.v40',
     agentProjectTree: {
       async read() {
         return {
@@ -2635,6 +2652,9 @@ function installBridge(page) {
       async archiveProject() { throw new Error('must not archive projects through read canary bridge'); },
       async renameTask() { throw new Error('must not rename tasks through read canary bridge'); },
       async archiveTask() { throw new Error('must not archive tasks through read canary bridge'); },
+      async exportTaskTranscript() {
+        throw new Error('must not export task transcripts through read canary bridge');
+      },
     },
     agentWorkbench: {
       async read(request) {
@@ -2689,6 +2709,7 @@ function installBridge(page) {
       prepareCurrentProjectWriteApproval() { throw new Error('must not write through bridge'); },
       approveCurrentProjectWrite() { throw new Error('must not write through bridge'); },
       retry() { throw new Error('must not write through bridge'); },
+      manualCompactContext() { throw new Error('must not compact through read canary bridge'); },
       answer() { throw new Error('must not write through bridge'); },
       answerDraft() { throw new Error('must not write through bridge'); },
       restoreDraft() { throw new Error('must not write through bridge'); },
@@ -2833,6 +2854,9 @@ function installBridge(page) {
     },
     checkRun: {
       async readCurrentDraftAvailableChecks() { throw new Error('must not read checks through bridge'); },
+      async diagnoseCurrentDraftCheckEnvironment() { throw new Error('must not diagnose checks through bridge'); },
+      async diagnoseProjectEnvironment() { throw new Error('must not diagnose projects through bridge'); },
+      async prepareProjectDependencies() { throw new Error('must not prepare project dependencies through bridge'); },
       async approveAndRunCurrentDraftCheck() { throw new Error('must not run checks through bridge'); },
       async decideCurrentDraftDependencyPreparation() {
         throw new Error('must not prepare check dependencies through bridge');
@@ -3412,6 +3436,71 @@ test('observes custom chrome controls without clicking window actions', async ()
   );
 });
 
+test('native chrome verification clicks maximize and restore, and rejects a locked renderer viewport', async () => {
+  for (const scenario of [
+    { initiallyMaximized: false, locked: false },
+    { initiallyMaximized: true, locked: false },
+    { initiallyMaximized: false, locked: true },
+    { initiallyMaximized: false, locked: false, staleHandle: true },
+    { initiallyMaximized: false, locked: false, staleHandle: true, staleMain: true },
+    { initiallyMaximized: false, locked: true, staleHandle: true, staleMain: true },
+  ]) {
+    let maximized = scenario.initiallyMaximized;
+    const clicks = [];
+    const native = {
+      isMaximized: () => maximized,
+      getContentBounds: () => ({ width: maximized ? 1920 : 1280, height: maximized ? 1040 : 820 }),
+    };
+    let handleReads = 0;
+    const app = { browserWindow: async () => ({ evaluate: async (fn) => {
+      handleReads += 1;
+      if (scenario.staleMain || (scenario.staleHandle && handleReads === 1)) throw new Error('Execution context was destroyed');
+      return fn(native);
+    } }) };
+    const page = {
+      async evaluate(fn) {
+        const bounds = native.getContentBounds();
+        return vm.runInNewContext(`(${fn.toString()})()`, {
+          window: { clawfabricBuilder: { windowControls: { readState: async () => ({ maximized }) } } },
+          outerWidth: bounds.width, outerHeight: bounds.height,
+        });
+      },
+      async waitForTimeout() {},
+      getByRole(role, { name }) {
+        assert.equal(role, 'button');
+        assert.match(name, /^(Maximize|Restore) window$/u);
+        return {
+          async click() { clicks.push(name); maximized = name === 'Maximize window'; },
+          async waitFor() { assert.equal(name, maximized ? 'Restore window' : 'Maximize window'); },
+        };
+      },
+      async waitForFunction(predicate, bounds) {
+        const content = scenario.locked ? { width: 1280, height: 820 } : native.getContentBounds();
+        assert.equal(vm.runInNewContext(`(${predicate.toString()})(bounds)`, {
+          bounds, innerWidth: content.width, innerHeight: content.height,
+        }), true);
+      },
+    };
+    if (scenario.locked) {
+      await assert.rejects(assertNativeWindowMaximizeRestore(page, app),
+        (error) => error.code === 'canary_custom_chrome_failed');
+    } else {
+      const evidence = await assertNativeWindowMaximizeRestore(page, app);
+      assert.equal(evidence.native_resize_verified, true);
+      assert.deepEqual(evidence.states, [
+        { maximized: true, width: 1920, height: 1040 },
+        { maximized: false, width: 1280, height: 820 },
+      ]);
+      assert.equal(maximized, scenario.initiallyMaximized);
+      assert.ok(clicks.includes('Maximize window') && clicks.includes('Restore window'));
+      if (scenario.staleHandle) assert.deepEqual(clicks, ['Maximize window', 'Restore window']);
+      if (scenario.staleMain) {
+        assert.equal(evidence.native_state_source, 'main_state_and_window_outer_bounds');
+      }
+    }
+  }
+});
+
 test('observes an unsaved draft before saving Version 1 through the real UI', async (t) => {
   const page = new FakePage();
   installBridge(page);
@@ -3430,7 +3519,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     workspace_gate: workspaceGateEvidence(),
   });
   const roleClicks = page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]);
-  assert.deepEqual(roleClicks, ['Send', 'Send']);
+  assert.deepEqual(roleClicks, ['Send']);
   assert.equal(
     page.events.filter((event) => event[0] === 'click').map((event) => event[1])[0],
     SELECTORS.composerAddMenuButton,
@@ -3445,12 +3534,9 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     event[0] === 'click'
     && event[1] === SELECTORS.agentTaskProposalNewProject
   ));
-  const secondSend = page.events.findLastIndex(
-    (event) => event[0] === 'roleClick' && event[2] === 'Send',
-  );
   assert.ok(firstSend >= 0 && firstSend < proposalVisible);
   assert.ok(proposalVisible < materializeClick);
-  assert.ok(materializeClick < secondSend);
+  assert.equal(page.events.filter((event) => event[0] === 'roleClick' && event[2] === 'Send').length, 1);
   const draftVisible = page.events.findIndex((event) => (
     event[0] === 'waitFor'
     && event[1] === SELECTORS.unsavedDraft
@@ -3468,7 +3554,7 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
     event[0] === 'click'
     && event[1] === SELECTORS.workspaceControlPreview
   ));
-  assert.ok(secondSend < draftVisible);
+  assert.ok(materializeClick < draftVisible);
   assert.ok(draftVisible < fixedStatusCheck);
   assert.ok(fixedStatusCheck < sidebarDefaultCheck);
   assert.ok(sidebarDefaultCheck < previewOpen);
@@ -3487,14 +3573,14 @@ test('observes an unsaved draft before saving Version 1 through the real UI', as
 
   const evidence = await readOnlyBridgeEvidence(page, 'builder-project:11111111-1111-4111-8111-111111111111');
   assert.equal(evidence.status.configured, true);
-  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v36');
+  assert.equal(evidence.bridge_contract.bridge_version, 'builder-preload.v40');
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   const source = evaluateEvents.find((event) => event[1].includes('providerSettings.status'))?.[1] ?? '';
   assert.match(source, /providerSettings\.status/u);
   assert.match(source, /projectWorkspace\.listCurrent/u);
   assert.match(source, /projectWorkspace\.loadCurrent/u);
   assert.match(source, /taskStream\.read/u);
-  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|cancel/u);
+  assert.doesNotMatch(source, /replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|manualCompactContext|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|cancel/u);
   const unsavedWait = page.events.findIndex(
     (event) => event[0] === 'scopedText' && event[2] === 'Unsaved draft',
   );
@@ -3816,7 +3902,7 @@ test('retries a failed draft through visible UI without saving or leaking write 
   assert.equal(page.candidateTurns, 1);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Send', 'Retry'],
+    ['Send', 'Retry'],
   );
   assert.equal(
     page.events.some((event) => event[0] === 'roleClick' && event[2] === 'Save version'),
@@ -3824,14 +3910,14 @@ test('retries a failed draft through visible UI without saving or leaking write 
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
-    ['Make a focus timer.', 'Make a focus timer.', 'Change this text after the first failure.'],
+    ['Make a focus timer.', 'Change this text after the first failure.'],
   );
   const evaluateEvents = page.events.filter((event) => event[0] === 'evaluate');
   assert.ok(evaluateEvents.length >= 1);
   for (const event of evaluateEvents) {
     assert.doesNotMatch(
       event[1],
-      /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent|livePreview\.(?:requestCurrentDraftPreview|reloadCurrentPreview|stopCurrentPreview)|source_tree/u,
+      /codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|manualCompactContext|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.saveDraft|providerSettings\.replaceCurrent|providerContextDisclosureApproval\.approveCurrent|livePreview\.(?:requestCurrentDraftPreview|reloadCurrentPreview|stopCurrentPreview)|source_tree/u,
     );
   }
 });
@@ -3905,7 +3991,7 @@ test('answers a saved-project question without creating a draft or revision', as
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Send', 'Send'],
+    ['Send', 'Send'],
   );
   assert.equal(page.events.some((event) => (
     event[0] === 'isVisible'
@@ -3931,7 +4017,6 @@ test('answers an initial no-folder chat question without opening workspace or dr
   assert.equal(page.questionTurns, 1);
   assert.equal(page.candidateTurns, 0);
   assert.equal(page.savedRevision, 0);
-  assert.equal(page.workspacePickerVisible, false);
   assert.equal(page.unsavedDraftVisible, false);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
@@ -3971,7 +4056,6 @@ test('keeps consecutive initial no-folder chat answers visible', async (t) => {
   assert.equal(page.questionTurns, 2);
   assert.equal(page.candidateTurns, 0);
   assert.equal(page.savedRevision, 0);
-  assert.equal(page.workspacePickerVisible, false);
   assert.equal(page.unsavedDraftVisible, false);
 });
 
@@ -3991,7 +4075,6 @@ test('rejects an initial no-folder chat question when answer_failed remains visi
   assert.equal(page.questionTurns, 1);
   assert.equal(page.candidateTurns, 0);
   assert.equal(page.savedRevision, 0);
-  assert.equal(page.workspacePickerVisible, false);
   assert.equal(page.unsavedDraftVisible, false);
 });
 
@@ -4653,6 +4736,24 @@ test('sanitizes optional task stream status projections without exposing private
   );
 });
 
+test('sanitizes Main-owned context usage and rejects forged meter arithmetic', () => {
+  const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
+  const raw = bridgeEvidence(projectId, true, 1, 1, 0);
+  raw.task_stream.context_usage_projection = contextUsageProjection();
+
+  const evidence = assertReadEvidence(raw);
+
+  assert.deepEqual(evidence.task_stream.context_usage_projection, contextUsageProjection());
+
+  const forged = bridgeEvidence(projectId, true, 1, 1, 0);
+  forged.task_stream.context_usage_projection = contextUsageProjection({ usage_percent: 12 });
+  assert.throws(
+    () => assertReadEvidence(forged),
+    (error) => error.code === 'canary_evidence_failed'
+      && error.diagnostic?.validation_phase === 'context_usage_projection',
+  );
+});
+
 test('rejects forged optional task stream status projections before canary evidence is trusted', () => {
   const projectId = 'builder-project:11111111-1111-4111-8111-111111111111';
   const forgedContext = bridgeEvidence(projectId, true, 1, 1, 0);
@@ -4799,7 +4900,7 @@ test('keeps an update candidate pending before the explicit Version 2 save', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Send'],
+    ['Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
@@ -4936,12 +5037,11 @@ test('observes a local Markdown artifact draft through workspace and review gate
   assert.equal(page.unsavedDraftVisible, false);
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Send'],
+    ['Send'],
   );
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'fill').map((event) => event[2]),
     [
-      'Create a README.md with concise project notes.',
       'Create a README.md with concise project notes.',
     ],
   );
@@ -4972,7 +5072,7 @@ test('verifies Version 1 before saving a second unsaved draft as Version 2', asy
   assert.equal(page.versionLabel, 'Version 2');
   assert.deepEqual(
     page.events.filter((event) => event[0] === 'roleClick').map((event) => event[2]),
-    ['Send', 'Send'],
+    ['Send'],
   );
   assert.equal(
     page.events.filter((event) => event[0] === 'click' && event[1] === SELECTORS.submitTurn).length,
@@ -5679,6 +5779,22 @@ test('accepts strict Harness runtime activity and agent step progress evidence',
     JSON.stringify(sanitized.task_stream),
     /index\.html|Project file updated|I will update|正在思考|正在分析下一步|raw_output|stdout|stderr|credential|source_tree/iu,
   );
+});
+
+test('keeps browser and question tools in strict redacted runtime evidence', () => {
+  for (const toolKind of ['browser', 'question']) {
+    const evidence = addProgrammingRuntimeFacts(bridgeEvidence(FAKE_PROJECT_ID, true, 1, 1, 0));
+    for (const item of evidence.task_stream.conversation.items) {
+      if (item.item_kind !== 'programming_runtime_tool_activity' || item.tool_kind === 'command') continue;
+      item.tool_kind = toolKind;
+      item.presentation = toolKind;
+      item.presentation_detail = null;
+      item.file_change = null;
+    }
+    const counts = assertReadEvidence(evidence).task_stream.conversation.item_facts.counts;
+    assert.equal(counts.programming_runtime_tool_activity_count, 5);
+    assert.equal(counts.programming_runtime_check_passed_count, 1);
+  }
 });
 
 test('counts one failed check and its repaired passing check from canonical runtime facts', () => {
@@ -6917,7 +7033,6 @@ test('copies only saved provider profile files and runs without provider input o
     'Send',
     'Send',
     'Send',
-    'Send',
     'Back to current',
     'Send',
     'Approve plan',
@@ -7727,6 +7842,19 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
   ]);
   assert.match(harnessWrite, /"name":"write"/u);
   assert.match(harnessWrite, /README\.md/u);
+  const harnessRetainedHistoryRead = await harnessRequest([
+    { role: 'user', content: 'Build the project.' },
+    { role: 'tool', content: 'File: index.html\nStatus: absent' },
+    { role: 'tool', content: 'Created: README.md' },
+    { role: 'tool', content: 'Created: check.js' },
+    { role: 'tool', content: 'Created: package.json' },
+    { role: 'tool', content: 'Created: index.html' },
+    { role: 'assistant', content: 'Created the focus timer files.' },
+    { role: 'user', content: 'Build the project again.' },
+  ]);
+  assert.match(harnessRetainedHistoryRead, /"name":"read"/u);
+  assert.match(harnessRetainedHistoryRead, /index\.html/u);
+  assert.doesNotMatch(harnessRetainedHistoryRead, /"name":"write"/u);
 
   const noChangeInstruction = 'Inspect the current project and explain what detail is still needed. Do not change files.';
   const harnessSearch = await harnessRequest([{ role: 'user', content: noChangeInstruction }]);
@@ -7744,6 +7872,25 @@ test('default packaged canary uses a local OpenAI-compatible provider mock', asy
     { role: 'tool', content: 'File: index.html\nObserved version: sha256:0000000000000000000000000000000000000000000000000000000000000000\nContent:\n<h1>Boundary Safe</h1>' },
   ]);
   assert.match(harnessAnswerAfterRead, /I inspected index\.html/u);
+  const harnessNoChangeRecovery = await harnessRequest([
+    { role: 'user', content: noChangeInstruction },
+    { role: 'tool', content: 'index.html:14:11 <h1>Boundary Safe</h1>' },
+    { role: 'tool', content: 'File: index.html\nObserved version: sha256:0000000000000000000000000000000000000000000000000000000000000000\nContent:\n<h1>Boundary Safe</h1>' },
+    { role: 'assistant', content: 'I inspected index.html, but I need the exact replacement text before changing files.' },
+    {
+      role: 'user',
+      content: [
+        'The preceding implementation turn ended without a successful Builder write or edit.',
+        'This admitted task requires a source change.',
+        'The complete original requirements remain authoritative:',
+        '<original_end_user_request>',
+        noChangeInstruction,
+        '</original_end_user_request>',
+      ].join('\n'),
+    },
+  ]);
+  assert.match(harnessNoChangeRecovery, /I already inspected index\.html/u);
+  assert.doesNotMatch(harnessNoChangeRecovery, /"name":"grep"/u);
 });
 
 test('local Harness provider drives packaged workspace boundary recovery', async (t) => {
@@ -7820,6 +7967,58 @@ test('local Harness provider drives packaged workspace boundary recovery', async
   assert.equal(JSON.stringify(server.snapshot()).includes(forbiddenText), false);
 });
 
+test('local Harness provider holds the explicit cancellation probe on the latest user turn', async (t) => {
+  const server = await createLocalCanaryProviderServer({
+    harnessCancellationHold: true,
+  });
+  t.after(async () => {
+    await server.close();
+  });
+  const tools = ['read', 'grep', 'edit', 'write'].map((name) => ({
+    type: 'function',
+    function: { name, description: name, parameters: { type: 'object' } },
+  }));
+  const responsePromise = fetch(`${server.baseUrl}/chat/completions`, {
+    body: JSON.stringify({
+      messages: [
+        {
+          role: 'user',
+          content: 'Inspect the current project and explain what detail is still needed. Do not change files.',
+        },
+        { role: 'tool', content: 'index.html:14:11 <h1>Boundary Safe</h1>' },
+        {
+          role: 'assistant',
+          content: 'I inspected index.html, but I need the exact replacement text before changing files.',
+        },
+        {
+          role: 'user',
+          content: 'Start another focus timer change, but wait before applying it.',
+        },
+      ],
+      model: 'local-canary-model',
+      stream: true,
+      tools,
+    }),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline && server.pendingResponseCount() !== 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+  assert.equal(server.pendingResponseCount(), 1);
+  assert.equal(server.snapshot().at(-1)?.response_kind, 'harness_cancellation_hold');
+  assert.equal(server.snapshot().at(-1)?.completed, false);
+  assert.equal(server.releaseNext(), true);
+  const response = await responsePromise;
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /cancellation probe is pending/u);
+  assert.equal(server.snapshot().at(-1)?.completed, true);
+});
+
 test('local Harness provider can stream accepted progress beyond a shorter legacy timeout', async (t) => {
   const server = await createLocalCanaryProviderServer({
     delayedHarnessStreamResponses: 1,
@@ -7859,7 +8058,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   const preloadSource = fs.readFileSync(PRELOAD_SOURCE_PATH, 'utf8');
   assert.match(source, /require\(['"]playwright-core['"]\)/u);
   assert.doesNotMatch(source, /require\(['"]playwright['"]\)/u);
-  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.(?:saveDraft|createLocalProject)/u);
+  assert.doesNotMatch(source, /permissions\.evaluate|providerSettings\.replaceCurrent|codeGenerator\.(?:submit|generate|continueDraft|generateApprovedPlan|proposePlan|preparePlanSourceReadApproval|approvePlanSourceRead|prepareCurrentProjectWriteApproval|approveCurrentProjectWrite|retry|manualCompactContext|answer|answerDraft|restoreRevisionAsDraft|rejectDraft|steer|queueFollowup)|projectWorkspace\.(?:saveDraft|createLocalProject)/u);
   assert.doesNotMatch(source, /generator\.proposePlan/u);
   assert.doesNotMatch(source, /bridge\.projectCatalog|bridge\.projectRevisions/u);
   assert.doesNotMatch(source, /builder-project-catalog-result\.v1|builder-project-repository-result\.v1/u);
@@ -7901,7 +8100,7 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(defaultSource, /approved_plan_canary_step_present/u);
   assert.match(harnessUiSource, /healthy_progress_survived_old_provider_timeout:\s*initialDraftDurationMs > 2_000/u);
   assert.doesNotMatch(defaultSource, /provider\.example|real-key-value-secret/u);
-  assert.match(planModeSource, /builder-packaged-plan-mode-canary-result\.v4/u);
+  assert.match(planModeSource, /builder-packaged-plan-mode-canary-result\.v5/u);
   assert.match(planModeSource, /approvePlanAndWaitForDraft/u);
   assert.match(planModeSource, /verifyAutoDeterministicRoutesSkipClassifier/u);
   assert.match(planModeSource, /verifyAskModePersistentAndClear/u);
@@ -7912,9 +8111,12 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /SELECTORS\.composerAddBuildMode/u);
   assert.match(planModeSource, /SELECTORS\.composerAddPlanMode/u);
   assert.match(planModeSource, /SELECTORS\.composerClearMode/u);
-  assert.match(planModeSource, /SELECTORS\.dismissCurrentProjectWriteApproval/u);
+  assert.doesNotMatch(planModeSource, /locator\(SELECTORS\.workspaceChip\)\.click/u);
+  assert.doesNotMatch(source, /locator\(SELECTORS\.workspaceChip\)\.click/u);
+  assert.match(planModeSource, /waitForGeneratedDraftAndDiscard/u);
   assert.match(planModeSource, /builder_semantic_route_classification/u);
   assert.match(planModeSource, /auto_question_skipped_classifier:\s*true/u);
+  assert.match(planModeSource, /auto_build_artifact_executed_with_existing_write_grant:\s*true/u);
   assert.match(planModeSource, /auto_build_artifact_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /ask_mode_persisted_until_cleared:\s*true/u);
   assert.match(planModeSource, /ask_mode_skipped_classifier:\s*true/u);
@@ -7923,24 +8125,25 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(planModeSource, /semantic_classifier_skipped:\s*true/u);
   assert.match(planModeSource, /natural_language_plan_signal_mismatch/u);
   assert.match(planModeSource, /build_mode_persisted_until_cleared:\s*true/u);
-  assert.match(planModeSource, /build_mode_requested_write_approval:\s*true/u);
+  assert.match(planModeSource, /build_mode_executed_with_existing_write_grant:\s*true/u);
   assert.match(planModeSource, /build_mode_skipped_classifier:\s*true/u);
   assert.match(planModeSource, /continuation_provider_request_observed:\s*true/u);
   assert.match(planModeSource, /formal_version_save_is_secondary:\s*true/u);
   assert.match(planModeSource, /undo_draft_directly_visible:\s*true/u);
   assert.match(planModeSource, /unsaved_draft_continued_without_save:\s*true/u);
   assert.match(planModeSource, /clickByRole\(page,\s*['"]button['"],\s*['"]Approve plan['"]\)/u);
-  assert.match(planModeSource, /approveCurrentProjectWriteIfRequested/u);
+  assert.match(planModeSource, /current_project_write_grant_reused/u);
   assert.match(planModeSource, /SELECTORS\.unsavedDraft/u);
   assert.match(planModeSource, /SELECTORS\.undoDraft/u);
-  assert.match(planModeSource, /SELECTORS\.reviewMore/u);
+  assert.match(planModeSource, /SELECTORS\.workspaceMenuButton/u);
   assert.match(planModeSource, /SELECTORS\.saveVersion/u);
+  assert.match(planModeSource, /save_version_directly_visible:\s*true/u);
   assert.match(planModeSource, /approved_plan_executed:\s*true/u);
   assert.match(planModeSource, /approved_plan_context_reached_harness:\s*true/u);
   assert.match(planModeSource, /provider_code_change_request_observed:\s*true/u);
   assert.match(planModeSource, /release_gate_integration:\s*['"]included_in_verify_release['"]/u);
   assert.doesNotMatch(planModeSource, /page\.locator\(SELECTORS\.saveVersion\)\.click/u);
-  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v36['"]/u);
+  assert.match(preloadSource, /bridgeVersion:\s*['"]builder-preload\.v40['"]/u);
   assert.match(preloadSource, /agentProjectTree:\s*Object\.freeze/u);
   assert.match(preloadSource, /agentWorkbench:\s*Object\.freeze/u);
   assert.match(preloadSource, /agent-project-tree:read/u);
@@ -7962,12 +8165,14 @@ test('script source keeps credential out of argv/env/output and cannot enter ASA
   assert.match(preloadSource, /readCurrentDraftAvailableChecks\(request\)/u);
   assert.match(preloadSource, /diagnoseCurrentDraftCheckEnvironment\(request\)/u);
   assert.match(preloadSource, /diagnoseProjectEnvironment\(request\)/u);
+  assert.match(preloadSource, /prepareProjectDependencies\(request\)/u);
   assert.match(preloadSource, /approveAndRunCurrentDraftCheck\(request\)/u);
   assert.match(preloadSource, /decideCurrentDraftDependencyPreparation\(request\)/u);
   assert.match(preloadSource, /skipCurrentDraftCheck\(request\)/u);
   assert.match(preloadSource, /check-run:read-current-draft-available/u);
   assert.match(preloadSource, /check-run:diagnose-current-draft-check-environment/u);
   assert.match(preloadSource, /check-run:diagnose-project-environment/u);
+  assert.match(preloadSource, /check-run:prepare-project-dependencies/u);
   assert.match(preloadSource, /check-run:approve-current-draft-check/u);
   assert.match(preloadSource, /check-run:decide-current-draft-dependency-preparation/u);
   assert.match(preloadSource, /check-run:skip-current-draft-check/u);

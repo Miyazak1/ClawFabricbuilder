@@ -354,7 +354,40 @@ async function waitForHarnessKind(providerServer, kind, timeoutMs = 120_000, opt
     if (request !== undefined) return request;
     await delay(100);
   }
-  throw new Error(`Packaged Harness did not observe ${kind}.`);
+  const diagnostic = typeof options.diagnostic === 'function'
+    ? await options.diagnostic().catch((error) => ({
+      diagnostic_error: error instanceof Error ? error.message : String(error),
+    }))
+    : null;
+  throw new Error(`Packaged Harness did not observe ${kind}: ${JSON.stringify(diagnostic)}`);
+}
+
+async function readHarnessObservationDiagnostic(page, providerServer, userDataPath) {
+  const debugPath = path.join(userDataPath, 'builder-canary-generation-debug.jsonl');
+  const composer = page.locator(SELECTORS.composer);
+  const submit = page.locator(SELECTORS.submitTurn).first();
+  return Object.freeze({
+    build_mode_visible: await page.locator('[data-builder-composer-mode-chip="build"]')
+      .isVisible().catch(() => false),
+    composer_dispatch: await composer.getAttribute('data-builder-route-dispatch').catch(() => null),
+    composer_permission: await composer.getAttribute('data-builder-route-permission').catch(() => null),
+    composer_route: await composer.getAttribute('data-builder-route').catch(() => null),
+    composer_signals: await composer.getAttribute('data-builder-route-signals').catch(() => null),
+    composer_state: await composer.getAttribute('data-builder-composer-state').catch(() => null),
+    current_project_write_approval_visible:
+      await page.locator(SELECTORS.currentProjectWriteApproval).isVisible().catch(() => false),
+    idea_value: await page.locator(SELECTORS.idea).inputValue().catch(() => null),
+    project_error: await page.locator(SELECTORS.projectPage)
+      .getAttribute('data-builder-project-error').catch(() => null),
+    project_status: await page.locator(SELECTORS.projectPage)
+      .getAttribute('data-builder-project-status').catch(() => null),
+    provider_requests: providerServer.snapshot(),
+    save_visible: await page.locator(SELECTORS.saveVersion).isVisible().catch(() => false),
+    submit_disabled: await submit.isDisabled().catch(() => null),
+    submit_visible: await submit.isVisible().catch(() => false),
+    unsaved_draft_visible: await page.locator(SELECTORS.unsavedDraft).isVisible().catch(() => false),
+    main_debug: fs.existsSync(debugPath) ? fs.readFileSync(debugPath, 'utf8') : null,
+  });
 }
 
 async function openPreviewAndMarkStable(page) {
@@ -977,6 +1010,7 @@ async function main() {
           await submitInstruction(page, PB07_INSTRUCTION);
           await waitForHarnessKind(providerServer, 'harness_pb07_tool_pressure', 30_000, {
             completed: true,
+            diagnostic: () => readHarnessObservationDiagnostic(page, providerServer, userDataPath),
           });
           await waitForHarnessKind(providerServer, 'harness_pb07_completed', 30_000);
           await waitForTaskStreamCounts(

@@ -49,13 +49,16 @@ function sourceTree(packageJson = {
 function readResult(tree) {
   return {
     result_version: 'builder-project-read-result.v1',
-    operation: 'current_loaded',
-    project_id: PROJECT_ID,
-    title: 'Project',
-    summary: 'Project summary',
+    product_revision_receipt: {
+      project_id: PROJECT_ID,
+      resulting_tree_digest: tree.source_tree_digest,
+    },
+    current: {},
     source_tree: tree,
-    base_revision: null,
+    git_candidate_receipt: {},
+    git_verification_receipt: {},
     authority_evidence: {},
+    operation: 'current_loaded',
   };
 }
 
@@ -179,6 +182,58 @@ test('reports missing project dependencies before suggesting any installation au
   assert.equal(result.environment_diagnosis.primary_action, 'show_project_dependency_setup');
   assert.equal(result.environment_diagnosis.project_dependency_state, 'install_missing');
   assert.equal(result.environment_diagnosis.authority.dependency_preparation, false);
+});
+
+test('diagnoses saved harness projects with local file dependencies as missing root install', async (t) => {
+  const tree = createBuilderProjectSourceTree({
+    files: [
+      {
+        path: 'package.json',
+        content: `${JSON.stringify({
+          name: 'clawfabric-packaged-harness-canary',
+          private: true,
+          scripts: {
+            test: 'clawfabric-local-check-tool --version',
+          },
+          devDependencies: {
+            'clawfabric-local-check-tool': 'file:./tools/clawfabric-local-check-tool',
+          },
+        }, null, 2)}\n`,
+      },
+      {
+        path: 'tools/clawfabric-local-check-tool/package.json',
+        content: `${JSON.stringify({
+          name: 'clawfabric-local-check-tool',
+          version: '1.0.0',
+          bin: {
+            'clawfabric-local-check-tool': 'bin/check-tool.js',
+          },
+        }, null, 2)}\n`,
+      },
+      {
+        path: 'tools/clawfabric-local-check-tool/bin/check-tool.js',
+        content: [
+          '#!/usr/bin/env node',
+          "'use strict';",
+          "console.log('clawfabric-local-check-tool 1.0.0');",
+          '',
+        ].join('\n'),
+      },
+      { path: 'check.js', content: "const canary = 'ready';\nvoid canary;\n" },
+      { path: 'index.html', content: '<main></main>\n' },
+    ],
+  });
+  const h = harness(t, { sourceTree: tree });
+
+  const result = await diagnose(h);
+
+  assert.equal(result.environment_diagnosis.readiness_state, 'project_dependencies_missing');
+  assert.equal(result.environment_diagnosis.primary_action, 'show_project_dependency_setup');
+  assert.equal(result.environment_diagnosis.package_manager, 'npm');
+  assert.equal(result.environment_diagnosis.package_manifest, 'present');
+  assert.equal(result.environment_diagnosis.dependency_manifest, 'present');
+  assert.equal(result.environment_diagnosis.project_dependency_state, 'install_missing');
+  assert.deepEqual(sanitizeBuilderProjectEnvironmentDiagnosisResult(result), result);
 });
 
 test('keeps missing host toolchains distinct from missing project dependencies', async (t) => {

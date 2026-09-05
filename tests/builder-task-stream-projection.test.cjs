@@ -538,6 +538,55 @@ function candidateEvents() {
   return events;
 }
 
+function automaticCheckBlockedCandidateEvents() {
+  const events = [];
+  const turnId = id('turn', 1);
+  const taskId = id('task', 2);
+  const runId = id('run', 3);
+  append(events, 'turn_submitted', {
+    message: { message_id: id('message', 4), text: 'Build a focused timer.' },
+    turn_id: turnId,
+    mode: 'work',
+    task: { task_id: taskId, title: 'Create Builder project' },
+    base_revision: null,
+  }, 5);
+  append(events, 'run_started', {
+    turn_id: turnId,
+    run_id: runId,
+    task_id: taskId,
+    attempt_number: 1,
+    retry_of_run_id: null,
+    input_digest: `sha256:${'8'.repeat(64)}`,
+  }, 6);
+  append(events, 'run_completed', {
+    turn_id: turnId,
+    run_id: runId,
+    terminal_status: 'succeeded',
+    result_kind: 'candidate',
+    result_digest: DIGEST,
+    assistant_message: {
+      message_id: id('message', 7),
+      text: 'The draft is recoverable, but the check did not pass.',
+    },
+    candidate_result: {
+      draft_id: `builder-generation-draft:${'9'.repeat(64)}`,
+      title: 'Project update needs repair',
+      summary: 'The automatic check did not pass.',
+      git_candidate_receipt: candidateReceipt(turnId, taskId, runId),
+      current_materialization: {
+        status: 'not_attempted',
+        reason: 'automatic_check_not_passed',
+      },
+    },
+  }, 8);
+  append(events, 'turn_completed', {
+    turn_id: turnId,
+    run_id: runId,
+    outcome: 'candidate_ready',
+  }, 9);
+  return events;
+}
+
 async function toolCallEvents() {
   const events = [];
   const turnId = id('turn', 30);
@@ -1043,6 +1092,16 @@ test('projects canonical events into bounded renderer-safe activity items', () =
   assert.equal(Object.isFrozen(stream), true);
   assert.equal(Object.isFrozen(stream.conversation.items), true);
   assert.equal(Object.isFrozen(stream.conversation.items[2].candidate), true);
+});
+
+test('projects automatic-check-blocked drafts as not written to the project folder', () => {
+  const stream = projectBuilderTaskStream(input(automaticCheckBlockedCandidateEvents()));
+
+  assert.deepEqual(stream.conversation.items[2].candidate.workspace_materialization, {
+    status: 'not_attempted',
+    label: 'Project folder not updated',
+    detail: 'The draft is recoverable, but Builder did not write it to the project folder because the automatic check did not pass.',
+  });
 });
 
 test('projects a Main-owned suffix cache identically to complete public replay', () => {

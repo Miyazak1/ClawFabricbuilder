@@ -69,15 +69,35 @@ describe('Builder desktop provider settings port', () => {
       void request;
       return current({ operation: 'current_replaced' });
     });
+    const selectModel = vi.fn(async (request: unknown) => {
+      void request;
+      return current({
+        operation: 'current_model_selected',
+        config: {
+          provider_id: 'builder-default',
+          base_url: 'https://provider.example/v1',
+          model: 'builder-model-pro',
+          timeout_ms: 30000,
+          temperature: 0.2,
+          max_tokens: 8192,
+          config_digest: CONFIG_DIGEST,
+        },
+      });
+    });
     const bridgeStatus = vi.fn(async () => status());
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent,
       replaceCurrent,
+      selectModel,
       status: bridgeStatus,
     });
 
     const loaded = await port.readCurrent();
     const saved = await port.replaceCurrent(writeRequest());
+    const selected = await port.selectModel({
+      model: 'builder-model-pro',
+      expected_config_digest: CONFIG_DIGEST,
+    });
     const checked = await port.status();
 
     expect(loaded).toEqual({
@@ -94,6 +114,7 @@ describe('Builder desktop provider settings port', () => {
       credential_status: 'stored',
     });
     expect(saved).toEqual(loaded);
+    expect(selected.config?.model).toBe('builder-model-pro');
     expect(checked).toEqual({
       configured: true,
       config_digest: CONFIG_DIGEST,
@@ -103,7 +124,12 @@ describe('Builder desktop provider settings port', () => {
     expect(Object.isFrozen(loaded.config)).toBe(true);
     expect(Object.isFrozen(port)).toBe(true);
     expect(JSON.stringify(loaded)).not.toMatch(/real-key-value|secret|encrypted/i);
+    expect(JSON.stringify(selected)).not.toMatch(/real-key-value|secret|encrypted/i);
     expect(JSON.stringify(checked)).not.toMatch(/real-key-value|secret|encrypted/i);
+    expect(selectModel.mock.calls[0][0]).toEqual({
+      model: 'builder-model-pro',
+      expected_config_digest: CONFIG_DIGEST,
+    });
   });
 
   it('accepts canonical local provider endpoints from the bridge and write request', async () => {
@@ -125,6 +151,7 @@ describe('Builder desktop provider settings port', () => {
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent,
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     });
 
@@ -146,22 +173,28 @@ describe('Builder desktop provider settings port', () => {
     });
   });
 
-  it('passes the credential only to replaceCurrent and never to read or status', async () => {
+  it('passes the credential only to replaceCurrent and never to read, status, or selectModel', async () => {
     const readCurrent = vi.fn(async () => current());
     const replaceCurrent = vi.fn(async (request: unknown) => {
       void request;
       return current({ operation: 'current_replaced' });
     });
+    const selectModel = vi.fn(async (request: unknown) => {
+      void request;
+      return current({ operation: 'current_model_selected' });
+    });
     const bridgeStatus = vi.fn(async () => status());
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent,
       replaceCurrent,
+      selectModel,
       status: bridgeStatus,
     });
 
     const request = writeRequest();
     await port.readCurrent();
     await port.status();
+    await port.selectModel({ model: 'builder-model-pro', expected_config_digest: CONFIG_DIGEST });
     await port.replaceCurrent(request);
 
     expect(readCurrent).toHaveBeenCalledWith();
@@ -177,6 +210,11 @@ describe('Builder desktop provider settings port', () => {
       },
       credential: 'real-key-value',
     });
+    expect(selectModel.mock.calls[0][0]).toEqual({
+      model: 'builder-model-pro',
+      expected_config_digest: CONFIG_DIGEST,
+    });
+    expect(JSON.stringify(selectModel.mock.calls[0][0])).not.toMatch(/real-key-value|credential/i);
     expect(replaceCurrent.mock.calls[0][0]).not.toBe(request);
   });
 
@@ -188,6 +226,7 @@ describe('Builder desktop provider settings port', () => {
         credential_status: 'missing',
       })),
       replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status({
         configured: false,
         config_digest: null,
@@ -208,9 +247,15 @@ describe('Builder desktop provider settings port', () => {
   });
 
   it.each([
-    ['missing method', { readCurrent: vi.fn(), replaceCurrent: vi.fn() }],
-    ['extra method', { readCurrent: vi.fn(), replaceCurrent: vi.fn(), status: vi.fn(), deleteAll: vi.fn() }],
-    ['non-function', { readCurrent: vi.fn(), replaceCurrent: true, status: vi.fn() }],
+    ['missing method', { readCurrent: vi.fn(), replaceCurrent: vi.fn(), status: vi.fn() }],
+    ['extra method', {
+      readCurrent: vi.fn(),
+      replaceCurrent: vi.fn(),
+      selectModel: vi.fn(),
+      status: vi.fn(),
+      deleteAll: vi.fn(),
+    }],
+    ['non-function', { readCurrent: vi.fn(), replaceCurrent: true, selectModel: vi.fn(), status: vi.fn() }],
   ])('rejects %s before creating a port', (_label, value) => {
     expect(() => createBuilderDesktopProviderSettingsPort(value)).toThrow(
       BuilderDesktopProviderSettingsPortError,
@@ -219,7 +264,7 @@ describe('Builder desktop provider settings port', () => {
 
   it('rejects accessor bridge authority without invoking getters', () => {
     let accessorReads = 0;
-    const accessor = { readCurrent: vi.fn(), status: vi.fn() } as Record<string, unknown>;
+    const accessor = { readCurrent: vi.fn(), selectModel: vi.fn(), status: vi.fn() } as Record<string, unknown>;
     Object.defineProperty(accessor, 'replaceCurrent', {
       enumerable: true,
       get() {
@@ -239,6 +284,7 @@ describe('Builder desktop provider settings port', () => {
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent: vi.fn(async () => { throw new Error(privateMarker); }),
       replaceCurrent: vi.fn(async () => current({ secret_binding: privateMarker })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected', secret_binding: privateMarker })),
       status: vi.fn(async () => status({ credential_status: 'stored', secret: privateMarker })),
     });
 
@@ -253,6 +299,7 @@ describe('Builder desktop provider settings port', () => {
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent: vi.fn(async () => current()),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     });
 
@@ -300,6 +347,31 @@ describe('Builder desktop provider settings port', () => {
     expect(replaceCurrent).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed model selection requests before reaching the bridge', async () => {
+    const selectModel = vi.fn(async () => current({ operation: 'current_model_selected' }));
+    const port = createBuilderDesktopProviderSettingsPort({
+      readCurrent: vi.fn(async () => current()),
+      replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel,
+      status: vi.fn(async () => status()),
+    });
+
+    await expectPortError(port.selectModel({
+      model: 'builder-model-pro',
+      expected_config_digest: 'sha256:not-a-digest',
+    }));
+    await expectPortError(port.selectModel({
+      model: `model${String.fromCharCode(0xd800)}`,
+      expected_config_digest: CONFIG_DIGEST,
+    }));
+    await expectPortError(port.selectModel({
+      model: 'builder-model-pro',
+      expected_config_digest: CONFIG_DIGEST,
+      extra: true,
+    } as never));
+    expect(selectModel).not.toHaveBeenCalled();
+  });
+
   it('rejects noncanonical bridge config before exposing it to the renderer', async () => {
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent: vi.fn(async () => current({
@@ -314,6 +386,7 @@ describe('Builder desktop provider settings port', () => {
         },
       })),
       replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     });
 
@@ -334,6 +407,7 @@ describe('Builder desktop provider settings port', () => {
         },
       })),
       replaceCurrent: vi.fn(async () => current({ operation: 'current_replaced' })),
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     });
 
@@ -354,6 +428,7 @@ describe('Builder desktop provider settings port', () => {
     const port = createBuilderDesktopProviderSettingsPort({
       readCurrent: vi.fn(async () => current()),
       replaceCurrent,
+      selectModel: vi.fn(async () => current({ operation: 'current_model_selected' })),
       status: vi.fn(async () => status()),
     });
 

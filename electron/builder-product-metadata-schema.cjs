@@ -13,8 +13,8 @@ const {
   sanitizeBuilderGitCandidateReceiptPair,
 } = require('./builder-git-receipt-contract.cjs');
 
-const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
-const BUILDER_PRODUCT_METADATA_USER_VERSION = 6;
+const BUILDER_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v7';
+const BUILDER_PRODUCT_METADATA_USER_VERSION = 7;
 const BUILDER_PRODUCT_METADATA_RESULT_VERSION = 'builder-product-metadata-result.v4';
 
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -55,7 +55,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     current_revision_receipt_digest TEXT,
     current_revision_number INTEGER NOT NULL DEFAULT 0,
     metadata_schema_version TEXT NOT NULL,
-    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v6'),
+    CHECK (metadata_schema_version = 'builder-product-metadata-schema.v7'),
     CHECK (project_created_at_ms >= 0),
     CHECK (current_revision_number >= 0),
     CHECK (
@@ -94,7 +94,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     PRIMARY KEY (project_id, conversation_id),
     UNIQUE (conversation_id),
     CHECK (created_at_ms >= 0),
-    CHECK (current_event_sequence IS NULL OR current_event_sequence BETWEEN 1 AND 1024),
+    CHECK (current_event_sequence IS NULL OR current_event_sequence BETWEEN 1 AND 4096),
     CHECK (
       (current_event_sequence IS NULL AND current_event_id IS NULL AND current_event_digest IS NULL)
       OR (current_event_sequence IS NOT NULL AND current_event_id IS NOT NULL
@@ -126,7 +126,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     UNIQUE (project_id, conversation_id, event_id),
     UNIQUE (project_id, conversation_id, event_digest),
     UNIQUE (project_id, conversation_id, command_id),
-    CHECK (sequence BETWEEN 1 AND 1024),
+    CHECK (sequence BETWEEN 1 AND 4096),
     CHECK (created_at_ms >= 0),
     CHECK (length(record_json) BETWEEN 2 AND 24576),
     CHECK (
@@ -149,7 +149,7 @@ const CREATE_SCHEMA_SQL = Object.freeze([
     candidate_digest TEXT NOT NULL,
     PRIMARY KEY (draft_id),
     UNIQUE (project_id, conversation_id, sequence),
-    CHECK (sequence BETWEEN 1 AND 1024),
+    CHECK (sequence BETWEEN 1 AND 4096),
     CHECK (length(draft_id) = 89),
     CHECK (length(candidate_digest) = 71),
     FOREIGN KEY (project_id, conversation_id, sequence)

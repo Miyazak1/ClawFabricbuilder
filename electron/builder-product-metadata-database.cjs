@@ -36,6 +36,7 @@ const {
   BUILDER_PRODUCT_METADATA_SCHEMA_VERSION,
   BUILDER_PRODUCT_METADATA_USER_VERSION,
   CREATE_SCHEMA_SQL,
+  METADATA_TABLES,
   BuilderProductMetadataSchemaError,
   canonicalJson,
   createRevisionReceipt,
@@ -52,6 +53,11 @@ const {
 } = require('./builder-product-metadata-schema.cjs');
 
 const DATABASE_ID = 'builder-product-metadata-database.v3';
+const LEGACY_PRODUCT_METADATA_SCHEMA_VERSION = 'builder-product-metadata-schema.v6';
+const LEGACY_PRODUCT_METADATA_USER_VERSION = 6;
+const LEGACY_CREATE_SCHEMA_SQL = Object.freeze(CREATE_SCHEMA_SQL.map((sql) => sql
+  .replaceAll(BUILDER_PRODUCT_METADATA_SCHEMA_VERSION, LEGACY_PRODUCT_METADATA_SCHEMA_VERSION)
+  .replaceAll('BETWEEN 1 AND 4096', 'BETWEEN 1 AND 1024')));
 const TRUSTED_CONVERSATION_AUTHORITY_RESULTS = new WeakSet();
 const MAX_REVISION_CHAIN_DEPTH = 1024;
 const PROJECT_ID_PATTERN =
@@ -85,6 +91,7 @@ const STORAGE_RETENTION_KEYS = Object.freeze([
   'saved_versions',
 ]);
 const conversationStateCaches = new WeakMap();
+const schemaFingerprintCaches = new WeakMap();
 
 class BuilderProductMetadataDatabaseError extends Error {
   constructor(code = 'builder_product_metadata_invalid') {
@@ -291,12 +298,18 @@ function createSchema(db) {
     db.exec(`PRAGMA user_version = ${BUILDER_PRODUCT_METADATA_USER_VERSION}`);
     db.exec('COMMIT');
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     throw error;
   }
 }
 
+function rollbackTransaction(db) {
+  schemaFingerprintCaches.delete(db);
+  try { db.exec('ROLLBACK'); } catch { /* preserve the operation failure */ }
+}
+
 function collectSchemaFingerprint(db) {
+  return builderPerformanceTrace.measureSync('main.metadata.schema_fingerprint.duration_ms', () => {
   const schema = all(
     db,
     `SELECT type, name, tbl_name, sql
@@ -304,6 +317,18 @@ function collectSchemaFingerprint(db) {
       WHERE name NOT LIKE 'sqlite_%'
       ORDER BY type, name`,
   );
+  const version = userVersion(db);
+  const key = canonicalJson({
+    schema, version,
+    data_version: one(db, 'PRAGMA data_version').data_version,
+    total_changes: one(db, 'SELECT total_changes() AS changes').changes,
+  });
+  const cached = schemaFingerprintCaches.get(db);
+  if (cached?.key === key) {
+    builderPerformanceTrace.increment('main.metadata.fingerprint.cache_hit_count');
+    return cached.fingerprint;
+  }
+  builderPerformanceTrace.increment('main.metadata.fingerprint.full_read_count');
   const tableNames = all(
     db,
     `SELECT name
@@ -326,17 +351,21 @@ function collectSchemaFingerprint(db) {
       table_xinfo: all(db, `PRAGMA table_xinfo(${table})`),
     };
   });
-  return frozen({
+  const fingerprint = frozen({
     foreign_key_check: all(db, 'PRAGMA foreign_key_check'),
     schema,
     tables,
-    user_version: userVersion(db),
+    user_version: version,
+  });
+  // External commits change data_version; local writes change total_changes.
+  // Rollback paths discard this entry since total_changes does not roll back.
+  if (fingerprint.foreign_key_check.length === 0) schemaFingerprintCaches.set(db, { key, fingerprint });
+  else schemaFingerprintCaches.delete(db);
+  return fingerprint;
   });
 }
 
-let expectedSchemaFingerprint;
-function expectedFingerprint() {
-  if (expectedSchemaFingerprint) return expectedSchemaFingerprint;
+function schemaFingerprintFor(schemaSql, version) {
   const expectedDb = new DatabaseSync(':memory:', {
     allowExtension: false,
     enableForeignKeyConstraints: true,
@@ -346,13 +375,34 @@ function expectedFingerprint() {
   try {
     expectedDb.exec('PRAGMA trusted_schema = OFF');
     expectedDb.exec('PRAGMA foreign_keys = ON');
-    for (const sql of CREATE_SCHEMA_SQL) expectedDb.exec(sql);
-    expectedDb.exec(`PRAGMA user_version = ${BUILDER_PRODUCT_METADATA_USER_VERSION}`);
-    expectedSchemaFingerprint = canonicalJson(collectSchemaFingerprint(expectedDb));
-    return expectedSchemaFingerprint;
+    for (const sql of schemaSql) expectedDb.exec(sql);
+    expectedDb.exec(`PRAGMA user_version = ${version}`);
+    return canonicalJson(collectSchemaFingerprint(expectedDb));
   } finally {
     expectedDb.close();
   }
+}
+
+let expectedSchemaFingerprint;
+function expectedFingerprint() {
+  if (expectedSchemaFingerprint === undefined) {
+    expectedSchemaFingerprint = schemaFingerprintFor(
+      CREATE_SCHEMA_SQL,
+      BUILDER_PRODUCT_METADATA_USER_VERSION,
+    );
+  }
+  return expectedSchemaFingerprint;
+}
+
+let legacySchemaFingerprint;
+function expectedLegacyFingerprint() {
+  if (legacySchemaFingerprint === undefined) {
+    legacySchemaFingerprint = schemaFingerprintFor(
+      LEGACY_CREATE_SCHEMA_SQL,
+      LEGACY_PRODUCT_METADATA_USER_VERSION,
+    );
+  }
+  return legacySchemaFingerprint;
 }
 
 function validateSchema(db) {
@@ -361,10 +411,53 @@ function validateSchema(db) {
   if (canonicalJson(actual) !== expectedFingerprint()) fail('builder_product_metadata_integrity_failed');
 }
 
+function migrateLegacySchema(db) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    if (canonicalJson(collectSchemaFingerprint(db)) !== expectedLegacyFingerprint()) {
+      fail('builder_product_metadata_integrity_failed');
+    }
+    const snapshots = METADATA_TABLES.map((tableName) => {
+      const table = quoteIdentifier(tableName);
+      const columns = all(db, `PRAGMA table_xinfo(${table})`)
+        .filter((column) => column.hidden === 0)
+        .map((column) => column.name);
+      return { tableName, columns, rows: all(db, `SELECT * FROM ${table}`) };
+    });
+    for (const tableName of [...METADATA_TABLES].reverse()) {
+      db.exec(`DROP TABLE ${quoteIdentifier(tableName)}`);
+    }
+    for (const sql of CREATE_SCHEMA_SQL) db.exec(sql);
+    for (const snapshot of snapshots) {
+      if (snapshot.rows.length === 0) continue;
+      const statement = db.prepare(`INSERT INTO ${quoteIdentifier(snapshot.tableName)} (
+        ${snapshot.columns.map(quoteIdentifier).join(', ')}
+      ) VALUES (${snapshot.columns.map(() => '?').join(', ')})`);
+      for (const row of snapshot.rows) {
+        statement.run(...snapshot.columns.map((column) => (
+          snapshot.tableName === 'projects' && column === 'metadata_schema_version'
+            ? BUILDER_PRODUCT_METADATA_SCHEMA_VERSION
+            : row[column]
+        )));
+      }
+    }
+    db.exec(`PRAGMA user_version = ${BUILDER_PRODUCT_METADATA_USER_VERSION}`);
+    db.exec('COMMIT');
+  } catch (error) {
+    rollbackTransaction(db);
+    throw error;
+  } finally {
+    schemaFingerprintCaches.delete(db);
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 function initialize(db) {
   configurePragmas(db);
   const version = userVersion(db);
   if (version === 0) createSchema(db);
+  else if (version === LEGACY_PRODUCT_METADATA_USER_VERSION) migrateLegacySchema(db);
   else if (version !== BUILDER_PRODUCT_METADATA_USER_VERSION) {
     fail('builder_product_metadata_integrity_failed');
   }
@@ -887,7 +980,7 @@ function appendConversationEvents(db, rawRequest) {
     db.exec('COMMIT');
     return appendResult;
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     conversationCache(db).delete(cacheKey);
     throw error;
   }
@@ -907,7 +1000,7 @@ function loadConversation(db, rawRequest) {
     db.exec('COMMIT');
     return loaded;
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     throw error;
   }
 }
@@ -947,7 +1040,7 @@ function loadConversationCandidateByDraft(db, rawRequest) {
     db.exec('COMMIT');
     return loaded;
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     throw error;
   }
 }
@@ -1429,7 +1522,7 @@ function recordProjectRevision(db, rawRequest) {
     db.exec('COMMIT');
     return result(db, 'recorded', actionReceipt, latestCurrent);
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     throw error;
   }
 }
@@ -1569,7 +1662,7 @@ function bindProjectWorkspace(db, rawRequest) {
     db.exec('COMMIT');
     return workspaceResult(db, workspace);
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* fixed failure below */ }
+    rollbackTransaction(db);
     throw error;
   }
 }

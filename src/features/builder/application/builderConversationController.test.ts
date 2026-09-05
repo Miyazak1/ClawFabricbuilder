@@ -156,6 +156,15 @@ function setupChanged(read: BuilderTaskStreamPort['read'] = async () => readyWir
         cursor,
       }));
     },
+    emitRuntimeChanged(projectId = PROJECT_ID, cursor = 1) {
+      if (listener === null) throw new Error('missing changed listener');
+      listener(Object.freeze({
+        event_version: 'builder-task-stream-changed.v2',
+        project_id: projectId,
+        change_kind: 'runtime_append',
+        cursor,
+      }));
+    },
   };
 }
 
@@ -376,6 +385,21 @@ describe('Builder conversation controller', () => {
     expect(read).not.toHaveBeenCalled();
 
     emitDurableChanged(PROJECT_ID, 13);
+    await flushController();
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('keeps runtime projection hints independent from durable cursor coalescing', async () => {
+    const { controller, emitDurableChanged, emitRuntimeChanged, read } = setupChanged(async () => readyWire());
+    await controller.load(PROJECT_ID, TASK_ADDRESS_ID);
+    read.mockClear();
+
+    emitDurableChanged(PROJECT_ID, 12);
+    await flushController();
+    expect(read).toHaveBeenCalledOnce();
+
+    read.mockClear();
+    emitRuntimeChanged(PROJECT_ID, 1);
     await flushController();
     expect(read).toHaveBeenCalledOnce();
   });

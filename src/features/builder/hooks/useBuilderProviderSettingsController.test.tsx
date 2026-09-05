@@ -111,6 +111,7 @@ describe('useBuilderProviderSettingsController', () => {
     const port: BuilderProviderSettingsPort = {
       readCurrent: vi.fn(async () => current()),
       replaceCurrent: vi.fn(async () => current()),
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus()),
     };
     const result = harness(port);
@@ -146,6 +147,7 @@ describe('useBuilderProviderSettingsController', () => {
         credential_status: 'missing',
       })),
       replaceCurrent: vi.fn(async () => current()),
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus({
         configured: false,
         config_digest: null,
@@ -178,6 +180,7 @@ describe('useBuilderProviderSettingsController', () => {
     const port: BuilderProviderSettingsPort = {
       readCurrent: vi.fn(() => initialRead.promise),
       replaceCurrent,
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus()),
     };
     const result = harness(port);
@@ -220,6 +223,7 @@ describe('useBuilderProviderSettingsController', () => {
     const port: BuilderProviderSettingsPort = {
       readCurrent: vi.fn(() => initialRead.promise),
       replaceCurrent: vi.fn(async () => current()),
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus()),
     };
     const result = harness(port);
@@ -255,6 +259,7 @@ describe('useBuilderProviderSettingsController', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus({
         configured: false,
         config_digest: null,
@@ -296,6 +301,7 @@ describe('useBuilderProviderSettingsController', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus({
         configured: false,
         config_digest: null,
@@ -323,6 +329,7 @@ describe('useBuilderProviderSettingsController', () => {
         credential_status: 'missing',
       })),
       replaceCurrent: vi.fn(async () => current()),
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus({
         configured: false,
         config_digest: null,
@@ -361,6 +368,7 @@ describe('useBuilderProviderSettingsController', () => {
         credential_status: 'missing',
       })),
       replaceCurrent,
+      selectModel: vi.fn(async () => current()),
       status: vi.fn(async () => providerStatus({
         configured: false,
         config_digest: null,
@@ -390,6 +398,7 @@ describe('useBuilderProviderSettingsController', () => {
     const port: BuilderProviderSettingsPort = {
       readCurrent: vi.fn(async () => { throw new Error(privateMarker); }),
       replaceCurrent: vi.fn(async () => { throw new Error(privateMarker); }),
+      selectModel: vi.fn(async () => { throw new Error(privateMarker); }),
       status: vi.fn(async () => { throw new Error(privateMarker); }),
     };
     const result = harness(port);

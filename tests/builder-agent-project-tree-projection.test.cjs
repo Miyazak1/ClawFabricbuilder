@@ -4,10 +4,13 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { createBuilderAgentProjectTreeProjection } = require('../electron/builder-agent-project-tree-projection.cjs');
+const { createBuilderTaskAddress } = require('../electron/builder-session-task-address.cjs');
 
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174002';
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
 const WORKSPACE_ID = 'builder-project:223e4567-e89b-42d3-a456-426614174200';
+const TASK_CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 
 function agentRead() {
   return {
@@ -24,24 +27,40 @@ const passthroughProjectLifecycleStore = Object.freeze({
   },
 });
 
+function digest(char) {
+  return `sha256:${char.repeat(64)}`;
+}
+
+function taskAddress(overrides = {}) {
+  return createBuilderTaskAddress({
+    task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174203',
+    session_id: 'builder-session:123e4567-e89b-42d3-a456-426614174201',
+    parent_task_address_id: null,
+    conversation_id: TASK_CONVERSATION_ID,
+    project_id: PROJECT_ID,
+    agent_id: AGENT_ID,
+    title: 'Improve navigation',
+    goal: 'Make Agent-first navigation usable.',
+    status: 'active',
+    current_brief_id: null,
+    current_plan_id: digest('1'),
+    base_revision_receipt_digest: null,
+    produced_revision_receipt_digest: null,
+    created_by: 'local-user',
+    created_at_ms: 10,
+    updated_at_ms: 30,
+    closed_at_ms: null,
+    ...overrides,
+  });
+}
+
 test('projects saved and workspace facts under the persisted Agent and only renders addressed tasks', async () => {
   const projection = createBuilderAgentProjectTreeProjection({
     agent_store: { read_agent: () => agentRead() },
     address_store: {
       list_task_addresses_for_agent: () => ({
         status: 'ready',
-        task_addresses: [{ task_address: {
-          task_address_id: 'builder-task-address:123e4567-e89b-42d3-a456-426614174203',
-          session_id: 'builder-session:123e4567-e89b-42d3-a456-426614174201',
-          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174205',
-          project_id: PROJECT_ID,
-          agent_id: AGENT_ID,
-          title: 'Improve navigation',
-          goal: 'Make Agent-first navigation usable.',
-          status: 'active',
-          current_plan_id: null,
-          updated_at_ms: 30,
-        } }],
+        task_addresses: [{ task_address: taskAddress() }],
       }),
     },
     project_lifecycle_store: passthroughProjectLifecycleStore,
@@ -67,11 +86,36 @@ test('projects saved and workspace facts under the persisted Agent and only rend
   assert.equal(result.agent.display_name, 'Builder');
   assert.deepEqual(result.projects.map((project) => project.project_id), [PROJECT_ID, WORKSPACE_ID]);
   assert.equal(result.projects[0].tasks.length, 1);
-  assert.equal(result.projects[0].tasks[0].conversation_id, 'builder-conversation:123e4567-e89b-42d3-a456-426614174205');
+  assert.equal(
+    result.projects[0].tasks[0].conversation_id,
+    TASK_CONVERSATION_ID,
+  );
   assert.equal(result.projects[1].tasks.length, 0);
   assert.equal(result.authority.permission_grant, false);
   assert.equal(result.authority.source_read, false);
   assert.equal(Object.isFrozen(result.projects), true);
+});
+
+test('fails closed instead of projecting malformed or root-history Task Address records', async () => {
+  const projection = createBuilderAgentProjectTreeProjection({
+    agent_store: { read_agent: () => agentRead() },
+    address_store: {
+      list_task_addresses_for_agent: () => ({
+        status: 'ready',
+        task_addresses: [{ task_address: {
+          ...taskAddress(),
+          conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174200',
+        } }],
+      }),
+    },
+    project_lifecycle_store: passthroughProjectLifecycleStore,
+    list_current_projects: async () => ({ operation: 'current_listed', projects: [] }),
+    list_project_workspaces: async () => ({ operation: 'project_workspaces_listed', workspaces: [] }),
+    owner_id: 'builder-user:00000000-0000-4000-8000-000000000001',
+  });
+  await assert.rejects(() => projection.read_tree({ agent_id: AGENT_ID }), {
+    code: 'builder_agent_project_tree_unavailable',
+  });
 });
 
 test('missing persisted Agent fails instead of synthesizing a project-first fallback', async () => {

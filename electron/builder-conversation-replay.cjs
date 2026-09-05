@@ -206,6 +206,37 @@ function applyTurnFollowupConsumed(state, payload) {
 }
 
 function applyRunStarted(state, payload) {
+  if (payload.resume_session_run_id !== undefined) {
+    if (payload.retry_of_run_id !== null) {
+      const previousTurn = state.turns.get(payload.turn_id);
+      const previousRun = previousTurn?.runs.at(-1);
+      if (state.activeTurnId !== null || [...state.turns.keys()].at(-1) !== payload.turn_id
+        || previousTurn?.status !== 'completed' || previousTurn.outcome !== 'interrupted'
+        || previousRun?.terminal_status !== 'interrupted'
+        || previousRun.run_id !== payload.retry_of_run_id
+        || (previousRun.resume_session_run_id ?? previousRun.run_id) !== payload.resume_session_run_id) fail();
+      previousTurn.status = 'active';
+      previousTurn.outcome = null;
+      state.activeTurnId = payload.turn_id;
+    } else {
+      const resumableRun = [...state.turns.values()].reverse().flatMap((turn) => (
+        turn.status === 'completed'
+        && turn.mode === 'work'
+        && ['candidate_ready', 'responded'].includes(turn.outcome)
+          ? [turn.runs.at(-1)]
+          : []
+      )).find((run) => (
+        run?.status === 'completed'
+        && run.terminal_status === 'succeeded'
+        && run.runtime_events.length > 0
+      ));
+      if (
+        resumableRun === undefined
+        || (resumableRun.resume_session_run_id ?? resumableRun.run_id)
+          !== payload.resume_session_run_id
+      ) fail();
+    }
+  }
   const turn = requireActiveTurn(state, payload.turn_id);
   if (state.runIds.has(payload.run_id)) fail();
   if (turn.mode === 'work') {
@@ -226,6 +257,7 @@ function applyRunStarted(state, payload) {
     attempt_number: payload.attempt_number,
     retry_of_run_id: payload.retry_of_run_id,
     input_digest: payload.input_digest,
+    ...(payload.resume_session_run_id === undefined ? {} : { resume_session_run_id: payload.resume_session_run_id }),
     status: 'running',
     terminal_status: null,
     result_kind: null,
@@ -508,6 +540,42 @@ function applyAgentStepProgressRecorded(state, payload) {
   state.agentStepProgressAdmissionDigests.add(admission.admission_digest);
 }
 
+function latestCompactionEligibleTurnAndRun(state) {
+  for (let index = state.turnOrder.length - 1; index >= 0; index -= 1) {
+    const turn = state.turns.get(state.turnOrder[index]);
+    const run = turn?.runs.at(-1) ?? null;
+    if (
+      turn?.mode === 'work'
+      && turn.task !== null
+      && turn.status === 'completed'
+      && ['candidate_ready', 'responded'].includes(turn.outcome)
+      && run !== null
+      && run.status === 'completed'
+      && run.terminal_status === 'succeeded'
+      && run.runtime_events.length > 0
+    ) return { turn, run };
+  }
+  return null;
+}
+
+function applyContextCompactionRecorded(state, payload) {
+  if (state.activeTurnId !== null) fail();
+  const eligible = latestCompactionEligibleTurnAndRun(state);
+  const turn = state.turns.get(payload.turn_id);
+  const run = turn?.runs.find((item) => item.run_id === payload.run_id) ?? null;
+  if (
+    eligible === null
+    || turn !== eligible.turn
+    || run !== eligible.run
+    || turn.task === null
+    || payload.task_id !== turn.task.task_id
+    || state.contextCompactionAdmissionIds.has(payload.admission_id)
+    || (payload.compaction_id !== null && state.contextCompactionIds.has(payload.compaction_id))
+  ) fail();
+  state.contextCompactionAdmissionIds.add(payload.admission_id);
+  if (payload.compaction_id !== null) state.contextCompactionIds.add(payload.compaction_id);
+}
+
 function applyCandidateReviewed(state, payload) {
   if (state.activeTurnId !== null || state.reviewIds.has(payload.review_id)) fail();
   const turn = state.turns.get(payload.turn_id);
@@ -729,7 +797,8 @@ const TRANSITIONS = Object.freeze({
   run_cancel_requested: applyRunCancelRequested,
   tool_call_requested: applyToolCallRequested,
   tool_call_result_recorded: applyToolCallResultRecorded,
-  agent_step_progress_recorded: applyAgentStepProgressRecorded,
+    agent_step_progress_recorded: applyAgentStepProgressRecorded,
+  context_compaction_recorded: applyContextCompactionRecorded,
   run_completed: applyRunCompleted,
   task_brief_updated: applyTaskBriefUpdated,
   turn_completed: applyTurnCompleted,
@@ -834,6 +903,8 @@ function createReplayState(first) {
     toolCallIds: new Set(),
     toolResultRecordDigests: new Set(),
     agentStepProgressAdmissionDigests: new Set(),
+    contextCompactionAdmissionIds: new Set(),
+    contextCompactionIds: new Set(),
     interruptRequestIds: new Set(),
     cancelRequestIds: new Set(),
     reviewIds: new Set(),

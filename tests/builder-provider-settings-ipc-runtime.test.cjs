@@ -13,6 +13,7 @@ const {
 const {
   READ_CURRENT_CHANNEL,
   REPLACE_CURRENT_CHANNEL,
+  SELECT_MODEL_CHANNEL,
   STATUS_CHANNEL,
 } = require('../electron/builder-provider-settings-ipc-adapter.cjs');
 const {
@@ -110,11 +111,13 @@ function runtimeWithRepository(createRepository) {
         return {
           READ_CURRENT_CHANNEL,
           REPLACE_CURRENT_CHANNEL,
+          SELECT_MODEL_CHANNEL,
           STATUS_CHANNEL,
           createBuilderProviderSettingsIpcAdapter: (options) => (
             realSettingsAdapter.createBuilderProviderSettingsIpcAdapter({
               readCurrent: options.readCurrent,
               writeCurrent: options.writeCurrent,
+              selectCurrentModel: options.selectCurrentModel,
               mainWindowRef: options.mainWindowRef,
             })
           ),
@@ -152,6 +155,9 @@ test('registers exactly the controlled settings channels and keeps repository cr
       write_current() {
         throw repositoryError('builder_provider_config_repository_unavailable');
       },
+      select_current_model() {
+        throw repositoryError('builder_provider_config_repository_unavailable');
+      },
     };
   });
   const userDataPath = temporaryUserData(t);
@@ -160,7 +166,12 @@ test('registers exactly the controlled settings channels and keeps repository cr
   const runtime = runtimeModule.createRuntime({ ipcMain, mainWindow, userDataPath });
 
   assert.equal(runtime.runtime_version, 'builder-provider-settings-ipc-runtime.v1');
-  assert.deepEqual(Array.from(runtime.channels), [READ_CURRENT_CHANNEL, REPLACE_CURRENT_CHANNEL, STATUS_CHANNEL]);
+  assert.deepEqual(Array.from(runtime.channels), [
+    READ_CURRENT_CHANNEL,
+    REPLACE_CURRENT_CHANNEL,
+    SELECT_MODEL_CHANNEL,
+    STATUS_CHANNEL,
+  ]);
   assert.equal(createCount, 0);
   assert.equal(runtime.register(), true);
   assert.equal(runtime.register(), false);
@@ -194,6 +205,10 @@ test('forwards read and replace through lazy main-only repository authority with
         calls.push(['write_current', request]);
         return repositoryEnvelope(providerConfig(request.config));
       },
+      select_current_model(request) {
+        calls.push(['select_current_model', request]);
+        return repositoryEnvelope(providerConfig({ model: request.model }));
+      },
     };
   });
   const userDataPath = temporaryUserData(t);
@@ -214,9 +229,14 @@ test('forwards read and replace through lazy main-only repository authority with
     credential: 'real-key-value',
   };
   const replaced = ipcMain.handlers.get(REPLACE_CURRENT_CHANNEL)({ sender: mainWindow.webContents }, request);
+  const selected = ipcMain.handlers.get(SELECT_MODEL_CHANNEL)(
+    { sender: mainWindow.webContents },
+    { model: 'selected-model', expected_config_digest: read.config.config_digest },
+  );
 
   assert.equal(replaced.config.model, 'replacement-model');
-  for (const result of [read, replaced]) {
+  assert.equal(selected.config.model, 'selected-model');
+  for (const result of [read, replaced, selected]) {
     assert.doesNotMatch(
       JSON.stringify(result),
       /real-key-value|secret_ref|secret_binding|encrypted_secret_digest|private-evidence-marker/iu,
@@ -232,6 +252,10 @@ test('forwards read and replace through lazy main-only repository authority with
       },
       credential: request.credential,
     }],
+    ['select_current_model', {
+      model: 'selected-model',
+      expected_config_digest: read.config.config_digest,
+    }],
   ]);
 });
 
@@ -244,6 +268,9 @@ test('keeps active renderer and payload validation inside the controlled setting
         return repositoryEnvelope();
       },
       write_current() {
+        return repositoryEnvelope();
+      },
+      select_current_model() {
         return repositoryEnvelope();
       },
     };
@@ -429,4 +456,5 @@ test('contains no preload, renderer, direct UI, generic provider, or legacy auth
   assert.match(source, /createBuilderProviderConfigRepository/u);
   assert.match(source, /read_current/u);
   assert.match(source, /write_current/u);
+  assert.match(source, /select_current_model/u);
 });

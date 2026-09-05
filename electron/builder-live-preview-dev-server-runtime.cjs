@@ -28,6 +28,7 @@ const {
 } = require('./builder-project-source-tree.cjs');
 const {
   BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION,
+  BuilderCheckRunProcessAdapterError,
 } = require('./builder-check-run-process-adapter.cjs');
 const {
   verifyBoundScript,
@@ -38,6 +39,8 @@ const BUILDER_LIVE_PREVIEW_DEV_SERVER_RUNTIME_VERSION =
 const HOST = '127.0.0.1';
 const STARTUP_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
+const SPAWN_ATTEMPTS = 10;
+const SPAWN_RETRY_DELAY_MS = 250;
 const OPTION_KEYS = Object.freeze([
   'process_adapter', 'process_exec_path', 'worker_path', 'now_ms', 'on_output',
 ]);
@@ -200,6 +203,20 @@ function probe(url) {
 
 function delay(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 
+async function spawnDevServer(spawnProcess, file, args, options) {
+  for (let attempt = 1; attempt <= SPAWN_ATTEMPTS; attempt += 1) {
+    try {
+      return spawnProcess(file, args, options);
+    } catch (error) {
+      if (!(error instanceof BuilderCheckRunProcessAdapterError) || attempt === SPAWN_ATTEMPTS) {
+        throw error;
+      }
+      await delay(SPAWN_RETRY_DELAY_MS);
+    }
+  }
+  fail();
+}
+
 function minimalEnvironment(workspaceRootPath) {
   const env = {
     ELECTRON_RUN_AS_NODE: '1', FORCE_COLOR: '0', NO_COLOR: '1',
@@ -275,7 +292,7 @@ function createBuilderLivePreviewDevServerRuntime(rawOptions) {
     const port = await reservePort();
     const previewOrigin = `http://${HOST}:${port}`;
     const entryUrl = `${previewOrigin}/`;
-    const child = spawnProcess(processExecPath, [
+    const child = await spawnDevServer(spawnProcess, processExecPath, [
       workerPath,
       'run-dev-script',
       'dev',

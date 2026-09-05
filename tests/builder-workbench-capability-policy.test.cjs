@@ -39,6 +39,7 @@ function adapterFixture() {
     updateMessageState() { return { operation: 'message_state_updated' }; },
     createTaskProposal() { return { operation: 'proposal_created' }; },
     decideTaskProposal() { return { operation: 'task_materialized' }; },
+    decideAgentPlan() { return { operation: 'decision_recorded' }; },
     controlTask() { return { operation: 'cancel_requested' }; },
     mainWindowRef() {
       return { webContents: sender, isDestroyed: () => false };

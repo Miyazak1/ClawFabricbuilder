@@ -199,17 +199,31 @@ function ownMethod(value, methodKey) {
 
 function sanitizeSourceResult(rawValue, request) {
   const descriptors = exactObject(rawValue, SOURCE_RESULT_KEYS);
+  const operation = descriptors.operation.value;
   if (
     descriptors.result_version.value !== BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_RESULT_VERSION
     || descriptors.service_version.value !== BUILDER_LIVE_PREVIEW_CURRENT_DRAFT_SOURCE_SERVICE_VERSION
-    || descriptors.operation.value !== 'current_draft_live_preview_source_admitted'
+    || (
+      operation !== 'current_draft_live_preview_source_admitted'
+      && operation !== 'saved_revision_live_preview_source_admitted'
+    )
     || descriptors.project_id.value !== request.project_id
     || descriptors.conversation_id.value !== request.conversation_id
   ) fail();
-  return sanitizeBuilderLivePreviewSourceAdmission(descriptors.source_admission.value);
+  const sourceAdmission = sanitizeBuilderLivePreviewSourceAdmission(descriptors.source_admission.value);
+  if (
+    (operation === 'current_draft_live_preview_source_admitted'
+      && sourceAdmission.source_kind !== 'current_draft')
+    || (operation === 'saved_revision_live_preview_source_admitted'
+      && sourceAdmission.source_kind !== 'saved_revision')
+  ) fail();
+  return sourceAdmission;
 }
 
 function rootLabel(sourceAdmission) {
+  if (sourceAdmission.source_ref.source_ref_kind === 'saved_project_revision') {
+    return `Saved revision ${sourceAdmission.source_ref.revision_number}`;
+  }
   if (sourceAdmission.source_ref.source_ref_kind !== 'current_draft_checkpoint_candidate') return 'Current files';
   return `Current draft ${sourceAdmission.source_ref.checkpoint_sequence}`;
 }
@@ -267,11 +281,8 @@ function createBuilderSideWorkspaceFileMainService(rawOptions) {
     });
     const sourceAdmission = sanitizeSourceResult(sourceResult, request);
     if (
-      sourceAdmission.source_kind !== 'current_draft'
-      || (
-        expectedSourceTreeDigest !== null
-        && sourceAdmission.source_tree.source_tree_digest !== expectedSourceTreeDigest
-      )
+      expectedSourceTreeDigest !== null
+      && sourceAdmission.source_tree.source_tree_digest !== expectedSourceTreeDigest
     ) fail();
     rememberAdmission(request, sourceAdmission);
     return sourceAdmission;
@@ -329,7 +340,10 @@ function createBuilderSideWorkspaceFileMainService(rawOptions) {
         const request = safeContentRequest(rawRequest);
         let sourceTree;
         let treeProjection;
-        if (request.file_ref.source_kind === 'current_draft') {
+        if (
+          request.file_ref.source_kind === 'current_draft'
+          || request.file_ref.source_kind === 'saved_revision'
+        ) {
           const sourceAdmission = await resolveAdmission(request, request.file_ref.source_tree_digest);
           sourceTree = sourceAdmission.source_tree;
           treeProjection = treeProjectionFromAdmission(sourceAdmission, request.file_ref.path);

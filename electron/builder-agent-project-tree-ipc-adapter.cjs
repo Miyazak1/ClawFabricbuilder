@@ -7,12 +7,15 @@ const RENAME_AGENT_PROJECT_CHANNEL = 'clawfabric-builder:agent-project-tree:rena
 const ARCHIVE_AGENT_PROJECT_CHANNEL = 'clawfabric-builder:agent-project-tree:archive-project';
 const RENAME_AGENT_TASK_CHANNEL = 'clawfabric-builder:agent-project-tree:rename-task';
 const ARCHIVE_AGENT_TASK_CHANNEL = 'clawfabric-builder:agent-project-tree:archive-task';
+const EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL =
+  'clawfabric-builder:agent-project-tree:export-task-transcript';
 const OPTION_KEYS = Object.freeze([
   'readTree',
   'renameProject',
   'archiveProject',
   'renameTask',
   'archiveTask',
+  'exportTaskTranscript',
   'mainWindowRef',
 ]);
 const AGENT_ID_PATTERN =
@@ -85,6 +88,7 @@ function safeOptions(value) {
       archiveProject: stableMethod(value, 'archiveProject'),
       renameTask: stableMethod(value, 'renameTask'),
       archiveTask: stableMethod(value, 'archiveTask'),
+      exportTaskTranscript: stableMethod(value, 'exportTaskTranscript'),
       mainWindowRef: stableMethod(value, 'mainWindowRef'),
     });
   } catch {
@@ -134,9 +138,12 @@ function safeLifecycleRequest(value, kind) {
       ? ['agent_id', 'project_id', 'title']
       : kind === 'project_archive'
         ? ['agent_id', 'project_id']
-        : kind === 'task_rename'
-          ? ['agent_id', 'project_id', 'task_address_id', 'title']
-          : ['agent_id', 'project_id', 'task_address_id'];
+      : kind === 'task_rename'
+        ? ['agent_id', 'project_id', 'task_address_id', 'title']
+        : kind === 'task_archive' || kind === 'task_export_transcript'
+          ? ['agent_id', 'project_id', 'task_address_id']
+          : null;
+    if (keys === null) throw ipcError('builder_agent_project_tree_invalid');
     if (!isPlainObject(value)) throw ipcError('builder_agent_project_tree_invalid');
     const actual = Reflect.ownKeys(value);
     if (actual.length !== keys.length || actual.some((key) => typeof key !== 'string' || !keys.includes(key))) {
@@ -261,11 +268,13 @@ function createBuilderAgentProjectTreeIpcAdapter(rawOptions) {
     adapter_version: 'builder-agent-project-tree-ipc-adapter.v1',
     channel: READ_AGENT_PROJECT_TREE_CHANNEL,
     authority: Object.freeze({
-      renderer_authority: 'agent_id_only',
+      renderer_authority: 'agent_project_task_selection_only',
       main_owned_agent_authority: true,
       main_owned_task_address_authority: true,
       active_renderer_required: true,
-      read_only: true,
+      request_surface: 'read_and_bounded_lifecycle_methods_only',
+      read_only: false,
+      lifecycle_authority: 'main_owned_project_and_task_lifecycle_stores',
       provider_dispatch: false,
       permission_grant: false,
       source_read: false,
@@ -312,6 +321,12 @@ function createBuilderAgentProjectTreeIpcAdapter(rawOptions) {
           return invokeLifecycle(event, args, options.archiveTask, 'task_archive');
         },
       }),
+      exportTaskTranscript: Object.freeze({
+        channel: EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
+        invoke(event, ...args) {
+          return invokeLifecycle(event, args, options.exportTaskTranscript, 'task_export_transcript');
+        },
+      }),
     }),
   });
 }
@@ -319,6 +334,7 @@ function createBuilderAgentProjectTreeIpcAdapter(rawOptions) {
 module.exports = Object.freeze({
   ARCHIVE_AGENT_PROJECT_CHANNEL,
   ARCHIVE_AGENT_TASK_CHANNEL,
+  EXPORT_AGENT_TASK_TRANSCRIPT_CHANNEL,
   READ_AGENT_PROJECT_TREE_CHANNEL,
   RENAME_AGENT_PROJECT_CHANNEL,
   RENAME_AGENT_TASK_CHANNEL,

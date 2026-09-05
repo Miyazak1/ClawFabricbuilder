@@ -3,7 +3,7 @@
 const { types: utilTypes } = require('node:util');
 const {
   createBuilderConversationAddress,
-  sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 } = require('./builder-conversation-address.cjs');
 
 const SERVICE_VERSION = 'builder-session-task-target-service.v1';
@@ -58,6 +58,13 @@ function safePattern(value, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) fail();
   return value;
 }
+function safeTaskConversationId(projectId, conversationId) {
+  try {
+    return sanitizeBuilderTaskConversationAddress(projectId, conversationId);
+  } catch {
+    fail();
+  }
+}
 function freezeDeep(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const nested of Object.values(value)) freezeDeep(nested);
@@ -105,7 +112,7 @@ function createBuilderSessionTaskTargetService(rawOptions) {
         operation: 'existing_task_target_resolved',
         project_id: projectId,
         task_address_id: safeTaskAddressId,
-        conversation_id: sanitizeBuilderConversationAddress(projectId, task.conversation_id),
+        conversation_id: safeTaskConversationId(projectId, task.conversation_id),
         agent_id: agentId,
         should_record_task_address: false,
         authority: 'main_owned_task_target_resolution',

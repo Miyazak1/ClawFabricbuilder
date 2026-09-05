@@ -29,6 +29,18 @@ const AGENT_ID_PATTERN =
 const CURSOR_PROTOCOL_VERSION = 'builder-task-stream-cursor.v1';
 const CURSOR_READ_RESULT_VERSION = 'builder-task-stream-cursor-read-result.v1';
 const SNAPSHOT_DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
+const INCREMENTAL_TOP_LEVEL_PATCH_KEYS = Object.freeze([
+  'context_status_projection',
+  'provider_context_disclosure_status_projection',
+  'context_usage_projection',
+  'draft_checkpoint_status_projection',
+  'draft_checkpoint_timeline_projection',
+  'review_state_projection',
+  'check_run_outcome_projection',
+  'candidate_activity',
+  'agent_activity_projection',
+]);
+const INCREMENTAL_TOP_LEVEL_CLEARED_KEYS = '__cleared_top_level_keys';
 const MAX_NODES = 20_000;
 const MAX_ENTRIES = 20_000;
 const MAX_UTF8_BYTES = 4 * 1024 * 1024;
@@ -276,6 +288,15 @@ function mergeIncrementalSnapshot(
   if (base.state !== 'ready' || !isPlainObject(patch) || !isPlainObject(patch.conversation)) {
     throw unavailable();
   }
+  const clearedTopLevelKeys = Object.hasOwn(patch, INCREMENTAL_TOP_LEVEL_CLEARED_KEYS)
+    ? patch[INCREMENTAL_TOP_LEVEL_CLEARED_KEYS]
+    : [];
+  if (
+    !Array.isArray(clearedTopLevelKeys)
+    || clearedTopLevelKeys.some((key) => (
+      typeof key !== 'string' || !INCREMENTAL_TOP_LEVEL_PATCH_KEYS.includes(key)
+    ))
+  ) throw unavailable();
   const patchConversation = patch.conversation;
   if (!isPlainObject(patchConversation.window) || !Array.isArray(patchConversation.items)) {
     throw unavailable();
@@ -296,8 +317,15 @@ function mergeIncrementalSnapshot(
     if (itemsBySequence.has(sequence)) throw unavailable();
     itemsBySequence.set(sequence, item);
   }
+  const merged: Record<string, unknown> = { ...base };
+  delete merged.state;
+  for (const key of clearedTopLevelKeys) delete merged[key];
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === INCREMENTAL_TOP_LEVEL_CLEARED_KEYS || key === 'conversation') continue;
+    merged[key] = value;
+  }
   return sanitizeBuilderConversationSnapshot({
-    ...patch,
+    ...merged,
     conversation: {
       ...patchConversation,
       items: [...itemsBySequence.entries()]

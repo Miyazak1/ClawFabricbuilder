@@ -12,6 +12,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   type Ref,
 } from 'react';
 import {
@@ -30,6 +31,7 @@ import {
   GitCompareArrows,
   Globe2,
   History,
+  ListCollapse,
   ListChecks,
   LockKeyhole,
   Maximize2,
@@ -38,6 +40,7 @@ import {
   MoreVertical,
   PanelRightClose,
   PanelRightOpen,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -77,6 +80,7 @@ import {
   type BuilderCheckRunProfile,
   type BuilderCheckRunStatusProjection,
   type BuilderCommandApprovalRequest,
+  type BuilderProjectEnvironmentDiagnosis,
   type BuilderLivePreviewStatusProjection,
   type BuilderLivePreviewViewBounds,
   type BuilderUserWebStatusProjection,
@@ -94,16 +98,14 @@ import {
   isTrustedBuilderProjectHistorySnapshot,
   type BuilderProjectHistorySnapshot,
 } from '../application/builderProjectHistoryController';
-import {
-  isTrustedBuilderProjectCatalogSnapshot,
-  type BuilderProjectCatalogSnapshot,
-} from '../application/builderProjectCatalogController';
+import type { BuilderProjectCatalogSnapshot } from '../application/builderProjectCatalogController';
 import type {
   BuilderConversationItem,
   BuilderConversationRunProgressStage,
   BuilderConversationWorkspaceMaterialization,
 } from '../domain/builderConversationSnapshot';
 import type { BuilderAgentActivityProjectionWire } from '../domain/builderAgentActivityProjection';
+import { hasActiveProgrammingTask, interruptedTaskContinuation } from '../domain/builderInterruptedTask';
 import type { BuilderAgentWorkbenchTaskProposalAction } from '../domain/builderAgentWorkbenchProjection';
 import {
   canStopBuilderAgentTask,
@@ -113,7 +115,6 @@ import type { BuilderCheckRunOutcomeProjectionWire } from '../domain/builderChec
 import type { BuilderDraftCheckpointStatusProjectionWire } from '../domain/builderDraftCheckpointStatusProjection';
 import type { BuilderDraftCheckpointTimelineProjectionWire } from '../domain/builderDraftCheckpointTimelineProjection';
 import type { BuilderProjectHistoryRevision } from '../domain/builderProjectHistory';
-import type { BuilderReviewStateProjectionWire } from '../domain/builderReviewStateProjection';
 import type { BuilderProjectSourceFile } from '../domain/builderProjectSnapshot';
 import {
   createBuilderSourceTreeChanges,
@@ -124,6 +125,7 @@ import type {
   BuilderProviderContextDisclosureInspectionWire,
   BuilderProviderContextDisclosureStatusProjectionWire,
 } from '../domain/builderProviderContextDisclosureStatusProjection';
+import type { BuilderContextUsageProjectionWire } from '../domain/builderContextUsageProjection';
 import { BuilderChangesPanel } from './BuilderChangesPanel';
 import { BuilderConversationMarkdown } from './BuilderConversationMarkdown';
 import {
@@ -136,7 +138,10 @@ import {
   BuilderComposer,
   type BuilderComposerApprovalMode,
   type BuilderComposerContextStatus,
+  type BuilderManualContextCompactionFeedback,
   type BuilderComposerMode,
+  type BuilderComposerModelSelection,
+  type BuilderComposerSurfaceKind,
 } from './BuilderComposer';
 import {
   BuilderDraftCheckStatus,
@@ -235,6 +240,19 @@ export type BuilderCheckEnvironmentDiagnosisView = Readonly<{
   failure_message?: string;
 }>;
 
+type BuilderProjectEnvironmentDiagnosisView = Readonly<{
+  project_id: string;
+  status: 'loading' | 'ready' | 'failed';
+  diagnosis?: BuilderProjectEnvironmentDiagnosis;
+  failure_message?: string;
+}>;
+
+type BuilderProjectDependencyPreparationView = Readonly<{
+  project_id: string;
+  status: 'preparing' | 'failed';
+  failure_message?: string;
+}>;
+
 export type BuilderPageProps = {
   activeRunFollowupQueued?: boolean;
   approvalMode?: BuilderComposerApprovalMode;
@@ -243,12 +261,17 @@ export type BuilderPageProps = {
   checkEnvironmentDiagnosis?: BuilderCheckEnvironmentDiagnosisView | null;
   checkRunProfiles?: readonly BuilderCheckRunProfile[];
   checkRunStatus?: BuilderCheckRunStatusProjection | null;
+  projectDependencyPreparation?: BuilderProjectDependencyPreparationView | null;
+  projectEnvironmentDiagnosis?: BuilderProjectEnvironmentDiagnosisView | null;
   instruction: string;
   composerRouteDecision?: BuilderComposerRouteDecision | null;
   composerContextStatus?: BuilderComposerContextStatus;
   providerContextDisclosureStatus?: BuilderProviderContextDisclosureStatusProjectionWire | null;
+  contextUsageProjection?: BuilderContextUsageProjectionWire | null;
+  manualContextCompactionFeedback?: BuilderManualContextCompactionFeedback;
   providerContextDisclosureApprovalState?: 'idle' | 'approving' | 'failed';
   composerMode?: BuilderComposerMode | null;
+  composerModelSelection?: BuilderComposerModelSelection;
   composerSubmitLocked?: boolean;
   liveOutput?: BuilderLiveOutputSnapshot | null;
   liveOutputStore?: BuilderLiveOutputStore | null;
@@ -260,6 +283,7 @@ export type BuilderPageProps = {
   sideWorkspaceFileContentStatus?: 'idle' | 'loading' | 'ready' | 'failed';
   sideWorkspaceFileTree?: BuilderSideWorkspaceFileTreeProjection | null;
   sideWorkspaceFileTreeStatus?: 'idle' | 'loading' | 'ready' | 'failed';
+  surfaceKind?: BuilderComposerSurfaceKind;
   approvedPlanContinuationFailure?: BuilderPlanReviewInFlight | null;
   answerFailureRecordedSuccess?: boolean;
   planReviewFailure?: BuilderPlanReviewInFlight | null;
@@ -270,8 +294,6 @@ export type BuilderPageProps = {
   commandApproval?: BuilderCommandApprovalPrompt | null;
   commandOutputStore?: BuilderCommandOutputStore | null;
   pendingUserMessages?: readonly BuilderPendingUserMessage[];
-  workspacePickerRequest?: number;
-  workspaceNewProjectRequest?: number;
   onInstructionChange?: (value: string) => void;
   onApprovePlanSourceRead?: () => Promise<unknown> | void;
   onApproveCurrentProjectWrite?: () => Promise<unknown> | void;
@@ -283,17 +305,18 @@ export type BuilderPageProps = {
   onDiagnoseCheckEnvironment?: (profile: BuilderCheckRunProfile) => Promise<unknown> | void;
   onApproveProviderContextDisclosure?: () => Promise<unknown> | void;
   onCancel?: () => void;
-  onCreateProject?: (projectTitle: string) => Promise<unknown> | void;
-  onClearWorkspaceSelection?: () => void;
-  onDismissWorkspacePicker?: () => void;
+  onPauseTask?: () => void;
   onDismissPlanSourceReadApproval?: () => void;
   onDismissCurrentProjectWriteApproval?: () => void;
   onSelectApprovalMode?: (mode: BuilderComposerApprovalMode) => Promise<unknown> | void;
   onSelectComposerMode?: (mode: BuilderComposerMode) => void;
+  onSelectComposerModel?: (model: string, expectedConfigDigest: string) => Promise<unknown> | void;
   onSelectPlanMode?: () => void;
   onClearComposerMode?: () => void;
   onSubmitInstruction?: () => void;
   onRetryGenerate?: () => void;
+  onResumeInterruptedRun?: () => void;
+  onManualCompactContext?: () => Promise<unknown> | void;
   onRefreshConversation?: () => Promise<unknown> | void;
   onRefreshHistory?: () => Promise<unknown> | void;
   onRejectDraft?: () => void;
@@ -322,10 +345,10 @@ export type BuilderPageProps = {
   onStopLivePreview?: () => Promise<unknown> | void;
   onInspectRevision?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onOpenProjectLocation?: (projectId: string) => Promise<unknown> | void;
-  onOpenProject?: (projectId: string) => Promise<unknown> | void;
   onRestoreRevisionAsDraft?: (projectId: string, revisionReceiptDigest: string) => Promise<unknown> | void;
   onShowCurrentRevision?: () => Promise<unknown> | void;
   onOpenSettings?: () => void;
+  onPrepareProjectDependencies?: (projectId: string) => Promise<unknown> | void;
   conversationSnapshot?: BuilderConversationControllerSnapshot;
   taskConversationSeed?: BuilderTaskConversationSeed | null;
   agentWorkbenchSnapshot?: BuilderAgentWorkbenchSnapshot;
@@ -338,6 +361,11 @@ export type BuilderPageProps = {
     proposalId: string,
     operation: 'approve_existing_project' | 'reject',
     projectId: string | null,
+  ) => Promise<unknown> | void;
+  onDecideAgentPlan?: (
+    agentPlanId: string,
+    contentDigest: string,
+    decision: 'approved' | 'rejected',
   ) => Promise<unknown> | void;
   onCreateProjectForAgentTaskProposal?: (
     proposalId: string,
@@ -491,8 +519,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
   const workEntries = new Map<string, ActivityWorkStatusEntry>();
   const toolRequestEntries = new Map<string, ActivityItemEntry>();
   const runtimeToolEntries = new Map<string, ActivityItemEntry>();
-  const toolEntriesByRun = new Map<string, ActivityItemEntry[]>();
-  const latestRuntimeAssistantByRun = new Map<string, ActivityItemEntry>();
   const latestRuntimeStatusByRun = new Map<string, ActivityItemEntry>();
   const recoveryActionEntries = new Map<string, ActivityItemEntry>();
   const items = activityItems(snapshot);
@@ -559,7 +585,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
         hidden: true,
       };
       toolRequestEntries.set(`${runKey}:${item.tool_call_id}`, entry);
-      toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
       entries.push(entry);
       continue;
     }
@@ -576,7 +601,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
           item,
           hidden: item.result.status === 'succeeded',
         };
-        toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
         entries.push(entry);
       }
       continue;
@@ -593,7 +617,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
         item,
         hidden: false,
       };
-      latestRuntimeAssistantByRun.set(runKey, entry);
       entries.push(entry);
       continue;
     }
@@ -615,7 +638,6 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
           hidden: false,
         };
         runtimeToolEntries.set(activityKey, entry);
-        toolEntriesByRun.set(runKey, [...(toolEntriesByRun.get(runKey) ?? []), entry]);
         entries.push(entry);
       }
       continue;
@@ -658,39 +680,25 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     }
     if (item.item_kind === 'run_completed') {
       const key = `${item.turn_id}:${item.run_id}`;
-      completedRuns.add(key);
-      const workEntry = workEntries.get(key);
-      if (workEntry !== undefined) workEntry.hidden = true;
-      const statusEntry = latestRuntimeStatusByRun.get(item.run_id);
-      if (statusEntry !== undefined) statusEntry.hidden = true;
-      const historyEntries = toolEntriesByRun.get(key) ?? [];
-      const historyItems = historyEntries
-        .filter((historyEntry) => !historyEntry.hidden)
-        .map((historyEntry) => historyEntry.item)
-        .filter((historyItem) => (
-          historyItem.item_kind === 'programming_runtime_tool_activity'
-          || (
-            historyItem.item_kind === 'tool_call_result_recorded'
-            && historyItem.result.status !== 'succeeded'
-          )
-        ));
-      for (const historyEntry of historyEntries) historyEntry.hidden = true;
-      if (historyItems.length > 0) {
+      const runHistoryItems = [...runtimeToolEntries.values()]
+        .filter((entry): entry is ActivityItemEntry & {
+          item: Extract<BuilderConversationItem, { item_kind: 'programming_runtime_tool_activity' }>;
+        } => (
+          entry.item.item_kind === 'programming_runtime_tool_activity'
+          && entry.item.turn_id === item.turn_id
+          && entry.item.run_id === item.run_id
+        ))
+        .sort((left, right) => left.item.sequence - right.item.sequence);
+      if (runHistoryItems.length > 0) {
+        for (const entry of runHistoryItems) entry.hidden = true;
         entries.push({
           entry_kind: 'run_history',
-          key: `history:${key}`,
+          key: `runtime-history:${key}`,
           runKey: key,
-          items: historyItems,
+          items: runHistoryItems.map((entry) => entry.item),
         });
       }
-      const runtimeAssistantEntry = latestRuntimeAssistantByRun.get(key);
-      const duplicateRuntimeSummary = item.result_kind === 'candidate'
-        && item.assistant_message !== null
-        && runtimeAssistantEntry?.item.item_kind === 'programming_runtime_assistant_message'
-        && runtimeAssistantEntry.item.message.text === item.assistant_message.text;
-      if (duplicateRuntimeSummary && runtimeAssistantEntry !== undefined) {
-        runtimeAssistantEntry.hidden = true;
-      }
+      completedRuns.add(key);
       entries.push({
         entry_kind: 'item',
         key: `item:${item.sequence}`,
@@ -708,7 +716,13 @@ function activityEntries(snapshot: BuilderConversationControllerSnapshot | null)
     }
     entries.push({ entry_kind: 'item', key: `item:${item.sequence}`, item, hidden: false });
   }
-  return entries.filter((entry) => entry.entry_kind === 'run_history' || !entry.hidden);
+  return entries.filter((entry) => {
+    if (entry.entry_kind === 'run_history') return true;
+    if (entry.entry_kind === 'item' && entry.item.item_kind === 'run_control_requested'
+      && entry.item.action === 'interrupt'
+      && completedRuns.has(`${entry.item.turn_id}:${entry.item.run_id}`)) return false;
+    return !entry.hidden;
+  });
 }
 
 function isNearChatBottom(element: HTMLElement): boolean {
@@ -850,14 +864,14 @@ function outcomeLabel(
   if (outcome === 'candidate_ready') return 'Draft ready';
   if (outcome === 'plan_proposed') return 'Plan ready';
   if (outcome === 'failed') return 'Could not finish';
-  if (outcome === 'interrupted') return 'Interrupted';
+  if (outcome === 'interrupted') return '已暂停';
   if (outcome === 'cancelled') return 'Stopped';
   return 'Responded';
 }
 
 function completionLabel(item: Extract<BuilderConversationItem, { item_kind: 'run_completed' }>): string {
   if (item.terminal_status === 'failed') return 'Could not finish';
-  if (item.terminal_status === 'interrupted') return 'Interrupted';
+  if (item.terminal_status === 'interrupted') return '已暂停';
   if (item.terminal_status === 'cancelled') return 'Stopped';
   if (item.result_kind === 'candidate') return 'Draft proposed';
   if (item.result_kind === 'plan') return 'Plan proposed';
@@ -995,6 +1009,7 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
     if (item.status_kind === 'attention') return <AlertCircle className="size-3.5" />;
     return <RefreshCw className="cf-builder-activity-spinner size-3.5" />;
   }
+  if (item.item_kind === 'context_compaction_recorded') return <Archive className="size-3.5" />;
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted'
       ? <CheckCircle2 className="size-3.5" />
@@ -1004,6 +1019,9 @@ function ActivityGlyph({ item }: Readonly<{ item: BuilderConversationItem }>) {
     return item.decision === 'approved'
       ? <CheckCircle2 className="size-3.5" />
       : <AlertCircle className="size-3.5" />;
+  }
+  if (item.item_kind === 'run_completed' && item.terminal_status === 'interrupted') {
+    return <Pause className="size-3.5" />;
   }
   if (item.item_kind === 'run_completed' && item.terminal_status !== 'succeeded') {
     return <AlertCircle className="size-3.5" />;
@@ -1087,6 +1105,11 @@ function activityTitle(item: BuilderConversationItem): string {
   if (item.item_kind === 'programming_runtime_status') {
     return item.status_kind === 'reasoning' ? 'Think' : item.status;
   }
+  if (item.item_kind === 'context_compaction_recorded') {
+    return item.status === 'compaction_completed'
+      ? 'Context compacted'
+      : 'Context already compact';
+  }
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'Version saved' : 'Draft rejected';
   }
@@ -1109,6 +1132,7 @@ function activityRecoveryTone(item: BuilderConversationItem): 'success' | 'pendi
   if (item.item_kind === 'candidate_reviewed') {
     return item.decision === 'accepted' ? 'success' : 'failure';
   }
+  if (item.item_kind === 'context_compaction_recorded') return 'success';
   return undefined;
 }
 
@@ -1374,6 +1398,15 @@ function activityBody(item: BuilderConversationItem): string {
     if (item.status_kind === 'cancelled') return '本轮已停止。';
     return '';
   }
+  if (item.item_kind === 'context_compaction_recorded') {
+    if (item.status === 'compaction_not_needed') {
+      return '当前 Harness 会话判断无需新增压缩摘要。';
+    }
+    const shadowedTokens = item.shadowed_token_count === null
+      ? 'some prior context'
+      : `${item.shadowed_token_count.toLocaleString()} tokens`;
+    return `Harness compacted ${shadowedTokens}; Builder is waiting for the next context usage projection.`;
+  }
   if (item.item_kind === 'candidate_reviewed') {
     if (item.decision === 'accepted') {
       const revisionNumber = item.saved_revision?.revision_number;
@@ -1389,6 +1422,7 @@ function activityBody(item: BuilderConversationItem): string {
       : 'The plan was rejected. The project has not changed.';
   }
   if (item.item_kind === 'run_completed') {
+    if (item.terminal_status === 'interrupted') return '上次运行已中断，任务记录已保留。';
     return item.assistant_message?.text
       ?? (item.terminal_status === 'succeeded'
         ? 'The assistant finished this step.'
@@ -1422,6 +1456,7 @@ function failedStatusMessage(
     if (error === 'builder_generation_project_workspace_required') return '开始构建前，请先选择或打开项目文件夹。';
     if (error === 'builder_generation_project_write_permission_required') return '开始构建前，请允许修改当前项目。';
     if (error === 'builder_generation_workspace_changed') return '工作期间项目发生了变化，请检查后重试。';
+    if (error === 'builder_generation_source_context_unavailable') return '上一次原生会话无法恢复，请明确重新开始恢复运行。';
     if (error === 'builder_generation_workspace_guard_denied') return '为保护项目，本次文件修改已被阻止。';
     if (error === 'builder_generation_workspace_guard_approval_required') return '这些文件修改需要额外确认后才能继续。';
     if (error === 'builder_generation_provider_unavailable') return '尚未配置 AI 服务。';
@@ -1436,6 +1471,7 @@ function failedStatusMessage(
   if (error === 'builder_generation_project_workspace_required') return '生成草稿前，请先选择或打开项目文件夹。';
   if (error === 'builder_generation_project_write_permission_required') return '生成草稿前，请允许修改当前项目。';
   if (error === 'builder_generation_workspace_changed') return '工作期间项目发生了变化，请检查后重试。';
+  if (error === 'builder_generation_source_context_unavailable') return '上一次原生会话无法恢复，请明确重新开始恢复运行。';
   if (error === 'builder_generation_workspace_guard_denied') return '为保护项目，本次文件修改已被阻止。';
   if (error === 'builder_generation_workspace_guard_approval_required') return '这些文件修改需要额外确认后才能继续。';
   if (error === 'builder_generation_provider_unavailable') return '尚未配置 AI 服务。';
@@ -1827,8 +1863,14 @@ function ActivityItem({
       data-builder-runtime-assistant-message={item.item_kind === 'programming_runtime_assistant_message'
         ? item.message.message_id
         : undefined}
+      data-builder-runtime-tool-kind={item.item_kind === 'programming_runtime_tool_activity'
+        ? item.tool_kind
+        : undefined}
       data-builder-runtime-status={item.item_kind === 'programming_runtime_status'
         ? item.status_kind
+        : undefined}
+      data-builder-context-compaction={item.item_kind === 'context_compaction_recorded'
+        ? item.status
         : undefined}
       data-builder-draft-checkpoint-status={item.item_kind === 'checkpoint_recorded'
         ? item.status === 'failed' ? 'failed' : 'ready'
@@ -2152,6 +2194,9 @@ function ActivityLiveOutputItem({
 }>) {
   const hasText = liveOutput.text.length > 0;
   const waitingText = liveOutput.waiting_text ?? '正在处理当前任务';
+  const activityKind = liveOutput.activity_kind ?? null;
+  const contextCompacting = activityKind === 'context_compacting';
+  const contextCompacted = activityKind === 'context_compacted';
   return (
     <li
       className="cf-builder-activity-item"
@@ -2167,9 +2212,24 @@ function ActivityLiveOutputItem({
         <p
           className="cf-builder-live-activity-status"
           data-builder-live-activity="true"
+          data-builder-live-activity-kind={activityKind ?? undefined}
           role="status"
         >
-          <RefreshCw aria-hidden="true" className="cf-builder-activity-spinner size-3.5" />
+          {contextCompacting ? (
+            <ListCollapse
+              aria-hidden="true"
+              className="cf-builder-context-compaction-icon size-3.5"
+              data-builder-context-compaction-animation="true"
+            />
+          ) : contextCompacted ? (
+            <CheckCircle2
+              aria-hidden="true"
+              className="cf-builder-context-compacted-icon size-3.5"
+              data-builder-context-compacted="true"
+            />
+          ) : (
+            <RefreshCw aria-hidden="true" className="cf-builder-activity-spinner size-3.5" />
+          )}
           <span>{waitingText}</span>
         </p>
         <div className="cf-builder-live-output-text" aria-live="polite">
@@ -2192,7 +2252,6 @@ function remainingLiveOutput(
   if (liveOutput === null || committedPrefix.length === 0) return liveOutput;
   if (!liveOutput.text.startsWith(committedPrefix)) return liveOutput;
   const remaining = liveOutput.text.slice(committedPrefix.length);
-  if (remaining.length === 0) return null;
   return Object.freeze({ ...liveOutput, text: remaining });
 }
 
@@ -2519,7 +2578,11 @@ function RuntimeHistoryGroup({
       data-builder-runtime-tool-group={kind}
     >
       <ActivityGlyph item={representative} />
-      <details className="cf-builder-run-history" data-builder-runtime-history-details={kind}>
+      <details
+        className="cf-builder-run-history"
+        data-builder-run-history="true"
+        data-builder-runtime-history-details={kind}
+      >
         <summary>
           <ChevronDown aria-hidden="true" className="size-3.5" />
           <span>{runtimeHistoryGroupLabel(kind, items.length)}</span>
@@ -2854,7 +2917,21 @@ const ActivityPanel = memo(function ActivityPanel({
   const runtimeFactRuns = new Set(
     snapshot?.conversation?.state === 'ready'
       ? snapshot.conversation.conversation.items
-        .filter((item) => item.item_kind === 'programming_runtime_tool_activity')
+        .filter((item): item is Extract<BuilderConversationItem, {
+          item_kind: 'programming_runtime_tool_activity';
+        }> => item.item_kind === 'programming_runtime_tool_activity')
+        .map((item) => `${item.turn_id}:${item.run_id}`)
+      : [],
+  );
+  const runtimeCommandRuns = new Set(
+    snapshot?.conversation?.state === 'ready'
+      ? snapshot.conversation.conversation.items
+        .filter((item): item is Extract<BuilderConversationItem, {
+          item_kind: 'programming_runtime_tool_activity';
+        }> => (
+          item.item_kind === 'programming_runtime_tool_activity'
+          && item.tool_kind === 'command'
+        ))
         .map((item) => `${item.turn_id}:${item.run_id}`)
       : [],
   );
@@ -3009,6 +3086,12 @@ const ActivityPanel = memo(function ActivityPanel({
                 && entry.item.candidate?.draft_id === currentDraftId;
               const hasRuntimeFacts = entry.item.item_kind === 'run_completed'
                 && runtimeFactRuns.has(`${entry.item.turn_id}:${entry.item.run_id}`);
+              const needsRuntimeCheckFallback = entry.item.item_kind === 'run_completed'
+                && isCurrentDraftCompletion
+                && hasRuntimeFacts
+                && !runtimeCommandRuns.has(`${entry.item.turn_id}:${entry.item.run_id}`)
+                && checkRunProfile !== null
+                && checkRunStatus !== null;
               return (
                 <Fragment key={entry.key}>
                   <ActivityItem
@@ -3042,6 +3125,13 @@ const ActivityPanel = memo(function ActivityPanel({
                       materialization={entry.item.candidate.workspace_materialization}
                     />
                     ) : null}
+                  {needsRuntimeCheckFallback ? (
+                    <RuntimeMainCheckAction
+                      checkRunProfile={checkRunProfile}
+                      checkRunStatus={checkRunStatus}
+                      onOpenCheckCommand={onOpenCheckCommand}
+                    />
+                  ) : null}
                 </Fragment>
               );
             })}
@@ -3246,6 +3336,8 @@ function AgentWorkbenchPanel({
   onRefresh,
   onUpdateMessageState,
   onDecideTaskProposal,
+  onDecideAgentPlan,
+  onReviseAgentPlan,
   onCreateProjectForTaskProposal,
   onOpenTaskProposal,
   projectCatalogSnapshot,
@@ -3262,6 +3354,12 @@ function AgentWorkbenchPanel({
     operation: 'approve_existing_project' | 'reject',
     projectId: string | null,
   ) => Promise<unknown> | void;
+  onDecideAgentPlan?: (
+    agentPlanId: string,
+    contentDigest: string,
+    decision: 'approved' | 'rejected',
+  ) => Promise<unknown> | void;
+  onReviseAgentPlan?: () => void;
   onCreateProjectForTaskProposal?: (proposalId: string, objective: string) => Promise<unknown> | void;
   onOpenTaskProposal?: (
     projectId: string,
@@ -3302,6 +3400,46 @@ function AgentWorkbenchPanel({
     { family: 'result', label: 'Results' },
     { family: 'status', label: 'Status' },
   ] as const;
+  const planDecision = projection?.agent_plan !== null && projection?.agent_plan !== undefined ? (
+        <div className="cf-builder-agent-plan-decision" data-builder-agent-plan-decision="true">
+          <div>
+            <strong>Plan version {projection.agent_plan.artifact.version}</strong>
+            <span>{projection.agent_plan.decision === null
+              ? 'Ready for review'
+              : projection.agent_plan.decision.decision === 'approved' ? 'Approved' : 'Rejected'}</span>
+          </div>
+          {projection.agent_plan.decision === null ? (
+            <div className="cf-builder-agent-plan-decision-actions">
+              <button
+                className="cf-builder-primary-button"
+                disabled={actionsDisabled || typeof onDecideAgentPlan !== 'function'}
+                onClick={() => { void onDecideAgentPlan?.(
+                  projection.agent_plan!.artifact.agent_plan_id,
+                  projection.agent_plan!.artifact.content_digest,
+                  'approved',
+                ); }}
+                type="button"
+              >Approve plan</button>
+              <button
+                className="cf-builder-secondary-button"
+                disabled={actionsDisabled || typeof onReviseAgentPlan !== 'function'}
+                onClick={onReviseAgentPlan}
+                type="button"
+              >Revise</button>
+              <button
+                className="cf-builder-secondary-button"
+                disabled={actionsDisabled || typeof onDecideAgentPlan !== 'function'}
+                onClick={() => { void onDecideAgentPlan?.(
+                  projection.agent_plan!.artifact.agent_plan_id,
+                  projection.agent_plan!.artifact.content_digest,
+                  'rejected',
+                ); }}
+                type="button"
+              >Reject</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null;
   function toggleFamily(family: WorkbenchFamily): void {
     setSelectedFamilies((current) => {
       if (current.size === 0) return new Set([family]);
@@ -3384,6 +3522,7 @@ function AgentWorkbenchPanel({
         <ol className="cf-builder-agent-workbench-list">
           {items.map((item) => {
             const ownerMessage = item.content_type === 'builder.chat.user_message.v1';
+            const turnStatus = item.content_type === 'builder.chat.turn_status.v1';
             const genericMessage = item.presentation_family === 'generic';
             return (
               <li
@@ -3401,13 +3540,17 @@ function AgentWorkbenchPanel({
                     <code>{item.content_type}</code>
                   </div>
                 ) : null}
-                <div className="cf-builder-agent-workbench-message-body">
+                <div className={turnStatus
+                  ? 'cf-builder-agent-workbench-message-body cf-builder-agent-turn-status'
+                  : 'cf-builder-agent-workbench-message-body'} role={turnStatus ? 'note' : undefined}>
+                  {turnStatus ? <StopCircle aria-hidden="true" className="size-3.5 shrink-0" /> : null}
                   {item.presentation.body_kind === 'markdown' ? (
                     <BuilderConversationMarkdown source={item.presentation.body_text} />
                   ) : (
                     <p>{item.presentation.body_text}</p>
                   )}
                 </div>
+                {item.message_id === projection?.agent_plan?.artifact.source_message_id ? planDecision : null}
                 {item.actions.map((action) => (
                   <AgentTaskProposalActions
                     action={action}
@@ -4196,8 +4339,20 @@ function BuilderSideWorkspaceBrowserToolbar({
         className="cf-builder-side-workspace-browser-address"
         data-builder-side-workspace-browser-address="true"
       >
+        {blockedSummary !== null ? (
+          <span
+            aria-label={blockedSummary}
+            className="cf-builder-side-workspace-browser-status"
+            data-builder-live-preview-blocked-count="true"
+            role="img"
+            title={blockedSummary}
+          >
+            <ShieldCheck aria-hidden="true" className="size-3.5" />
+          </span>
+        ) : null}
         <input
           aria-label="Browser address"
+          title={addressLabel}
           placeholder="Enter URL"
           readOnly={!userWebActive}
           onChange={(event) => onAddressChange?.(event.currentTarget.value)}
@@ -4209,15 +4364,6 @@ function BuilderSideWorkspaceBrowserToolbar({
           value={addressLabel}
         />
       </label>
-      {blockedSummary !== null ? (
-        <span
-          className="cf-builder-side-workspace-browser-status"
-          data-builder-live-preview-blocked-count="true"
-          title={blockedSummary}
-        >
-          {blockedSummary}
-        </span>
-      ) : null}
       <span className="cf-builder-side-workspace-browser-tools" aria-label="Browser tools">
         <button
           aria-label="Start live preview"
@@ -5233,12 +5379,17 @@ export function BuilderPage({
   checkEnvironmentDiagnosis = null,
   checkRunProfiles = [],
   checkRunStatus = null,
+  projectDependencyPreparation = null,
+  projectEnvironmentDiagnosis = null,
   instruction,
   composerRouteDecision = null,
   composerContextStatus = null,
   providerContextDisclosureStatus = null,
+  contextUsageProjection = null,
+  manualContextCompactionFeedback = 'idle',
   providerContextDisclosureApprovalState = 'idle',
   composerMode = null,
+  composerModelSelection,
   composerSubmitLocked = false,
   commandApproval = null,
   commandOutputStore = null,
@@ -5251,20 +5402,20 @@ export function BuilderPage({
   onApproveProviderContextDisclosure,
   onApprovePlanSourceRead,
   onCancel,
-  onCreateProject,
-  onClearWorkspaceSelection,
+  onPauseTask,
   onDismissCurrentProjectWriteApproval,
-  onDismissWorkspacePicker,
   onDismissPlanSourceReadApproval,
   onInstructionChange,
-  onOpenProject,
   onOpenProjectLocation,
   onSelectApprovalMode,
   onSelectComposerMode,
+  onSelectComposerModel,
   onSelectPlanMode,
   onClearComposerMode,
   onSubmitInstruction,
   onRetryGenerate,
+  onResumeInterruptedRun,
+  onManualCompactContext,
   onRefreshConversation,
   onRefreshHistory,
   onRejectDraft,
@@ -5289,12 +5440,14 @@ export function BuilderPage({
   onInspectRevision,
   onShowCurrentRevision,
   onOpenSettings,
+  onPrepareProjectDependencies,
   conversationSnapshot,
   taskConversationSeed = null,
   agentWorkbenchSnapshot,
   onRefreshAgentWorkbench,
   onUpdateAgentWorkbenchMessageState,
   onDecideAgentTaskProposal,
+  onDecideAgentPlan,
   onCreateProjectForAgentTaskProposal,
   onArchiveAgentTask,
   onOpenAgentTaskProposal,
@@ -5316,12 +5469,11 @@ export function BuilderPage({
   sideWorkspaceFileContentStatus = 'idle',
   sideWorkspaceFileTree = null,
   sideWorkspaceFileTreeStatus = 'idle',
+  surfaceKind = 'task',
   planReviewFailure = null,
   planReviewInFlight = null,
   planReviewRecorded = null,
   planSourceReadApproval = null,
-  workspaceNewProjectRequest = 0,
-  workspacePickerRequest = 0,
   onSelectFile,
   onOpenRuntimeToolFile,
   onDecideLivePreviewDevServerApproval,
@@ -5342,9 +5494,7 @@ export function BuilderPage({
   const conversationItemCount = conversationSnapshot?.conversation?.state === 'ready'
     ? conversationSnapshot.conversation.conversation.items.length
     : 0;
-  const showingAgentWorkbench = conversationSnapshot?.agent_id !== null
-    && conversationSnapshot?.agent_id !== undefined
-    && conversationSnapshot.project_id === null;
+  const showingAgentWorkbench = surfaceKind === 'workbench';
   const saved = current?.savedProject ?? null;
   const draft = current?.draft ?? null;
   const inspected = current?.inspectedRevision ?? null;
@@ -5353,16 +5503,11 @@ export function BuilderPage({
   const selected = files.find((file) => file.path === activeFile) ?? null;
   const busy = current?.busy ?? false;
   const hasUnsavedDraft = draft !== null;
+  const hasSideWorkspaceSource = hasUnsavedDraft || saved !== null;
   const viewingHistory = inspected !== null;
   const hasContent = files.length > 0;
   const title = draft?.title ?? inspected?.target.title ?? saved?.target.title ?? 'New project';
   const workingProject = current?.workingProject ?? null;
-  const catalog = isTrustedBuilderProjectCatalogSnapshot(projectCatalogSnapshot)
-    ? projectCatalogSnapshot
-    : null;
-  const catalogProjects = catalog?.projects ?? [];
-  const catalogWorkspaceProjects = catalog?.workspaceProjects ?? [];
-  const catalogBusy = catalog?.status === 'loading' || catalog?.status === 'refreshing';
   const activeConversationTurnId = conversationSnapshot?.conversation?.state === 'ready'
     ? conversationSnapshot.conversation.conversation.recorded_active_turn_id
     : null;
@@ -5400,6 +5545,9 @@ export function BuilderPage({
     && !composerSubmitLocked
     && instruction.trim().length > 0;
   const canSubmitComposer = canSubmit || (canAddContext && instruction.trim().length > 0);
+  const pausedTask = !showingAgentWorkbench && !composerBusy && !composerSubmitLocked && !hasUnsavedDraft && !viewingHistory
+    && conversationSnapshot?.status === 'ready'
+    && interruptedTaskContinuation(conversationSnapshot.conversation) !== null;
   const canCancel = typeof onCancel === 'function'
     && (
       status === 'answering'
@@ -5410,6 +5558,9 @@ export function BuilderPage({
   const canEditInstruction = typeof onInstructionChange === 'function'
     && !viewingHistory
     && (!composerBusy || canAddContext);
+  const canPauseTask = !showingAgentWorkbench && ['generating', 'submitting'].includes(status) && !hasUnsavedDraft
+    && conversationSnapshot?.status === 'ready'
+    && hasActiveProgrammingTask(conversationSnapshot.conversation);
   const activity = visibleActivitySnapshot(conversationSnapshot);
   const failed = status === 'generation_failed' || status === 'answer_failed' || status === 'submit_failed';
   const workspaceConflictProjectedInConversation = current?.error === 'builder_generation_workspace_changed'
@@ -5558,9 +5709,7 @@ export function BuilderPage({
   const canProposePlan = (typeof onSelectComposerMode === 'function' || typeof onSelectPlanMode === 'function')
     && (showingAgentWorkbench || saved !== null || workingProject !== null)
     && !busy
-    && !hasUnsavedDraft
-    && !viewingHistory
-    && (showingAgentWorkbench || PLAN_PROPOSAL_READY_STATUSES.has(status));
+    && (showingAgentWorkbench || (!hasUnsavedDraft && !viewingHistory && PLAN_PROPOSAL_READY_STATUSES.has(status)));
   const changes = useMemo(() => createBuilderSourceTreeChanges(
     saved?.source_tree ?? null,
     draft?.source_tree ?? null,
@@ -5584,6 +5733,7 @@ export function BuilderPage({
   const shouldFollowChatRef = useRef(true);
   const observedChatScrollTopRef = useRef(0);
   const chatReaderScrollIntentUntilRef = useRef(0);
+  const chatReaderScrollDirectionRef = useRef(0);
   const liveOutputFollowFrameRef = useRef<number | null>(null);
   const livePreviewLayoutFrameRef = useRef<number | null>(null);
   const livePreviewLayoutSignatureRef = useRef<string | null>(null);
@@ -5654,8 +5804,9 @@ export function BuilderPage({
     ? activeAgentTestBrowserRunId ?? `${latestAgentTestBrowserActivity?.run_id}|${latestAgentTestBrowserActivity?.tool_call_id}`
     : null;
   const observedAgentTestBrowserIdentityRef = useRef<string | null>(null);
+  const pendingAgentTestPreviewHandoffRef = useRef<string | null>(null);
   const showFilesPanel = sourceFile !== null
-    || hasUnsavedDraft
+    || hasSideWorkspaceSource
     || sideWorkspaceFileTree !== null
     || sideWorkspaceFileContent !== null;
   const artifactTabs = useMemo(() => {
@@ -5725,6 +5876,7 @@ export function BuilderPage({
     ].join('|');
   useEffect(() => {
     if (commandOutputIdentity === null || !artifactTabs.includes('terminal_placeholder')) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A new command opens its existing terminal artifact synchronously.
     setArtifactPanelState((panelState) => {
       if (
         panelState.identity === artifactPanelIdentity
@@ -5750,6 +5902,7 @@ export function BuilderPage({
       || !artifactTabs.includes('browser_placeholder')
     ) return;
     observedAgentTestBrowserIdentityRef.current = agentTestBrowserIdentity;
+    pendingAgentTestPreviewHandoffRef.current = artifactPanelIdentity;
     setArtifactPanelState((panelState) => {
       const baseOpenTabs = panelState.identity === artifactPanelIdentity
         ? panelState.openTabs.filter((tab) => artifactTabs.includes(tab))
@@ -5764,6 +5917,21 @@ export function BuilderPage({
       };
     });
   }, [agentTestBrowserIdentity, artifactPanelIdentity, artifactTabs]);
+  useEffect(() => {
+    if (agentTestBrowserIdentity !== null || busy) return;
+    const identity = pendingAgentTestPreviewHandoffRef.current;
+    if (identity === null) return;
+    pendingAgentTestPreviewHandoffRef.current = null;
+    if (identity !== artifactPanelIdentity) return;
+    // End the temporary browser tab without retaining its session or starting a server.
+    setArtifactPanelState((panelState) => {
+      if (panelState.identity !== identity || panelState.active !== 'browser_placeholder') return panelState;
+      const replacement = artifactTabs.includes('preview') ? 'preview' : null;
+      const openTabs = panelState.openTabs.filter((tab) => tab !== 'browser_placeholder' && artifactTabs.includes(tab));
+      if (replacement !== null && !openTabs.includes(replacement)) openTabs.push(replacement);
+      return { ...panelState, active: replacement ?? openTabs.at(-1) ?? null, openTabs };
+    });
+  }, [agentTestBrowserIdentity, artifactPanelIdentity, artifactTabs, busy]);
   const retainedOpenArtifactTabs: readonly BuilderArtifactTab[] =
     artifactPanelState.identity === artifactPanelIdentity
     ? artifactPanelState.openTabs.filter((tab) => artifactTabs.includes(tab))
@@ -6138,14 +6306,14 @@ export function BuilderPage({
   }, [showChangesPanel]);
 
   useEffect(() => {
-    if (activeArtifactTab !== 'source' || !hasUnsavedDraft) return;
+    if (activeArtifactTab !== 'source' || !hasSideWorkspaceSource) return;
     if (skipNextDraftSourceRequestRef.current) {
       skipNextDraftSourceRequestRef.current = false;
       return;
     }
     if (sideWorkspaceFileTree?.source_kind === 'runtime_snapshot') return;
     void onRequestSideWorkspaceFiles?.();
-  }, [activeArtifactTab, hasUnsavedDraft, onRequestSideWorkspaceFiles, sideWorkspaceFileTree]);
+  }, [activeArtifactTab, hasSideWorkspaceSource, onRequestSideWorkspaceFiles, sideWorkspaceFileTree]);
 
   function updateChatFollowState(): void {
     const scroll = chatScrollRef.current;
@@ -6162,17 +6330,28 @@ export function BuilderPage({
       if (shouldFollowChatRef.current) followChatToBottom();
       return;
     }
-    shouldFollowChatRef.current = isNearChatBottom(scroll);
+    shouldFollowChatRef.current = chatReaderScrollDirectionRef.current >= 0 && isNearChatBottom(scroll);
     observedChatScrollTopRef.current = scroll.scrollTop;
   }
 
   function markChatReaderScrollIntent(): void {
     chatReaderScrollIntentUntilRef.current = Date.now() + 500;
+    chatReaderScrollDirectionRef.current = 0;
+  }
+
+  function markChatWheelScrollIntent(event: ReactWheelEvent<HTMLDivElement>): void {
+    markChatReaderScrollIntent();
+    chatReaderScrollDirectionRef.current = Math.sign(event.deltaY);
+    // Pause before the browser scroll event, so a concurrent stream frame cannot undo the gesture.
+    if (event.deltaY < 0) shouldFollowChatRef.current = false;
   }
 
   function markChatKeyboardScrollIntent(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
       markChatReaderScrollIntent();
+      const upward = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey);
+      chatReaderScrollDirectionRef.current = upward ? -1 : 1;
+      if (upward) shouldFollowChatRef.current = false;
     }
   }
 
@@ -6633,8 +6812,9 @@ export function BuilderPage({
   })();
   const dependencyPreparationReason = displayedCheckRunStatus?.environment_reason ?? 'none';
   const dependencyPreparationAttemptFailed = dependencyPreparationReason === 'dependency_preparation_failed'
-    || dependencyPreparationReason === 'dependency_preparation_timed_out'
-    || dependencyPreparationReason === 'package_manager_unavailable';
+    || dependencyPreparationReason === 'dependency_preparation_timed_out';
+  const dependencyPreparationToolchainBlocked = dependencyPreparationReason === 'package_manager_unavailable'
+    || dependencyPreparationReason === 'host_toolchain_missing';
   const dependencyPreparationInteractionActive = checkRunOperation === 'preparing_dependencies'
     || checkRunOperation === 'failed';
   const dependencyPreparationNeeded = hasUnsavedDraft
@@ -6648,24 +6828,72 @@ export function BuilderPage({
       dependencyPreparationReason === 'dependency_workspace_missing'
       || dependencyPreparationReason === 'install_approval_required'
       || dependencyPreparationAttemptFailed
+      || dependencyPreparationToolchainBlocked
     )
-    && typeof onDecideCheckDependencyPreparation === 'function';
+    && (
+      typeof onDecideCheckDependencyPreparation === 'function'
+      || typeof onDiagnoseCheckEnvironment === 'function'
+    );
   const dependencyPreparationProfile = dependencyPreparationNeeded ? checkRunProfile : null;
-  const dependencyPreparationTitle = dependencyPreparationAttemptFailed
+  const dependencyPreparationTitle = dependencyPreparationToolchainBlocked
     ? dependencyPreparationReason === 'package_manager_unavailable'
       ? 'Package manager unavailable'
-      : 'Check dependency preparation failed'
-    : 'Prepare check dependencies?';
-  const dependencyPreparationSummary = dependencyPreparationAttemptFailed
-    ? dependencyPreparationReason === 'dependency_preparation_timed_out'
-      ? 'Dependency preparation reached the time limit in the isolated check workspace.'
-      : dependencyPreparationReason === 'package_manager_unavailable'
-        ? 'Builder could not start the package manager needed to prepare check dependencies.'
+      : 'Local toolchain unavailable'
+    : dependencyPreparationAttemptFailed
+      ? 'Check dependency preparation failed'
+      : 'Prepare check dependencies?';
+  const dependencyPreparationSummary = dependencyPreparationToolchainBlocked
+    ? dependencyPreparationReason === 'package_manager_unavailable'
+      ? 'Builder could not start the package manager needed to prepare check dependencies.'
+      : 'Builder cannot see the local Node/package-manager toolchain required for this check.'
+    : dependencyPreparationAttemptFailed
+      ? dependencyPreparationReason === 'dependency_preparation_timed_out'
+        ? 'Dependency preparation reached the time limit in the isolated check workspace.'
         : 'Dependency preparation failed in the isolated check workspace.'
-    : `I can install dependencies in the isolated check workspace before rerunning ${dependencyPreparationProfile?.command_display ?? 'the check'}.`;
-  const dependencyPreparationNote = dependencyPreparationAttemptFailed
-    ? 'This did not write to the project folder or save a version. You can retry this check preparation.'
-    : 'This does not write to the project folder or save a version. Approval is only for this check.';
+      : checkRunOperation === 'preparing_dependencies'
+        ? `Builder is preparing dependencies in the isolated check workspace before rerunning ${dependencyPreparationProfile?.command_display ?? 'the check'}.`
+        : `The generated draft needs dependencies prepared in its isolated check workspace before ${dependencyPreparationProfile?.command_display ?? 'the check'} can pass.`;
+  const dependencyPreparationNote = dependencyPreparationToolchainBlocked
+    ? 'Diagnose local tools first. Dependency preparation cannot start until the selected package manager is available.'
+    : dependencyPreparationAttemptFailed
+      ? 'This did not write to the project folder or save a version. You can retry this check preparation.'
+      : 'This does not write to the project folder or save a version. Approval is only for this check.';
+  const dependencyPreparationStatus = checkRunOperation === 'preparing_dependencies'
+    ? 'preparing'
+    : dependencyPreparationToolchainBlocked
+      ? 'toolchain_unavailable'
+      : dependencyPreparationAttemptFailed ? 'retryable' : 'needs_approval';
+  const dependencyPreparationCanPrepare = dependencyPreparationProfile !== null
+    && !dependencyPreparationToolchainBlocked
+    && typeof onDecideCheckDependencyPreparation === 'function';
+  const dependencyPreparationPrimaryAction = dependencyPreparationToolchainBlocked
+    ? 'Diagnose local tools before preparing dependencies.'
+    : checkRunOperation === 'preparing_dependencies'
+      ? `Builder will rerun ${dependencyPreparationProfile?.command_display ?? 'the check'} automatically.`
+      : `Builder will rerun ${dependencyPreparationProfile?.command_display ?? 'the check'} and enable Save if it passes.`;
+  const dependencyPreparationStatusFacts = dependencyPreparationProfile === null ? [] : [
+    {
+      key: 'project_folder',
+      label: 'Project folder',
+      value: 'Not changed by Prepare once',
+    },
+    {
+      key: 'check_workspace',
+      label: 'Check workspace',
+      value: dependencyPreparationToolchainBlocked
+        ? 'Waiting for local toolchain'
+        : checkRunOperation === 'preparing_dependencies'
+        ? 'Preparing dependencies now'
+        : dependencyPreparationAttemptFailed
+          ? 'Needs another preparation attempt'
+          : 'Dependencies not prepared yet',
+    },
+    {
+      key: 'after_prepare',
+      label: dependencyPreparationToolchainBlocked ? 'Next step' : 'After Prepare once',
+      value: dependencyPreparationPrimaryAction,
+    },
+  ];
   const dependencyPreparationDecisionFailureMessage = checkRunOperationFailureCode === 'busy'
     ? 'A project check is already running. Try again when it finishes.'
     : checkRunOperationFailureCode === 'stale_draft'
@@ -6706,6 +6934,17 @@ export function BuilderPage({
           <p className="cf-builder-review-note">
             {dependencyPreparationNote}
           </p>
+          <dl
+            className="cf-builder-dependency-facts"
+            data-builder-dependency-preparation-status={dependencyPreparationStatus}
+          >
+            {dependencyPreparationStatusFacts.map((fact) => (
+              <div data-builder-dependency-preparation-fact={fact.key} key={fact.key}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
           {dependencyPreparationDiagnosis === null ? null : (
             <div
               className="mt-2 space-y-1 text-xs text-muted-foreground"
@@ -6747,29 +6986,112 @@ export function BuilderPage({
             {dependencyPreparationDiagnosis?.status === 'loading' ? 'Checking...' : 'Diagnose'}
           </button>
         ) : null}
-        <button
-          className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-deny-dependency-preparation="true"
-          disabled={checkRunOperation === 'preparing_dependencies'}
-          onClick={() => {
-            void onDecideCheckDependencyPreparation?.('deny', dependencyPreparationProfile);
-          }}
-          type="button"
-        >
-          Not now
-        </button>
-        <button
-          className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          data-builder-allow-dependency-preparation="true"
-          disabled={checkRunOperation === 'preparing_dependencies'}
-          onClick={() => {
-            void onDecideCheckDependencyPreparation?.('allow_once', dependencyPreparationProfile);
-          }}
-          type="button"
-        >
-          {checkRunOperation === 'preparing_dependencies' ? 'Preparing...' : 'Prepare once'}
-        </button>
+        {dependencyPreparationCanPrepare ? (
+          <>
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-deny-dependency-preparation="true"
+              disabled={checkRunOperation === 'preparing_dependencies'}
+              onClick={() => {
+                void onDecideCheckDependencyPreparation?.('deny', dependencyPreparationProfile);
+              }}
+              type="button"
+            >
+              Not now
+            </button>
+            <button
+              className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-allow-dependency-preparation="true"
+              disabled={checkRunOperation === 'preparing_dependencies'}
+              onClick={() => {
+                void onDecideCheckDependencyPreparation?.('allow_once', dependencyPreparationProfile);
+              }}
+              type="button"
+            >
+              {checkRunOperation === 'preparing_dependencies' ? 'Preparing...' : 'Prepare once'}
+            </button>
+          </>
+        ) : null}
       </div>
+    </section>
+  );
+  const projectEnvironmentSetup = !hasUnsavedDraft
+    && !viewingHistory
+    && saved !== null
+    && projectEnvironmentDiagnosis?.project_id === saved.target.project_id
+    && projectEnvironmentDiagnosis.status === 'ready'
+    && projectEnvironmentDiagnosis.diagnosis?.readiness_state === 'project_dependencies_missing'
+    ? projectEnvironmentDiagnosis.diagnosis
+    : null;
+  const projectEnvironmentSetupCommand = projectEnvironmentSetup?.package_manager === 'pnpm'
+    ? 'pnpm install'
+    : projectEnvironmentSetup?.package_manager === 'yarn'
+      ? 'yarn install'
+      : projectEnvironmentSetup?.package_manager === 'bun'
+        ? 'bun install'
+        : 'npm install';
+  const projectEnvironmentPreparing = projectEnvironmentSetup !== null
+    && projectDependencyPreparation?.project_id === projectEnvironmentSetup.project_id
+    && projectDependencyPreparation.status === 'preparing';
+  const projectEnvironmentPreparationFailure = projectEnvironmentSetup !== null
+    && projectDependencyPreparation?.project_id === projectEnvironmentSetup.project_id
+    && projectDependencyPreparation.status === 'failed'
+    ? projectDependencyPreparation.failure_message ?? 'Project dependency preparation failed.'
+    : null;
+  const projectEnvironmentSetupCard = projectEnvironmentSetup === null ? null : (
+    <section
+      aria-label="Project environment setup"
+      className="cf-builder-review-checkpoint cf-builder-chat-flow-surface"
+      data-builder-project-environment-setup="true"
+    >
+      <div className="cf-builder-review-copy">
+        <div className="cf-builder-review-icon" aria-hidden="true">
+          <AlertCircle className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="cf-builder-review-title">Saved project dependencies needed</h2>
+          <p className="cf-builder-review-summary">
+            This saved project declares dependencies, but its project folder does not have an install yet.
+          </p>
+          <p className="cf-builder-review-note">
+            Prepare once runs {projectEnvironmentSetupCommand} in the saved project folder for local launch, then Builder diagnoses it again.
+            Current-draft checks still use their isolated workspace.
+          </p>
+          {projectEnvironmentPreparationFailure === null ? null : (
+            <p className="cf-builder-review-note" role="alert">
+              {projectEnvironmentPreparationFailure}
+            </p>
+          )}
+        </div>
+      </div>
+      {typeof onPrepareProjectDependencies === 'function' || typeof onOpenSettings === 'function' ? (
+        <div className="cf-builder-review-actions">
+          {typeof onPrepareProjectDependencies === 'function' ? (
+            <button
+              className="cf-builder-primary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              data-builder-prepare-project-dependencies="true"
+              disabled={projectEnvironmentPreparing}
+              onClick={() => {
+                void onPrepareProjectDependencies(projectEnvironmentSetup.project_id);
+              }}
+              type="button"
+            >
+              <ShieldCheck className="size-3.5" aria-hidden="true" />
+              {projectEnvironmentPreparing ? 'Preparing...' : 'Prepare once'}
+            </button>
+          ) : null}
+          {typeof onOpenSettings === 'function' ? (
+            <button
+              className="cf-builder-secondary-button inline-flex min-h-8 shrink-0 items-center justify-center gap-2 px-2.5 text-xs font-medium"
+              data-builder-open-project-environment-diagnostics="true"
+              onClick={onOpenSettings}
+              type="button"
+            >
+              Open diagnostics
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
   const planSourceReadApprovalCard = planSourceReadApproval === null ? null : (
@@ -6945,6 +7267,13 @@ export function BuilderPage({
       saveLabel={saveVersionLabel}
     />
   ) : null;
+  const canManualCompactContext = !showingAgentWorkbench
+    && !viewingHistory
+    && typeof onManualCompactContext === 'function'
+    && manualContextCompactionFeedback !== 'compacting'
+    && contextUsageProjection !== null
+    && contextUsageProjection.compaction_state !== 'compacting'
+    && contextUsageProjection.measurement_state !== 'awaiting_post_compaction_projection';
   const composer = (
     <div
       className="cf-builder-composer-stack"
@@ -6962,39 +7291,32 @@ export function BuilderPage({
         canEditInstruction={canEditInstruction}
         canProposePlan={canProposePlan}
         canSubmitComposer={canSubmitComposer}
-        catalogBusy={catalogBusy}
-        catalogProjects={catalogProjects}
-        catalogWorkspaceProjects={catalogWorkspaceProjects}
         composerContextStatus={viewingHistory ? null : composerContextStatus}
         providerContextDisclosureStatus={viewingHistory ? null : providerContextDisclosureStatus}
+        contextUsageProjection={viewingHistory ? null : contextUsageProjection}
+        manualContextCompactionFeedback={viewingHistory ? 'idle' : manualContextCompactionFeedback}
+        canManualCompactContext={canManualCompactContext}
         composerMode={composerMode}
+        modelSelection={composerModelSelection}
         composerRouteDecision={composerRouteDecision}
         hasUnsavedDraft={hasUnsavedDraft}
         instruction={instruction}
         onCancel={onCancel}
+        onPauseTask={canPauseTask ? onPauseTask : undefined}
+        onResumeInterruptedRun={onResumeInterruptedRun}
+        onManualCompactContext={canManualCompactContext ? onManualCompactContext : undefined}
+        paused={pausedTask}
         onClearComposerMode={onClearComposerMode}
-        onClearWorkspaceSelection={onClearWorkspaceSelection}
-        onCreateProject={onCreateProject}
-        onDismissWorkspacePicker={onDismissWorkspacePicker}
         onInstructionChange={onInstructionChange}
-        onOpenProject={onOpenProject}
+        onOpenSettings={onOpenSettings}
         onSelectApprovalMode={onSelectApprovalMode}
         onSelectComposerMode={onSelectComposerMode}
+        onSelectModel={onSelectComposerModel}
         onSelectPlanMode={onSelectPlanMode}
         onSubmitInstruction={onSubmitInstruction}
-        savedProject={saved === null
-          ? null
-          : {
-            revisionNumber: saved.target.revision_number,
-            title: saved.target.title,
-          }}
-        showWorkspaceContext={!showingAgentWorkbench}
         surfaceKind={showingAgentWorkbench ? 'workbench' : 'task'}
         status={status}
         viewingHistory={viewingHistory}
-        workingProject={workingProject}
-        workspaceNewProjectRequest={workspaceNewProjectRequest}
-        workspacePickerRequest={workspacePickerRequest}
       />
     </div>
   );
@@ -7389,7 +7711,7 @@ export function BuilderPage({
               onKeyDownCapture={markChatKeyboardScrollIntent}
               onScroll={updateChatFollowState}
               onTouchMoveCapture={markChatReaderScrollIntent}
-              onWheelCapture={markChatReaderScrollIntent}
+              onWheelCapture={markChatWheelScrollIntent}
               ref={chatScrollRef}
             >
               <div
@@ -7406,6 +7728,8 @@ export function BuilderPage({
                   onRefresh={onRefreshAgentWorkbench}
                   onUpdateMessageState={onUpdateAgentWorkbenchMessageState}
                   onDecideTaskProposal={onDecideAgentTaskProposal}
+                  onDecideAgentPlan={onDecideAgentPlan}
+                  onReviseAgentPlan={onSelectPlanMode}
                   onCreateProjectForTaskProposal={onCreateProjectForAgentTaskProposal}
                   onOpenTaskProposal={onOpenAgentTaskProposal}
                   projectCatalogSnapshot={projectCatalogSnapshot}
@@ -7447,6 +7771,7 @@ export function BuilderPage({
                 {currentProjectWriteApprovalCard}
                 {commandApprovalCard}
                 {dependencyPreparationCard}
+                {projectEnvironmentSetupCard}
 
                 {conversationNotice}
                 <div

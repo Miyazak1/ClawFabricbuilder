@@ -4,7 +4,9 @@ import {
   type BuilderCodeGeneratorPort,
   type BuilderCommandApprovalRequest,
   type BuilderCommandOutputEvent,
+  type BuilderGenerationActivityKind,
   type BuilderGenerationOutputEvent,
+  type BuilderManualContextCompactionResult,
   type BuilderGenerationStartedEvent,
   type BuilderGenerationDiagnosticCode as ApplicationBuilderGenerationDiagnosticCode,
   type BuilderSemanticRouteClassification,
@@ -29,6 +31,8 @@ type BuilderCodeGeneratorBridge = Readonly<{
   prepareCurrentProjectWriteApproval(request: unknown): Promise<unknown>;
   approveCurrentProjectWrite(request: unknown): Promise<unknown>;
   retry(request: unknown): Promise<unknown>;
+  resumeInterruptedRun?(request: unknown): Promise<unknown>;
+  manualCompactContext?(request: unknown): Promise<unknown>;
   answer(request: unknown): Promise<unknown>;
   answerPlan(request: unknown): Promise<unknown>;
   answerDraft(request: unknown): Promise<unknown>;
@@ -74,6 +78,8 @@ const REQUIRED_BRIDGE_KEYS = new Set([
 ]);
 const BRIDGE_KEYS = new Set([
   ...REQUIRED_BRIDGE_KEYS,
+  'resumeInterruptedRun',
+  'manualCompactContext',
   'classifyIntent',
   'decideCommandApproval',
   'subscribeCommandApproval',
@@ -88,7 +94,7 @@ const UTF8_ENCODER = new TextEncoder();
 const GENERATE_RESULT_VERSION = 'builder-generation-ipc-result.v1';
 const GENERATION_STARTED_EVENT_VERSION = 'builder-generation-started.v1';
 const GENERATION_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
-const GENERATION_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v1';
+const GENERATION_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v2';
 const GENERATION_OUTPUT_RESET_EVENT_VERSION = 'builder-generation-output-reset.v1';
 const FAILURE_CODES = new Set<BuilderGenerationDiagnosticCode>(
   Object.keys(BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY) as BuilderGenerationDiagnosticCode[],
@@ -110,6 +116,8 @@ const RUN_ID_PATTERN =
   /^builder-run:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MESSAGE_ID_PATTERN =
   /^builder-message:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const ADMISSION_ID_PATTERN = /^builder-context-compaction-admission:[0-9a-f]{64}$/u;
+const COMPACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$/u;
 const MAX_DISPLAY_DELTA_TEXT_BYTES = 16 * 1024;
 const COMMAND_APPROVAL_REQUEST_ID_PATTERN =
   /^builder-controlled-command-approval-request:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -251,6 +259,14 @@ function sanitizeBridge(value: unknown): BuilderCodeGeneratorBridge {
       methods[key] = descriptor.value as (...args: unknown[]) => unknown;
     }
     return Object.freeze({
+      ...(methods.resumeInterruptedRun === undefined ? {} : {
+        resumeInterruptedRun:
+          methods.resumeInterruptedRun as NonNullable<BuilderCodeGeneratorBridge['resumeInterruptedRun']>,
+      }),
+      ...(methods.manualCompactContext === undefined ? {} : {
+        manualCompactContext:
+          methods.manualCompactContext as NonNullable<BuilderCodeGeneratorBridge['manualCompactContext']>,
+      }),
       ...(methods.classifyIntent === undefined ? {} : {
         classifyIntent: methods.classifyIntent as NonNullable<BuilderCodeGeneratorBridge['classifyIntent']>,
       }),
@@ -351,6 +367,16 @@ function unwrapGenerationEnvelope(value: unknown): unknown {
 
 function safeProjectId(value: unknown): string {
   if (typeof value !== 'string' || !PROJECT_ID_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function safeConversationId(value: unknown): string {
+  if (typeof value !== 'string' || !CONVERSATION_ID_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function safeTaskAddressId(value: unknown): string {
+  if (typeof value !== 'string' || !TASK_ADDRESS_ID_PATTERN.test(value)) throw portError();
   return value;
 }
 
@@ -489,6 +515,114 @@ function unwrapCurrentProjectWriteApprovalResult(
     operation: result.operation,
     approval_scope: 'current_project_write',
     authority: 'main_selected_project_project_edit_v1',
+  });
+}
+
+function safeNullableSeq(value: unknown): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 10_000_000) throw portError();
+  return value as number;
+}
+
+function safeNullableCount(value: unknown): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 1_000_000_000) throw portError();
+  return value as number;
+}
+
+function safeNullableCompactionId(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !COMPACTION_ID_PATTERN.test(value)) throw portError();
+  return value;
+}
+
+function unwrapManualContextCompactionResult(value: unknown): BuilderManualContextCompactionResult {
+  const result = exactDataRecord(value, [
+    'result_version',
+    'operation',
+    'status',
+    'admission_id',
+    'conversation_compaction_projection_digest',
+    'compaction_id',
+    'start_seq',
+    'summary_seq',
+    'end_seq',
+    'shadowed_token_count',
+    'authority',
+  ]);
+  const authority = exactDataRecord(result.authority, [
+    'bridge_authority',
+    'admission_authority',
+    'harness_authority',
+    'renderer_authority',
+    'ipc_authority',
+    'provider_dispatch',
+    'tool_dispatch',
+    'source_write',
+    'sqlite_write',
+    'permission_grant_authority',
+    'revision_authority',
+    'summary_materialization',
+  ]);
+  const startSeq = safeNullableSeq(result.start_seq);
+  const summarySeq = safeNullableSeq(result.summary_seq);
+  const endSeq = safeNullableSeq(result.end_seq);
+  const shadowedTokenCount = safeNullableCount(result.shadowed_token_count);
+  const operation = result.operation;
+  const status = result.status;
+  if (
+    result.result_version !== 'builder-context-compaction-execution-result.v1'
+    || !['manual_compaction_completed', 'manual_compaction_noop'].includes(operation as string)
+    || !['compaction_completed', 'compaction_not_needed'].includes(status as string)
+    || (operation === 'manual_compaction_completed') !== (status === 'compaction_completed')
+    || typeof result.admission_id !== 'string'
+    || !ADMISSION_ID_PATTERN.test(result.admission_id)
+    || typeof result.conversation_compaction_projection_digest !== 'string'
+    || !DIGEST_PATTERN.test(result.conversation_compaction_projection_digest)
+    || authority.bridge_authority !== 'main_context_compaction_execution_bridge_v1'
+    || authority.admission_authority !== 'verified_main_context_compaction_admission_contract_v1'
+    || authority.harness_authority !== 'manual_compactNow_invoked_after_admission'
+    || authority.renderer_authority !== 'not_present'
+    || authority.ipc_authority !== 'not_present'
+    || authority.provider_dispatch !== 'harness_owned_compaction_only'
+    || authority.tool_dispatch !== 'not_performed_by_bridge'
+    || authority.source_write !== 'not_performed_by_bridge'
+    || authority.sqlite_write !== 'not_performed_by_bridge'
+    || authority.permission_grant_authority !== 'not_present'
+    || authority.revision_authority !== 'not_present'
+    || authority.summary_materialization !== 'not_performed_by_bridge'
+  ) throw portError();
+  const compactionId = safeNullableCompactionId(result.compaction_id);
+  if (status === 'compaction_completed') {
+    if (compactionId === null || startSeq === null || summarySeq === null || endSeq === null
+      || shadowedTokenCount === null || !(startSeq < summarySeq && summarySeq < endSeq)) throw portError();
+  } else if (compactionId !== null || startSeq !== null || summarySeq !== null
+    || endSeq !== null || shadowedTokenCount !== null) throw portError();
+  return Object.freeze({
+    result_version: 'builder-context-compaction-execution-result.v1',
+    operation: operation as BuilderManualContextCompactionResult['operation'],
+    status: status as BuilderManualContextCompactionResult['status'],
+    admission_id: result.admission_id,
+    conversation_compaction_projection_digest: result.conversation_compaction_projection_digest,
+    compaction_id: compactionId,
+    start_seq: startSeq,
+    summary_seq: summarySeq,
+    end_seq: endSeq,
+    shadowed_token_count: shadowedTokenCount,
+    authority: Object.freeze({
+      bridge_authority: 'main_context_compaction_execution_bridge_v1',
+      admission_authority: 'verified_main_context_compaction_admission_contract_v1',
+      harness_authority: 'manual_compactNow_invoked_after_admission',
+      renderer_authority: 'not_present',
+      ipc_authority: 'not_present',
+      provider_dispatch: 'harness_owned_compaction_only',
+      tool_dispatch: 'not_performed_by_bridge',
+      source_write: 'not_performed_by_bridge',
+      sqlite_write: 'not_performed_by_bridge',
+      permission_grant_authority: 'not_present',
+      revision_authority: 'not_present',
+      summary_materialization: 'not_performed_by_bridge',
+    }),
   });
 }
 
@@ -707,6 +841,25 @@ function safeActivityText(value: unknown): string {
   return value;
 }
 
+function safeActivityKind(value: unknown): BuilderGenerationActivityKind {
+  if (typeof value !== 'string' || ![
+    'reasoning',
+    'session_running',
+    'session_idle',
+    'turn_preparing',
+    'step_analyzing',
+    'model_retry_waiting',
+    'model_retrying',
+    'context_compacting',
+    'context_compacted',
+    'todo_updated',
+    'subagent_started',
+    'subagent_finished',
+    'generation_finishing',
+  ].includes(value)) throw portError();
+  return value as BuilderGenerationActivityKind;
+}
+
 function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
   const reset = Object.hasOwn(value as object, 'retain_text_bytes');
   const activity = Object.hasOwn(value as object, 'activity_text');
@@ -729,6 +882,7 @@ function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
       'turn_id',
       'task_id',
       'run_id',
+      'activity_kind',
       'activity_text',
     ] : [
       'event_version',
@@ -787,6 +941,7 @@ function sanitizeOutputEvent(value: unknown): BuilderGenerationOutputEvent {
     return Object.freeze({
       event_version: GENERATION_ACTIVITY_EVENT_VERSION,
       ...common,
+      activity_kind: safeActivityKind(event.activity_kind),
       activity_text: safeActivityText(event.activity_text),
     });
   }
@@ -1000,6 +1155,32 @@ export function createBuilderDesktopCodeGeneratorPort(
         task_address_id: request.task_address_id,
       }]).then(unwrapGenerationEnvelope);
     },
+    resumeInterruptedRun(request: Parameters<NonNullable<BuilderCodeGeneratorPort['resumeInterruptedRun']>>[0]) {
+      if (!bridge.resumeInterruptedRun || !TASK_ADDRESS_ID_PATTERN.test(request.task_address_id)
+        || !RUN_ID_PATTERN.test(request.run_id)) return Promise.reject(portError());
+      return callBridge(
+        bridge,
+        bridge.resumeInterruptedRun,
+        [{ task_address_id: request.task_address_id, run_id: request.run_id }],
+      )
+        .then(unwrapGenerationEnvelope);
+    },
+    ...(bridge.manualCompactContext === undefined ? {} : {
+      manualCompactContext(request: Parameters<NonNullable<BuilderCodeGeneratorPort['manualCompactContext']>>[0]) {
+        const projectId = safeProjectId(request.project_id);
+        const conversationId = safeConversationId(request.conversation_id);
+        const taskAddressId = safeTaskAddressId(request.task_address_id);
+        return callBridge(
+          bridge,
+          bridge.manualCompactContext as NonNullable<BuilderCodeGeneratorBridge['manualCompactContext']>,
+          [{
+            project_id: projectId,
+            conversation_id: conversationId,
+            task_address_id: taskAddressId,
+          }],
+        ).then((result) => unwrapManualContextCompactionResult(unwrapGenerationEnvelope(result)));
+      },
+    }),
     answer(request: Parameters<BuilderCodeGeneratorPort['answer']>[0]) {
       return callBridge(bridge, bridge.answer, [
         instructionRequestPayload(request.instruction, request.task_address_id, request.queued_followup),
@@ -1044,6 +1225,7 @@ export function createBuilderDesktopCodeGeneratorPort(
     cancel(request: Parameters<BuilderCodeGeneratorPort['cancel']>[0]) {
       return callBridge(bridge, bridge.cancel, [{
         request_id: request.request_id,
+        ...(request.pause === true ? { pause: true } : {}),
       }]).then((result) => unwrapCancelResult(result, request.request_id));
     },
     steer(request: Parameters<BuilderCodeGeneratorPort['steer']>[0]) {

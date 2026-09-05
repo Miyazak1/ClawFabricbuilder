@@ -10,6 +10,10 @@ const {
 } = require('./builder-code-change-kernel.cjs');
 const { MAX_EVENT_SEQUENCE } = require('./builder-conversation-records.cjs');
 const {
+  sanitizeBuilderAgentPlanArtifact,
+  sanitizeBuilderAgentPlanDecision,
+} = require('./builder-agent-plan-contract.cjs');
+const {
   BuilderProjectSourceTreeError,
   MAX_SOURCE_TREE_UTF8_BYTES,
   createBuilderProjectSourceTree,
@@ -40,11 +44,14 @@ const BUILDER_GENERATION_PROMPT_DESCRIPTOR_VERSION = 'builder-generation-prompt-
 const BUILDER_GENERATED_OPERATIONS_KIND = 'builder_code_change_operations';
 const BUILDER_GENERATED_EXPLANATION_KIND = 'builder_conversation_explanation';
 const BUILDER_GENERATED_PLAN_KIND = 'builder_project_plan_proposal';
+const BUILDER_GENERATED_AGENT_PLAN_MARKDOWN_KIND = 'builder_agent_plan_markdown';
 
 const MAX_INSTRUCTION_CODE_POINTS = 4000;
 const MAX_INSTRUCTION_UTF8_BYTES = 16 * 1024;
 const MAX_EXPLANATION_CODE_POINTS = 4000;
 const MAX_EXPLANATION_UTF8_BYTES = 16 * 1024;
+const MAX_PLAN_EXPLANATION_CODE_POINTS = 12_000;
+const MAX_PLAN_EXPLANATION_UTF8_BYTES = 48_000;
 const MAX_PLAN_STEP_COUNT = 12;
 const MAX_PLAN_STEP_TITLE_CODE_POINTS = 120;
 const MAX_PLAN_STEP_TITLE_UTF8_BYTES = 512;
@@ -64,6 +71,7 @@ const TASK_ADDRESS_ID_PATTERN = /^builder-task-address:[0-9a-f]{8}-[0-9a-f]{4}-[
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const UNSAFE_UNICODE_FORMAT_PATTERN = /[\p{Cf}\p{Bidi_Control}]/u;
 const LOCAL_PATH_PATTERN = /(?:file:\/{1,3}|\\\\|(?:^|[\s"'`=(,:])(?:[A-Za-z]:[\\/]|~[\\/]|\/(?!\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*))/iu;
+const WEB_PROJECT_ROOT_PATH_PATTERN = /\/(?:api|post|posts|articles|blog|images|assets|static|public|categories|tags|about)(?:\/(?:[A-Za-z0-9_:@[\]-]+|[A-Za-z0-9_:@[\]-]+\.[A-Za-z0-9_-]+))*/giu;
 const CREDENTIAL_ASSIGNMENT_PATTERN = /["'`]?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret|credential|client[_-]?secret|private[_-]?key|aws[_-]?secret[_-]?access[_-]?key)["'`]?\s*[:=]\s*(?!["'`]?\s*(?:null|undefined)\b)\S/iu;
 const AUTHORIZATION_VALUE_PATTERN = /\b(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{16,}/iu;
 const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/u;
@@ -75,6 +83,7 @@ const WORKING_BRIEF_USER_CONTEXT_PATTERN =
 const REQUEST_KEYS = Object.freeze(['version', 'instruction', 'existing_project_id', 'task_address_id', 'request_digest']);
 const REQUEST_INPUT_KEYS = Object.freeze(['instruction', 'existing_project_id', 'task_address_id']);
 const PROMPT_INPUT_KEYS = Object.freeze(['request', 'base_source_tree', 'conversation_events']);
+const AGENT_PLAN_EXPLANATION_PROMPT_INPUT_KEYS = Object.freeze([...PROMPT_INPUT_KEYS, 'prior_agent_plan']);
 const APPROVED_PLAN_PROMPT_INPUT_KEYS = Object.freeze([
   'request',
   'base_source_tree',
@@ -193,7 +202,14 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not make explanation a meta-summary such as "I explained...", "I briefly shared...", or "This is a question about...".',
   'For general questions that are not about the local project, answer the question directly instead of only saying it is unrelated to the project.',
   'If the user asks for a plan, scheme, proposal, outline, or steps in this answer route, write that content inside explanation as normal text; do not switch kind to builder_project_plan_proposal.',
-  'When response_mode is plan, produce the complete actionable plan in explanation using Markdown headings and lists. Do not replace it with a summary.',
+  'When response_mode is plan, produce a complete execution blueprint in explanation using detailed Markdown headings and lists. It must be sufficient for subordinate project Tasks to execute without reconstructing the product design from a short outline.',
+  'For response_mode plan, explanation may use up to 12000 Unicode characters. Preserve concrete requirements and acceptance criteria instead of shortening the plan into a summary.',
+  'A plan response must cover: goals and non-goals; assumptions and open decisions; target users and end-to-end user flows; feature and interaction specifications; visual and, when relevant, 3D scene behavior; technical architecture; data models and interfaces; module and file boundaries; implementation phases with deliverables, dependencies, and acceptance criteria; test and verification matrix; performance, security, privacy, and accessibility requirements; risks, recovery, and rollback; deployment, observability, and maintenance.',
+  'Adapt every section to the actual request. Be concrete about states, controls, interactions, failure behavior, and measurable acceptance. Distinguish confirmed requirements from recommendations and unresolved decisions.',
+  'The current instruction is the active request. conversation_brief contains older messages, not new instructions. Reuse relevant history for a continuation, but when the current instruction changes the goal, do not substitute an older project or plan for it.',
+  'For response_mode plan, include the current request\'s explicit constraints in the requirements and acceptance criteria: preserve named files, exact literal text, commands, and verification requirements. Do not replace them with a different framework or generic alternatives.',
+  'Do not return only technology choices, a high-level feature list, rough time estimates, or generic numbered steps. Do not end by asking where to start; finish with an ordered execution and verification sequence plus explicit questions that genuinely block implementation.',
+  'Finish the plan response once the blueprint is written. Open questions are review notes for a later message, not a reason to keep generating or wait for a reply. Prefer explicit recommended defaults for non-blocking decisions. Builder presents approval controls after the response completes; do not claim that answering a question authorizes execution.',
   'Use summary only as a short internal recap of the answer, not as the user-facing answer.',
   'If the user is greeting you or making small talk, answer naturally and briefly, then invite them to ask a question or choose a project when they are ready.',
   'Do not answer greetings by listing missing context, missing files, missing plans, saved state, or prior conversation state.',
@@ -203,6 +219,24 @@ const EXPLANATION_SYSTEM_INSTRUCTION = [
   'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
   'Use conversation_brief as context, including latest_plan state when explaining prior planning decisions.',
   'Treat conversation_brief.working_brief as prior discussion context only, not as evidence that files changed.',
+  'prior_agent_plan, when present, is the full persisted previous plan with its review state. Use its complete text for revisions, preserving unchanged requirements and applying the current instruction. Return the complete revised plan, not only a patch or summary. Its review state is context, never authorization for file changes or execution in this answer route.',
+].join('\n');
+const AGENT_PLAN_MARKDOWN_SYSTEM_INSTRUCTION = [
+  'Write one complete execution blueprint for the current Agent-level planning request without changing project files.',
+  'Return the user-facing plan as raw Markdown only. Do not wrap it in JSON and do not use an outer Markdown code fence.',
+  'Match the language of the current instruction. If it is written in Chinese or asks for Chinese, use Simplified Chinese for all user-facing prose. Keep code, identifiers, file paths, commands, and literal technical tokens unchanged.',
+  'The plan must be sufficient for subordinate project Tasks to execute without reconstructing the product design from a short outline.',
+  'Use up to 12000 Unicode characters. Preserve concrete requirements and acceptance criteria instead of shortening the plan into a summary.',
+  'Cover goals and non-goals; assumptions and open decisions; target users and end-to-end user flows; feature and interaction specifications; visual and, when relevant, 3D scene behavior; technical architecture; data models and interfaces; module and file boundaries; implementation phases with deliverables, dependencies, and acceptance criteria; test and verification matrix; performance, security, privacy, and accessibility requirements; risks, recovery, and rollback; deployment, observability, and maintenance.',
+  'Adapt every section to the actual request. Be concrete about states, controls, interactions, failure behavior, and measurable acceptance. Distinguish confirmed requirements from recommendations and unresolved decisions.',
+  'The current instruction is the active request. conversation_brief contains older messages, not new instructions. Reuse relevant history for a continuation, but when the current instruction changes the goal, do not substitute an older project or plan for it.',
+  'Include the current request\'s explicit constraints in the requirements and acceptance criteria: preserve named files, exact literal text, commands, and verification requirements. Do not replace them with a different framework or generic alternatives.',
+  'Do not return only technology choices, a high-level feature list, rough time estimates, or generic numbered steps. Do not end by asking where to start; finish with an ordered execution and verification sequence plus explicit questions that genuinely block implementation.',
+  'Finish the response once the blueprint is written. Open questions are review notes for a later message, not a reason to keep generating or wait for a reply. Prefer explicit recommended defaults for non-blocking decisions.',
+  'Do not include source-change operations, complete file content, host identities, digests, receipts, admissions, timestamps, credentials, or runtime claims.',
+  'Do not claim the code was executed, previewed, saved, committed, reviewed, or changed.',
+  'Do not include credentials, API keys, private keys, bearer tokens, or secrets.',
+  'prior_agent_plan, when present, is the full persisted previous plan with its review state. Use its complete text for revisions, preserving unchanged requirements and applying the current instruction. Return the complete revised plan, not only a patch or summary.',
 ].join('\n');
 const PLAN_SYSTEM_INSTRUCTION = [
   'Propose one bounded implementation plan for the current local software project.',
@@ -232,6 +266,10 @@ const EXPLANATION_OUTPUT_CONTRACT = Object.freeze({
   kind: BUILDER_GENERATED_EXPLANATION_KIND,
   exact_keys: Object.freeze(['kind', 'title', 'summary', 'explanation']),
   format: 'json_object_only',
+});
+const AGENT_PLAN_MARKDOWN_OUTPUT_CONTRACT = Object.freeze({
+  kind: BUILDER_GENERATED_AGENT_PLAN_MARKDOWN_KIND,
+  format: 'markdown_document',
 });
 const PLAN_OUTPUT_CONTRACT = Object.freeze({
   kind: BUILDER_GENERATED_PLAN_KIND,
@@ -341,9 +379,12 @@ function hasDisallowedControl(value, allowFormatting) {
   return false;
 }
 
-function containsUnsafeMaterial(value) {
+function containsUnsafeMaterial(value, allowWebProjectPaths = false) {
   const normalized = value.normalize('NFKC');
-  return LOCAL_PATH_PATTERN.test(normalized)
+  const localPathInput = allowWebProjectPaths
+    ? normalized.replace(WEB_PROJECT_ROOT_PATH_PATTERN, '')
+    : normalized;
+  return LOCAL_PATH_PATTERN.test(localPathInput)
     || CREDENTIAL_ASSIGNMENT_PATTERN.test(normalized)
     || AUTHORIZATION_VALUE_PATTERN.test(normalized)
     || PRIVATE_KEY_PATTERN.test(normalized)
@@ -351,7 +392,14 @@ function containsUnsafeMaterial(value) {
     || COMMON_SECRET_VALUE_PATTERN.test(normalized);
 }
 
-function safeText(value, maximumCodePoints, maximumUtf8Bytes, allowFormatting, code) {
+function safeText(
+  value,
+  maximumCodePoints,
+  maximumUtf8Bytes,
+  allowFormatting,
+  code,
+  allowWebProjectPaths = false,
+) {
   if (
     typeof value !== 'string'
     || value.length === 0
@@ -363,7 +411,7 @@ function safeText(value, maximumCodePoints, maximumUtf8Bytes, allowFormatting, c
     || Buffer.byteLength(value, 'utf8') > maximumUtf8Bytes
     || hasUnpairedSurrogate(value)
     || hasDisallowedControl(value, allowFormatting)
-    || containsUnsafeMaterial(value)
+    || containsUnsafeMaterial(value, allowWebProjectPaths)
   ) fail(code);
   return value;
 }
@@ -726,6 +774,7 @@ function sanitizePromptInput(value, keys = PROMPT_INPUT_KEYS) {
       16_000,
       true,
       'builder_generation_request_invalid',
+      true,
     )
     : null;
   return {
@@ -735,7 +784,30 @@ function sanitizePromptInput(value, keys = PROMPT_INPUT_KEYS) {
     conversationBrief: conversationBriefFromEvents(conversationEvents, request.request_digest),
     providerContextPromptBridgeAdmission,
     approvedPlanPublicText,
+    priorAgentPlan: keys === AGENT_PLAN_EXPLANATION_PROMPT_INPUT_KEYS
+      ? sanitizePriorAgentPlan(valueAt(value, 'prior_agent_plan', 'builder_generation_request_invalid'), request)
+      : null,
   };
+}
+
+function sanitizePriorAgentPlan(value, request) {
+  if (request.existing_project_id !== null) fail('builder_generation_request_invalid');
+  assertExactObject(value, ['artifact', 'decision'], 'builder_generation_request_invalid');
+  try {
+    const artifact = sanitizeBuilderAgentPlanArtifact(valueAt(value, 'artifact', 'builder_generation_request_invalid'));
+    const rawDecision = valueAt(value, 'decision', 'builder_generation_request_invalid');
+    const decision = rawDecision === null ? null : sanitizeBuilderAgentPlanDecision(rawDecision);
+    if (decision !== null && (decision.agent_plan_id !== artifact.agent_plan_id
+      || decision.content_digest !== artifact.content_digest)) fail('builder_generation_request_invalid');
+    return {
+      version: artifact.version,
+      review_state: decision?.decision ?? 'proposed',
+      text: safeText(artifact.markdown, MAX_PLAN_EXPLANATION_CODE_POINTS,
+        MAX_PLAN_EXPLANATION_UTF8_BYTES, true, 'builder_generation_request_invalid', true),
+    };
+  } catch {
+    fail('builder_generation_request_invalid');
+  }
 }
 
 function sanitizeProviderContextPromptBridgeAdmissionForPrompt(value, request) {
@@ -842,6 +914,7 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
       conversationBrief,
       providerContextPromptBridgeAdmission,
       approvedPlanPublicText,
+      priorAgentPlan,
     } = sanitizePromptInput(value, keys);
     const userContext = {
       instruction: request.instruction,
@@ -854,7 +927,10 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
         })),
       },
     };
-    if (outputContract.kind === BUILDER_GENERATED_EXPLANATION_KIND) {
+    if (
+      outputContract.kind === BUILDER_GENERATED_EXPLANATION_KIND
+      || outputContract.kind === BUILDER_GENERATED_AGENT_PLAN_MARKDOWN_KIND
+    ) {
       const currentTurnIds = currentPromptTurnIds(conversationEvents, request.request_digest);
       const routeContext = currentPromptRouteContext(conversationEvents, currentTurnIds);
       if (routeContext?.route === 'plan') userContext.response_mode = 'plan';
@@ -875,6 +951,7 @@ function promptDescriptor(value, promptVersion, systemInstruction, outputContrac
         text: approvedPlanPublicText,
       };
     }
+    if (priorAgentPlan !== null) userContext.prior_agent_plan = priorAgentPlan;
     if (providerContextPromptBridgeAdmission !== null) {
       userContext.approved_working_context =
         providerContextPromptBridgeAdmission.provider_prompt_context;
@@ -987,6 +1064,22 @@ function createBuilderExplanationPromptDescriptor(value) {
       exact_keys: [...EXPLANATION_OUTPUT_CONTRACT.exact_keys],
       format: EXPLANATION_OUTPUT_CONTRACT.format,
     },
+    isPlainObject(value) && Object.hasOwn(value, 'prior_agent_plan')
+      ? AGENT_PLAN_EXPLANATION_PROMPT_INPUT_KEYS : PROMPT_INPUT_KEYS,
+  );
+}
+
+function createBuilderAgentPlanMarkdownPromptDescriptor(value) {
+  return promptDescriptor(
+    value,
+    'builder-agent-plan-markdown.v1',
+    AGENT_PLAN_MARKDOWN_SYSTEM_INSTRUCTION,
+    {
+      kind: AGENT_PLAN_MARKDOWN_OUTPUT_CONTRACT.kind,
+      format: AGENT_PLAN_MARKDOWN_OUTPUT_CONTRACT.format,
+    },
+    isPlainObject(value) && Object.hasOwn(value, 'prior_agent_plan')
+      ? AGENT_PLAN_EXPLANATION_PROMPT_INPUT_KEYS : PROMPT_INPUT_KEYS,
   );
 }
 
@@ -1185,10 +1278,11 @@ function sanitizeGeneratedPlan(value, requestDigest) {
   };
 }
 
-function sanitizeGeneratedExplanation(value) {
+function sanitizeGeneratedExplanation(value, responseMode = 'answer') {
   assertExactObject(value, EXPLANATION_OUTPUT_KEYS, 'builder_generation_structured_response_invalid');
   if (valueAt(value, 'kind', 'builder_generation_structured_response_invalid')
     !== BUILDER_GENERATED_EXPLANATION_KIND) fail('builder_generation_structured_response_invalid');
+  const rawExplanation = valueAt(value, 'explanation', 'builder_generation_structured_response_invalid');
   return {
     title: safeText(
       valueAt(value, 'title', 'builder_generation_structured_response_invalid'),
@@ -1205,16 +1299,17 @@ function sanitizeGeneratedExplanation(value) {
       'builder_generation_structured_response_invalid',
     ),
     explanation: safeText(
-      valueAt(value, 'explanation', 'builder_generation_structured_response_invalid'),
-      MAX_EXPLANATION_CODE_POINTS,
-      MAX_EXPLANATION_UTF8_BYTES,
+      typeof rawExplanation === 'string' ? rawExplanation.trim() : rawExplanation,
+      responseMode === 'plan' ? MAX_PLAN_EXPLANATION_CODE_POINTS : MAX_EXPLANATION_CODE_POINTS,
+      responseMode === 'plan' ? MAX_PLAN_EXPLANATION_UTF8_BYTES : MAX_EXPLANATION_UTF8_BYTES,
       true,
       'builder_generation_structured_response_invalid',
+      responseMode === 'plan',
     ),
   };
 }
 
-function parseProviderOutputText(value, requestDigest = '') {
+function parseProviderOutputText(value, requestDigest = '', responseMode = 'answer') {
   if (
     typeof value !== 'string'
     || value.length === 0
@@ -1233,9 +1328,46 @@ function parseProviderOutputText(value, requestDigest = '') {
   if (!isPlainObject(parsed)) fail('builder_generation_structured_response_invalid');
   const kind = valueAt(parsed, 'kind', 'builder_generation_structured_response_invalid');
   if (kind === BUILDER_GENERATED_OPERATIONS_KIND) return { result_kind: 'candidate', ...sanitizeGeneratedOperations(parsed) };
-  if (kind === BUILDER_GENERATED_EXPLANATION_KIND) return { result_kind: 'explanation', ...sanitizeGeneratedExplanation(parsed) };
+  if (kind === BUILDER_GENERATED_EXPLANATION_KIND) return { result_kind: 'explanation', ...sanitizeGeneratedExplanation(parsed, responseMode) };
   if (kind === BUILDER_GENERATED_PLAN_KIND) return { result_kind: 'plan', ...sanitizeGeneratedPlan(parsed, requestDigest) };
   fail('builder_generation_structured_response_invalid');
+}
+
+function unwrapPlanMarkdownFence(value) {
+  const match = /^```(?:markdown|md)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(value);
+  return match === null ? value : match[1].trim();
+}
+
+function parseAgentPlanMarkdownText(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_GENERATED_TEXT_BYTES
+    || Buffer.byteLength(value, 'utf8') > MAX_GENERATED_TEXT_BYTES
+    || hasUnpairedSurrogate(value)
+  ) fail('builder_generation_structured_response_invalid');
+  const text = value.trim();
+  if (text.length === 0) fail('builder_generation_structured_response_invalid');
+  if (text.startsWith('{')) {
+    const generated = parseProviderOutputText(text, '', 'plan');
+    if (generated.result_kind !== 'explanation') fail('builder_generation_structured_response_invalid');
+    return generated;
+  }
+  const explanation = safeText(
+    unwrapPlanMarkdownFence(text),
+    MAX_PLAN_EXPLANATION_CODE_POINTS,
+    MAX_PLAN_EXPLANATION_UTF8_BYTES,
+    true,
+    'builder_generation_structured_response_invalid',
+    true,
+  );
+  const chinese = /\p{Script=Han}/u.test(explanation);
+  return {
+    result_kind: 'explanation',
+    title: chinese ? '实施计划' : 'Implementation plan',
+    summary: chinese ? '完整计划已生成，等待审阅。' : 'The complete plan is ready for review.',
+    explanation,
+  };
 }
 
 function projectBuilderGenerationResult(value) {
@@ -1344,15 +1476,17 @@ function projectBuilderDraftContinuationGenerationResult(value) {
   }
 }
 
-function projectBuilderExplanationResult(value) {
+function projectBuilderExplanationResult(value, responseMode = 'answer') {
   try {
+    if (responseMode !== 'answer' && responseMode !== 'plan') fail('builder_generation_request_invalid');
     assertExactObject(value, ['request', 'generated_text'], 'builder_generation_request_invalid');
     const request = sanitizeBuilderGenerationRequestInternal(
       valueAt(value, 'request', 'builder_generation_request_invalid'),
     );
-    const generated = parseProviderOutputText(
-      valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid'),
-    );
+    const generatedText = valueAt(value, 'generated_text', 'builder_generation_structured_response_invalid');
+    const generated = responseMode === 'plan'
+      ? parseAgentPlanMarkdownText(generatedText)
+      : parseProviderOutputText(generatedText, '', responseMode);
     if (generated.result_kind !== 'explanation') fail('builder_generation_structured_response_invalid');
     return freezeDeep({
       version: BUILDER_GENERATION_RESULT_PROTOCOL,
@@ -1441,6 +1575,7 @@ module.exports = Object.freeze({
   BuilderGenerationKernelError,
   createBuilderGenerationRequest,
   sanitizeBuilderGenerationRequest,
+  createBuilderAgentPlanMarkdownPromptDescriptor,
   createBuilderExplanationPromptDescriptor,
   createBuilderApprovedPlanGenerationPromptDescriptor,
   createBuilderGenerationPromptDescriptor,

@@ -50,6 +50,11 @@ const AUTHORITY = Object.freeze({
   node_integration: false,
   preload: false,
 });
+const RUNTIME_LAUNCH_AUTHORITY = Object.freeze({
+  projection_authority: 'main_owned_project_runtime_launch_projection_v1',
+  renderer_authority: 'status_projection_only',
+  path_disclosure: 'not_serialized',
+});
 
 class BuilderLivePreviewIpcRuntimeError extends Error {
   constructor(code = 'builder_live_preview_ipc_runtime_unavailable') {
@@ -172,6 +177,23 @@ function unavailableStatus(request, status = 'unavailable') {
       ? 'Live preview is stopped.'
       : 'Live preview is unavailable until a main-owned preview source resolver is connected.',
     dev_server_approval: null,
+    runtime_launch_projection: Object.freeze({
+      projection_version: 'builder-project-runtime-launch-projection.v1',
+      project_id: request.project_id,
+      conversation_id: request.conversation_id,
+      preview_kind: 'live_static_web',
+      source_status: 'not_requested',
+      command_profile: 'none',
+      user_approval: 'not_required',
+      command_execution: 'not_applicable',
+      dependency_preparation: 'not_allowed',
+      package_install: 'not_allowed',
+      sandbox_policy: 'static_preview_no_command_execution',
+      provider_dispatch: false,
+      tool_dispatch: false,
+      project_workspace_write: 'not_granted_by_preview',
+      authority: RUNTIME_LAUNCH_AUTHORITY,
+    }),
     unavailable_reason: status === 'stopped' ? null : 'preview_source_resolver_not_connected',
     updated_at_ms: Date.now(),
     authority: AUTHORITY,

@@ -4,6 +4,13 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
+const {
+  BUILDER_MAIN_STDIO_BOUNDARY_VERSION,
+  installBuilderMainStdioBoundary,
+} = require('./builder-main-stdio-boundary.cjs');
+
+installBuilderMainStdioBoundary();
+
 const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, net, session, shell } = require('electron');
 const { resolveBuilderRendererTarget } = require('./runtime-options.cjs');
 const {
@@ -65,6 +72,8 @@ const PACKAGED_CANARY_PROJECT_ROOT_PATH = 'BUILDER_PACKAGED_CANARY_PROJECT_ROOT_
 const PACKAGED_CANARY_PROJECT_ROOT_DIRECTORY = 'project-root';
 const PERFORMANCE_TRACE_FILE = 'builder-performance-trace.v1.json';
 const PACKAGED_CANARY_STARTUP_DEBUG_FILE = 'builder-canary-startup-debug.json';
+const PACKAGED_EPIPE_FAULT_CANARY_SENTINEL = 'BUILDER_PACKAGED_EPIPE_FAULT_CANARY';
+const PACKAGED_EPIPE_FAULT_CANARY_RESULT_FILE = 'builder-epipe-fault-canary-result.json';
 let mainWindow = null;
 let ipcRuntimes = Object.freeze([]);
 let ipcShutdownPromise = null;
@@ -95,6 +104,54 @@ function recordPackagedCanaryStartupFailure(error) {
   } catch {
     // Canary diagnostics never change startup or shutdown behavior.
   }
+}
+
+function packagedEpipeFaultCanaryEnabled() {
+  return app.isPackaged
+    && process.env[PACKAGED_CANARY_SENTINEL] === '1'
+    && process.env[PACKAGED_EPIPE_FAULT_CANARY_SENTINEL] === '1';
+}
+
+async function runPackagedEpipeFaultCanary(userDataPath) {
+  const uncaught = [];
+  const onUncaught = (error) => {
+    uncaught.push({
+      code: typeof error?.code === 'string' ? error.code : 'unknown',
+      name: typeof error?.name === 'string' ? error.name : 'Error',
+    });
+  };
+  process.on('uncaughtExceptionMonitor', onUncaught);
+  const epipe = Object.assign(new Error('EPIPE: broken pipe, write'), {
+    code: 'EPIPE',
+    syscall: 'write',
+  });
+  let emitted = false;
+  let writeReturnedFalse = false;
+  let callbackCode = null;
+  try {
+    process.stderr.emit('error', epipe);
+    emitted = true;
+    writeReturnedFalse = process.stderr.write('builder packaged epipe fault canary\n', 'utf8', (error) => {
+      callbackCode = typeof error?.code === 'string' ? error.code : null;
+    }) === false;
+    await new Promise((resolve) => queueMicrotask(resolve));
+  } finally {
+    process.off('uncaughtExceptionMonitor', onUncaught);
+  }
+  fs.writeFileSync(
+    path.join(userDataPath, PACKAGED_EPIPE_FAULT_CANARY_RESULT_FILE),
+    `${JSON.stringify({
+      result_version: 'builder-packaged-epipe-fault-main-result.v1',
+      main_stdio_boundary_version: BUILDER_MAIN_STDIO_BOUNDARY_VERSION,
+      injected_stream: 'stderr',
+      epipe_error_event_contained: emitted,
+      post_close_write_returned_false: writeReturnedFalse,
+      post_close_callback_code: callbackCode,
+      uncaught_exception_observed: uncaught.length !== 0,
+      uncaught_exception_count: uncaught.length,
+    })}\n`,
+    { encoding: 'utf8', flag: 'wx' },
+  );
 }
 
 function invalidPackagedCanaryPath() {
@@ -219,17 +276,21 @@ function resolveWindowIconPath() {
 
 function createMainWindow() {
   Menu.setApplicationMenu(null);
+  const packagedCanary = app.isPackaged && process.env[PACKAGED_CANARY_SENTINEL] === '1';
   const window = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 840,
     minHeight: 620,
-    backgroundColor: '#f4f5f7',
+    backgroundColor: '#0f1311',
     autoHideMenuBar: true,
     frame: false,
     icon: resolveWindowIconPath(),
+    opacity: packagedCanary ? 0 : 1,
     show: false,
+    skipTaskbar: packagedCanary,
     webPreferences: {
+      backgroundThrottling: !packagedCanary,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -239,7 +300,10 @@ function createMainWindow() {
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    if (packagedCanary) window.showInactive();
+    else window.show();
+  });
   window.once('closed', () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -398,6 +462,8 @@ function createIpcRuntimes(userDataPath, packagedCanaryProjectRootPath) {
         generationRuntime.readCheckRunSkipCurrentDraftServiceForMainOnlyApprovalRuntime(),
       projectEnvironmentDiagnosisService:
         generationRuntime.readProjectEnvironmentDiagnosisServiceForMainOnlyApprovalRuntime(),
+      projectDependencyPreparer:
+        generationRuntime.readProjectDependencyPreparerForMainOnlyApprovalRuntime(),
     }),
     createBuilderLivePreviewIpcRuntime({
       ipcMain,
@@ -495,6 +561,14 @@ if (!app.requestSingleInstanceLock()) {
         'main.lifecycle.create_main_window.duration_ms',
         () => createMainWindow(),
       );
+      if (packagedEpipeFaultCanaryEnabled()) {
+        await runPackagedEpipeFaultCanary(userDataPath);
+        setTimeout(() => {
+          quitAfterIpcShutdown = true;
+          app.quit();
+        }, 250);
+        return;
+      }
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
           builderPerformanceTrace.measureSync(

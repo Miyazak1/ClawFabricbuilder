@@ -11,6 +11,21 @@ export type BuilderGenerationStartedEvent = Readonly<{
   project_id: string | null;
 }>;
 
+export type BuilderGenerationActivityKind =
+  | 'reasoning'
+  | 'session_running'
+  | 'session_idle'
+  | 'turn_preparing'
+  | 'step_analyzing'
+  | 'model_retry_waiting'
+  | 'model_retrying'
+  | 'context_compacting'
+  | 'context_compacted'
+  | 'todo_updated'
+  | 'subagent_started'
+  | 'subagent_finished'
+  | 'generation_finishing';
+
 export type BuilderGenerationOutputEvent = Readonly<{
   event_version: 'builder-generation-output.v1';
   request_id: string;
@@ -21,13 +36,14 @@ export type BuilderGenerationOutputEvent = Readonly<{
   run_id: string;
   display_delta_text: string;
 }> | Readonly<{
-  event_version: 'builder-generation-activity.v1';
+  event_version: 'builder-generation-activity.v2';
   request_id: string;
   project_id: string | null;
   conversation_id: string;
   turn_id: string;
   task_id: string | null;
   run_id: string;
+  activity_kind: BuilderGenerationActivityKind;
   activity_text: string;
 }> | Readonly<{
   event_version: 'builder-generation-output-reset.v1';
@@ -110,6 +126,39 @@ export type BuilderCurrentProjectWriteApprovalResult = Readonly<{
   authority: 'main_selected_project_project_edit_v1';
 }>;
 
+export type BuilderManualContextCompactionRequest = Readonly<{
+  project_id: string;
+  conversation_id: string;
+  task_address_id: string;
+}>;
+
+export type BuilderManualContextCompactionResult = Readonly<{
+  result_version: 'builder-context-compaction-execution-result.v1';
+  operation: 'manual_compaction_completed' | 'manual_compaction_noop';
+  status: 'compaction_completed' | 'compaction_not_needed';
+  admission_id: string;
+  conversation_compaction_projection_digest: string;
+  compaction_id: string | null;
+  start_seq: number | null;
+  summary_seq: number | null;
+  end_seq: number | null;
+  shadowed_token_count: number | null;
+  authority: Readonly<{
+    bridge_authority: 'main_context_compaction_execution_bridge_v1';
+    admission_authority: 'verified_main_context_compaction_admission_contract_v1';
+    harness_authority: 'manual_compactNow_invoked_after_admission';
+    renderer_authority: 'not_present';
+    ipc_authority: 'not_present';
+    provider_dispatch: 'harness_owned_compaction_only';
+    tool_dispatch: 'not_performed_by_bridge';
+    source_write: 'not_performed_by_bridge';
+    sqlite_write: 'not_performed_by_bridge';
+    permission_grant_authority: 'not_present';
+    revision_authority: 'not_present';
+    summary_materialization: 'not_performed_by_bridge';
+  }>;
+}>;
+
 export type BuilderSemanticRouteClassification = Readonly<{
   result_version: 'builder-semantic-route-classification.v1';
   request_digest: string;
@@ -147,6 +196,7 @@ export type BuilderGenerationDiagnosticCode =
   | 'builder_generation_project_write_permission_required'
   | 'builder_generation_project_busy'
   | 'builder_generation_workspace_changed'
+  | 'builder_generation_source_context_unavailable'
   | 'builder_generation_workspace_guard_denied'
   | 'builder_generation_workspace_guard_approval_required'
   | 'builder_generation_provider_unavailable'
@@ -168,6 +218,7 @@ export const BUILDER_GENERATION_DIAGNOSTIC_RETRYABILITY: Readonly<
   builder_generation_project_write_permission_required: false,
   builder_generation_project_busy: true,
   builder_generation_workspace_changed: true,
+  builder_generation_source_context_unavailable: true,
   builder_generation_workspace_guard_denied: false,
   builder_generation_workspace_guard_approval_required: false,
   builder_generation_provider_unavailable: false,
@@ -188,6 +239,7 @@ const DIAGNOSTIC_MESSAGES: Readonly<Record<BuilderGenerationDiagnosticCode, stri
   builder_generation_project_write_permission_required: 'Allow current project changes before building.',
   builder_generation_project_busy: 'Another task is changing this project. Open that task or try again later.',
   builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
+  builder_generation_source_context_unavailable: 'The previous coding session could not be resumed. Start a recovered run explicitly.',
   builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
   builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
   builder_generation_provider_unavailable: 'AI project generation is not configured.',
@@ -259,6 +311,8 @@ export interface BuilderCodeGeneratorPort {
     request: Readonly<{ project_id: string; task_address_id?: string | null }>,
   ): Promise<BuilderCurrentProjectWriteApprovalResult>;
   retry(request: BuilderGenerationRequest): Promise<unknown>;
+  resumeInterruptedRun?(request: Readonly<{ task_address_id: string; run_id: string }>): Promise<unknown>;
+  manualCompactContext?(request: BuilderManualContextCompactionRequest): Promise<BuilderManualContextCompactionResult>;
   answer(request: BuilderGenerationTurnRequest): Promise<unknown>;
   answerPlan?(request: BuilderGenerationTurnRequest): Promise<unknown>;
   answerDraft(request: Readonly<{ draft_id: string; instruction: string }>): Promise<unknown>;
@@ -268,7 +322,7 @@ export interface BuilderCodeGeneratorPort {
   ): Promise<unknown>;
   restorePreviousCheckpointAsDraft?(request: Readonly<{ draft_id: string }>): Promise<unknown>;
   rejectDraft(request: Readonly<{ draft_id: string }>): Promise<unknown>;
-  cancel(request: Readonly<{ request_id: string }>): Promise<unknown>;
+  cancel(request: Readonly<{ request_id: string; pause?: true }>): Promise<unknown>;
   steer(request: Readonly<{ request_id: string; message: string }>): Promise<unknown>;
   queueFollowup(request: Readonly<{ request_id: string; message: string }>): Promise<unknown>;
   subscribeStarted?(listener: (event: BuilderGenerationStartedEvent) => void): () => void;
@@ -523,6 +577,32 @@ export type BuilderProjectEnvironmentDiagnosisResult = Readonly<{
   environment_diagnosis: BuilderProjectEnvironmentDiagnosis;
 }>;
 
+export type BuilderProjectDependencyPreparationResult = Readonly<{
+  result_version: 'builder-project-dependency-preparation-result.v1';
+  service_version: 'builder-project-dependency-preparer.v1';
+  operation: 'project_dependencies_prepared';
+  project_id: string;
+  preparation_receipt: Readonly<{
+    receipt_version: 'builder-project-dependency-preparation-receipt.v1';
+    project_id: string;
+    package_manager: 'npm' | 'pnpm' | 'yarn' | 'bun' | 'none';
+    install_command: string;
+    status:
+      | 'prepared'
+      | 'already_prepared'
+      | 'not_needed'
+      | 'unsupported'
+      | 'failed'
+      | 'timed_out';
+    exit_code: number | null;
+    started_at_ms: number;
+    completed_at_ms: number;
+    output_digest: string;
+    receipt_digest: string;
+  }>;
+  environment_diagnosis: BuilderProjectEnvironmentDiagnosis;
+}>;
+
 export type BuilderCheckRunSkippedResult = Readonly<{
   result_version: 'builder-check-skip-current-draft-public-result.v1';
   operation: 'current_draft_check_skipped';
@@ -540,6 +620,9 @@ export interface BuilderCheckRunPort {
   diagnoseProjectEnvironment(
     request: Readonly<{ project_id: string }>,
   ): Promise<BuilderProjectEnvironmentDiagnosisResult>;
+  prepareProjectDependencies(
+    request: Readonly<{ project_id: string }>,
+  ): Promise<BuilderProjectDependencyPreparationResult>;
   approveAndRunCurrentDraftCheck(request: BuilderCheckRunApproveRequest): Promise<BuilderCheckRunCompletedResult>;
   decideCurrentDraftDependencyPreparation(
     request: BuilderCheckRunDependencyPreparationRequest,
@@ -565,6 +648,11 @@ export interface BuilderAgentProjectTreePort {
     title: string;
   }>): Promise<unknown>;
   archiveTask(request: Readonly<{
+    agent_id: string;
+    project_id: string;
+    task_address_id: string;
+  }>): Promise<unknown>;
+  exportTaskTranscript(request: Readonly<{
     agent_id: string;
     project_id: string;
     task_address_id: string;
@@ -619,6 +707,12 @@ export interface BuilderAgentWorkbenchPort {
     operation: BuilderWorkbenchTaskProposalDecision;
     project_id: string | null;
   }>): Promise<unknown>;
+  decideAgentPlan(request: Readonly<{
+    agent_id: string;
+    agent_plan_id: string;
+    content_digest: string;
+    decision: 'approved' | 'rejected';
+  }>): Promise<unknown>;
   controlTask(request: Readonly<{
     agent_id: string;
     project_id: string;
@@ -666,6 +760,27 @@ export type BuilderLivePreviewStatusProjection = Readonly<{
     expires_at_ms: number;
     decisions: readonly ['allow_once', 'deny'];
   }> | null;
+  runtime_launch_projection: Readonly<{
+    projection_version: 'builder-project-runtime-launch-projection.v1';
+    project_id: string;
+    conversation_id: string;
+    preview_kind: 'live_static_web' | 'live_dev_server_web';
+    source_status: 'not_requested' | 'main_owned_verified';
+    command_profile: 'none' | 'main_owned_dev_server_profile';
+    user_approval: 'not_required' | 'required' | 'approved_once' | 'denied_or_expired';
+    command_execution: 'not_applicable' | 'approval_required' | 'started' | 'stopped' | 'failed';
+    dependency_preparation: 'not_allowed';
+    package_install: 'not_allowed';
+    sandbox_policy: 'static_preview_no_command_execution' | 'dev_server_only_no_dependency_install';
+    provider_dispatch: false;
+    tool_dispatch: false;
+    project_workspace_write: 'not_granted_by_preview';
+    authority: Readonly<{
+      projection_authority: 'main_owned_project_runtime_launch_projection_v1';
+      renderer_authority: 'status_projection_only';
+      path_disclosure: 'not_serialized';
+    }>;
+  }>;
   unavailable_reason:
     | 'preview_source_resolver_not_connected'
     | 'no_current_draft_preview_source'

@@ -46,6 +46,33 @@ export type BuilderAgentWorkbenchMessage = Readonly<{
   created_at_ms: number;
 }>;
 
+export type BuilderAgentPlanProjection = Readonly<{
+  status: 'ready';
+  artifact: Readonly<{
+    artifact_version: 'builder-agent-plan-artifact.v1';
+    content_digest: string;
+    agent_plan_id: string;
+    agent_id: string;
+    source_conversation_id: string;
+    source_turn_id: string;
+    source_run_id: string;
+    source_message_id: string;
+    version: number;
+    markdown: string;
+    state: 'proposed';
+    created_at_ms: number;
+  }>;
+  decision: Readonly<{
+    decision_version: 'builder-agent-plan-decision.v1';
+    decision_digest: string;
+    agent_plan_id: string;
+    content_digest: string;
+    decision: 'approved' | 'rejected';
+    decided_by: string;
+    decided_at_ms: number;
+  }> | null;
+}>;
+
 export type BuilderAgentWorkbenchProjection = Readonly<{
   projection_version: 'builder-agent-workbench-projection.v2';
   agent_id: string;
@@ -56,6 +83,7 @@ export type BuilderAgentWorkbenchProjection = Readonly<{
     has_more: boolean;
   }>;
   task_monitor: BuilderAgentTaskMonitorProjection;
+  agent_plan?: BuilderAgentPlanProjection | null;
   inbox: Readonly<{
     unread_count: number;
     action_required_count: number;
@@ -94,6 +122,11 @@ const PROPOSAL_ID = new RegExp(`^builder-task-proposal:${UUID}$`, 'u');
 const PROJECT_ID = new RegExp(`^builder-project:${UUID}$`, 'u');
 const TASK_ID = new RegExp(`^builder-task-address:${UUID}$`, 'u');
 const CONVERSATION_ID = new RegExp(`^builder-conversation:${UUID}:${UUID}$`, 'u');
+const AGENT_CONVERSATION_ID = new RegExp(`^builder-agent-conversation:${UUID}$`, 'u');
+const TURN_ID = new RegExp(`^builder-turn:${UUID}$`, 'u');
+const RUN_ID = new RegExp(`^builder-run:${UUID}$`, 'u');
+const AGENT_PLAN_ID = new RegExp(`^builder-agent-plan:${UUID}$`, 'u');
+const DIGEST = /^sha256:[0-9a-f]{64}$/u;
 
 function invalid(): never { throw new BuilderAgentWorkbenchProjectionError(); }
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -232,11 +265,61 @@ function message(value: unknown): BuilderAgentWorkbenchMessage {
   });
 }
 
+function agentPlan(value: unknown): BuilderAgentPlanProjection | null {
+  if (value === null) return null;
+  const bundle = record(value, ['status', 'artifact', 'decision']);
+  if (bundle.status !== 'ready') invalid();
+  const artifact = record(bundle.artifact, [
+    'artifact_version', 'content_digest', 'agent_plan_id', 'agent_id', 'source_conversation_id',
+    'source_turn_id', 'source_run_id', 'source_message_id', 'version', 'markdown', 'state', 'created_at_ms',
+  ]);
+  if (artifact.artifact_version !== 'builder-agent-plan-artifact.v1' || artifact.state !== 'proposed') invalid();
+  const sanitizedArtifact = Object.freeze({
+    artifact_version: 'builder-agent-plan-artifact.v1' as const,
+    content_digest: identifier(artifact.content_digest, DIGEST),
+    agent_plan_id: identifier(artifact.agent_plan_id, AGENT_PLAN_ID),
+    agent_id: identifier(artifact.agent_id, AGENT_ID),
+    source_conversation_id: identifier(artifact.source_conversation_id, AGENT_CONVERSATION_ID),
+    source_turn_id: identifier(artifact.source_turn_id, TURN_ID),
+    source_run_id: identifier(artifact.source_run_id, RUN_ID),
+    source_message_id: identifier(artifact.source_message_id, MESSAGE_ID),
+    version: integer(artifact.version),
+    markdown: text(artifact.markdown, 128_000),
+    state: 'proposed' as const,
+    created_at_ms: integer(artifact.created_at_ms),
+  });
+  let sanitizedDecision: BuilderAgentPlanProjection['decision'] = null;
+  if (bundle.decision !== null) {
+    const decision = record(bundle.decision, [
+      'decision_version', 'decision_digest', 'agent_plan_id', 'content_digest',
+      'decision', 'decided_by', 'decided_at_ms',
+    ]);
+    if (
+      decision.decision_version !== 'builder-agent-plan-decision.v1'
+      || (decision.decision !== 'approved' && decision.decision !== 'rejected')
+      || decision.agent_plan_id !== sanitizedArtifact.agent_plan_id
+      || decision.content_digest !== sanitizedArtifact.content_digest
+    ) invalid();
+    sanitizedDecision = Object.freeze({
+      decision_version: 'builder-agent-plan-decision.v1',
+      decision_digest: identifier(decision.decision_digest, DIGEST),
+      agent_plan_id: identifier(decision.agent_plan_id, AGENT_PLAN_ID),
+      content_digest: identifier(decision.content_digest, DIGEST),
+      decision: decision.decision,
+      decided_by: text(decision.decided_by, 80),
+      decided_at_ms: integer(decision.decided_at_ms),
+    });
+  }
+  return Object.freeze({ status: 'ready', artifact: sanitizedArtifact, decision: sanitizedDecision });
+}
+
 export function sanitizeBuilderAgentWorkbenchProjection(
   value: unknown,
 ): BuilderAgentWorkbenchProjection {
+  const hasAgentPlan = value !== null && typeof value === 'object' && Object.hasOwn(value, 'agent_plan');
   const source = record(value, [
-    'projection_version', 'agent_id', 'stream', 'task_monitor', 'inbox', 'authority',
+    'projection_version', 'agent_id', 'stream', 'task_monitor',
+    ...(hasAgentPlan ? ['agent_plan'] : []), 'inbox', 'authority',
   ]);
   if (source.projection_version !== 'builder-agent-workbench-projection.v2') invalid();
   const stream = record(source.stream, ['items', 'after_cursor', 'next_cursor', 'has_more']);
@@ -269,6 +352,7 @@ export function sanitizeBuilderAgentWorkbenchProjection(
       has_more: stream.has_more,
     }),
     task_monitor: sanitizeBuilderAgentTaskMonitorProjection(source.task_monitor),
+    ...(hasAgentPlan ? { agent_plan: agentPlan(source.agent_plan) } : {}),
     inbox: Object.freeze({
       unread_count: count(inbox.unread_count),
       action_required_count: count(inbox.action_required_count),

@@ -7,6 +7,7 @@ const {
   READ_AGENT_WORKBENCH_CHANNEL,
   UPDATE_WORKBENCH_MESSAGE_STATE_CHANNEL,
   CONTROL_WORKBENCH_TASK_CHANNEL,
+  DECIDE_AGENT_PLAN_CHANNEL,
   BuilderWorkbenchIpcError,
   createBuilderWorkbenchIpcAdapter,
 } = require('../electron/builder-workbench-ipc-adapter.cjs');
@@ -57,6 +58,10 @@ function fixture() {
       calls.push(['decide-proposal', request]);
       return { operation: 'task_materialized' };
     },
+    decideAgentPlan(request) {
+      calls.push(['decide-agent-plan', request]);
+      return { operation: 'decision_recorded' };
+    },
     controlTask(request) {
       calls.push(['control-task', request]);
       return { operation: 'cancel_requested' };
@@ -83,6 +88,23 @@ test('reads the bounded Workbench projection for the active renderer', async () 
     limit: 100,
   }]]);
   assert.equal(adapter.authority.plugin_payload_exposure, false);
+});
+
+test('binds Agent Plan decisions to the exact persisted digest', async () => {
+  const { adapter, calls, sender } = fixture();
+  assert.equal(adapter.channels.decideAgentPlan.channel, DECIDE_AGENT_PLAN_CHANNEL);
+  const request = {
+    agent_id: AGENT_ID,
+    agent_plan_id: 'builder-agent-plan:323e4567-e89b-42d3-a456-426614174000',
+    content_digest: `sha256:${'a'.repeat(64)}`,
+    decision: 'approved',
+  };
+  await adapter.channels.decideAgentPlan.invoke({ sender }, request);
+  assert.deepEqual(calls, [['decide-agent-plan', request]]);
+  await assert.rejects(
+    adapter.channels.decideAgentPlan.invoke({ sender }, { ...request, content_digest: 'sha256:bad' }),
+    { code: 'builder_workbench_invalid' },
+  );
 });
 
 test('allows only bounded message-state requests', async () => {

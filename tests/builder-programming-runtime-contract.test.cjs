@@ -14,6 +14,7 @@ const {
 } = require('../electron/builder-programming-runtime-contract.cjs');
 
 const UUID = '12345678-1234-4234-8234-123456789abc';
+const RESUME_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 
 function capabilities(overrides = {}) {
@@ -101,6 +102,62 @@ test('creates immutable runtime descriptors and run contracts with stable digest
   );
   assert.ok(Object.isFrozen(runContract));
   assert.ok(Object.isFrozen(runContract.admission.allowed_tools));
+});
+
+test('preserves complete approved plans larger than the user-message limit with bounded input', () => {
+  const request = runInput();
+  request.input.text = `<approved_plan>\n${'完整的实施计划。'.repeat(12000)}\n</approved_plan>`;
+  request.input.completion_requirement = 'source_change_required';
+  const contract = createBuilderProgrammingRuntimeRunContract(request);
+  assert.equal(contract.input.text, request.input.text);
+  assert.equal(contract.input.completion_requirement, 'source_change_required');
+  assert.deepEqual(sanitizeBuilderProgrammingRuntimeRunContract(contract), contract);
+  request.input.text = 'x'.repeat(144 * 1024 + 1);
+  assert.throws(() => createBuilderProgrammingRuntimeRunContract(request), BuilderProgrammingRuntimeContractError);
+  request.input.text = 'x\u0000y';
+  assert.throws(() => createBuilderProgrammingRuntimeRunContract(request), BuilderProgrammingRuntimeContractError);
+});
+
+test('binds source-change completion requirements to writable Build tool authority', () => {
+  const ask = runInput('ask');
+  ask.input.completion_requirement = 'source_change_required';
+  assert.throws(
+    () => createBuilderProgrammingRuntimeRunContract(ask),
+    BuilderProgrammingRuntimeContractError,
+  );
+
+  const buildWithoutMutationTools = runInput('build');
+  buildWithoutMutationTools.admission.allowed_tools = ['read', 'search', 'command'];
+  buildWithoutMutationTools.input.completion_requirement = 'source_change_required';
+  assert.throws(
+    () => createBuilderProgrammingRuntimeRunContract(buildWithoutMutationTools),
+    BuilderProgrammingRuntimeContractError,
+  );
+});
+
+test('binds native resume identity to an explicit continuation kind', () => {
+  for (const resumeKind of ['task_continuation', 'interrupted_recovery']) {
+    const request = runInput();
+    request.input.resume_session_run_id = `builder-run:${RESUME_UUID}`;
+    request.input.resume_kind = resumeKind;
+    const contract = createBuilderProgrammingRuntimeRunContract(request);
+    assert.equal(contract.input.resume_session_run_id, request.input.resume_session_run_id);
+    assert.equal(contract.input.resume_kind, resumeKind);
+  }
+
+  const missingKind = runInput();
+  missingKind.input.resume_session_run_id = `builder-run:${RESUME_UUID}`;
+  assert.throws(
+    () => createBuilderProgrammingRuntimeRunContract(missingKind),
+    BuilderProgrammingRuntimeContractError,
+  );
+
+  const missingSession = runInput();
+  missingSession.input.resume_kind = 'task_continuation';
+  assert.throws(
+    () => createBuilderProgrammingRuntimeRunContract(missingSession),
+    BuilderProgrammingRuntimeContractError,
+  );
 });
 
 test('admits read-only Ask and Plan runs without writable workspace authority', () => {

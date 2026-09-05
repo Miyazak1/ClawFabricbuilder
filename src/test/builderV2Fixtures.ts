@@ -522,6 +522,32 @@ export function createTaskStreamWire() {
   };
 }
 
+export function createInterruptedTaskStreamWire(route: 'build' | 'plan' | 'answer' = 'build') {
+  const wire = createTaskStreamWire();
+  return {
+    ...wire,
+    conversation: {
+      ...wire.conversation, head_sequence: 6,
+      window: { ...wire.conversation.window, last_sequence: 6 },
+      items: [
+        wire.conversation.items[0], wire.conversation.items[1],
+        { item_kind: 'run_context_snapshot_recorded', sequence: 3, turn_id: TURN_ID,
+          run_id: RUN_ID, task_id: TASK_ID, context: {
+            recorded_state: 'recorded', route, dispatch: route === 'answer' ? 'reply' : route,
+            downgraded_from: null, downgrade_reason: null, brief: 'available',
+            base: 'project_revision', permission_result: 'allowed',
+            command_execution: 'not_included', network_access: 'not_included',
+          } },
+        { item_kind: 'run_control_requested', sequence: 4, turn_id: TURN_ID, run_id: RUN_ID, action: 'interrupt' },
+        { item_kind: 'run_completed', sequence: 5, turn_id: TURN_ID, run_id: RUN_ID,
+          terminal_status: 'interrupted', result_kind: 'failure', failure_phase: 'not_applicable',
+          assistant_message: null, candidate: null },
+        { item_kind: 'turn_completed', sequence: 6, turn_id: TURN_ID, run_id: RUN_ID, outcome: 'interrupted' },
+      ],
+    },
+  };
+}
+
 export function createProgressTaskStreamWire() {
   const wire = createTaskStreamWire();
   return {

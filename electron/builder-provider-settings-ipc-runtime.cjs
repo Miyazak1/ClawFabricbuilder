@@ -6,6 +6,7 @@ const { types: utilTypes } = require('node:util');
 const {
   READ_CURRENT_CHANNEL,
   REPLACE_CURRENT_CHANNEL,
+  SELECT_MODEL_CHANNEL,
   STATUS_CHANNEL,
   createBuilderProviderSettingsIpcAdapter,
 } = require('./builder-provider-settings-ipc-adapter.cjs');
@@ -128,6 +129,9 @@ function createBuilderProviderSettingsIpcRuntime(rawOptions) {
       writeCurrent(request) {
         return currentRepository().write_current(request);
       },
+      selectCurrentModel(request) {
+        return currentRepository().select_current_model(request);
+      },
       mainWindowRef: options.mainWindowRef,
     });
   } catch {
@@ -137,6 +141,7 @@ function createBuilderProviderSettingsIpcRuntime(rawOptions) {
   const handlers = Object.freeze([
     Object.freeze({ channel: READ_CURRENT_CHANNEL, invoke: adapter.channels.readCurrent.invoke }),
     Object.freeze({ channel: REPLACE_CURRENT_CHANNEL, invoke: adapter.channels.replaceCurrent.invoke }),
+    Object.freeze({ channel: SELECT_MODEL_CHANNEL, invoke: adapter.channels.selectModel.invoke }),
     Object.freeze({ channel: STATUS_CHANNEL, invoke: adapter.channels.status.invoke }),
   ]);
   const installed = [];

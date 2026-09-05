@@ -1,4 +1,7 @@
-import type { BuilderGenerationOutputEvent } from './builderPorts';
+import type {
+  BuilderGenerationActivityKind,
+  BuilderGenerationOutputEvent,
+} from './builderPorts';
 import { incrementBuilderPerformance } from './builderPerformanceTrace';
 
 const MAX_LIVE_OUTPUT_TEXT_BYTES = 16 * 1024;
@@ -11,6 +14,7 @@ export type BuilderLiveOutputSnapshot = Readonly<{
   project_id: string | null;
   text: string;
   chunk_count: number;
+  activity_kind?: BuilderGenerationActivityKind;
   waiting_text?: string;
 }>;
 
@@ -136,11 +140,12 @@ export function createBuilderLiveOutputStore(
         publish();
         return true;
       }
-      if (event.event_version === 'builder-generation-activity.v1') {
+      if (event.event_version === 'builder-generation-activity.v2') {
         cancelFrame();
         flush();
         current = Object.freeze({
           ...current,
+          activity_kind: event.activity_kind,
           waiting_text: event.activity_text,
         });
         publish();

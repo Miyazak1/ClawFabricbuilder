@@ -35,7 +35,8 @@ bounded Chinese lifecycle status.
 | `subagent.started` / `finished` | Parent-bound notification is validated; child output remains private; lifecycle status is projected | Implemented |
 | Concurrent safe tools | Harness may run four calls; only tools declaring `isConcurrencySafe()` can overlap | Implemented |
 | Native Tool Presentation | Broker tools implement canonical output, `render`, `presentationMeta`, `presentCall`, and `presentResult`; Main projects bounded read/search/diff details | Implemented |
-| Live renderer activity | `builder-generation-activity.v1` replaces one status in place and never appends it to assistant text | Implemented |
+| Live renderer activity | `builder-generation-activity.v2` replaces one status in place, carries a bounded activity kind for state-specific presentation, and never appends it to assistant text | Implemented |
+| Context usage projection | Harness native `tokenUsage` and `contextPressure` session projections feed one Main-owned whole-value event; composer shows projected prompt occupancy, cumulative cache hit/read/write buckets, output, compaction state, and last compaction time | Implemented |
 
 The runtime descriptor now declares `reasoning_status: bounded_status` and
 `parallel_read_tools: true`.

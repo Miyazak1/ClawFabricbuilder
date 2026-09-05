@@ -151,7 +151,7 @@ const PREVIEW_RUN_AUTHORITY = Object.freeze({
   node_integration: 'not_present',
   preload: 'not_present',
 });
-const PREVIEW_KINDS = Object.freeze(['live_static_web']);
+const PREVIEW_KINDS = Object.freeze(['live_static_web', 'live_dev_server_web']);
 const PREVIEW_STATUSES = Object.freeze([
   'admitted',
   'server_starting',
@@ -306,16 +306,17 @@ function safeNullableSummary(value) {
   return safeBoundedText(value, 320);
 }
 
-function safeEntryPath(value) {
+function safeEntryPath(value, previewKind) {
   const entryPath = safeBoundedText(value, 240);
   if (
     entryPath.startsWith('/')
     || entryPath.endsWith('/')
     || entryPath.includes('\\')
     || entryPath.includes('..')
-    || !/\.html?$/iu.test(entryPath)
     || /[<>:"|?*]/u.test(entryPath)
   ) fail();
+  if (previewKind === 'live_static_web' && !/\.html?$/iu.test(entryPath)) fail();
+  if (previewKind === 'live_dev_server_web' && entryPath !== 'package.json') fail();
   return entryPath;
 }
 
@@ -392,9 +393,9 @@ function createBuilderLivePreviewAdmission(rawInput) {
     const draftCheckpointId = safeNullableDraftCheckpointId(valueAt(rawInput, 'draft_checkpoint_id'));
     const revisionReceiptDigest = safeNullableDigest(valueAt(rawInput, 'revision_receipt_digest'));
     if (runId === null && draftCheckpointId === null && revisionReceiptDigest === null) fail();
-    const sourceTreeDigest = safeDigest(valueAt(rawInput, 'source_tree_digest'));
-    const selectedEntryPath = safeEntryPath(valueAt(rawInput, 'selected_entry_path'));
     const previewKind = safeEnum(valueAt(rawInput, 'preview_kind'), PREVIEW_KINDS);
+    const sourceTreeDigest = safeDigest(valueAt(rawInput, 'source_tree_digest'));
+    const selectedEntryPath = safeEntryPath(valueAt(rawInput, 'selected_entry_path'), previewKind);
     const admittedAtMs = safeTimestamp(valueAt(rawInput, 'admitted_at_ms'));
     const expiresAtMs = safeExpiresAt(valueAt(rawInput, 'expires_at_ms'), admittedAtMs);
     const body = {
@@ -436,12 +437,12 @@ function sanitizeBuilderLivePreviewAdmission(rawAdmission) {
       draft_checkpoint_id: safeNullableDraftCheckpointId(valueAt(rawAdmission, 'draft_checkpoint_id')),
       revision_receipt_digest: safeNullableDigest(valueAt(rawAdmission, 'revision_receipt_digest')),
       source_tree_digest: safeDigest(valueAt(rawAdmission, 'source_tree_digest')),
-      selected_entry_path: safeEntryPath(valueAt(rawAdmission, 'selected_entry_path')),
       preview_kind: safeEnum(valueAt(rawAdmission, 'preview_kind'), PREVIEW_KINDS),
       admitted_at_ms: safeTimestamp(valueAt(rawAdmission, 'admitted_at_ms')),
       expires_at_ms: 0,
       authority: sanitizeLivePreviewAdmissionAuthority(valueAt(rawAdmission, 'authority')),
     };
+    admission.selected_entry_path = safeEntryPath(valueAt(rawAdmission, 'selected_entry_path'), admission.preview_kind);
     if (admission.admission_version !== BUILDER_LIVE_PREVIEW_ADMISSION_VERSION) fail();
     admission.expires_at_ms = safeExpiresAt(valueAt(rawAdmission, 'expires_at_ms'), admission.admitted_at_ms);
     if (

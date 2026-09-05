@@ -9,6 +9,7 @@ const {
   createBuilderConversationAddress,
   parseBuilderConversationAddress,
   sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 } = require('../electron/builder-conversation-address.cjs');
 
 const PROJECT_ID = 'builder-project:123e4567-e89b-42d3-a456-426614174200';
@@ -37,6 +38,16 @@ test('retains the project-root address only when it is bound to the same project
   assert.equal(parseBuilderConversationAddress(rootConversationId).format, 'project_root');
   assert.throws(
     () => sanitizeBuilderConversationAddress(OTHER_PROJECT_ID, rootConversationId),
+    BuilderConversationAddressError,
+  );
+});
+
+test('admits task conversations separately from project-root history addresses', () => {
+  const conversationId = createBuilderConversationAddress(PROJECT_ID, CONVERSATION_UUID);
+  const rootConversationId = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200';
+  assert.equal(sanitizeBuilderTaskConversationAddress(PROJECT_ID, conversationId), conversationId);
+  assert.throws(
+    () => sanitizeBuilderTaskConversationAddress(PROJECT_ID, rootConversationId),
     BuilderConversationAddressError,
   );
 });

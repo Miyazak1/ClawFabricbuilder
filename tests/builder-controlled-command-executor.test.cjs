@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -16,6 +17,7 @@ const {
   OUTPUT_PRIVATE_RETENTION_BYTES,
 } = require('../electron/builder-controlled-command-executor.cjs');
 const {
+  BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION,
   createBuilderCheckRunProcessAdapter,
 } = require('../electron/builder-check-run-process-adapter.cjs');
 const {
@@ -96,7 +98,27 @@ function fixture(scriptContent, testScript = 'node check.js', maxToolOutputBytes
   return { runContract, sourceTree };
 }
 
-async function setup(rawFixture, commandTimeoutMs = null) {
+function outputProcessAdapter(stdoutChunk) {
+  return {
+    adapter_version: BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION,
+    spawn_process() {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      queueMicrotask(() => {
+        child.emit('spawn');
+        child.stdout.emit('data', stdoutChunk);
+      });
+      return child;
+    },
+    terminate_process_tree({ child }) {
+      queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+      return Promise.resolve(true);
+    },
+  };
+}
+
+async function setup(rawFixture, commandTimeoutMs = null, processAdapterOverride = null) {
   const tempRoot = fs.realpathSync.native(os.tmpdir());
   const root = fs.mkdtempSync(path.join(tempRoot, 'builder-controlled-command-test-'));
   const commandRoot = path.join(root, 'commands');
@@ -128,7 +150,7 @@ async function setup(rawFixture, commandTimeoutMs = null) {
     worker_path: path.resolve(__dirname, '../electron/builder-packaged-check-script-worker.cjs'),
     clock: selectedClock,
   });
-  const processAdapter = createBuilderCheckRunProcessAdapter({
+  const processAdapter = processAdapterOverride ?? createBuilderCheckRunProcessAdapter({
     spawn_process: childProcess.spawn,
     platform: process.platform,
     windows_root: process.platform === 'win32' ? path.normalize(process.env.SystemRoot) : null,
@@ -194,17 +216,43 @@ test('preserves a non-zero exit code as a failed structured result', async () =>
   }
 });
 
-test('cancels an active command and settles its process tree before cleanup', async () => {
+test('waits for process-tree confirmation after child close before settling cancellation', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  let confirmTermination;
+  const processAdapter = {
+    adapter_version: BUILDER_CHECK_RUN_PROCESS_ADAPTER_VERSION,
+    spawn_process() {
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
+    terminate_process_tree() {
+      return new Promise((resolve) => { confirmTermination = resolve; });
+    },
+  };
   const input = fixture("process.stdout.write('started\\n'); setInterval(() => {}, 1_000);\n");
-  const harness = await setup(input);
+  const harness = await setup(input, null, processAdapter);
   try {
-    const running = harness.executor.execute(harness.request);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    let settled = false;
+    const running = harness.executor.execute(harness.request).then((result) => {
+      settled = true;
+      return result;
+    });
+    const activeDeadline = Date.now() + 5_000;
+    while (harness.executor.active_count() === 0 && Date.now() < activeDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     assert.equal(harness.executor.cancel({ run_id: input.runContract.admission.run_id }), true);
+    child.emit('close', null, 'SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    assert.equal(fs.readdirSync(harness.commandRoot).length, 1);
+
+    confirmTermination(true);
     const result = await running;
     assert.equal(result.status, 'cancelled');
-    assert.equal(result.exit_code, null);
-    assert.equal(harness.executor.active_count(), 0);
+    assert.equal(settled, true);
     assert.equal(fs.readdirSync(harness.commandRoot).length, 0);
   } finally {
     cleanup(harness.root);
@@ -290,8 +338,9 @@ test('retains a 10 MiB mixed output burst privately while public events and read
 });
 
 test('terminates output above the independent private retention hard limit', async () => {
-  const script = `process.stdout.write(Buffer.alloc(${OUTPUT_PRIVATE_RETENTION_BYTES + 1_024 * 1_024}, 88));\n`;
-  const harness = await setup(fixture(script));
+  const oversizedOutput = Buffer.alloc(OUTPUT_PRIVATE_RETENTION_BYTES + 1_024 * 1_024, 88);
+  const script = `process.stdout.write(Buffer.alloc(${oversizedOutput.length}, 88));\n`;
+  const harness = await setup(fixture(script), null, outputProcessAdapter(oversizedOutput));
   try {
     const result = await harness.executor.execute(harness.request);
     assert.equal(result.status, 'output_exceeded');

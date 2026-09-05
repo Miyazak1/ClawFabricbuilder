@@ -22,6 +22,9 @@ const UNAVAILABLE_PORT: BuilderProviderSettingsPort = Object.freeze({
   replaceCurrent() {
     return Promise.reject(new BuilderDesktopProviderSettingsPortError());
   },
+  selectModel() {
+    return Promise.reject(new BuilderDesktopProviderSettingsPortError());
+  },
   status() {
     return Promise.reject(new BuilderDesktopProviderSettingsPortError());
   },

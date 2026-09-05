@@ -44,6 +44,8 @@ const {
 const UUID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = `builder-project:${UUID}`;
 const CONVERSATION_ID = `builder-conversation:${UUID}`;
+const TASK_CONVERSATION_ID =
+  `builder-conversation:${UUID}:11111111-1111-4111-8111-111111111115`;
 const SESSION_ID = 'builder-session:11111111-1111-4111-8111-111111111112';
 const TASK_ADDRESS_ID = 'builder-task-address:11111111-1111-4111-8111-111111111113';
 const AGENT_ID = 'builder-agent:11111111-1111-4111-8111-111111111114';
@@ -85,7 +87,7 @@ function taskAddress() {
     project_id: PROJECT_ID,
     agent_id: AGENT_ID,
     parent_task_address_id: null,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
     title: 'Build the local project',
     goal: 'Make a recoverable local coding change.',
     status: 'active',
@@ -131,7 +133,7 @@ function fixture(t) {
 function beginQuestion(conversation) {
   return conversation.begin_question({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
     question: 'Summarize the current task and keep the project direction compact.',
     request_digest: REQUEST_DIGEST,
     base_revision: null,
@@ -150,7 +152,7 @@ function syntheticLargeLoadedConversation() {
       record_version: 'builder-conversation-event.v2',
       record_kind: 'builder_conversation_event',
       project_id: PROJECT_ID,
-      conversation_id: CONVERSATION_ID,
+      conversation_id: TASK_CONVERSATION_ID,
       sequence: events.length + 1,
       command_id: `builder-command:${nextUuid()}`,
       event_type: eventType,
@@ -226,7 +228,7 @@ function syntheticLargeLoadedConversation() {
     operation: 'conversation_loaded',
     conversation: {
       project_id: PROJECT_ID,
-      conversation_id: CONVERSATION_ID,
+      conversation_id: TASK_CONVERSATION_ID,
       created_at_ms: 1,
     },
     action_events: [],
@@ -246,7 +248,7 @@ test('records a bounded compaction summary from a committed public conversation'
   });
   const loaded = item.metadata.load_conversation({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
   });
 
   const recorded = item.recorder.record_committed_conversation_compaction({
@@ -256,7 +258,7 @@ test('records a bounded compaction summary from a committed public conversation'
   assert.equal(item.recorder.service_version, SERVICE_VERSION);
   assert.equal(recorded.operation, 'compaction_summary_recorded');
   assert.equal(recorded.project_id, PROJECT_ID);
-  assert.equal(recorded.conversation_id, CONVERSATION_ID);
+  assert.equal(recorded.conversation_id, TASK_CONVERSATION_ID);
   assert.equal(recorded.task_address_id, TASK_ADDRESS_ID);
   assert.match(recorded.summary_id, /^builder-context-compaction-summary:[0-9a-f]{64}$/u);
   assert.equal(recorded.authority.provider_dispatch, false);
@@ -266,7 +268,7 @@ test('records a bounded compaction summary from a committed public conversation'
   assert.equal(recorded.authority.readiness_authority, 'not_authoritative_for_readiness');
 
   const latest = item.compactionStore.read_latest_context_compaction_summary({
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
     task_address_id: TASK_ADDRESS_ID,
   });
   assert.equal(latest.status, 'ready');
@@ -282,7 +284,7 @@ test('replays the same source range idempotently and skips short conversations',
   const context = beginQuestion(item.conversation);
   const loadedRunning = item.metadata.load_conversation({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
   });
 
   const skippedRecorder = createBuilderContextCompactionRecordingService({
@@ -301,7 +303,7 @@ test('replays the same source range idempotently and skips short conversations',
   item.conversation.complete_explanation({ context, assistant_text: 'The answer is ready.' });
   const loadedComplete = item.metadata.load_conversation({
     project_id: PROJECT_ID,
-    conversation_id: CONVERSATION_ID,
+    conversation_id: TASK_CONVERSATION_ID,
   });
   const first = item.recorder.record_committed_conversation_compaction({
     loaded_conversation: loadedComplete,

@@ -111,8 +111,18 @@ const {
 const {
   CONVERSATION_ID_PATTERN,
   createBuilderConversationAddress,
-  sanitizeBuilderConversationAddress,
+  sanitizeBuilderTaskConversationAddress,
 } = require('./builder-conversation-address.cjs');
+const {
+  BUILDER_CONTEXT_COMPACTION_ADMISSION_RECORD_KIND,
+  BUILDER_CONTEXT_COMPACTION_ADMISSION_RECORD_VERSION,
+  createBuilderContextCompactionAdmissionRecord,
+} = require('./builder-context-compaction-admission.cjs');
+const {
+  BuilderContextCompactionExecutionBridgeError,
+  createBuilderContextCompactionExecutionBridge,
+  sanitizeBuilderContextCompactionExecutionResult,
+} = require('./builder-context-compaction-execution-bridge.cjs');
 const {
   MAX_APPEND_EVENTS,
 } = require('./builder-conversation-authority-contract.cjs');
@@ -135,7 +145,7 @@ const RESTORE_REVISION_OPERATION_PREFIX = 'restore-revision:';
 const RESTORE_CHECKPOINT_OPERATION_PREFIX = 'restore-checkpoint:';
 const DRAFT_CONTINUATION_OPERATION_PREFIX = 'draft-continuation:';
 const PROVIDER_OUTPUT_EVENT_VERSION = 'builder-generation-output.v1';
-const PROVIDER_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v1';
+const PROVIDER_ACTIVITY_EVENT_VERSION = 'builder-generation-activity.v2';
 const PROVIDER_OUTPUT_RESET_EVENT_VERSION = 'builder-generation-output-reset.v1';
 const MAX_LIVE_OUTPUT_BUFFER_BYTES = 512 * 1024;
 const MAX_LIVE_DISPLAY_TEXT_BYTES = 16 * 1024;
@@ -166,6 +176,7 @@ const OPTION_KEYS = Object.freeze([
   'projectIdentityAuthority',
   'conversationService',
   'agentConversationService',
+  'agentPlanService',
   'gitAuthority',
   'currentProjection',
   'transport',
@@ -239,6 +250,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_generation_draft_conflict: 'The generated project draft could not be verified.',
   builder_generation_project_workspace_required: 'Choose or open a project folder before building.',
   builder_generation_workspace_changed: 'The project changed while AI was working. Review it and try again.',
+  builder_generation_source_context_unavailable: 'The previous coding session could not be resumed. Start a recovered run explicitly.',
   builder_generation_workspace_guard_denied: 'The proposed file changes were blocked to protect this project.',
   builder_generation_workspace_guard_approval_required: 'The proposed file changes need additional approval.',
   builder_generation_checkpoint_undo_unavailable: 'The previous AI change could not be restored.',
@@ -402,6 +414,12 @@ const CURRENT_DRAFT_CONTINUATION_INTENT_PATTERNS = Object.freeze([
   /^(?:continue|keep)\s+(?:on\s+)?(?:improving|refining|polishing|updating|editing|changing|fixing|finishing|implementing|building)\b.*$/u,
   /^(?:continue|resume)\s+from\s+(?:this|the)\s+(?:restored\s+)?checkpoint\b.{0,120}\b(?:complete|finish|improve|refine|update|edit|change|fix|implement|build)\b.*$/u,
 ]);
+const COMMAND_ONLY_BUILD_INTENT_PATTERNS = Object.freeze([
+  /(?:^|\b)(?:run|execute)\s+(?:the\s+)?(?:declared|configured|current|project)\s+.{0,80}\bcommand\b/u,
+  /(?:^|\b)(?:run|execute)\s+(?:the\s+)?(?:build|test|lint|check)\s+command\b/u,
+  /(?:^|\b)(?:only|just)\s+(?:run|execute)\s+.{0,80}\bcommand\b/u,
+  /(?:只|仅)(?:运行|执行).{0,80}(?:命令|构建|测试|检查)/u,
+]);
 const PENDING_BUILD_CONFIRMATION_INTENT_PATTERN =
   /(?:需要我|要我|要不要我|是否(?:需要|要)我|我可以|可以帮你|如果你想).{0,64}(?:直接|现在|马上)?(?:修改|调整|更改|改|应用|生成|创建|实现|写|做|开始)|(?:would you like|do you want me to|should i|i can).{0,96}(?:change|modify|apply|build|create|implement|update|make|write)/iu;
 const WORK_DISCUSSION_INTENT_PATTERNS = Object.freeze([
@@ -448,6 +466,15 @@ function normalizedIntentText(instruction) {
 
 function matchesAny(patterns, text) {
   return patterns.some((pattern) => pattern.test(text));
+}
+
+function isCommandOnlyBuildIntent(instruction) {
+  const text = normalizedIntentText(instruction);
+  return text.length > 0 && matchesAny(COMMAND_ONLY_BUILD_INTENT_PATTERNS, text);
+}
+
+function allowsResponseOnlyBuildCompletion(instruction) {
+  return isCommandOnlyBuildIntent(instruction);
 }
 
 function isContextualSubmitContextIntent(instruction) {
@@ -814,6 +841,22 @@ function unavailableCheckClosure(summary) {
   });
 }
 
+function automaticCheckBlocksCurrentMaterialization({
+  interruptedCandidate,
+  finalCheckProjection,
+}) {
+  return interruptedCandidate
+    || finalCheckProjection?.status === 'failed'
+    || finalCheckProjection?.status === 'incomplete';
+}
+
+function currentMaterializationBlockedByAutomaticCheck() {
+  return freezeDeep({
+    status: 'not_attempted',
+    reason: 'automatic_check_not_passed',
+  });
+}
+
 function chineseHarnessBuildClosure({
   modelSummary,
   candidate,
@@ -848,6 +891,8 @@ function chineseHarnessBuildClosure({
     ? '项目文件：最新草稿已写入当前项目文件夹。'
     : currentMaterialization.status === 'not_materialized'
       ? '项目文件：草稿已保留，但未能写入当前项目文件夹，请先检查工作区状态。'
+      : currentMaterialization.reason === 'automatic_check_not_passed'
+        ? '项目文件：草稿已保留在 Builder 中；自动检查未通过前不会写入当前项目文件夹。'
       : '项目文件：草稿已保留；当前没有可写入的项目文件夹。';
   const normalizedSummary = modelSummary.trim();
   const detail = /\p{Script=Han}/u.test(normalizedSummary)
@@ -859,6 +904,8 @@ function chineseHarnessBuildClosure({
       ? '下一步：先准备依赖或授权 Builder 准备隔离检查环境，然后再运行检查。'
     : currentMaterialization.status === 'materialized'
       ? '使用方式：点击顶部「Run」运行项目；需要开发服务器时，确认本次命令后会打开本地地址。也可以点击「Open location」查看项目文件。'
+      : currentMaterialization.reason === 'automatic_check_not_passed'
+        ? '下一步：继续修复这份草稿，等自动检查通过后再写入项目文件夹并运行。'
       : '下一步：选择或恢复项目文件夹后，再运行和打开项目。';
   return [
     headline,
@@ -1213,6 +1260,45 @@ function safeDigest(value) {
   return value;
 }
 
+function invalidNativeSessionContinuationProjection() {
+  fail('builder_generation_source_context_unavailable');
+}
+
+function verifyNativeSessionContinuationProjection(rawProjection, expectedSessionRunId, currentSourceTree) {
+  let projection;
+  try {
+    projection = exactObject(rawProjection, [
+      'projection_version',
+      'continuity_status',
+      'reason',
+      'session_run_id',
+      'source_tree_digest',
+      'source_freshness',
+      'observed_working_set',
+    ]);
+  } catch {
+    invalidNativeSessionContinuationProjection();
+  }
+  let sourceTreeDigest;
+  try {
+    sourceTreeDigest = safeDigest(valueAt(projection, 'source_tree_digest'));
+  } catch {
+    invalidNativeSessionContinuationProjection();
+  }
+  if (
+    valueAt(projection, 'projection_version') !== 'builder-session-continuation-projection.v1'
+    || valueAt(projection, 'continuity_status') !== 'native_resumed'
+    || valueAt(projection, 'reason') !== 'previous_harness_session_available'
+    || valueAt(projection, 'session_run_id') !== expectedSessionRunId
+    || sourceTreeDigest !== currentSourceTree.source_tree_digest
+    || valueAt(projection, 'source_freshness') !== 'unchanged'
+    || !Array.isArray(valueAt(projection, 'observed_working_set'))
+  ) {
+    invalidNativeSessionContinuationProjection();
+  }
+  return projection;
+}
+
 function safeTimestamp(value) {
   if (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000) fail();
   return value;
@@ -1470,6 +1556,7 @@ function sanitizeOptions(value) {
     keys.includes('agentConversationService')
     && !isPlainObject(descriptors.agentConversationService.value)
   ) fail();
+  if (keys.includes('agentPlanService') && !isPlainObject(descriptors.agentPlanService.value)) fail();
   if (keys.includes('workspaceReadAuthority') && !isPlainObject(descriptors.workspaceReadAuthority.value)) fail();
   if (keys.includes('currentProjection') && !isPlainObject(descriptors.currentProjection.value)) fail();
   if (keys.includes('projectUnderstandingService') && !isPlainObject(descriptors.projectUnderstandingService.value)) {
@@ -1558,6 +1645,9 @@ function sanitizeOptions(value) {
     conversationService: descriptors.conversationService.value,
     ...(keys.includes('agentConversationService')
       ? { agentConversationService: descriptors.agentConversationService.value }
+      : {}),
+    ...(keys.includes('agentPlanService')
+      ? { agentPlanService: descriptors.agentPlanService.value }
       : {}),
     gitAuthority: descriptors.gitAuthority.value,
     ...(keys.includes('currentProjection')
@@ -2050,7 +2140,7 @@ function sanitizeCandidateWorkspaceBaseRead(value, expectedReceipt) {
   return freezeDeep({ base_source_tree_digest: baseSourceTreeDigest });
 }
 
-function sanitizeDraftCurrentMaterialization(value) {
+  function sanitizeDraftCurrentMaterialization(value) {
   if (!isPlainObject(value)) fail();
   const status = valueAt(value, 'status');
   if (status === 'materialized') {
@@ -2062,7 +2152,10 @@ function sanitizeDraftCurrentMaterialization(value) {
     const reason = valueAt(value, 'reason');
     if (
       (status === 'not_materialized' && reason !== 'current_projection_unavailable')
-      || (status === 'not_attempted' && reason !== 'current_projection_not_configured')
+      || (
+        status === 'not_attempted'
+        && !['current_projection_not_configured', 'automatic_check_not_passed'].includes(reason)
+      )
     ) fail();
     return freezeDeep({ status, reason });
   }
@@ -2249,6 +2342,21 @@ function createBuilderGenerationMainService(rawOptions) {
   const rejectConversationCandidate = ownMethod(options.conversationService, 'reject_candidate');
   const readApprovedPlan = ownMethod(options.conversationService, 'read_approved_plan');
   const readConversationStream = ownMethod(options.conversationService, 'read_stream');
+  const readConversationSessionContinuation = (() => {
+    const candidate = optionalValueAt(options.conversationService, 'read_session_continuation');
+    if (candidate !== undefined && typeof candidate !== 'function') fail();
+    return candidate ?? null;
+  })();
+  const readConversationCompactionProjection = (() => {
+    const candidate = optionalValueAt(options.conversationService, 'read_compaction_projection');
+    if (candidate !== undefined && typeof candidate !== 'function') fail();
+    return candidate ?? null;
+  })();
+  const recordConversationContextCompaction = (() => {
+    const candidate = optionalValueAt(options.conversationService, 'record_context_compaction');
+    if (candidate !== undefined && typeof candidate !== 'function') fail();
+    return candidate ?? null;
+  })();
   const admitApprovedPlanContinuation = ownMethod(
     options.conversationService,
     'admit_approved_plan_continuation',
@@ -2263,6 +2371,19 @@ function createBuilderGenerationMainService(rawOptions) {
   const completeAgentConversationExplanation = options.agentConversationService === undefined
     ? null
     : ownMethod(options.agentConversationService, 'complete_explanation');
+  const recordCompletedAgentPlan = options.agentPlanService === undefined
+    ? null
+    : ownMethod(options.agentPlanService, 'record_completed_plan');
+  const readLatestAgentPlan = options.agentPlanService === undefined
+    ? null
+    : ownMethod(options.agentPlanService, 'read_latest');
+  const readApprovedAgentPlanForTask = options.agentPlanService === undefined
+    ? null
+    : (() => {
+      const candidate = optionalValueAt(options.agentPlanService, 'read_approved_for_task');
+      if (candidate !== undefined && typeof candidate !== 'function') fail();
+      return candidate ?? null;
+    })();
   const recordAgentConversationRetryableFailure = options.agentConversationService === undefined
     ? null
     : ownMethod(options.agentConversationService, 'record_retryable_failure');
@@ -2367,11 +2488,24 @@ function createBuilderGenerationMainService(rawOptions) {
       options.providerContextDisclosureStatusService,
       'clear_current_provider_context_disclosure_status_for_conversation',
     );
+  const manualContextCompactionBridge = (() => {
+    if (options.harnessRuntimeComposition === null) return null;
+    try {
+      return createBuilderContextCompactionExecutionBridge({
+        harness_runtime: options.harnessRuntimeComposition,
+      });
+    } catch {
+      return null;
+    }
+  })();
   const pendingDrafts = new Map();
   const inFlight = new Map();
   const activeContexts = new Map();
   const retryableContexts = new Map();
   const pendingRetryContexts = new Map();
+  const pendingResumeContexts = new Map();
+  const resumedSourceTrees = new WeakMap();
+  const preparedResumes = new WeakSet();
   const pendingGenerateRouteDecisionHints = new Map();
   const pendingGenerateQueuedFollowups = new Map();
 
@@ -2548,7 +2682,9 @@ function createBuilderGenerationMainService(rawOptions) {
     }
     return freezeDeep({
       status: 'not_attempted',
-      reason: 'current_projection_not_configured',
+      reason: value.reason === 'automatic_check_not_passed'
+        ? 'automatic_check_not_passed'
+        : 'current_projection_not_configured',
     });
   }
 
@@ -2587,6 +2723,7 @@ function createBuilderGenerationMainService(rawOptions) {
   const pendingDraftContinuationContexts = new Map();
   const explanationContexts = new WeakMap();
   const providerOutputStates = new WeakMap();
+  const incompleteAgentPlans = new Map();
   const liveOutputContextsByRunId = new Map();
   const pendingDraftAnswerContexts = new Map();
   const pendingAnswerRouteDecisionHints = new Map();
@@ -3256,7 +3393,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function notifyProviderActivity(context, activityText) {
+  function notifyProviderActivity(context, activityKind, activityText) {
     if (!Object.hasOwn(options, 'onProviderOutputDelta')) return;
     const conversationContext = observedConversationContext(context);
     if (conversationContext === undefined) return;
@@ -3269,6 +3406,7 @@ function createBuilderGenerationMainService(rawOptions) {
         turn_id: conversationContext.ids.turn_id,
         task_id: conversationContext.ids.task_id,
         run_id: conversationContext.ids.run_id,
+        activity_kind: activityKind,
         activity_text: activityText,
       })]);
     } catch {
@@ -3385,19 +3523,44 @@ function createBuilderGenerationMainService(rawOptions) {
     return typeof message === 'string' ? message : null;
   }
 
-  function harnessRuntimeInputText(request, context) {
-    if (!Object.hasOwn(context, 'approved_plan_public_text')) return request.instruction;
-    const approvedPlanPublicText = valueAt(context, 'approved_plan_public_text');
-    return [
-      'Implement the approved plan below.',
-      '',
-      'This plan was approved in the current Builder conversation and is the implementation specification.',
-      'If the current source tree is empty or lacks the files normally needed for the plan, treat that as a valid new-project starting point. Use write to create the required project files instead of ending the run because README, package.json, src, or other common files are absent.',
-      'Do not use shell or list commands to discover the project tree. Use Builder read, grep, write, and edit tools; Builder runs checks after the turn.',
-      '<approved_plan>',
-      approvedPlanPublicText,
-      '</approved_plan>',
-    ].join('\n');
+  function harnessRuntimeInput(request, context) {
+    const conversationApprovedPlan = Object.hasOwn(context, 'approved_plan_public_text');
+    let approvedPlanPublicText = conversationApprovedPlan
+      ? valueAt(context, 'approved_plan_public_text')
+      : null;
+    let planSource = 'current Builder conversation';
+    if (approvedPlanPublicText === null && readApprovedAgentPlanForTask !== null && request.task_address_id !== null) {
+      const selected = Reflect.apply(readApprovedAgentPlanForTask, options.agentPlanService, [{
+        task_address_id: request.task_address_id,
+      }]);
+      if (valueAt(selected, 'status') === 'ready') {
+        approvedPlanPublicText = valueAt(valueAt(selected, 'artifact'), 'markdown');
+        planSource = 'Builder Agent workbench';
+      }
+    }
+    if (approvedPlanPublicText === null) {
+      return freezeDeep({
+        text: request.instruction,
+        completion_requirement: allowsResponseOnlyBuildCompletion(request.instruction)
+          ? 'response_allowed'
+          : 'source_change_required',
+      });
+    }
+    return freezeDeep({
+      text: [
+        conversationApprovedPlan ? 'Implement the approved plan below.' : request.instruction,
+        '',
+        conversationApprovedPlan
+          ? 'This plan was approved in the current Builder conversation and is the implementation specification.'
+          : `The plan below was approved in the ${planSource} and is the implementation specification.`,
+        'If the current source tree is empty or lacks the files normally needed for the plan, treat that as a valid new-project starting point. Use write to create the required project files instead of ending the run because README, package.json, src, or other common files are absent.',
+        'Do not use shell or list commands to discover the project tree. Use Builder read, grep, write, and edit tools; Builder runs checks after the turn.',
+        '<approved_plan>',
+        approvedPlanPublicText,
+        '</approved_plan>',
+      ].join('\n'),
+      completion_requirement: 'source_change_required',
+    });
   }
 
   function workingContextSnapshotUpdatedAtMs(conversationContext) {
@@ -3711,7 +3874,7 @@ function createBuilderGenerationMainService(rawOptions) {
     return freezeDeep({
       project_id: projectId,
       task_address_id: taskAddressId,
-      conversation_id: sanitizeBuilderConversationAddress(
+      conversation_id: sanitizeBuilderTaskConversationAddress(
         projectId,
         safePattern(valueAt(result, 'conversation_id'), CONVERSATION_ID_PATTERN, 96),
       ),
@@ -3768,6 +3931,15 @@ function createBuilderGenerationMainService(rawOptions) {
         },
       }],
     );
+  }
+
+  function shouldPrepareNativeSessionContinuation(request, routeDecision, queuedFollowup) {
+    if (queuedFollowup !== null) return false;
+    const matchedSignals = routeDecision === null ? [] : valueAt(routeDecision, 'matched_signals');
+    return (
+      Array.isArray(matchedSignals)
+      && matchedSignals.includes('current_draft_continuation')
+    ) || matchesAny(CURRENT_DRAFT_CONTINUATION_INTENT_PATTERNS, normalizedIntentText(request.instruction));
   }
 
   function generationRequestFromApprovedPlan(editContext) {
@@ -3927,6 +4099,33 @@ function createBuilderGenerationMainService(rawOptions) {
         }));
         return generationContext;
       }
+      const pausedContext = pendingResumeContexts.get(key);
+      if (pausedContext !== undefined) {
+        pendingResumeContexts.delete(key);
+        const base = await baseForGeneration(request, pausedContext.project.project_id,
+          baseRevisionFromConversationContext(pausedContext));
+        let recoveredTree;
+        try {
+          recoveredTree = await options.harnessRuntimeComposition.prepareResume({
+            project_id: pausedContext.project.project_id,
+            conversation_id: pausedContext.conversation.conversation_id,
+            run_id: pausedContext.ids.run_id,
+            session_run_id: pausedContext.resume_session_run_id,
+            current_source_tree: base.source_tree,
+          });
+        } catch (error) {
+          fail(error?.code === 'builder_harness_runtime_composition_conflict'
+            ? 'builder_generation_workspace_changed' : 'builder_generation_source_context_unavailable');
+        }
+        let resumed = options.conversationService.begin_resume({ context: pausedContext, request_digest: request.request_digest });
+        activeContexts.set(key, resumed);
+        resumed = await recordConversationContextSnapshot(resumed);
+        activeContexts.set(key, resumed);
+        notifyGenerationStarted(request, resumed.project.project_id);
+        const generationContext = generationContextFromConversation(request, base, resumed);
+        resumedSourceTrees.set(generationContext, recoveredTree);
+        return generationContext;
+      }
       setupPhase = 'retry_context_lookup';
       const retryableContext = pendingRetryContexts.get(key);
       if (retryableContext !== undefined) {
@@ -3976,6 +4175,54 @@ function createBuilderGenerationMainService(rawOptions) {
           ? routeDecisionHint
           : withRouteDecisionMatchedSignal(routeDecisionHint, 'active_run_followup'),
       };
+      const prepareContinuation = optionalValueAt(
+        options.harnessRuntimeComposition,
+        'prepareContinuation',
+      );
+      if (
+        shouldPrepareNativeSessionContinuation(request, routeDecisionHint, queuedFollowup)
+        && readConversationSessionContinuation !== null
+        && typeof prepareContinuation === 'function'
+      ) {
+        const continuation = Reflect.apply(
+          readConversationSessionContinuation,
+          options.conversationService,
+          [{ project_id: projectId, conversation_id: taskTarget.conversation_id }],
+        );
+        const continuationStatus = valueAt(continuation, 'status');
+        if (continuationStatus === 'ready') {
+          try {
+            const prepared = await Reflect.apply(
+              prepareContinuation,
+              options.harnessRuntimeComposition,
+              [{
+                project_id: projectId,
+                conversation_id: taskTarget.conversation_id,
+                run_id: valueAt(continuation, 'run_id'),
+                session_run_id: valueAt(continuation, 'session_run_id'),
+                current_source_tree: base.source_tree,
+              }],
+            );
+            verifyNativeSessionContinuationProjection(
+              prepared,
+              valueAt(continuation, 'session_run_id'),
+              base.source_tree,
+            );
+            beginRequest.resume_session_run_id = valueAt(prepared, 'session_run_id');
+          } catch (error) {
+            const code = failureCodeFrom(error);
+            if (code === 'builder_harness_runtime_composition_conflict') {
+              fail('builder_generation_workspace_changed');
+            }
+            if (code === 'builder_harness_runtime_composition_unavailable') {
+              fail('builder_generation_source_context_unavailable');
+            }
+            throw error;
+          }
+        } else if (continuationStatus !== 'none') {
+          fail();
+        }
+      }
       setupPhase = queuedFollowup === null ? 'begin_work' : 'begin_queued_followup_work';
       let conversationContext = queuedFollowup === null
         ? Reflect.apply(
@@ -4010,6 +4257,13 @@ function createBuilderGenerationMainService(rawOptions) {
       return generationContextFromConversation(request, base, conversationContext);
     } catch (error) {
       recordCanaryGenerationDebug(setupPhase, error);
+      if (
+        error instanceof BuilderGenerationMainServiceError
+        && [
+          'builder_generation_workspace_changed',
+          'builder_generation_source_context_unavailable',
+        ].includes(error.code)
+      ) throw error;
       fail();
     }
   }
@@ -4134,6 +4388,12 @@ function createBuilderGenerationMainService(rawOptions) {
         );
         activeContexts.set(key, conversationContext);
         notifyGenerationStarted(request, null);
+        const previousPlan = readLatestAgentPlan === null ? null : Reflect.apply(
+          readLatestAgentPlan, options.agentPlanService, [{
+            agent_id: conversationContext.agent.agent_id,
+            source_conversation_id: conversationContext.conversation.conversation_id,
+          }],
+        );
         const explanationContext = freezeDeep({
           project_id: null,
           base_revision_evidence: null,
@@ -4142,6 +4402,10 @@ function createBuilderGenerationMainService(rawOptions) {
           turn_id: conversationContext.ids.turn_id,
           task_id: null,
           run_id: conversationContext.ids.run_id,
+          ...(previousPlan?.status === 'ready' ? { prior_agent_plan: {
+            artifact: previousPlan.artifact,
+            decision: previousPlan.decision,
+          } } : {}),
         });
         explanationContexts.set(explanationContext, conversationContext);
         liveOutputContextsByRunId.set(conversationContext.ids.run_id, conversationContext);
@@ -4465,8 +4729,26 @@ function createBuilderGenerationMainService(rawOptions) {
         onOutputDelta({ context, delta_text: deltaText }) {
           notifyProviderOutputDelta(context, deltaText);
         },
+        onOutputReset({ context }) {
+          const state = liveOutputState(context);
+          notifyProviderOutputReset(context, { payload: {
+            text_digest: `sha256:${nodeCrypto.createHash('sha256').update(state.buffer_text, 'utf8').digest('hex')}`,
+            text_bytes: state.buffer_bytes,
+          } });
+        },
       }
       : {}),
+    onPlanResponseValidation(facts) {
+      for (const field of ['accepted', 'code_points', 'utf8_bytes', 'outer_whitespace', 'headings', 'list_items']) {
+        builderPerformanceTrace.observe(`main.agent_plan.validation.${field}`, facts[field]);
+      }
+    },
+    onIncompletePlan({ context, explanation }) {
+      const conversationContext = observedConversationContext(context);
+      if (conversationContext !== undefined && isAgentConversationContext(conversationContext)) {
+        incompleteAgentPlans.set(conversationContext.ids.run_id, explanation);
+      }
+    },
     ...(Object.hasOwn(options, 'transport') ? { transport: options.transport } : {}),
   });
 
@@ -4563,6 +4845,13 @@ function createBuilderGenerationMainService(rawOptions) {
     return 'builder_generation_failed';
   }
 
+  function isTerminalHarnessNoChangeFailure(error) {
+    return [
+      safeCanaryGenerationDebugProperty(error, 'runtime_code'),
+      safeCanaryGenerationDebugProperty(error, 'runtime_cause_code'),
+    ].includes('builder_harness_source_change_required');
+  }
+
   function publicHarnessFailure(error) {
     if (
       failureCodeFrom(error) === 'builder_harness_generation_runner_failed'
@@ -4595,6 +4884,16 @@ function createBuilderGenerationMainService(rawOptions) {
     if (conversationContext === undefined) return;
     try {
       const failureCode = failureCodeFrom(error);
+      if (isTerminalHarnessNoChangeFailure(error) && !isAgentConversationContext(conversationContext)) {
+        Reflect.apply(
+          completeConversationFailure,
+          options.conversationService,
+          [{ context: conversationContext, failure_code: failureCode }],
+        );
+        retryableContexts.delete(key);
+        clearProviderContextDisclosureStatusForContext(conversationContext);
+        return;
+      }
       if (
         failureCode === 'builder_generation_cancelled'
         && cancellationTerminalOperationKeys.has(key)
@@ -4616,7 +4915,12 @@ function createBuilderGenerationMainService(rawOptions) {
         conversationContext,
         recordConversationRetryableFailure,
         recordAgentConversationRetryableFailure,
-        { context: conversationContext, failure_code: failureCode },
+        {
+          context: conversationContext, failure_code: failureCode,
+          ...(isAgentConversationContext(conversationContext) ? {
+            assistant_text: incompleteAgentPlans.get(conversationContext.ids.run_id) ?? null,
+          } : {}),
+        },
       );
       retryableContexts.set(key, failedContext);
       clearProviderContextDisclosureStatusForContext(failedContext);
@@ -4625,7 +4929,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function completeAcceptedCancellation(key, context) {
+  function completeAcceptedCancellation(key, context, failureCode = 'builder_generation_cancelled') {
     if (cancellationTerminalOperationKeys.has(key)) return context;
     if (isAgentConversationContext(context)) {
       const completedContext = applyConversationContextMethod(
@@ -4640,7 +4944,7 @@ function createBuilderGenerationMainService(rawOptions) {
     Reflect.apply(
       completeConversationFailure,
       options.conversationService,
-      [{ context, failure_code: 'builder_generation_cancelled' }],
+      [{ context, failure_code: failureCode }],
     );
     cancellationTerminalOperationKeys.add(key);
     return context;
@@ -5424,6 +5728,7 @@ function createBuilderGenerationMainService(rawOptions) {
     queuedFollowup = null,
     admittedProviderConfig = null,
     draftContinuationContext = null,
+    resumeContext = null,
   ) {
     const operationPrefix = draftContinuationContext === null
       ? GENERATE_OPERATION_PREFIX
@@ -5437,6 +5742,7 @@ function createBuilderGenerationMainService(rawOptions) {
     );
     if (routeConflict) return routeConflict;
     if (retryableContext !== null && queuedFollowup !== null) fail();
+    if (resumeContext !== null) pendingResumeContexts.set(key, resumeContext);
     if (retryableContext !== null) pendingRetryContexts.set(key, retryableContext);
     if (routeDecisionHint !== null) pendingGenerateRouteDecisionHints.set(key, routeDecisionHint);
     if (queuedFollowup !== null) pendingGenerateQueuedFollowups.set(key, queuedFollowup);
@@ -5459,6 +5765,7 @@ function createBuilderGenerationMainService(rawOptions) {
         : draftContinuationContexts;
       let conversationContext = latestConversationContext(context, contextStore.get(context));
       if (conversationContext === undefined) fail();
+      const recoveredSourceTree = resumedSourceTrees.get(context);
       const providerConfig = await measureTraceWindow(
         'harness_start_provider_config',
         'main.harness_start.provider_config.duration_ms',
@@ -5485,15 +5792,16 @@ function createBuilderGenerationMainService(rawOptions) {
       conversationContext = latestConversationContext(context, contextStore.get(context));
       if (conversationContext === undefined) fail();
       const state = { context: conversationContext };
-      const workingSourceTree = draftContinuationContext === null
+      const workingSourceTree = recoveredSourceTree ?? (draftContinuationContext === null
         ? context.base_source_tree
-        : context.prompt_base_source_tree;
+        : context.prompt_base_source_tree);
       const candidateBaseSourceTree = draftContinuationContext === null
         ? context.base_source_tree
         : context.candidate_base_source_tree;
       const baseRevisionEvidence = draftContinuationContext === null
         ? context.base_revision_evidence
         : context.candidate_base_revision_evidence;
+      const runtimeInput = harnessRuntimeInput(request, context);
       const runContract = builderPerformanceTrace.measureSync(
         'main.harness_start.run_contract.duration_ms',
         () => createBuilderProgrammingRuntimeRunContract({
@@ -5524,12 +5832,28 @@ function createBuilderGenerationMainService(rawOptions) {
           },
           input: {
             message_id: conversationContext.ids.message_id,
-            text: harnessRuntimeInputText(request, context),
+            text: runtimeInput.text,
+            completion_requirement: runtimeInput.completion_requirement,
+            ...(conversationContext.resume_session_run_id === undefined ? {} : {
+              resume_session_run_id: conversationContext.resume_session_run_id,
+              resume_kind: resumeContext === null
+                ? 'task_continuation'
+                : 'interrupted_recovery',
+            }),
           },
         }),
       );
       const journal = createBuilderProgrammingRuntimeEventJournal({ run_contract: runContract });
       let pendingRuntimeEvents = [];
+      function runtimeEventNeedsImmediateFlush(runtimeEvent, mainFact) {
+        if (mainFact) return true;
+        if ([
+          'run_completed',
+          'run_failed',
+          'run_cancelled',
+        ].includes(runtimeEvent.event_type)) return true;
+        return false;
+      }
       function assertHarnessRunActive(candidateEvent = null) {
         if (runLease?.cancellation_requested !== true) return;
         const eventTypeDescriptor = candidateEvent === null
@@ -5570,6 +5894,23 @@ function createBuilderGenerationMainService(rawOptions) {
           () => recordRuntimeEvents(batch),
         );
         pendingRuntimeEvents = [];
+        activeContexts.set(key, state.context);
+        contextStore.set(context, state.context);
+        liveOutputContextsByRunId.set(state.context.ids.run_id, state.context);
+      }
+      async function queueRuntimeEvent(runtimeEvent, flushNow) {
+        pendingRuntimeEvents.push(runtimeEvent);
+        if (
+          flushNow
+          || pendingRuntimeEvents.length >= MAX_RUNTIME_EVENT_BATCH_SIZE
+        ) {
+          try {
+            await flushPendingRuntimeEvents();
+          } catch (error) {
+            recordCanaryGenerationDebug('harness_runtime_conversation_record_batch', error);
+            throw error;
+          }
+        }
       }
       async function persistRuntimeEvent(candidate, mainFact) {
         return await builderPerformanceTrace.measureAsync(
@@ -5599,41 +5940,22 @@ function createBuilderGenerationMainService(rawOptions) {
             if (!mainFact && runtimeEvent.event_type === 'assistant_text_delta') {
               builderPerformanceTrace.increment('main.provider_output.delta_event_count');
               notifyProviderOutputDelta(context, runtimeEvent.payload.delta_text);
-              pendingRuntimeEvents.push(runtimeEvent);
-              if (pendingRuntimeEvents.length >= MAX_RUNTIME_EVENT_BATCH_SIZE) {
-                try {
-                  await flushPendingRuntimeEvents();
-                } catch (error) {
-                  recordCanaryGenerationDebug('harness_runtime_conversation_record_batch', error);
-                  throw error;
-                }
-                activeContexts.set(key, state.context);
-                contextStore.set(context, state.context);
-                liveOutputContextsByRunId.set(state.context.ids.run_id, state.context);
-              }
-              return runtimeEvent;
             }
-            try {
-              if (pendingRuntimeEvents.length > 0) {
-                const batch = [...pendingRuntimeEvents, runtimeEvent];
-                builderPerformanceTrace.observe('main.harness_runtime.pending_batch_size', batch.length);
-                await recordRuntimeEvents(batch);
-                pendingRuntimeEvents = [];
-              } else {
-                await recordRuntimeEvents([runtimeEvent]);
-              }
-            } catch (error) {
-              recordCanaryGenerationDebug('harness_runtime_conversation_record', error);
-              throw error;
-            }
-            activeContexts.set(key, state.context);
-            contextStore.set(context, state.context);
-            liveOutputContextsByRunId.set(state.context.ids.run_id, state.context);
+            await queueRuntimeEvent(
+              runtimeEvent,
+              runtimeEventNeedsImmediateFlush(runtimeEvent, mainFact),
+            );
             if (!mainFact && [
               'assistant_reasoning_status',
               'runtime_activity_status',
             ].includes(runtimeEvent.event_type)) {
-              notifyProviderActivity(context, runtimeEvent.payload.status);
+              notifyProviderActivity(
+                context,
+                runtimeEvent.event_type === 'assistant_reasoning_status'
+                  ? 'reasoning'
+                  : runtimeEvent.payload.activity_kind,
+                runtimeEvent.payload.status,
+              );
             }
             if (!mainFact && runtimeEvent.event_type === 'assistant_text_discarded') {
               notifyProviderOutputReset(context, runtimeEvent);
@@ -5893,14 +6215,19 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       assertHarnessRunActive();
       conversationContext = state.context;
-      const currentMaterialization = await measureTraceWindow(
-        'harness_candidate_materialize_current',
-        'main.harness_candidate.materialize_current.duration_ms',
-        () => materializeCandidateToCurrentWorkspace(
-          receiptPair,
-          continuationWorkspaceExpectation(draftContinuationContext, candidate),
-        ),
-      );
+      const currentMaterialization = automaticCheckBlocksCurrentMaterialization({
+        interruptedCandidate,
+        finalCheckProjection,
+      })
+        ? currentMaterializationBlockedByAutomaticCheck()
+        : await measureTraceWindow(
+          'harness_candidate_materialize_current',
+          'main.harness_candidate.materialize_current.duration_ms',
+          () => materializeCandidateToCurrentWorkspace(
+            receiptPair,
+            continuationWorkspaceExpectation(draftContinuationContext, candidate),
+          ),
+        );
       const completionSummary = chineseHarnessBuildClosure({
         modelSummary: summary,
         candidate,
@@ -5979,6 +6306,12 @@ function createBuilderGenerationMainService(rawOptions) {
       }
       const settledError = runLease?.cancellation_requested === true
         ? new BuilderGenerationMainServiceError('builder_generation_cancelled')
+        : error instanceof BuilderGenerationMainServiceError
+          && [
+            'builder_generation_workspace_changed',
+            'builder_generation_source_context_unavailable',
+          ].includes(error.code)
+          ? error
         : publicHarnessFailure(error);
       if (runner !== null && runnerResult !== null) {
         try { await runner.cancel(runnerResult.run_handle, 'superseded'); } catch { /* stable failure below */ }
@@ -5988,6 +6321,7 @@ function createBuilderGenerationMainService(rawOptions) {
     }).finally(() => {
       clearStructuredRuntimeDigestForOperation(key);
       pendingRetryContexts.delete(key);
+      pendingResumeContexts.delete(key);
       pendingGenerateRouteDecisionHints.delete(key);
       pendingGenerateQueuedFollowups.delete(key);
       pendingDraftContinuationContexts.delete(key);
@@ -6333,6 +6667,128 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
+  function prepareResumeInterruptedRun(rawRequest) {
+    exactObject(rawRequest, ['project_id', 'task_address_id', 'run_id']);
+    if (options.programmingRuntimeFeatureFlag !== 'enabled' || options.harnessRuntimeComposition === null) fail();
+    const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+    const taskAddressId = safePattern(valueAt(rawRequest, 'task_address_id'), TASK_ADDRESS_ID_PATTERN, 96);
+    const target = taskTargetForRequest({ task_address_id: taskAddressId }, projectId);
+    if (target.should_record_task_address) fail();
+    const context = options.conversationService.read_resume_context({
+      project_id: projectId, conversation_id: target.conversation_id, run_id: valueAt(rawRequest, 'run_id'),
+    });
+    if (!context.events.some(event => event.event_type === 'programming_runtime_event_recorded'
+      && event.payload.runtime_event?.run_id === context.ids.run_id
+      && event.payload.runtime_event.runtime_kind === 'deepseek_harness.v1')) fail();
+    const submitted = context.events.find(event => event.event_type === 'turn_submitted' && event.payload.turn_id === context.ids.turn_id);
+    const request = createBuilderGenerationRequest({ instruction: submitted.payload.message.text,
+      existing_project_id: projectId, task_address_id: taskAddressId });
+    const prepared = freezeDeep({ request, context });
+    preparedResumes.add(prepared);
+    return prepared;
+  }
+
+  function resumeInterruptedRun(prepared) {
+    if (!preparedResumes.has(prepared)) fail();
+    preparedResumes.delete(prepared);
+    return startHarnessGenerate(prepared.request, null, null, null, null, null, prepared.context);
+  }
+
+  function harnessSessionIdFromRunId(value) {
+    const runId = safePattern(value, RUN_ID_PATTERN, 64);
+    return `builder-harness-${runId.slice('builder-run:'.length)}`;
+  }
+
+  function safeTaskConversationId(projectId, value) {
+    return sanitizeBuilderTaskConversationAddress(
+      projectId,
+      safePattern(value, CONVERSATION_ID_PATTERN, 96),
+    );
+  }
+
+  async function manualCompactContext(rawRequest) {
+    let request;
+    try {
+      exactObject(rawRequest, ['project_id', 'conversation_id', 'task_address_id']);
+      const projectId = safeProjectId(valueAt(rawRequest, 'project_id'));
+      const conversationId = safeTaskConversationId(projectId, valueAt(rawRequest, 'conversation_id'));
+      const taskAddressId = safePattern(valueAt(rawRequest, 'task_address_id'), TASK_ADDRESS_ID_PATTERN, 96);
+      request = freezeDeep({ project_id: projectId, conversation_id: conversationId, task_address_id: taskAddressId });
+    } catch {
+      throw new BuilderGenerationMainServiceError('builder_generation_request_invalid');
+    }
+    try {
+      if (
+        readConversationCompactionProjection === null
+        || readConversationSessionContinuation === null
+        || recordConversationContextCompaction === null
+        || manualContextCompactionBridge === null
+      ) fail('builder_generation_source_context_unavailable');
+      const target = taskTargetForRequest(
+        { task_address_id: request.task_address_id },
+        request.project_id,
+      );
+      if (target.should_record_task_address || target.conversation_id !== request.conversation_id) {
+        fail('builder_generation_request_invalid');
+      }
+      const projection = Reflect.apply(
+        readConversationCompactionProjection,
+        options.conversationService,
+        [{ project_id: request.project_id, conversation_id: request.conversation_id }],
+      );
+      const continuation = Reflect.apply(
+        readConversationSessionContinuation,
+        options.conversationService,
+        [{ project_id: request.project_id, conversation_id: request.conversation_id }],
+      );
+      exactObject(continuation, ['status', 'run_id', 'session_run_id']);
+      if (valueAt(continuation, 'status') !== 'ready') fail('builder_generation_source_context_unavailable');
+      const sessionId = harnessSessionIdFromRunId(valueAt(continuation, 'session_run_id'));
+      const admission = createBuilderContextCompactionAdmissionRecord({
+        record_version: BUILDER_CONTEXT_COMPACTION_ADMISSION_RECORD_VERSION,
+        record_kind: BUILDER_CONTEXT_COMPACTION_ADMISSION_RECORD_KIND,
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        task_address_id: request.task_address_id,
+        conversation_compaction_projection_id: valueAt(projection, 'projection_id'),
+        source_event_count: valueAt(valueAt(projection, 'source'), 'event_count'),
+        source_current_sequence: valueAt(valueAt(projection, 'source'), 'current_sequence'),
+        source_current_event_id: valueAt(valueAt(projection, 'source'), 'current_event_id'),
+        source_current_event_digest: valueAt(valueAt(projection, 'source'), 'current_event_digest'),
+        requested_by: 'local-user',
+        requested_at_ms: safeTimestamp(Date.now()),
+        trigger: 'manual',
+        admission_status: 'admitted_for_manual_compaction',
+        admission_reason: 'manual_request_on_committed_conversation_projection',
+        harness_operation: 'compactNow',
+        harness_turn_binding: 'manual_turn_null',
+        execution_boundary: 'admission_only_no_compaction_started',
+      }, projection);
+      const result = sanitizeBuilderContextCompactionExecutionResult(
+        await manualContextCompactionBridge.execute_manual_compaction({
+          session_id: sessionId,
+          context_compaction_admission: admission,
+          conversation_compaction_projection: projection,
+          abort_signal: null,
+        }),
+      );
+      Reflect.apply(recordConversationContextCompaction, options.conversationService, [{
+        project_id: request.project_id,
+        conversation_id: request.conversation_id,
+        task_address_id: request.task_address_id,
+        run_id: valueAt(continuation, 'run_id'),
+        context_compaction_result: result,
+      }]);
+      return result;
+    } catch (error) {
+      if (error instanceof BuilderGenerationMainServiceError) throw error;
+      if (error instanceof BuilderContextCompactionExecutionBridgeError) {
+        throw new BuilderGenerationMainServiceError('builder_generation_source_context_unavailable');
+      }
+      throw new BuilderGenerationMainServiceError('builder_generation_source_context_unavailable');
+    }
+  }
+
   async function submit(rawRequest) {
     let request;
     try { request = sanitizeBuilderGenerationRequest(rawRequest); } catch {
@@ -6424,7 +6880,7 @@ function createBuilderGenerationMainService(rawOptions) {
     return startGenerate(request, retryableContext);
   }
 
-  function startAnswer(request, routeDecisionHint = null, queuedFollowup = null) {
+  function startAnswer(request, routeDecisionHint = null, queuedFollowup = null, recordAgentPlan = false) {
     const key = operationKey(ANSWER_OPERATION_PREFIX, request.request_digest);
     const existing = inFlight.get(key);
     if (existing) return existing;
@@ -6452,6 +6908,10 @@ function createBuilderGenerationMainService(rawOptions) {
           assistant_text: internal.explanation,
         },
       );
+      if (recordAgentPlan) {
+        if (recordCompletedAgentPlan === null) fail();
+        Reflect.apply(recordCompletedAgentPlan, options.agentPlanService, [{ context: terminal }]);
+      }
       recordTaskCapsuleFromExplanationTerminal(conversationContext, terminal);
       return publicResult;
     }).catch((error) => {
@@ -6459,6 +6919,7 @@ function createBuilderGenerationMainService(rawOptions) {
       throw error;
     }).finally(() => {
       pendingDraftAnswerContexts.delete(key);
+      incompleteAgentPlans.delete(activeContexts.get(key)?.ids.run_id);
       pendingAnswerRouteDecisionHints.delete(key);
       pendingAnswerQueuedFollowups.delete(key);
       clearProviderContextDisclosureStatusForKey(key);
@@ -6495,7 +6956,7 @@ function createBuilderGenerationMainService(rawOptions) {
     if (request.existing_project_id !== null || request.task_address_id !== null) {
       return Promise.reject(new BuilderGenerationMainServiceError('builder_generation_request_invalid'));
     }
-    return startAnswer(request, planRouteDecisionHint());
+    return startAnswer(request, planRouteDecisionHint(), null, true);
   }
 
   async function answerQueuedFollowup(rawRequest) {
@@ -6557,11 +7018,16 @@ function createBuilderGenerationMainService(rawOptions) {
     }
   }
 
-  function cancel(rawRequest) {
+  function cancel(rawRequest, pauseForShutdown = false) {
     let requestId;
+    let pauseRequested = false;
     try {
-      exactObject(rawRequest, ['request_id']);
+      exactObjectWithOptional(rawRequest, ['request_id'], ['pause']);
       requestId = safeDigest(valueAt(rawRequest, 'request_id'));
+      if (Object.hasOwn(rawRequest, 'pause')) {
+        if (valueAt(rawRequest, 'pause') !== true) fail();
+        pauseRequested = true;
+      }
     } catch {
       return host.cancel(rawRequest);
     }
@@ -6572,16 +7038,21 @@ function createBuilderGenerationMainService(rawOptions) {
       operationKey(PLAN_OPERATION_PREFIX, requestId),
     ];
     let cancelled = false;
+    const pausing = pauseForShutdown || pauseRequested;
+    const cancellationReason = pauseForShutdown ? 'shutdown' : 'user_requested';
     for (const key of keys) {
       const context = activeContexts.get(key);
       if (context === undefined) continue;
       const harnessRun = harnessRunnersByOperationKey.get(key);
+      if (pauseRequested && (key !== operationKey(GENERATE_OPERATION_PREFIX, requestId)
+        || harnessRun === undefined || isAgentConversationContext(context)
+        || options.harnessRuntimeComposition?.descriptor?.capabilities?.session_resume !== 'runtime_local')) continue;
       if (harnessRun !== undefined) {
         harnessRun.cancellation_requested = true;
       }
       let cancelledContext;
       try {
-        cancelledContext = applyConversationContextMethod(
+        cancelledContext = pausing && !isAgentConversationContext(context) ? context : applyConversationContextMethod(
           context,
           requestConversationCancel,
           requestAgentConversationCancel,
@@ -6590,17 +7061,19 @@ function createBuilderGenerationMainService(rawOptions) {
       } catch {
         if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
           harnessRun.cancellation_promise = harnessRun.runner
-            .cancel_run_id(harnessRun.run_id, 'user_requested')
+            .cancel_run_id(harnessRun.run_id, cancellationReason)
             .catch(() => false);
         }
         throw new BuilderGenerationMainServiceError();
       }
       try {
-        cancelledContext = completeAcceptedCancellation(key, cancelledContext);
+        cancelledContext = completeAcceptedCancellation(key, cancelledContext,
+          pauseForShutdown ? 'builder_generation_desktop_closed'
+            : pauseRequested ? 'builder_generation_paused' : 'builder_generation_cancelled');
       } catch {
         if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
           harnessRun.cancellation_promise = harnessRun.runner
-            .cancel_run_id(harnessRun.run_id, 'user_requested')
+            .cancel_run_id(harnessRun.run_id, cancellationReason)
             .catch(() => false);
         }
         throw new BuilderGenerationMainServiceError();
@@ -6609,7 +7082,7 @@ function createBuilderGenerationMainService(rawOptions) {
       clearProviderContextDisclosureStatusForContext(cancelledContext);
       if (harnessRun !== undefined && harnessRun.cancellation_promise === null) {
         harnessRun.cancellation_promise = harnessRun.runner
-          .cancel_run_id(harnessRun.run_id, 'user_requested')
+          .cancel_run_id(harnessRun.run_id, cancellationReason)
           .catch(() => false);
       }
       cancelled = true;
@@ -6928,6 +7401,9 @@ function createBuilderGenerationMainService(rawOptions) {
   return Object.freeze({
     service_version: BUILDER_GENERATION_MAIN_SERVICE_VERSION,
     submit,
+    prepare_resume_interrupted_run: prepareResumeInterruptedRun,
+    resume_interrupted_run: resumeInterruptedRun,
+    manual_compact_context: manualCompactContext,
     classify_intent: classifyIntent,
     submit_queued_followup: submitQueuedFollowup,
     answer,
@@ -6940,7 +7416,8 @@ function createBuilderGenerationMainService(rawOptions) {
     generate_approved_plan: generateApprovedPlan,
     retry_generate: retryGenerate,
     prepare_approved_plan_edit_context: prepareApprovedPlanEditContext,
-    cancel,
+    cancel: (request) => cancel(request),
+    pause_for_shutdown: (request) => cancel(request, true),
     steer,
     queue_followup: queueFollowup,
     availability: host.availability,
@@ -6973,6 +7450,8 @@ function createBuilderGenerationMainService(rawOptions) {
       run_steering: 'request_id_only_main_conversation_fact',
       run_followup_queue: 'request_id_only_main_conversation_fact',
       run_followup_consumption: 'main_conversation_replay_verified',
+      manual_context_compaction:
+        'main_only_current_conversation_projection_admission_then_harness_compact',
       credential_exposed_to_renderer: false,
       electron_registration: false,
       preload_exposure: false,

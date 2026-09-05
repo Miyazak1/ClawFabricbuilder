@@ -18,7 +18,9 @@ const SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174201';
 const PARENT_SESSION_ID = 'builder-session:123e4567-e89b-42d3-a456-426614174202';
 const TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174203';
 const CHILD_TASK_ADDRESS_ID = 'builder-task-address:123e4567-e89b-42d3-a456-426614174204';
-const CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174205';
+const ROOT_CONVERSATION_ID = 'builder-conversation:123e4567-e89b-42d3-a456-426614174200';
+const CONVERSATION_ID =
+  'builder-conversation:123e4567-e89b-42d3-a456-426614174200:123e4567-e89b-42d3-a456-426614174205';
 const AGENT_ID = 'builder-agent:123e4567-e89b-42d3-a456-426614174206';
 
 function digest(char) {
@@ -32,7 +34,7 @@ function sessionInput(overrides = {}) {
     display_id: 'S-A1B2C3',
     title: 'Management dashboard work line',
     status: 'active',
-    root_conversation_id: CONVERSATION_ID,
+    root_conversation_id: ROOT_CONVERSATION_ID,
     current_task_id: TASK_ADDRESS_ID,
     parent_session_id: null,
     forked_from_session_id: null,
@@ -146,6 +148,9 @@ test('keeps session lifecycle status explicit for archive and delete scopes', ()
   assertAddressError(() => createBuilderSessionAddress(sessionInput({
     parent_session_id: SESSION_ID,
   })));
+  assertAddressError(() => createBuilderSessionAddress(sessionInput({
+    root_conversation_id: 'builder-conversation:123e4567-e89b-42d3-a456-426614174999',
+  })));
 });
 
 test('keeps task address lifecycle tied to executable status and produced revision state', () => {
@@ -181,6 +186,13 @@ test('keeps task address lifecycle tied to executable status and produced revisi
   assertAddressError(() => createBuilderTaskAddress(taskInput({
     status: 'active',
     produced_revision_receipt_digest: digest('d'),
+  })));
+  assertAddressError(() => createBuilderTaskAddress(taskInput({
+    conversation_id: ROOT_CONVERSATION_ID,
+  })));
+  assertAddressError(() => createBuilderTaskAddress(taskInput({
+    conversation_id:
+      'builder-conversation:123e4567-e89b-42d3-a456-426614174999:123e4567-e89b-42d3-a456-426614174205',
   })));
 });
 

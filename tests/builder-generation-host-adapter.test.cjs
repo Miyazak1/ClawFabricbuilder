@@ -10,6 +10,12 @@ const {
   createBuilderGenerationHostAdapter,
 } = require('../electron/builder-generation-host-adapter.cjs');
 const {
+  createBuilderOpenAICompatibleTransport,
+} = require('../electron/builder-openai-compatible-transport.cjs');
+const {
+  projectBuilderExplanationResult,
+} = require('../electron/builder-generation-kernel.cjs');
+const {
   createBuilderConversationEvent,
 } = require('../electron/builder-conversation-records.cjs');
 const {
@@ -77,6 +83,59 @@ function providerExplanation(overrides = {}) {
   };
 }
 
+function completePlanMarkdown() {
+  return `# Product goals and boundaries
+
+- Deliver an interactive football-themed technical blog with a navigable 3D stadium as its primary content interface.
+- Keep article reading, search, keyboard navigation, and reduced-motion access fully usable without WebGL.
+
+## Users and end-to-end flows
+
+- A first-time visitor enters the stadium, selects a marked area, opens the associated article preview, and continues to the article page.
+- A returning reader searches or filters posts without replaying the introductory camera sequence.
+
+## Functional and interaction specification
+
+- Define loading, ready, selected, article-open, empty, and recoverable-error states with visible feedback for every control.
+- Support pointer, touch, keyboard, and screen-reader paths for stadium navigation and article selection.
+
+## Visual and 3D behavior
+
+- Use a bounded camera, labelled interaction markers, stable lighting, and progressive model quality so the scene remains legible and responsive.
+- Respect reduced-motion preferences by replacing camera travel and ambient animation with immediate state changes.
+
+## Technical architecture
+
+- Separate the content domain, page routing, 3D scene adapter, interaction state, and persistence boundaries so article rendering does not depend on WebGL.
+- Load the stadium client-side behind a capability check while server-rendering indexable article metadata and fallback navigation.
+
+## Data, interfaces, modules, and files
+
+- Define typed Post, Category, StadiumMarker, SceneState, and NavigationIntent contracts with validated identifiers and explicit empty states.
+- Place content access, scene rendering, marker controls, article surfaces, and analytics behind separate modules with focused tests.
+
+## Implementation phases and dependencies
+
+- Phase one delivers content schemas, routes, fallback navigation, and acceptance fixtures before any 3D dependency is introduced.
+- Phase two delivers the optimized stadium scene and marker interactions; phase three integrates content, accessibility, and production telemetry.
+
+## Acceptance and verification matrix
+
+- Verify article discovery, marker selection, browser history, deep links, refresh recovery, mobile input, keyboard input, and no-WebGL fallback.
+- Measure initial content render, scene-ready time, frame stability, bundle size, memory use, and interaction latency against documented budgets.
+
+## Security, privacy, accessibility, and performance
+
+- Sanitize authored content, constrain external assets, avoid collecting interaction data without consent, and document retention behavior.
+- Meet WCAG interaction requirements with semantic alternatives, visible focus, sufficient contrast, descriptive labels, and reduced motion.
+
+## Risks, recovery, deployment, and maintenance
+
+- Treat GPU failure, oversized assets, content/schema drift, and route-state divergence as explicit risks with fallback and rollback procedures.
+- Deploy behind a feature flag, observe client errors and scene performance, retain the non-3D experience, and document content and asset updates.
+`.trim();
+}
+
 function providerPlan(overrides = {}) {
   return {
     kind: 'builder_project_plan_proposal',
@@ -122,24 +181,39 @@ function routeDecision(payload, projectId = PROJECT_ID) {
   };
 }
 
-function events({ requestDigest = request().request_digest, baseRevision = null } = {}) {
+function events({
+  requestDigest = request().request_digest,
+  baseRevision = null,
+  route = 'build',
+  projectId = PROJECT_ID,
+} = {}) {
   const turnPayload = {
     message: { message_id: 'builder-message:123e4567-e89b-42d3-a456-426614174002', text: 'Make a focus timer.' },
     turn_id: TURN_ID,
-    mode: 'work',
-    task: { task_id: TASK_ID, title: 'Create Builder project' },
+    mode: ['build', 'plan'].includes(route) ? 'work' : 'question',
+    task: projectId === null ? null : { task_id: TASK_ID, title: 'Create Builder project' },
     base_revision: baseRevision,
   };
+  const submittedRouteDecision = route === 'plan'
+    ? {
+        ...routeDecision(turnPayload, projectId),
+        route: 'plan',
+        matched_signals: ['explicit_plan'],
+        required_permissions: ['project_read'],
+        permission_result: 'allowed',
+        dispatch: 'plan',
+      }
+    : routeDecision(turnPayload, projectId);
   const first = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
-    project_id: PROJECT_ID,
+    project_id: projectId,
     conversation_id: `builder-conversation:${UUID}`,
     sequence: 1,
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174001',
     event_type: 'turn_submitted',
     previous_event: null,
-    payload: { ...turnPayload, route_decision: routeDecision(turnPayload) },
+    payload: { ...turnPayload, route_decision: submittedRouteDecision },
     authority: {
       context_authority: 'project_local_conversation',
       permission_admission: 'not_granted',
@@ -150,7 +224,7 @@ function events({ requestDigest = request().request_digest, baseRevision = null 
   const second = createBuilderConversationEvent({
     record_version: 'builder-conversation-event.v2',
     record_kind: 'builder_conversation_event',
-    project_id: PROJECT_ID,
+    project_id: projectId,
     conversation_id: `builder-conversation:${UUID}`,
     sequence: 2,
     command_id: 'builder-command:123e4567-e89b-42d3-a456-426614174005',
@@ -159,7 +233,7 @@ function events({ requestDigest = request().request_digest, baseRevision = null 
     payload: {
       turn_id: TURN_ID,
       run_id: RUN_ID,
-      task_id: TASK_ID,
+      task_id: projectId === null ? null : TASK_ID,
       attempt_number: 1,
       retry_of_run_id: null,
       input_digest: requestDigest,
@@ -881,7 +955,9 @@ test('repairs a plan-shaped response in the read-only explanation route', async 
   assert.match(transportInputs[1][0].messages[2].content, /Preserve the language of the original end-user instruction/iu);
   assert.match(transportInputs[1][0].messages[2].content, /must not change the response language/iu);
   assert.match(transportInputs[1][0].messages[2].content, /Set kind to builder_conversation_explanation/u);
-  assert.match(transportInputs[1][0].messages[2].content, /write that plan as normal text in explanation/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /complete implementation blueprint/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /modules and files/iu);
+  assert.match(transportInputs[1][0].messages[2].content, /risks and rollback/iu);
   assert.doesNotMatch(
     JSON.stringify({
       version: result.version,
@@ -895,6 +971,183 @@ test('repairs a plan-shaped response in the read-only explanation route', async 
     /builder_project_plan_proposal|builder_code_change_operations|"steps"|"operations"|credential_value|credential_secret|"secret_ref"|api[_-]?key|provider\.example/iu,
   );
 });
+
+test('retains an underspecified Agent plan without silently rewriting it', async () => {
+  const rawRequest = request({ instruction: '为交互式 3D 足球博客制定完整实施计划', existingProjectId: PROJECT_ID });
+  const transportInputs = [];
+  const output = [];
+  const validation = [];
+  const incomplete = [];
+  const planConversationEvents = events({ requestDigest: rawRequest.request_digest, route: 'plan' });
+  assert.equal(projectBuilderExplanationResult({
+    request: rawRequest,
+    generated_text: JSON.stringify(providerExplanation({ explanation: completePlanMarkdown() })),
+  }).explanation, completePlanMarkdown());
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    onOutputDelta: ({ delta_text }) => output.push(delta_text),
+    onOutputReset: () => output.push('RESET'),
+    onPlanResponseValidation: (facts) => validation.push(facts),
+    onIncompletePlan: (value) => incomplete.push(value),
+    buildExplanationContext: (raw) => ({
+      ...explanationContextFor(raw, {
+        base_source_tree: sourceTree([{ path: 'README.md', content: '# Existing project\n' }]),
+        conversation_events: planConversationEvents,
+      }),
+    }),
+    transport: async (...args) => {
+      transportInputs.push(args);
+      await args[1].on_output_delta({
+        delta_text: transportInputs.length === 1 ? '# Short outline' : completePlanMarkdown(),
+      });
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: '# 技术选择\n\n- 使用 React 和 Three.js。\n- 下一步可以开始搭建。',
+      };
+    },
+  }));
+
+  await assert.rejects(adapter.explain(rawRequest), { code: 'builder_generation_structured_response_invalid' });
+
+  assert.equal(transportInputs.length, 1);
+  assert.deepEqual(output, ['# Short outline']);
+  assert.equal(incomplete.length, 1);
+  assert.match(incomplete[0].explanation, /Incomplete plan[\s\S]*# Short outline/u);
+  for (const input of transportInputs) {
+    assert.equal(input[0].messages.length, 2);
+    assert.match(input[0].messages[0].content, /raw Markdown only/iu);
+    assert.equal(JSON.parse(input[0].messages[1].content).response_mode, 'plan');
+    assert.equal(JSON.parse(input[0].messages[1].content).instruction, rawRequest.instruction);
+  }
+  assert.deepEqual(validation.map((facts) => facts.accepted), [0]);
+  assert.deepEqual(Object.keys(validation[0]).sort(), ['accepted', 'code_points', 'headings', 'list_items', 'outer_whitespace', 'utf8_bytes']);
+});
+
+for (const streaming of [false, true]) {
+  for (const complete of [false, true]) {
+    test(`Agent plan uses a single request (observer=${streaming}, complete=${complete})`, async () => {
+      const rawRequest = request({
+        instruction: 'Plan a complete interactive football blog.', existingProjectId: PROJECT_ID,
+      });
+      const requests = [];
+      const output = [];
+      const incomplete = [];
+      const shortPlan = '# Short outline';
+      const adapter = createBuilderGenerationHostAdapter(dependencies({
+        onIncompletePlan: (value) => incomplete.push(value),
+        buildExplanationContext: (raw) => ({
+          ...explanationContextFor(raw, {
+            conversation_events: events({ requestDigest: raw.request_digest, route: 'plan' }),
+          }),
+        }),
+        ...(streaming ? {
+          onOutputDelta: ({ delta_text }) => output.push(delta_text),
+          onOutputReset: () => output.push('RESET'),
+        } : {}),
+        transport: createBuilderOpenAICompatibleTransport({
+          fetchImpl: async (_url, options) => {
+            requests.push(JSON.parse(options.body));
+            const content = complete ? completePlanMarkdown() : shortPlan;
+            return JSON.parse(options.body).stream
+              ? new Response([
+                `data: ${JSON.stringify({ choices: [{ finish_reason: null, delta: { content } }] })}\n\n`,
+                `data: ${JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] })}\n\n`,
+                'data: [DONE]\n\n',
+              ].join(''), { headers: { 'content-type': 'text/event-stream' } })
+              : new Response(JSON.stringify({
+                choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+              }), { headers: { 'content-type': 'application/json' } });
+          },
+        }),
+      }));
+
+      if (complete) {
+        assert.equal((await adapter.explain(rawRequest)).explanation, completePlanMarkdown());
+      } else {
+        await assert.rejects(adapter.explain(rawRequest), { code: 'builder_generation_structured_response_invalid' });
+      }
+      assert.equal(requests.length, 1, 'plan validation must not automatically rewrite the answer');
+      assert.deepEqual(requests.map((value) => value.messages.length), [2]);
+      assert.equal(incomplete.length, complete ? 0 : 1);
+      for (const value of requests) {
+        assert.equal(value.stream, true, 'plan output is captured even without a UI observer');
+        assert.match(value.messages[0].content, /raw Markdown only/iu);
+        assert.equal(JSON.parse(value.messages[1].content).response_mode, 'plan');
+        assert.equal(JSON.parse(value.messages[1].content).instruction, rawRequest.instruction);
+      }
+      if (streaming) {
+        assert.deepEqual(output, [complete ? completePlanMarkdown() : shortPlan]);
+      }
+    });
+  }
+}
+
+test('accepts a legacy JSON-wrapped Agent plan without exposing the wrapper', async () => {
+  const rawRequest = request({
+    instruction: 'Plan a complete interactive football blog.', existingProjectId: PROJECT_ID,
+  });
+  const output = [];
+  const markdown = completePlanMarkdown();
+  const wrapped = JSON.stringify(providerExplanation({ explanation: markdown }));
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    onOutputDelta: ({ delta_text }) => output.push(delta_text),
+    buildExplanationContext: (raw) => explanationContextFor(raw, {
+      conversation_events: events({ requestDigest: raw.request_digest, route: 'plan' }),
+    }),
+    transport: async (_input, runtime) => {
+      await runtime.on_output_delta({ delta_text: wrapped.slice(0, 97) });
+      await runtime.on_output_delta({ delta_text: wrapped.slice(97) });
+      return {
+        transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: wrapped,
+      };
+    },
+  }));
+
+  assert.equal((await adapter.explain(rawRequest)).explanation, markdown);
+  assert.equal(output.join(''), markdown);
+  assert.doesNotMatch(output.join(''), /builder_conversation_explanation|"explanation"/u);
+});
+
+test('accepts full Agent plans with bold sections and prose instead of Markdown heading/list quotas', async () => {
+  const markdown = completePlanMarkdown().replace(/^#{1,6} (.+)$/gmu, '**$1**').replace(/^- /gmu, '');
+  let attempts = 0;
+  const adapter = createBuilderGenerationHostAdapter(dependencies({
+    buildExplanationContext: (raw) => explanationContextFor(raw, {
+      conversation_events: events({ requestDigest: raw.request_digest, route: 'plan' }),
+    }),
+    transport: async () => {
+      attempts += 1;
+      return { transport_version: 'builder-openai-compatible-transport.v1',
+        generated_text: markdown };
+    },
+  }));
+  const result = await adapter.explain(request({ existingProjectId: PROJECT_ID }));
+  assert.equal(result.explanation, markdown);
+  assert.equal(attempts, 1);
+});
+
+for (const unsafe of [false, true]) {
+  test(`retains only safe plan text after a truncated stream (unsafe=${unsafe})`, async () => {
+    const incomplete = [];
+    let attempts = 0;
+    const partial = unsafe ? 'Use C:\\Users\\private\\secret.txt in this plan.' : '# Draft\n\nThe timer must support pause and resume.';
+    const adapter = createBuilderGenerationHostAdapter(dependencies({
+      onIncompletePlan: (value) => incomplete.push(value),
+      buildExplanationContext: (raw) => explanationContextFor(raw, {
+        conversation_events: events({ requestDigest: raw.request_digest, route: 'plan' }),
+      }),
+      transport: async (_input, runtime) => {
+        attempts += 1;
+        await runtime.on_output_delta({ delta_text: partial });
+        throw Object.assign(new Error('stream timeout'), { code: 'builder_provider_timeout' });
+      },
+    }));
+    await assert.rejects(adapter.explain(request({ existingProjectId: PROJECT_ID })));
+    assert.equal(attempts, 1);
+    assert.equal(incomplete.length, unsafe ? 0 : 1);
+    if (!unsafe) assert.ok(incomplete[0].explanation.endsWith(partial));
+  });
+}
 
 test('generates a bounded plan proposal from source context without creating Git evidence', async () => {
   const rawRequest = request({ instruction: 'Plan a smaller settings panel.', existingProjectId: PROJECT_ID });
@@ -1365,6 +1618,8 @@ test('rejects provider context prompt bridge material before explicit prompt wir
 
 test('maps timeout and provider failures without reflecting raw errors', async () => {
   for (const [transportCode, expected] of [
+    ['builder_provider_request_invalid', 'builder_generation_request_invalid'],
+    ['builder_provider_unavailable', 'builder_generation_provider_unavailable'],
     ['builder_provider_timeout', 'builder_generation_timeout'],
     ['builder_provider_http_error', 'builder_generation_provider_http_error'],
     ['builder_provider_transport_error', 'builder_generation_provider_transport_error'],

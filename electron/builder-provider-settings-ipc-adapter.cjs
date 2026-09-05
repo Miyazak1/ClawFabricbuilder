@@ -11,13 +11,17 @@ const {
 
 const READ_CURRENT_CHANNEL = 'clawfabric-builder:provider-settings:read-current';
 const REPLACE_CURRENT_CHANNEL = 'clawfabric-builder:provider-settings:replace-current';
+const SELECT_MODEL_CHANNEL = 'clawfabric-builder:provider-settings:select-model';
 const STATUS_CHANNEL = 'clawfabric-builder:provider-settings:status';
 const OPTION_KEYS = Object.freeze([
   'readCurrent',
   'writeCurrent',
+  'selectCurrentModel',
   'mainWindowRef',
 ]);
 const WRITE_KEYS = Object.freeze(['config', 'credential']);
+const SELECT_MODEL_KEYS = Object.freeze(['model', 'expected_config_digest']);
+const MODEL_MAX_LENGTH = 200;
 const WRITE_CONFIG_KEYS = Object.freeze([
   'base_url',
   'model',
@@ -46,6 +50,7 @@ const ERROR_MESSAGES = Object.freeze({
   builder_provider_settings_forbidden: 'AI provider settings are unavailable.',
   builder_provider_settings_request_invalid: 'AI provider settings could not verify the request.',
   builder_provider_settings_not_found: 'AI provider settings are not configured.',
+  builder_provider_settings_stale: 'AI provider settings changed before the model could be selected.',
   builder_provider_settings_unavailable: 'AI provider settings are unavailable.',
   builder_provider_settings_integrity_failed: 'AI provider settings could not be verified.',
   builder_provider_settings_persistence_failed: 'AI provider settings could not be saved.',
@@ -54,6 +59,7 @@ const ERROR_MESSAGES = Object.freeze({
 const REPOSITORY_ERROR_CODES = Object.freeze({
   builder_provider_config_repository_invalid: 'builder_provider_settings_request_invalid',
   builder_provider_config_repository_not_found: 'builder_provider_settings_not_found',
+  builder_provider_config_repository_stale: 'builder_provider_settings_stale',
   builder_provider_config_repository_unavailable: 'builder_provider_settings_unavailable',
   builder_provider_config_repository_integrity_failed: 'builder_provider_settings_integrity_failed',
   builder_provider_config_repository_persistence_failed: 'builder_provider_settings_persistence_failed',
@@ -256,6 +262,51 @@ function safeWriteRequest(value) {
   });
 }
 
+function hasUnpairedSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function safeModel(value) {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.trim() !== value
+    || value.length > MODEL_MAX_LENGTH
+    || hasUnpairedSurrogate(value)
+  ) {
+    throw ipcError('builder_provider_settings_request_invalid');
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      throw ipcError('builder_provider_settings_request_invalid');
+    }
+  }
+  return value;
+}
+
+function safeSelectModelRequest(value) {
+  const descriptors = exactObject(value, SELECT_MODEL_KEYS, 'builder_provider_settings_request_invalid');
+  const expectedConfigDigest = descriptors.expected_config_digest.value;
+  if (typeof expectedConfigDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(expectedConfigDigest)) {
+    throw ipcError('builder_provider_settings_request_invalid');
+  }
+  return freezeDeep({
+    model: safeModel(descriptors.model.value),
+    expected_config_digest: expectedConfigDigest,
+  });
+}
+
 function isNotFound(error) {
   return safeErrorCode(error) === 'builder_provider_settings_not_found';
 }
@@ -313,6 +364,26 @@ function createBuilderProviderSettingsIpcAdapter(rawOptions) {
           }
         },
       }),
+      selectModel: Object.freeze({
+        channel: SELECT_MODEL_CHANNEL,
+        method: 'selectModel',
+        invoke(event, ...rawArguments) {
+          try {
+            assertActiveSender(event, options.mainWindowRef);
+            if (rawArguments.length !== 1) {
+              throw ipcError('builder_provider_settings_request_invalid');
+            }
+            const result = Reflect.apply(
+              options.selectCurrentModel,
+              undefined,
+              [safeSelectModelRequest(rawArguments[0])],
+            );
+            return redactedEnvelope(result, 'current_model_selected');
+          } catch (error) {
+            throw normalizeError(error);
+          }
+        },
+      }),
       status: Object.freeze({
         channel: STATUS_CHANNEL,
         method: 'status',
@@ -339,10 +410,12 @@ function createBuilderProviderSettingsIpcAdapter(rawOptions) {
         },
       }),
     }),
-    exposed_methods: Object.freeze(['readCurrent', 'replaceCurrent', 'status']),
+    exposed_methods: Object.freeze(['readCurrent', 'replaceCurrent', 'selectModel', 'status']),
     authority: Object.freeze({
       provider_config_repository_injected: true,
       active_renderer_required: true,
+      model_selection_preserves_existing_credential: true,
+      model_selection_stale_config_rejected: true,
       generic_provider_authority_reused: false,
       direct_electron_registration: false,
       direct_preload_exposure: false,
@@ -357,6 +430,7 @@ function createBuilderProviderSettingsIpcAdapter(rawOptions) {
 module.exports = Object.freeze({
   READ_CURRENT_CHANNEL,
   REPLACE_CURRENT_CHANNEL,
+  SELECT_MODEL_CHANNEL,
   STATUS_CHANNEL,
   BuilderProviderSettingsIpcError,
   createBuilderProviderSettingsIpcAdapter,

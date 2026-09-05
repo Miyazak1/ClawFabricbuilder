@@ -23,6 +23,7 @@ const MAX_CURRENT_BYTES = 128 * 1024;
 const NONCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const WRITE_KEYS = Object.freeze(['config', 'credential']);
+const SELECT_MODEL_KEYS = Object.freeze(['model', 'expected_config_digest']);
 const CURRENT_BODY_KEYS = Object.freeze(['repository_version', 'config', 'secret_binding']);
 const CURRENT_KEYS = Object.freeze([...CURRENT_BODY_KEYS, 'repository_digest']);
 const UTF8_DECODER = new NodeTextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -30,6 +31,7 @@ const UTF8_DECODER = new NodeTextDecoder('utf-8', { fatal: true, ignoreBOM: true
 const ERROR_MESSAGES = Object.freeze({
   builder_provider_config_repository_invalid: 'AI provider settings could not verify the request.',
   builder_provider_config_repository_not_found: 'AI provider settings are not configured.',
+  builder_provider_config_repository_stale: 'AI provider settings changed before the model could be selected.',
   builder_provider_config_repository_unavailable: 'AI provider settings are unavailable.',
   builder_provider_config_repository_integrity_failed: 'AI provider settings could not be verified.',
   builder_provider_config_repository_persistence_failed: 'AI provider settings could not be saved.',
@@ -453,6 +455,58 @@ function createBuilderProviderConfigRepository(rootPath, options = {}) {
           config_file_fsync: 'not_performed',
           config_publish: 'not_performed',
           config_parent_directory_fsync: 'not_performed',
+        });
+      } catch (error) {
+        throw normalizeError(error);
+      }
+    },
+
+    select_current_model(rawRequest) {
+      try {
+        exactObject(rawRequest, SELECT_MODEL_KEYS, 'builder_provider_config_repository_invalid');
+        const expectedConfigDigest = ownValue(
+          rawRequest,
+          'expected_config_digest',
+          'builder_provider_config_repository_invalid',
+        );
+        if (typeof expectedConfigDigest !== 'string' || !DIGEST_PATTERN.test(expectedConfigDigest)) {
+          fail('builder_provider_config_repository_invalid');
+        }
+        const current = readVerifiedCurrent(
+          context,
+          secretStore,
+          'builder_provider_config_repository_not_found',
+        );
+        if (current.config.config_digest !== expectedConfigDigest) {
+          fail('builder_provider_config_repository_stale');
+        }
+        let config;
+        try {
+          config = createBuilderProviderConfig({
+            base_url: current.config.base_url,
+            model: ownValue(rawRequest, 'model', 'builder_provider_config_repository_invalid'),
+            timeout_ms: current.config.timeout_ms,
+            temperature: current.config.temperature,
+            max_tokens: current.config.max_tokens,
+            secret_ref: current.config.secret_ref,
+          });
+        } catch {
+          fail('builder_provider_config_repository_invalid');
+        }
+        const next = createCurrentEnvelope({
+          repository_version: BUILDER_PROVIDER_CONFIG_REPOSITORY_VERSION,
+          config,
+          secret_binding: current.secret_binding,
+        });
+        const published = publishCurrent(context, next);
+        secretStore.verify_binding(published.reopened.secret_binding);
+        return resultEnvelope('current_model_selected', published.reopened, {
+          secret_file_fsync: 'not_performed',
+          secret_publish: 'not_performed',
+          secret_parent_directory_fsync: 'not_performed',
+          config_file_fsync: published.file_fsync,
+          config_publish: published.publish,
+          config_parent_directory_fsync: published.parent_directory_fsync,
         });
       } catch (error) {
         throw normalizeError(error);
